@@ -208,14 +208,21 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
 
     PerfScope perfScope("PlayerMarkerService::OnWhereabouts");
 
-    StartQuest();
+    // Map icons only, for everyone, party or not (Emma, 2026-10-11). Party members used to be the quest "Fellow
+    // travellers", whose objectives put them on the compass: the journal listed it under Miscellaneous, with "[...]"
+    // for names (<Alias=MemberN> is filled when the quest starts, before any name is set), and "it does not belong
+    // here at all". A compass marker needs a shown objective, which the journal always lists, so the compass goes too.
+    // The quest is never started now; the party marker code stays for a later "compass on demand".
+    // A save made while it ran still has it running, and in the journal: stopped once here.
+    if (!m_questStarted && m_pQuest->getState() == TESQuest::State::Running)
+    {
+        m_questStarted = true;
+        StopQuest();
+        spdlog::info("Player markers: quest Fellow travellers was running from the save; stopped (map icons only)");
+    }
 
     const uint32_t cLocalId = m_world.GetTransport().GetLocalPlayerId();
-    const auto& partyService = m_world.GetPartyService();
-    const auto& partyMembers = partyService.GetPartyMembers();
-    const auto isParty = [&](uint32_t aPlayerId) {
-        return partyService.IsInParty() && std::find(partyMembers.begin(), partyMembers.end(), aPlayerId) != partyMembers.end();
-    };
+    const auto isParty = [](uint32_t) { return false; };
     const auto isListedAs = [&](uint32_t aPlayerId, bool aParty) {
         for (const auto& entry : acMessage.Players)
             if (entry.PlayerId == aPlayerId)

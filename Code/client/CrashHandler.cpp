@@ -5,8 +5,11 @@
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <Psapi.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <unordered_map>
+#include <vector>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -738,6 +741,63 @@ void LogThread(const char* apWhat, const DWORD aThreadId) noexcept
     }
 }
 
+// Where this process's threads started, the most common first. Both games of 2026-10-11 evening gained 100 to 450
+// threads a minute while playing (Emma 178 to 5,218 between 18:01 and 18:34, then stutters; Seen 763 to 3,369 and a
+// frozen loading screen) and the count alone cannot say whose they are: our code starts two threads. A thread's start
+// address names its owner (a module and offset), so this line names the leak the next time it happens.
+void LogThreadStarts(const uint32_t aCount) noexcept
+{
+    using NtQueryInformationThread_t = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    static const auto s_query = reinterpret_cast<NtQueryInformationThread_t>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
+    if (!s_query)
+        return;
+
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE)
+        return;
+    std::unordered_map<uintptr_t, uint32_t> starts;
+    uint32_t unopened = 0;
+    LONG lastStatus = 0;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    for (BOOL ok = Thread32First(hSnapshot, &entry); ok; ok = Thread32Next(hSnapshot, &entry))
+    {
+        if (entry.th32OwnerProcessID != GetCurrentProcessId())
+            continue;
+        // The full query right: with THREAD_QUERY_LIMITED_INFORMATION the start address is refused, and the first
+        // version of this line said "0 start addresses" all evening (2026-10-11 19:29 to 19:48, both games).
+        HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+        if (!hThread)
+        {
+            ++unopened;
+            continue;
+        }
+        uintptr_t start = 0;
+        constexpr ULONG cThreadQuerySetWin32StartAddress = 9;
+        if (const LONG cStatus = s_query(hThread, cThreadQuerySetWin32StartAddress, &start, sizeof(start), nullptr); cStatus == 0)
+            ++starts[start];
+        else
+        {
+            ++unopened;
+            lastStatus = cStatus;
+        }
+        CloseHandle(hThread);
+    }
+    CloseHandle(hSnapshot);
+
+    std::vector<std::pair<uintptr_t, uint32_t>> sorted(starts.begin(), starts.end());
+    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::string line;
+    char desc[MAX_PATH + 64];
+    for (size_t i = 0; i < sorted.size() && i < 6; ++i)
+    {
+        DescribeCodeAddress(reinterpret_cast<void*>(sorted[i].first), desc, sizeof(desc));
+        line += fmt::format("{}{} x{}", i ? ", " : "", desc, sorted[i].second);
+    }
+    spdlog::warn("ThreadStarts: {} threads from {} start addresses ({} not readable, last status 0x{:X}); most: {}", aCount, sorted.size(), unopened,
+                 static_cast<uint32_t>(lastStatus), line);
+}
+
 void LogHealth(const int64_t aSinceBeatMs) noexcept
 {
     PROCESS_MEMORY_COUNTERS_EX counters{};
@@ -767,6 +827,17 @@ DWORD WINAPI WatchdogMain(LPVOID) noexcept
         {
             nextHealthMs = cNow + 30000;
             LogHealth(cSince);
+
+            // Every 5 minutes, and only once the count is past what a normal game has (about 200).
+            static int64_t s_nextThreadStartsMs = 0;
+            if (cNow >= s_nextThreadStartsMs)
+            {
+                if (const uint32_t cThreads = CountThreads(); cThreads > 500)
+                {
+                    s_nextThreadStartsMs = cNow + 300000;
+                    LogThreadStarts(cThreads);
+                }
+            }
         }
 
         // Once at 25 s and once more at 2 minutes for the same stall. A long loading screen also gets here.

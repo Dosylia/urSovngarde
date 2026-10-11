@@ -52,6 +52,8 @@
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/ClashRequest.h>
 #include <Messages/NotifyClash.h>
+#include <Messages/NotifyArrowNocked.h>
+#include <Messages/ArrowNockedRequest.h>
 #include <Events/ClashEvent.h>
 #include <Messages/CharacterSpawnRequest.h>
 #include <Messages/RequestFactionsChanges.h>
@@ -523,6 +525,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_ownershipTransferConnection = m_dispatcher.sink<NotifyOwnershipTransfer>().connect<&CharacterService::OnOwnershipTransfer>(this);
     m_removeCharacterConnection = m_dispatcher.sink<NotifyRemoveCharacter>().connect<&CharacterService::OnRemoveCharacter>(this);
     m_clashConnection = m_dispatcher.sink<NotifyClash>().connect<&CharacterService::OnNotifyClash>(this);
+    m_arrowNockedConnection = m_dispatcher.sink<NotifyArrowNocked>().connect<&CharacterService::OnNotifyArrowNocked>(this);
 
     m_mountConnection = m_dispatcher.sink<MountEvent>().connect<&CharacterService::OnMountEvent>(this);
     m_notifyMountConnection = m_dispatcher.sink<NotifyMount>().connect<&CharacterService::OnNotifyMount>(this);
@@ -1393,6 +1396,20 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
             // Players and npcs with temporary ref ids and base ids (usually random events)
             pNpc = TESNPC::Create(acMessage.AppearanceBuffer, acMessage.ChangeFlags);
             FaceGenSystem::Setup(m_world, *entity, acMessage.FaceTints);
+
+            // What the owner's appearance turned into here. TESNPC::Create starts from this player's own race,
+            // class and outfits and loads the owner's over them, so a load that did not take leaves a copy of this
+            // player's race with no name and no face: a friend's orc was "a naked white nordic skin with black face"
+            // (Discord, 2026-10-11; empty names on every player copy in that log, their two mod lists differing).
+            if (acMessage.IsPlayer && pNpc)
+            {
+                const auto* pRace = reinterpret_cast<const TESForm*>(pNpc->raceForm.race); // TESRace derives from TESForm first
+                const TESNPC* pOwnBase = Cast<TESNPC>(PlayerCharacter::Get()->baseForm);
+                const bool cOwnRace = pOwnBase && reinterpret_cast<const TESForm*>(pOwnBase->raceForm.race) == pRace;
+                spdlog::info("Player copy appearance: {} bytes, change flags {:X}, {} face tints; race {:X}{}, name '{}'", acMessage.AppearanceBuffer.size(), acMessage.ChangeFlags,
+                             acMessage.FaceTints.Entries.size(), pRace ? pRace->formID : 0, cOwnRace ? " (this player's own race: the owner's may not have loaded)" : "",
+                             pNpc->fullName.value.AsAscii());
+            }
         }
 
         pActor = RememberOwnCopy(Actor::Create(pNpc));
@@ -3012,6 +3029,18 @@ void CharacterService::RunLocalUpdates() const noexcept
             spdlog::info("VRArchery: local attack state {} (9 bow draw, 10 arrow attached, 11 drawn, 12 releasing, 13 released), weapon drawn {}", attackState,
                          pPlayer->actorState.IsWeaponDrawn());
         }
+
+        // The arrow is on the string from state 10 (measured 2026-10-10: a VR draw goes 8, 9, 10, the arrow flies at
+        // 10, then 0). Said to the others when it starts and when it ends, so their copy of this player shows it.
+        static bool s_nockedSent = false;
+        const bool cNocked = attackState >= 10 && attackState <= 11;
+        if (cNocked != s_nockedSent && m_transport.IsConnected())
+        {
+            ArrowNockedRequest request{};
+            request.Nocked = cNocked;
+            if (m_transport.Send(request))
+                s_nockedSent = cNocked;
+        }
     }
 #endif
 
@@ -3723,5 +3752,55 @@ void CharacterService::OnNotifyClash(const NotifyClash& acMessage) const noexcep
     if (cOurs)
         VRBodySync::FeelClash(acMessage.OtherSide);
     spdlog::info("Clash from server {}: {}{}", acMessage.FromId, cHeard ? "heard" : "not heard (no sound)", cOurs ? ", felt" : "");
+#endif
+}
+
+void CharacterService::OnNotifyArrowNocked(const NotifyArrowNocked& acMessage) const noexcept
+{
+    auto view = m_world.view<RemoteComponent, FormIdComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [&view, &acMessage](auto entity) { return view.get<RemoteComponent>(entity).Id == acMessage.ServerId; });
+    if (it == view.end())
+        return;
+
+    Actor* pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(*it).Id));
+    if (!pActor || !pActor->GetNiNode() || pActor->IsDead())
+        return;
+
+    // The arrow is the game's own: it takes the copy's equipped ammo, so none means nothing to put on the string.
+    if (acMessage.Nocked && (!pActor->GetEquippedAmmo() || !pActor->actorState.IsWeaponDrawn()))
+    {
+        spdlog::info("ArrowNocked: {:X} (server {:X}) has an arrow on the string over there, but this copy has {}; not attached", pActor->formID, acMessage.ServerId,
+                     pActor->GetEquippedAmmo() ? "its weapon sheathed" : "no arrows equipped");
+        return;
+    }
+
+    // Actor::AttachArrow and DetachArrow, both taking the actor's biped (TESObjectREFR::GetBiped2, slot 0x7F on every
+    // runtime). Called by slot, not through the declaration in Actor.h: that one is at 0xCD, the slot on Skyrim SE,
+    // and VR has them two further on (CommonLibVR, RelocateVirtual(0x0CD, 0x0CF) and (0x0CE, 0x0D0)).
+#ifdef SKYRIMVR
+    constexpr size_t cAttachSlot = 0xCF;
+    constexpr size_t cDetachSlot = 0xD0;
+#else
+    constexpr size_t cAttachSlot = 0xCD;
+    constexpr size_t cDetachSlot = 0xCE;
+#endif
+    constexpr size_t cGetBiped2Slot = 0x7F;
+    using TGetBiped = void* (*)(Actor*);
+    using TArrow = void (*)(Actor*, void*);
+    void** pVtable = *reinterpret_cast<void***>(pActor);
+    void* pBipedHolder = reinterpret_cast<TGetBiped>(pVtable[cGetBiped2Slot])(pActor);
+    if (!pBipedHolder || !*static_cast<void**>(pBipedHolder))
+        return;
+#ifdef SKYRIMVR
+    size_t before = 0;
+    VRBodySync::NodesNamedLike(pActor, "arrow", 0, before);
+#endif
+    reinterpret_cast<TArrow>(pVtable[acMessage.Nocked ? cAttachSlot : cDetachSlot])(pActor, pBipedHolder);
+    spdlog::info("ArrowNocked: {:X} (server {:X}): arrow {} the string", pActor->formID, acMessage.ServerId, acMessage.Nocked ? "put on" : "taken off");
+#ifdef SKYRIMVR
+    // Whether the game made or removed an arrow in the copy's 3D, said by node names: a check the rig can read.
+    size_t after = 0;
+    const std::string names = VRBodySync::NodesNamedLike(pActor, "arrow", 6, after);
+    spdlog::info("ArrowNocked: {:X} has {} node(s) named like an arrow, {} before{}{}", pActor->formID, after, before, names.empty() ? "" : ": ", names);
 #endif
 }

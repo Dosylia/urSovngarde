@@ -46,6 +46,9 @@ void FeelClash(uint8_t aSide) noexcept;
 //! A dead body whose owner has it elsewhere: its ragdoll -- what it is drawn from -- is moved there, every rigid body
 //! by the same offset, when it lies more than 64 units away (at most twice a second). False when nothing was moved.
 bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept;
+//! The names of the nodes in an actor's 3D whose name contains `acpPart` (any case), comma separated, at most
+//! `aMax`; how many there were in all goes to `aCount`. For checks that cannot look at the screen (the rig).
+std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, size_t& aCount) noexcept;
 //! Whether this player's HIGGS bodies, or what they hold, touched another player's weapon body at that point (game
 //! units) in the last half second: a hit landed there landed on the weapon, not on its owner.
 bool IsWeaponTouchAt(const glm::vec3& acPoint) noexcept;

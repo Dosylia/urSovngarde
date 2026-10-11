@@ -15,6 +15,8 @@
 
 #include <Messages/ClashRequest.h>
 #include <Messages/NotifyClash.h>
+#include <Messages/ArrowNockedRequest.h>
+#include <Messages/NotifyArrowNocked.h>
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
 #include <Messages/ServerReferencesMoveRequest.h>
@@ -63,6 +65,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher)
     , m_newPackageConnection(aDispatcher.sink<PacketEvent<NewPackageRequest>>().connect<&CharacterService::OnNewPackageRequest>(this))
     , m_requestRespawnConnection(aDispatcher.sink<PacketEvent<RequestRespawn>>().connect<&CharacterService::OnRequestRespawn>(this))
     , m_clashConnection(aDispatcher.sink<PacketEvent<ClashRequest>>().connect<&CharacterService::OnClashRequest>(this))
+    , m_arrowNockedConnection(aDispatcher.sink<PacketEvent<ArrowNockedRequest>>().connect<&CharacterService::OnArrowNockedRequest>(this))
     , m_syncExperienceConnection(aDispatcher.sink<PacketEvent<SyncExperienceRequest>>().connect<&CharacterService::OnSyncExperienceRequest>(this))
     , m_dialogueConnection(aDispatcher.sink<PacketEvent<DialogueRequest>>().connect<&CharacterService::OnDialogueRequest>(this))
     , m_subtitleConnection(aDispatcher.sink<PacketEvent<SubtitleRequest>>().connect<&CharacterService::OnSubtitleRequest>(this))
@@ -1314,5 +1317,19 @@ void CharacterService::OnClashRequest(const PacketEvent<ClashRequest>& acMessage
     notify.Tick = packet.Tick;
     // To everyone near the weapon that was met -- its owner first among them -- but not back to the sender.
     if (!GameServer::Get()->SendToPlayersInRange(notify, other, acMessage.pPlayer))
+        spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
+}
+
+void CharacterService::OnArrowNockedRequest(const PacketEvent<ArrowNockedRequest>& acMessage) const noexcept
+{
+    // Always the sender's own character: a player can only say what is on their own bow.
+    const auto character = acMessage.pPlayer->GetCharacter();
+    if (!character || !m_world.valid(*character))
+        return;
+
+    NotifyArrowNocked notify{};
+    notify.ServerId = World::ToInteger(*character);
+    notify.Nocked = acMessage.Packet.Nocked;
+    if (!GameServer::Get()->SendToPlayersInRange(notify, *character, acMessage.pPlayer))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }

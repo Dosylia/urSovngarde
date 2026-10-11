@@ -179,6 +179,36 @@ function Restore-Saves {
     else { Write-Host 'Saves put back: the test game wrote nothing.' }
 }
 
+# The game connects by itself to whatever %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt names, and that is Emma's file:
+# on 2026-10-11 it named the public server, and the rig's test game at 14:38 joined the public server with her
+# character. For the run it names the local test server (with -NoConnect too: then there is nothing to join), and her
+# file is put back by "down".
+$connectFile = Join-Path $env:LOCALAPPDATA 'SkyrimTogetherVR\connect.txt'
+$connectBackup = "$connectFile.before-rig"
+
+function Set-RigConnect {
+    if (Test-Path -LiteralPath $connectBackup) { Restore-Connect }
+    if (Test-Path -LiteralPath $connectFile) { Copy-Item -LiteralPath $connectFile -Destination $connectBackup -Force }
+    else { Set-Content -LiteralPath $connectBackup -Value '' -NoNewline } # "there was none": removed again on restore
+    $port = 10578
+    $ini = Join-Path $release 'config\STServer.ini'
+    if (Test-Path $ini) {
+        $line = Select-String -LiteralPath $ini -Pattern '^\s*uPort\s*=\s*(\d+)' | Select-Object -First 1
+        if ($line) { $port = [int]$line.Matches[0].Groups[1].Value }
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path $connectFile) | Out-Null
+    Set-Content -LiteralPath $connectFile -Value "127.0.0.1:$port" -Encoding ascii
+    Write-Host "Connect file set to the local test server (127.0.0.1:$port) for this run."
+}
+
+function Restore-Connect {
+    if (-not (Test-Path -LiteralPath $connectBackup)) { return }
+    if ((Get-Item -LiteralPath $connectBackup).Length -eq 0) { Remove-Item -LiteralPath $connectFile -ErrorAction SilentlyContinue }
+    else { Copy-Item -LiteralPath $connectBackup -Destination $connectFile -Force }
+    Remove-Item -LiteralPath $connectBackup -Force
+    Write-Host 'Connect file put back as it was.'
+}
+
 function Stop-Everything {
     $state = $null
     if (Test-Path $stateFile) { $state = Get-Content $stateFile -Raw | ConvertFrom-Json }
@@ -196,6 +226,7 @@ function Stop-Everything {
     if ($state -and $state.startedServer) { Get-Process urSovngardeServer, SkyrimTogetherServer -ErrorAction SilentlyContinue | Stop-Process -Force }
 
     Restore-Saves
+    if (-not (Test-Running $gamePattern)) { Restore-Connect }
 
     # More than once if need be. SteamVR's parts restart one another: on 2026-10-02 a single pass left all five
     # running, the setting could not be removed, and the fake headset stayed switched on until somebody noticed.
@@ -234,6 +265,7 @@ if (Test-Running '^(vrserver|vrmonitor)$') { throw 'SteamVR is already running. 
 $startedServer = $false
 try {
     Copy-SavesAside
+    Set-RigConnect
     Set-NullDriver $true
     @{ startedServer = $false; save = $Save } | ConvertTo-Json | Set-Content $stateFile
 

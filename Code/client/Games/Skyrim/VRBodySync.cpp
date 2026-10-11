@@ -4699,6 +4699,16 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     if (!apActor)
         return false;
     const auto cNow = std::chrono::steady_clock::now();
+
+    // Not while its owner is moving it: then its bones arrive (ApplyRemotePoses) and draw it where the owner has it,
+    // and moving the ragdoll too made the two fight. Seen, 2026-10-11 19:38, of a horse Emma was dragging: "keeps
+    // teleporting forward and backward" ("posing body CD4CF from its owner's bones" and "ragdoll lay 112 units ...;
+    // moved there" taking turns), and at 18:23 a bandit she had dragged that he could then not grab. Once the bones
+    // stop, the ragdoll is put where the owner left the body, which is what this is for.
+    if (const auto cPosed = s_bodyPosedByOwnerAt.find(apActor->formID);
+        cPosed != s_bodyPosedByOwnerAt.end() && cNow - cPosed->second < std::chrono::milliseconds(1500))
+        return false;
+
     auto& placed = s_placed[apActor->formID];
     if (cNow < placed.NextAt)
         return false;
@@ -4784,6 +4794,42 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     placed.SayAfter = true;
     spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies)", apActor->formID, cApart, moved);
     return moved > 0;
+}
+
+std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, size_t& aCount) noexcept
+{
+    aCount = 0;
+    std::string out;
+    void* pRoot = apActor ? apActor->GetNiNode() : nullptr;
+    if (!pRoot || !acpPart)
+        return out;
+    std::string part(acpPart);
+    std::transform(part.begin(), part.end(), part.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    std::vector<void*> queue{pRoot};
+    for (size_t head = 0; head < queue.size() && head < 4096; ++head)
+    {
+        void* pObject = queue[head];
+        if (const char* pName = GetName(pObject))
+        {
+            std::string name(pName);
+            std::string lower = name;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (lower.find(part) != std::string::npos)
+            {
+                if (aCount < aMax)
+                    out += (out.empty() ? "" : ", ") + name;
+                ++aCount;
+            }
+        }
+        void* pNode = AsNode(pObject);
+        void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
+        const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
+        for (uint16_t i = 0; pChildren && i < capacity; ++i)
+            if (pChildren[i])
+                queue.push_back(pChildren[i]);
+    }
+    return out;
 }
 
 bool IsWeaponTouchAt(const glm::vec3& acPoint) noexcept

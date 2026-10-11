@@ -215,9 +215,17 @@ void LoadScriptExtender()
     // so loading the DLL starts it (and its plugins, from inside LoadLibraryW).
     g_ScriptExtenderStarting = true;
     if (g_SKSEModuleHandle = LoadLibraryW(needle->c_str()))
+    {
         spdlog::info("SKSE VR {} loaded (initialized from DllMain). Messages without a colored [timestamp] prefix "
                      "come from the Script Extender and its plugins.",
                      skseVersion);
+        // Where it landed. Below 0x78000000 its trampoline search underflows and it skips the rest of its setup,
+        // so the preloaded Engine Fixes crashes at EngineFixes.dll+F15C6 (the player of 2026-10-11 had it at
+        // 0x8600000 twice). The launcher keeps that range reserved during the load (script_extender/SELowZone,
+        // cmpayc's PR #2); this line says whether that held.
+        const auto cBase = reinterpret_cast<uintptr_t>(g_SKSEModuleHandle);
+        spdlog::info("SKSE VR is at 0x{:X}{}", cBase, cBase < 0x78000000 ? ", below 0x78000000: its plugins will not load" : "");
+    }
     else
         spdlog::error("Failed to load {} (error {})", needle->string(), GetLastError());
     return;

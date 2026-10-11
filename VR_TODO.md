@@ -115,6 +115,26 @@ controllers: `input vrTrackedSet`, one frame = HMD and both controllers, a 3x4 `
 5. Mounts: the rider's copy put on the horse directly (Sync).
 6. The skill book that cannot be taken after the other player touched it (Sync).
 
+- [ ] **Built 2026-10-11 20:15, waiting for a real session (protocol change, next release):** `ArrowNockedRequest` /
+      `NotifyArrowNocked`. The archer's game sends it when its attack state enters and leaves 10 to 11; the server
+      passes it to players in range; the receiver calls Actor::AttachArrow / DetachArrow on the copy by vtable slot
+      (0xCF / 0xD0 on VR, GetBiped2 at 0x7F), only with ammo equipped and the weapon drawn. Rig, `live-arrow-nock`
+      (bot archer, iron arrows): 7 of 7, no crash; the copy's arrow-named nodes went 8 to 9 within 5 s of the attach
+      (the game loads the arrow a moment later). Not seen on screen yet (the bot's copy holds no bow in hand without a
+      VR pose stream). Look in the next session: Emma's arrow on the string as Seen sees it, and that it is gone after
+      the shot. The tools folder and Emma's local server run this build; the public server (v1.9.3) refuses it.
+- [ ] **HIGH PRIORITY (Emma, 2026-10-11): the arrow nocked on the other player's bow, in the next release.** Seen has
+      never seen Emma's arrow on her string, nor she his ("always like that"). Cause measured 2026-10-10: the arrow on
+      the string is the game's own attachment, driven by the actor's attack state (`ActorState::AttackState()`); a VR
+      draw moves it 8, 9 (bow draw), 10 (arrow attached), the arrow flies at 10, then 0 (`VRArchery: local attack
+      state`, CharacterService.cpp). Nothing sends that state. Plan: send 9 and 10 (and back to 0) when they change,
+      set them on the copy, and check the arrow shows on its string; if setting the state does not draw it, attach
+      the arrow by hand on the receiving side. Protocol change: Emma accepts it for the next release, so every player
+      and the public server update together (a v1.9.3 client is refused by a server built with it, and the other way
+      round). Test in the rig: DevBench 1.27 drives the VR controllers (`input vrTrackedSet`), so a bow drawn by the
+      headless game can be looked at on the bot's side, or the other way round, with `log SHOT`. Details of the
+      measurement under the work queue item "The arrow nocked on the other player's bow".
+
 Next big work (Emma, 2026-10-10 afternoon, for the public server: "Need plan for this and map pointers of players
 completed, this is next big work"): party members on the map (item 4, plan completed under Later) and proximity
 voice chat, our own first ("I would rather a test run with our own system and if it fails, then fall back to
@@ -181,7 +201,7 @@ each item's past are in `VR_HISTORY.md` under the section named in brackets.
 - [x] **The weapon's visible blade** (2026-10-07, built with the corpse fix): `kWorldBoundOffset` is 0xE4; nothing
       reads it on a live path any more (`ReadWorldBound` has no caller), only the shape report's line. Was: `kWorldBoundOffset` 0xB0 is `previousWorld`; the world bound is at 0xE4 on VR
       (measured 2026-10-06). Batch into another item's build.
-- [ ] **The arrow nocked on the other player's bow** (measured 2026-10-10 in Emma's 11:40 session, Seen: "dosylia
+- [ ] **The arrow nocked on the other player's bow** (high priority since 2026-10-11, see "Now"; measured 2026-10-10 in Emma's 11:40 session, Seen: "dosylia
       loaded an arrow in the bow but seenfront does not see it"). A full VR draw goes 8, 9 (bow draw), 10 (arrow
       attached), the arrow flies while the state is 10 (11:40:53.463, "Projectile launch: shooter 14"), then 0; it never
       reaches 11, 12 or 13. So the state does move: send 9 and 10 to the other game and set them on the copy, then
@@ -443,6 +463,54 @@ each item's past are in `VR_HISTORY.md` under the section named in brackets.
       SteamVR tab's name in `VRDashboard`, an OpenVR call, not the menu's browser.
 
 ### Sync: NPCs, followers, the world
+
+- [ ] **A friend's orc shown as "a naked white nordic skin with black face"** (Discord, yamb7161, 2026-10-11; their log
+      `urSovngarde-logs-2026-10-11_14-43`, v1.9.3, their own server). Every player copy in it has an empty name and
+      level 1 ("Spawn Actor: FF000EF6, and NPC "), no error logged. TESNPC::Create (Games/Forms.cpp) starts the copy
+      from the receiving player's own race, class and outfits and loads the owner's appearance over them, so a load
+      that did not take leaves this player's race, no name, no face. Their two mod lists differ: "Base form differs"
+      in mod slots 0x11 (16 times) and 0x0F (8), same id a Bandit for one and an Imperial Guard for the other. Not
+      proven which part of the appearance failed: the owner's log and both plugins.txt are needed. Added (working
+      tree, ships with the next release): "Player copy appearance: N bytes, change flags, face tints; race, name",
+      flagging a copy left with the receiver's own race. Fix only once that line shows the cause.
+- [ ] **Session 2026-10-11 19:18 to 19:50 (Emma's server, v1.9.3-2 both sides).** (1) `ThreadStarts` said "0 start
+      addresses" all session: OpenThread with THREAD_QUERY_LIMITED_INFORMATION is refused the start address
+      (0xC0000022, checked in PowerShell); fixed to THREAD_QUERY_INFORMATION, with a count of unreadable threads. The
+      leak goes on, slower (Emma 1,036 at 19:26 to 2,489 at 19:45; Seen to 2,876). (2) Emma's sound late after 19:32:
+      frame rate steady (44 to 45 fps, p95 23 ms), no log line surged; not explained yet, the thread breakdown first.
+      (3) Bandit near Dawnstar killed in one hit (19:32:18): Emma's hit of 108 on 38C61, a Bandit Plunderer in her game
+      and a Bandit Highwayman in Seen's (leveled pick differs, so does health). (4) Snow Bear (Emma) and Ice Wraith
+      (Seen) are one reference, 820B9: Emma's game captured pick 23A8C and sent it, Seen's kept its own wraith; the
+      leveled conform did not happen for a creature of another kind. (5) Horse Emma dragged teleporting back and forth
+      for Seen (19:38): bone posing and PlaceCorpse took turns; PlaceCorpse now waits until the owner's bones stop
+      (1.5 s), fixed in the working tree. (6) Lydia not seen by Seen inside (19:40): her updates stopped 25 s before
+      his copy of her was removed at 19:39:11 as he went in; Emma's side shows her flooding WeapEquip (90 a second)
+      from 19:38. (7) Not found in Seen's log: the naked Solitude guard (19:21) and the copy left in Solitude (19:22);
+      the times may differ. (8) Player markers: the "Fellow travellers" objectives sit in the journal's Miscellaneous
+      list with "[...]" names: `<Alias=MemberN>` is filled when the quest starts, before any name is set. Emma: "it
+      does not belong here at all"; a compass marker needs a shown objective, which the journal always lists. Emma's
+      choice (2026-10-11): map icons only. Done in the working tree: everyone, party or not, is a map icon; the quest is
+      never started, and one left running by a save is stopped at the first whereabouts.
+- [ ] **Session 2026-10-11 17:32 to 18:37 (Emma's own server, Emma and Seen; client v1.9.3-2, server still v1.9.2).**
+      (1) Thread leak in both games: Emma 178 threads at 18:01 to 5,218 at 18:34 (stutters at the end), Seen 763 to
+      3,369 by 18:11, then a loading screen frozen for 53 s (main thread waiting inside the game, SkyrimVR+0x15BB0A);
+      after his restart 179 to 4,838. Both stopped growing in the same minute, 18:34. It was there this morning too
+      (v1.9.2, to about 1,300, then flat); the afternoon of 2026-10-10 stayed near 210. Not voice (flat from 09:10 this
+      morning under heavy voice), not spawns or stand-ins (no per-minute match). Our code starts two threads. Added:
+      `ThreadStarts` in CrashHandler.cpp, every 5 minutes past 500 threads, the six most common thread start
+      addresses by module. Next session names the owner. (2) Stand-in loop: a copy for a reference not loaded here
+      remade about every 25 ms (Frost Dragon 34DDB, 18:28:27, 958 in a minute; Bandit Outlaw 3006877 every 1.5 s at
+      17:52), `CharacterService.cpp` "stands in again, inside the loaded cells". (3) Seen could not grab a bandit body
+      (FF001238, server 10004A) after Emma dragged it (18:23:06 to :32): while she dragged, his copy was posed from her
+      bones and its ragdoll snapped back each second (CorpseDiag, past 64 units); after she let go his log shows no
+      motion of it at all, so no claim was made. Measure where the ragdoll bodies are against the drawn body when a
+      hand closes on a remote corpse. Emma's local server was v1.9.2 (updated to the working tree 2026-10-11 18:55).
+      (4) World objects: 15 objects reported "being moved" in one tick on Seen's side at 18:34:34 (a cell settling,
+      read as a hand), held and followed on Emma's. Also: `IsMovableObject` takes form type 36, MovableStatic
+      (waterfalls, banners, large animated scenery), not only loose objects. (5) Teleport to a player by name was open
+      to anyone; now admins or the target's party only on a public server (`bAnnounceServer` or `bPublicStatus`).
+      Admin identity: launcher and hub sessions both advise per-admin keys sent as the connect token, only to the
+      public server, hashed in the server's EnvironmentFile; waiting on a test or action (Emma's choice).
 
 - [ ] **Public server, 2026-10-11 07:56 to 08:38 (Emma, Seen, Pengy, a stranger): copies at doors, frozen NPCs.**
       Fixed in the working tree, not built (Emma was about to play) and not deployed (her folder stays v1.9.2).

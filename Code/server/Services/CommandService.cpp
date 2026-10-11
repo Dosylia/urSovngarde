@@ -11,9 +11,25 @@
 
 #include <Setting.h>
 
+extern Console::Setting<bool> bPublicStatus;
+
 namespace
 {
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
+
+// A server strangers join: listed upstream, or on the urSovngarde website's public server page.
+bool IsPublicServer() noexcept
+{
+    return bAnnounceServer || bPublicStatus;
+}
+
+bool IsAdmin(const Player* apPlayer) noexcept
+{
+    for (const auto cSession : GameServer::Get()->GetAdminSessions())
+        if (const Player* pAdmin = PlayerManager::Get()->GetByConnectionId(cSession); pAdmin && pAdmin == apPlayer)
+            return true;
+    return false;
+}
 }
 
 CommandService::CommandService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
@@ -75,6 +91,23 @@ void CommandService::OnTeleportCommandRequest(const PacketEvent<TeleportCommandR
     }
 
     TeleportCommandResponse response{};
+
+    // On a public server, going to a player is for admins and for that player's party only (Emma, 2026-10-11: only
+    // admins use commands there). Anyone else's request was answered with the player's position, so a stranger could
+    // land on anyone by typing their name. Refused, the answer carries no cell and the game says the teleport failed.
+    if (pTargetPlayer && IsPublicServer() && !IsAdmin(acMessage.pPlayer))
+    {
+        auto& partyService = m_world.GetPartyService();
+        const auto* pParty = partyService.GetPlayerParty(acMessage.pPlayer);
+        const bool cSameParty = pParty && std::find(pParty->Members.begin(), pParty->Members.end(), pTargetPlayer) != pParty->Members.end();
+        if (!cSameParty)
+        {
+            spdlog::info("Teleport of player {} to '{}' refused: a public server, and neither an admin nor in that player's party", acMessage.pPlayer->GetId(),
+                         acMessage.Packet.TargetPlayer.c_str());
+            pTargetPlayer = nullptr;
+        }
+    }
+
     if (pTargetPlayer)
     {
         auto character = pTargetPlayer->GetCharacter();

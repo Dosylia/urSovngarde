@@ -17,6 +17,7 @@
 #include <Messages/NotifyDroppedItemRemoved.h>
 #include <Messages/NotifyDroppedItemMove.h>
 #include <Messages/ClashRequest.h>
+#include <Messages/ArrowNockedRequest.h>
 #include <Messages/VoiceDataRequest.h>
 #include <Messages/VoiceStateRequest.h>
 #include <Messages/NotifyVoiceData.h>
@@ -2281,6 +2282,17 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.IsWeaponDrawn = args.empty() || args[0] != "off";
         SendMsg(request);
         spdlog::info("[script] weapon {}", request.IsWeaponDrawn ? "drawn" : "sheathed");
+        return true;
+    }
+
+    // "nock on|off": an arrow on this character's bow string, or none, as a VR client says it (ArrowNockedRequest); the
+    // server passes it on and the other players' games attach the arrow on their copy of this character.
+    if (name == "nock")
+    {
+        ArrowNockedRequest request{};
+        request.Nocked = args.empty() || args[0] != "off";
+        SendMsg(request);
+        spdlog::info("[script] arrow {} the string", request.Nocked ? "on" : "off");
         return true;
     }
 

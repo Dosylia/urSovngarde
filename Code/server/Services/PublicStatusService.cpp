@@ -18,9 +18,11 @@
 
 extern Console::Setting<uint32_t> uMaxPlayerCount;
 
+// Not in the anonymous namespace: CommandService also reads it, as "this is the public server".
+Console::Setting<bool> bPublicStatus{"LiveServices:bPublicStatus", "Publish this server's status (name, player count, character names and where they are) on the urSovngarde website's public server page. Needs the URSOVNGARDE_SERVER_KEY environment variable", false};
+
 namespace
 {
-Console::Setting bPublicStatus{"LiveServices:bPublicStatus", "Publish this server's status (name, player count, character names and where they are) on the urSovngarde website's public server page. Needs the URSOVNGARDE_SERVER_KEY environment variable", false};
 Console::StringSetting sPublicAddress{"LiveServices:sPublicAddress", "The address players type to join this server (host:port), shown on the public server page", ""};
 Console::StringSetting sPublicStatusUrl{"LiveServices:sPublicStatusUrl", "Where the public server's status is sent", "https://ursovngarde-hub.ursovngarde.workers.dev/servers/public/status"};
 
