@@ -9,6 +9,7 @@
 
 #include "DllBlocklist.h"
 #include "TargetConfig.h"
+#include "script_extender/SELowZone.h"
 #include "Utils/NtInternal.h"
 #include "utils/Error.h"
 #include "launcher.h"
@@ -225,6 +226,21 @@ DWORD WINAPI TP_GetModuleFileNameA(HMODULE aModule, char* alpFileName, DWORD aBu
     return result;
 }
 
+#ifdef SKYRIMVR
+// The runtime carries its version digits right after the prefix, which is what tells it apart from
+// sksevr_steam_loader.dll.
+bool IsScriptExtenderRuntime(const wchar_t* apName)
+{
+    constexpr wchar_t kPrefix[] = L"sksevr_";
+    constexpr size_t kPrefixLength = (sizeof(kPrefix) / sizeof(wchar_t)) - 1;
+
+    if (std::wcsncmp(apName, kPrefix, kPrefixLength) != 0)
+        return false;
+
+    return apName[kPrefixLength] >= L'0' && apName[kPrefixLength] <= L'9';
+}
+#endif
+
 // we use this function to enforce the DLL load policy
 NTSTATUS WINAPI TP_LdrLoadDll(const wchar_t* apPath, uint32_t* apFlags, UNICODE_STRING* apFileName, HANDLE* apHandle)
 {
@@ -259,7 +275,23 @@ NTSTATUS WINAPI TP_LdrLoadDll(const wchar_t* apPath, uint32_t* apFlags, UNICODE_
 #endif
     }
 
-    return RealLdrLoadDll(apPath, apFlags, apFileName, apHandle);
+#ifdef SKYRIMVR
+    // The Script Extender allocates its trampolines from DllMain, so the whole of what it needs has
+    // to be arranged around this one call and torn down straight after.
+    const bool cIsScriptExtender = pos != std::wstring_view::npos && (pos + 1) != fileName.length() && IsScriptExtenderRuntime(&fileName[pos + 1]);
+
+    if (cIsScriptExtender)
+        script_extender::ReserveLowZone();
+#endif
+
+    const NTSTATUS status = RealLdrLoadDll(apPath, apFlags, apFileName, apHandle);
+
+#ifdef SKYRIMVR
+    if (cIsScriptExtender)
+        script_extender::ReleaseLowZone();
+#endif
+
+    return status;
 }
 } // namespace
 
