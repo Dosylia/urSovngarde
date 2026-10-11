@@ -37,6 +37,9 @@ log CHECK game alive
 log CHECK game inworld
 # The game's own creature is kept (deleting one the game's AI was still running crashed Emma's game, 2026-10-06).
 log CHECK logged Temporary actor \w+ was made by the game, not by this client; kept on connect
+# The copy of the bot's bear is this client's, from the connection that ended: it goes, and the server's re-send
+# makes the only copy. Kept, it was sent to the server as a new bear (Seen's duplicated bandits, 2026-10-11).
+log CHECK logged Leftover copy \w+ from the last connection
 
 log -- and once more, with whatever the first time left behind
 log DO console player.placeatme 0201EEC9 1

@@ -437,6 +437,16 @@ void Bot::SendAuthentication() noexcept
     skyrim.Id = 0;
     skyrim.IsLite = false;
     request.UserMods.ModList.push_back(skyrim);
+    // A worldspace in another plugin ("--plugin Dragonborn.esm"): a real client lists every plugin it has, and the
+    // server only knows a plugin someone listed.
+    if (m_options.WorldSpacePlugin != "Skyrim.esm")
+    {
+        Mods::Entry plugin{};
+        plugin.Filename = m_options.WorldSpacePlugin.c_str();
+        plugin.Id = 1;
+        plugin.IsLite = false;
+        request.UserMods.ModList.push_back(plugin);
+    }
 
     SendMsg(request);
 }

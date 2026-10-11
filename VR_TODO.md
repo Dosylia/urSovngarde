@@ -444,6 +444,48 @@ each item's past are in `VR_HISTORY.md` under the section named in brackets.
 
 ### Sync: NPCs, followers, the world
 
+- [ ] **Public server, 2026-10-11 07:56 to 08:38 (Emma, Seen, Pengy, a stranger): copies at doors, frozen NPCs.**
+      Fixed in the working tree, not built (Emma was about to play) and not deployed (her folder stays v1.9.2).
+      No protocol change. (1) Copies of players at doors. A copy deleted while the game still held it stayed in its
+      cell marked deleted, and the game built its 3D again when that cell loaded. All three logs show it: Emma 10,
+      Seen 23, Pengy 13 copies back after their delete. Now a deleted temporary actor gets no 3D (`Actor.cpp`,
+      "DeletedCopy"). (2) Frozen NPCs. When an owner let go, the server gave its actors to the first player in
+      range, even one whose game had sent nothing for minutes (the stranger, silent all session). That happened to
+      about 45 actors at 08:00:05. 2001F3 stood frozen in three games from 08:25 to 08:38, asked for every few
+      seconds and refused as out of range. Silent players now come last. (3) Names lose control characters
+      ("Shezarrine-0" plus a line break). (4) A player's own health loss is no longer logged as PvP on itself.
+      (5) RangeDiag no longer prints INT_MAX distances. (6) Dead bodies, Emma's answer of 2026-10-11: anyone at all
+      may take one by grabbing it. Her grabs on a body Seen's game owned were refused four times, from 08:27 to 08:29,
+      as "not in a party" (the public server makes none), so only Seen's dragging showed. Test: build, then one gate crossing with two players. Then
+      check that no "Spawn Actor" of a deleted copy follows, and that a relinquish never goes to a silent player
+      while another is in range.
+- [ ] **Public server, 2026-10-11 08:49 to 09:42 (Seen, Pengy, player 1 "Shezarrine"; v1.9.2): duplicated bandits.**
+      Seen's log, then Pengy's (second zip; Pengy's clock is 9 h ahead: 17:51:29 there is Seen's 08:51:26 reconnect;
+      the first zip held an old v1.8.1 log). Emma was not playing; the game server's log is not readable as `deploy`. (1) Bandits multiplied with each of Seen's reconnects (his own
+      client closing the connection, reason kAborted, then joining again a second later: 08:51, 08:52, 09:05, 09:15,
+      09:17). The disconnect hands every NPC copy to the game and empties `s_ownCopies`, so on connect each leftover
+      copy was logged "made by the game, not by this client; kept on connect" and sent to the server as a new
+      character, while the server sent the original again and a second copy was made. Example: bandit 100065, copy
+      FF00122D at 09:15:48, kept at 09:17:59, back as new server character 73 at 09:21:28 beside the new copy
+      FF001261. Fixed in the working tree, not deployed: the copies standing at disconnect are remembered (with their
+      base) and removed on the next connect, disabled and freed once the game lets go, like a copy the server
+      removes. `live-temp-reconnect` checks the new "Leftover copy" line. (2) "Shezarrine" (player 1) was Pengy's own
+      first connection, never closed. Pengy's game was in the world as Shezarrine (a human, the character loaded
+      at start) when it connected (17:48:40 Pengy's time), then loaded Pengy's real save 8 s later while connected;
+      the server kept the name and body of connect time. At 18:14:21 Pengy's dashboard connected to 203.0.113.10
+      (the example address of setup-connect.ps1, remembered by the connect form). TiltedConnect's `Connect` wrote
+      the new handle over the open one without closing it, so the old connection lived on in the networking
+      library, answering the server and sending nothing: a silent "Shezarrine" to the end, beside the new "Pengy".
+      The same happened at 16:57:44 Pengy's time, 07:57:44 here: the silent "stranger" of the morning session, who
+      was given 45 NPCs at 08:00:05 that then froze. Fixed in the working tree, not deployed: `TransportService::
+      Connect` closes the connection there is first; `VRConnectService` closes before an attempt (so the close
+      schedules no retry), and while online connects again when the loaded character's name differs from the
+      name at connect (name only: the race changes in werewolf form). (3) Frost sword: A:14D95 and its spell
+      A:14D94 are from a mod Seen's game does not have ("Could not find inventory item", 49 times), held by player
+      1. Not a bug. (4) Seen giant for a few seconds after opening the map (09:30): Pengy's log shows Seen's pose
+      gone from 18:30:35 to 18:31:05 (the map open, hips at the default 71.1) but no size on the copy; nothing to
+      fix from that. Test: in the rig, connect, then a dashboard connect to a bad address: the bot must see the
+      player leave at once; then load another character's save while connected.
 - [x] Followers and dragons in flight -- in the work queue: both done there (bot pairs `follower` 2026-10-07,
       `dragonfly` 2026-10-09).
 - [ ] Maven fought by Seen was invisible for Emma; the blacksmith dead on Seen's side only; Brynjolf (essential)
@@ -737,7 +779,15 @@ each item's past are in `VR_HISTORY.md` under the section named in brackets.
       is never displayed (the quest is still starting); it is now shown once the quest runs, and checked again every
       2 s. Not seen yet: the compass and the map themselves (the rig has no headset view of them), and whether a map
       marker near you also shows on the compass (it is put away while the body is loaded, which covers the loaded
-      area). The map icon is type 11 (a standing stone), a guess for Emma to look at. Was: (Emma, 2026-10-10: "Start now"; she and Seen try invite, accept and teleport in the next session) (Emma, 2026-10-09, for a public server: "how hard would it be marked on
+      area). The map icon is type 11 (a standing stone), a guess for Emma to look at.
+      First real session (public server, v1.9.2, Emma and Seen at Riverwood, 2026-10-10 15:49 to 16:01; both logs):
+      far apart, the map icon followed each of them (15:51); once each body loaded in the other's game it was put away
+      (15:53), and after the party was made the objective showed (15:59) but its marker stayed put away: nothing on
+      the map or the compass for a player across the lake. "Hide when near" had been read as "hide while the body is
+      loaded", which is hundreds of metres. Fixed in the working tree, not deployed (Emma: her folder stays v1.9.2 for
+      the public server): hidden only within 2100 units (30 m, as far as voice carries) in the same room or worldspace;
+      a loaded body further away has its marker follow the body itself. Client only, Code/encoding untouched, so it
+      still speaks protocol 1c96b999. Not tested in the rig (the rig runs her tools folder). Was: (Emma, 2026-10-10: "Start now"; she and Seen try invite, accept and teleport in the next session) (Emma, 2026-10-09, for a public server: "how hard would it be marked on
       the map? Some that look good without breaking immersion"). Upstream has no player markers: only the player
       list, parties with "teleport to" and the member's place in the party menu, and shared custom waypoints
       (`MapService`). Plan: Skyrim's own quest markers, so the VR map and compass need nothing: a "Fellow

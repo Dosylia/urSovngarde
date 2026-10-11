@@ -64,6 +64,9 @@ private:
     std::chrono::steady_clock::time_point m_inGameSince{};
     std::chrono::steady_clock::time_point m_nextAttempt{};
     std::chrono::steady_clock::time_point m_attemptStarted{};
+    // The character's name when the connection was made; another one loaded since means connecting again.
+    TiltedPhoques::String m_connectedName;
+    std::chrono::steady_clock::time_point m_nextNameCheck{};
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;

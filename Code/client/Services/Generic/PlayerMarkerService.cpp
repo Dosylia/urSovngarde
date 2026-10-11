@@ -18,6 +18,7 @@
 #include <Structs/GridCellCoords.h>
 
 #include <Actor.h>
+#include <PlayerCharacter.h>
 #include <ExtraData/ExtraData.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESQuest.h>
@@ -38,6 +39,11 @@ constexpr uint32_t kMapMarkerFirst = 0x005040;
 // A marker follows a player only once they have moved this far (game units, about 70 to the metre), so a player
 // standing about does not move it every two seconds.
 constexpr float kFollowDistance = 256.f;
+
+// Closer than this, a player's marker is put away: they are in plain sight (2100 units, about 30 m, as far as their
+// voice carries). Hiding it as soon as their body was loaded hid it across a whole lake (Emma, Riverwood,
+// 2026-10-10): a body is loaded hundreds of metres away.
+constexpr float kHideDistance = 2100.f;
 
 // The world map's icon for other players. Map marker types are the game's own (11: a landmark's standing stone).
 constexpr uint16_t kMapMarkerType = 11;
@@ -258,9 +264,20 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
                 SetMapMarkerName(slot.pMarker, cText);
         }
 
-        // Their body is in our game: no marker, the player can see them. Everyone else's is followed.
-        if (FindPlayerActor(m_world, entry.PlayerId))
-            Park(slot, index);
+        // Close by: no marker, the player can see them. Their body in our game but further: the marker follows the
+        // body, which is where the player sees them. Not loaded here: it follows what the server says.
+        if (Actor* pActor = FindPlayerActor(m_world, entry.PlayerId))
+        {
+            const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+            const glm::vec3 cBody(pActor->position.x, pActor->position.y, pActor->position.z);
+            // The same room, or the same worldspace outdoors: only then are the two positions comparable.
+            const bool cSameSpace = pPlayer && (pPlayer->parentCell == pActor->parentCell ||
+                                                (pPlayer->GetWorldSpace() && pPlayer->GetWorldSpace() == pActor->GetWorldSpace()));
+            if (cSameSpace && glm::distance(cBody, glm::vec3(pPlayer->position.x, pPlayer->position.y, pPlayer->position.z)) < kHideDistance)
+                Park(slot, index);
+            else
+                FollowBody(slot, pActor);
+        }
         else
             Follow(slot, index, entry.WorldSpaceId, entry.CellId, glm::vec3(entry.Position.x, entry.Position.y, entry.Position.z));
 
@@ -303,7 +320,7 @@ void PlayerMarkerService::StopQuest() noexcept
 
 void PlayerMarkerService::Follow(Slot& aSlot, size_t aIndex, const GameId& acWorldSpaceId, const GameId& acCellId, const glm::vec3& acPosition) noexcept
 {
-    if (!aSlot.Parked && aSlot.CellId == acCellId && glm::distance(aSlot.Position, acPosition) < kFollowDistance)
+    if (!aSlot.Parked && aSlot.BodyCellId == 0 && aSlot.CellId == acCellId && glm::distance(aSlot.Position, acPosition) < kFollowDistance)
         return;
 
     TESObjectCELL* pCell = ResolveCell(m_world, acWorldSpaceId, acCellId, acPosition);
@@ -316,7 +333,28 @@ void PlayerMarkerService::Follow(Slot& aSlot, size_t aIndex, const GameId& acWor
                      acPosition.y, acPosition.z, pCell->formID);
     aSlot.Parked = false;
     aSlot.CellId = acCellId;
+    aSlot.BodyCellId = 0;
     aSlot.Position = acPosition;
+}
+
+void PlayerMarkerService::FollowBody(Slot& aSlot, Actor* apActor) noexcept
+{
+    TESObjectCELL* pCell = apActor->parentCell;
+    if (!pCell)
+        return;
+
+    const glm::vec3 cBody(apActor->position.x, apActor->position.y, apActor->position.z);
+    if (!aSlot.Parked && aSlot.BodyCellId == pCell->formID && glm::distance(aSlot.Position, cBody) < kFollowDistance)
+        return;
+
+    aSlot.pMarker->MoveTo(pCell, ToNiPoint(cBody));
+    if (aSlot.Parked)
+        spdlog::info("Player markers: {:X} follows player {} ({}), whose body is here, to ({:.0f}, {:.0f}, {:.0f})", aSlot.pMarker->formID, aSlot.PlayerId, aSlot.Text.c_str(), cBody.x,
+                     cBody.y, cBody.z);
+    aSlot.Parked = false;
+    aSlot.CellId = GameId{};
+    aSlot.BodyCellId = pCell->formID;
+    aSlot.Position = cBody;
 }
 
 void PlayerMarkerService::Park(Slot& aSlot, size_t aIndex) noexcept
@@ -337,6 +375,7 @@ void PlayerMarkerService::Free(Slot& aSlot, size_t aIndex, bool aParty) noexcept
     aSlot.PlayerId = 0;
     aSlot.Text.clear();
     aSlot.CellId = GameId{};
+    aSlot.BodyCellId = 0;
 }
 
 void PlayerMarkerService::FreeAll() noexcept

@@ -155,6 +155,14 @@ bool IsHandedAway(const Actor* apActor, uint32_t& aServerId) noexcept
 // id is taken out: a copy mistaken for the game's is left standing, the other mistake is the crash.
 std::unordered_set<uint32_t> s_ownCopies;
 
+// The copies this client still had when its last connection ended, by form id, with the base each one had then.
+// The disconnect hands them to the game and empties s_ownCopies, so without this the clean-up on connect took every
+// one of them for the game's own actor, kept it, and sent it to the server as a new character -- while the server
+// sent the character it stood for again and a second copy was made. Seen's six reconnects on 2026-10-11 (08:51 to
+// 09:17) left a bandit camp with two to four of each bandit, the extras owned by Seen and shown to everyone. The base
+// is kept because the game reuses a freed id; an id also leaves this map as soon as the game removes the actor.
+TiltedPhoques::Map<uint32_t, uint32_t> s_lastConnectionCopies;
+
 Actor* RememberOwnCopy(Actor* apActor) noexcept
 {
     if (apActor)
@@ -869,6 +877,37 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
     for (auto entity : entities)
     {
         auto& formIdComponent = m_world.get<FormIdComponent>(entity);
+
+        // A copy from the previous connection, which the disconnect handed to the game. The server sends its
+        // character again in a moment, so this one goes. The game has been running it since, as it ran the
+        // "Aspiring Mage" below, so it is disabled and freed once the game lets go, like a copy the server removes.
+        if (const auto leftover = s_lastConnectionCopies.find(formIdComponent.Id); leftover != s_lastConnectionCopies.end())
+        {
+            const uint32_t cBaseId = leftover->second;
+            s_lastConnectionCopies.erase(leftover);
+
+            Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
+            if (pActor && !pActor->IsDeleted() && pActor->IsTemporary() && pActor->baseForm && pActor->baseForm->formID == cBaseId)
+            {
+                const uint32_t refWord = static_cast<uint32_t>(pActor->handleRefObject.refCount);
+                const uint32_t handles = refWord & 0x3FF;
+                if (CopyRemovalPolicy::OnRemoved(handles, s_waitingCopies.size()) == CopyRemovalPolicy::Action::WaitDisabled)
+                {
+                    spdlog::info("Leftover copy {:X} from the last connection: {} handle(s) still on it, disabled and queued ({} of {} slots used)",
+                                 formIdComponent.Id, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
+                    pActor->Disable();
+                    s_waitingCopies.push_back(WaitingCopy{formIdComponent.Id, std::chrono::steady_clock::now()});
+                }
+                else
+                {
+                    spdlog::info("Leftover copy {:X} from the last connection deleted on connect", formIdComponent.Id);
+                    RecentDeletes::Record(pActor, formIdComponent.Id, handles, refWord, RecentDeletes::kOnConnect);
+                    pActor->Delete();
+                }
+                continue;
+            }
+        }
+
         // Delete this client's own copies left from an earlier connection. A temporary actor the game made itself (loaded
         // with the save, or placed by a mod's script) is the game's, and is taken like one it makes after connecting:
         // deleting it here, while the game's AI threads were still running it, crashed Emma's game 43 ms later
@@ -940,7 +979,15 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
 
     // The players' copies are deleted and every other copy has just been handed to the game: none of them is this
-    // client's to disable or delete any more, and their ids will be given out again. See s_ownCopies.
+    // client's to disable or delete any more, and their ids will be given out again. See s_ownCopies. The ones still
+    // standing are remembered for the clean-up on the next connect; see s_lastConnectionCopies. Added to, not
+    // replaced: a failed attempt reports a disconnection too, with s_ownCopies already empty.
+    for (const uint32_t cFormId : s_ownCopies)
+    {
+        const Actor* pActor = Cast<Actor>(TESForm::GetById(cFormId));
+        if (pActor && !pActor->IsDeleted() && pActor->baseForm)
+            s_lastConnectionCopies[cFormId] = pActor->baseForm->formID;
+    }
     s_ownCopies.clear();
     s_handedAway.clear();
 
@@ -1208,8 +1255,12 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                     if (Actor* pActor = Cast<Actor>(TESForm::GetById(pFormIdComponent->Id)))
                     {
                         const glm::vec3 wanted{acMessage.Position.x, acMessage.Position.y, acMessage.Position.z};
-                        spdlog::info("Character {:X} was {} ms without an update and the server has re-sent it; moving the copy to where the server says ({:.0f}, {:.0f}, {:.0f})", acMessage.ServerId,
-                                     newestTick == 0 ? currentTick : currentTick - newestTick, wanted.x, wanted.y, wanted.z);
+                        if (newestTick == 0)
+                            spdlog::info("Character {:X} had no update yet and the server has re-sent it; moving the copy to where the server says ({:.0f}, {:.0f}, {:.0f})",
+                                         acMessage.ServerId, wanted.x, wanted.y, wanted.z);
+                        else
+                            spdlog::info("Character {:X} was {} ms without an update and the server has re-sent it; moving the copy to where the server says ({:.0f}, {:.0f}, {:.0f})",
+                                         acMessage.ServerId, currentTick - newestTick, wanted.x, wanted.y, wanted.z);
 
                         // Drop what is buffered: every point in it predates the silence and would drag the copy
                         // back through where it used to be.
@@ -2390,6 +2441,9 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
 
 void CharacterService::CancelServerAssignment(const entt::entity aEntity, const uint32_t aFormId) const noexcept
 {
+    // Gone from the game, so its id may be given to an actor of the game's own next. See s_lastConnectionCopies.
+    s_lastConnectionCopies.erase(aFormId);
+
     // TEMPORARY (2026-10-03): what a temporary actor was when its removal was noticed. Three crashes on 2026-10-02
     // came within a second of a trip that left copies of Seekers behind which this client ran itself, and for those
     // nothing is logged below: either the game had freed them already, or they were not in the list of copies.

@@ -44,8 +44,88 @@ constexpr size_t kMaxPlaceLength = 60;
 // What the server keeps of a place a client sends, before it is cut to kMaxPlaceLength characters.
 constexpr size_t kMaxPlaceBytes = 240;
 
-// Tamriel, the only worldspace the page's map draws: Skyrim.esm's 0x3C.
-constexpr uint32_t kTamrielBaseId = 0x3C;
+// The exterior worldspaces of Skyrim VR and its DLCs, by plugin and object id, with the editor id the website draws
+// each one's map by. Read from the game's own master files on 2026-10-10 (Skyrim.esm, Update.esm, Dawnguard.esm,
+// HearthFires.esm, Dragonborn.esm, SkyrimVR.esm: every WRLD record they hold), not typed from memory. A worldspace
+// added by another mod is sent as "<plugin>:<object id in hex>".
+struct KnownWorldSpace
+{
+    std::string_view Plugin;
+    uint32_t BaseId;
+    std::string_view EditorId;
+};
+
+constexpr KnownWorldSpace kKnownWorldSpaces[] = {
+    {"Skyrim.esm", 0x00003C, "Tamriel"},
+    {"Skyrim.esm", 0x01691D, "WindhelmWorld"},
+    {"Skyrim.esm", 0x016BB4, "RiftenWorld"},
+    {"Skyrim.esm", 0x016D71, "MarkarthWorld"},
+    {"Skyrim.esm", 0x01A26F, "WhiterunWorld"},
+    {"Skyrim.esm", 0x01B44A, "CWTestHold"},
+    {"Skyrim.esm", 0x01CDD3, "LabyrinthianWorld"},
+    {"Skyrim.esm", 0x01CDD9, "LabyrinthianWorld03"},
+    {"Skyrim.esm", 0x01E49D, "MossMotherCavernWorld"},
+    {"Skyrim.esm", 0x01EE62, "Blackreach"},
+    {"Skyrim.esm", 0x01FAE2, "BloatedMansGrottoWorld"},
+    {"Skyrim.esm", 0x0204C7, "FallowstoneCaveWorldEnd"},
+    {"Skyrim.esm", 0x020BFE, "SouthfringeWorld"},
+    {"Skyrim.esm", 0x020DCB, "BlindCliffCaveWorld"},
+    {"Skyrim.esm", 0x021EDB, "LabyrinthianWorld04"},
+    {"Skyrim.esm", 0x0243DE, "FallowstoneCaveWorldStart"},
+    {"Skyrim.esm", 0x0278DD, "SkuldafnWorld"},
+    {"Skyrim.esm", 0x029AB7, "DeepwoodRedoubtWorld"},
+    {"Skyrim.esm", 0x02A9D8, "ShadowgreenCavernWorld"},
+    {"Skyrim.esm", 0x02B101, "RedEagleRedoubtWorld"},
+    {"Skyrim.esm", 0x02C965, "DarkwaterWorld"},
+    {"Skyrim.esm", 0x02EE41, "Sovngarde"},
+    {"Skyrim.esm", 0x034240, "BluePalaceWingWorld"},
+    {"Skyrim.esm", 0x035699, "KarthspireRedoubtWorld"},
+    {"Skyrim.esm", 0x037EDF, "SolitudeWorld"},
+    {"Skyrim.esm", 0x03A9D6, "EldergleamSanctuaryWorld"},
+    {"Skyrim.esm", 0x0419E1, "CWSiegeTestWorld"},
+    {"Skyrim.esm", 0x046033, "WhiterunDragonsreachWorld"},
+    {"Skyrim.esm", 0x04F838, "EastEmpireWarehouse"},
+    {"Skyrim.esm", 0x050015, "BrinewaterGrottoWorld"},
+    {"Skyrim.esm", 0x069857, "AlftandWorld"},
+    {"Skyrim.esm", 0x06ED38, "FXLightWorldSpace"},
+    {"Skyrim.esm", 0x094B35, "JaphetsFollyWorld"},
+    {"Skyrim.esm", 0x0C350D, "KatariahWorld"},
+    {"Skyrim.esm", 0x0C97EB, "FrostmereCryptWorld"},
+    {"Skyrim.esm", 0x0D45F0, "WindhelmPitWorldspace"},
+    {"Skyrim.esm", 0x104217, "LabyrinthianMazeWorld"},
+    {"Update.esm", 0x00293A, "TestSnow"},
+    {"Dawnguard.esm", 0x000BB5, "DLC01FalmerValley"},
+    {"Dawnguard.esm", 0x001408, "DLC01SoulCairn"},
+    {"Dawnguard.esm", 0x001DB8, "DLC1HunterHQWorld"},
+    {"Dawnguard.esm", 0x002F64, "DLC1ForebearsHoldout"},
+    {"Dawnguard.esm", 0x0042C2, "TestMeganWorld"},
+    {"Dawnguard.esm", 0x0048C7, "DLC1AncestorsGladeWorld"},
+    {"Dawnguard.esm", 0x004BEA, "DLC1DarkfallPassageWorld"},
+    {"Dawnguard.esm", 0x00528D, "DLC01Boneyard"},
+    {"Dawnguard.esm", 0x007202, "DLC1VampireCastleCourtyard"},
+    {"Dragonborn.esm", 0x000800, "DLC2SolstheimWorld"},
+    {"Dragonborn.esm", 0x01C0B2, "DLC2ApocryphaWorld"},
+    {"SkyrimVR.esm", 0x0008B8, "VRPlayroom"},
+};
+
+// Worldspaces of their own, with their own coordinates, that stand at one place of a bigger map: a player there is
+// sent at that place, in the bigger map's coordinates, under their own editor id. Each place is where their doors
+// come out, read from Dawnguard.esm on 2026-10-10:
+// - Fort Dawnguard's courtyard, on Tamriel's map: its road door (0x110B5);
+// - Castle Volkihar's courtyard, on Tamriel's map: the middle of the island's three doors (0xD15B, 0x2888, 0x2889);
+// - the Boneyard, on the Soul Cairn's map (DLC01SoulCairn): the Soul Cairn's door to it (0x2FE1).
+struct PlacedElsewhere
+{
+    std::string_view EditorId;
+    float X;
+    float Y;
+};
+
+constexpr PlacedElsewhere kPlacedElsewhere[] = {
+    {"DLC1HunterHQWorld", 200505.f, -107812.f},
+    {"DLC1VampireCastleCourtyard", -172340.f, 150683.f},
+    {"DLC01Boneyard", 8321.f, 11729.f},
+};
 
 // Windows-1252's 0x80 to 0x9F; 0 where it has no character.
 constexpr char16_t kWindows1252[32] = {0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
@@ -153,23 +233,50 @@ std::string EnvironmentVariable(const char* acpName)
 #endif
 }
 
+// Where this system keeps its trusted certificates. The Linux server links its own OpenSSL, built on CI, which looks
+// for them where they were on that machine; on Seen's Debian VPS (2026-10-10) every push failed with "SSL server
+// verification failed". SSL_CERT_FILE, when set, still wins. Windows reads its own store (httplib).
+std::string SystemCaBundle()
+{
+#ifdef _WIN32
+    return {};
+#else
+    if (!EnvironmentVariable("SSL_CERT_FILE").empty())
+        return {};
+    for (const char* pPath : {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem", "/etc/ssl/ca-bundle.pem"})
+    {
+        if (std::filesystem::exists(pPath))
+            return pPath;
+    }
+    return {};
+#endif
+}
+
+
 bool SameFilename(std::string_view aLeft, std::string_view aRight)
 {
     return std::ranges::equal(aLeft, aRight, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); });
 }
 
-// A worldspace id is in this server's mod ids, which are handed out as clients join, so Skyrim.esm's id is looked up.
-bool IsTamriel(World& aWorld, const GameId& acWorldSpaceId)
+// The website's name for an exterior worldspace: its editor id, or "<plugin>:<object id>" for one no master file has.
+// A worldspace id is in this server's mod ids, which are handed out as clients join, so its plugin is looked up by
+// that id. Empty when the plugin is not known (then no position is sent).
+std::string WorldSpaceName(World& aWorld, const GameId& acWorldSpaceId)
 {
-    if (acWorldSpaceId.BaseId != kTamrielBaseId)
-        return false;
-
     for (const auto& entry : aWorld.ctx().at<ModsComponent>().GetStandardMods())
     {
-        if (SameFilename({entry.first.c_str(), entry.first.size()}, "Skyrim.esm"))
-            return entry.second.id == acWorldSpaceId.ModId;
+        if (entry.second.id != acWorldSpaceId.ModId)
+            continue;
+
+        const std::string_view plugin{entry.first.c_str(), entry.first.size()};
+        for (const auto& known : kKnownWorldSpaces)
+        {
+            if (known.BaseId == acWorldSpaceId.BaseId && SameFilename(plugin, known.Plugin))
+                return std::string(known.EditorId);
+        }
+        return fmt::format("{}:{:X}", plugin, acWorldSpaceId.BaseId);
     }
-    return false;
+    return {};
 }
 
 // "https://host/path" as httplib wants it: the scheme and host for the client, the path for the request.
@@ -308,17 +415,33 @@ std::string PublicStatusService::BuildStatus() noexcept
             AppendJsonString(players, ToUtf8({place.c_str(), place.size()}, kMaxPlaceLength));
         }
 
-        // A position only outdoors in Tamriel: anywhere else the page lists the player without a dot on its map.
+        // A position only outdoors, in any worldspace (Tamriel, Solstheim, the Soul Cairn, Blackreach...), named by
+        // its editor id so the page can pick that world's map. Indoors (no worldspace) the player is listed without a
+        // dot on any map. A hidden player never gets this far.
         const auto& cell = pPlayer->GetCellComponent();
         const auto character = pPlayer->GetCharacter();
-        if (character && m_world.valid(*character) && cell.WorldSpaceId && IsTamriel(m_world, cell.WorldSpaceId))
+        if (character && m_world.valid(*character) && cell.WorldSpaceId)
         {
-            if (const auto* pMovement = m_world.try_get<MovementComponent>(*character))
+            const std::string worldSpace = WorldSpaceName(m_world, cell.WorldSpaceId);
+            const auto* pMovement = m_world.try_get<MovementComponent>(*character);
+            if (pMovement && !worldSpace.empty())
             {
+                float x = pMovement->Position.x;
+                float y = pMovement->Position.y;
+                for (const auto& placed : kPlacedElsewhere)
+                {
+                    if (placed.EditorId == worldSpace)
+                    {
+                        x = placed.X;
+                        y = placed.Y;
+                    }
+                }
+
                 // Rotation.z is the game's heading in radians: 0 faces north, and it turns clockwise.
                 const long heading = std::lround(glm::degrees(pMovement->Rotation.z));
-                players += fmt::format(",\"worldspace\":\"Tamriel\",\"x\":{},\"y\":{},\"heading\":{}", std::lround(pMovement->Position.x),
-                                       std::lround(pMovement->Position.y), ((heading % 360) + 360) % 360);
+                players += ",\"worldspace\":";
+                AppendJsonString(players, ToUtf8(worldSpace, 120));
+                players += fmt::format(",\"x\":{},\"y\":{},\"heading\":{}", std::lround(x), std::lround(y), ((heading % 360) + 360) % 360);
             }
         }
         players += '}';
@@ -391,6 +514,8 @@ bool PublicStatusService::Post(const std::string& acBody, std::chrono::seconds a
     client.set_read_timeout(aTimeout);
     client.set_write_timeout(aTimeout);
     // The certificate is checked, unlike ServerListService's announce: this request carries the key.
+    if (static const std::string s_caBundle = SystemCaBundle(); !s_caBundle.empty())
+        client.set_ca_cert_path(s_caBundle);
 
     const httplib::Headers headers{{"Authorization", "Bearer " + m_key}};
     const auto response = client.Post(m_path, headers, acBody, "application/json");

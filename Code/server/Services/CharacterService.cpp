@@ -150,6 +150,18 @@ namespace
 // An owner that has gone silent counts as away too: a paused game sends nothing (the mod's update runs off the
 // Papyrus VM, which pausing suspends), and until now its NPCs simply froze for the other player. Three seconds of
 // silence is well past any network hiccup at 10 snapshots a second. A silent player is never a candidate.
+
+// Fifteen seconds, not three: a loading screen is silent too, and Emma's take 8 to 10 s. At three seconds every
+// door handed all her actors to Seen, her follower Lydia included, who then came out through the door with her
+// anyway -- owned by Seen, pulled back and forth between the two games, and re-dressed by his (2026-10-03 15:09,
+// 2026-10-04 09:33). Actors really left behind still go to whoever is near them once the owner arrives somewhere
+// else and they are out of its range.
+constexpr auto cSilence = 15s;
+
+bool IsSilent(const Player* apPlayer, const std::chrono::steady_clock::time_point aNow) noexcept
+{
+    return apPlayer->GetLastMovementAt() != std::chrono::steady_clock::time_point{} && aNow - apPlayer->GetLastMovementAt() > cSilence;
+}
 } // namespace
 
 void CharacterService::HandOffAbandonedActors() const noexcept
@@ -162,16 +174,7 @@ void CharacterService::HandOffAbandonedActors() const noexcept
         return;
     s_nextSweep = now + 2s;
 
-    // static: a lambda may use it without capturing it. MSVC lets a plain local constexpr through as well; GCC does not
-    // ("'cSilence' is not captured", Seen's Linux build of 2026-10-01).
-    // Fifteen seconds, not three: a loading screen is silent too, and Emma's take 8 to 10 s. At three seconds every
-    // door handed all her actors to Seen, her follower Lydia included, who then came out through the door with her
-    // anyway -- owned by Seen, pulled back and forth between the two games, and re-dressed by his (2026-10-03 15:09,
-    // 2026-10-04 09:33). Actors really left behind still go to whoever is near them once the owner arrives somewhere
-    // else and they are out of its range.
-    static constexpr auto cSilence = 15s;
-    const auto isSilent = [now](const Player* apPlayer)
-    { return apPlayer->GetLastMovementAt() != std::chrono::steady_clock::time_point{} && now - apPlayer->GetLastMovementAt() > cSilence; };
+    const auto isSilent = [now](const Player* apPlayer) { return IsSilent(apPlayer, now); };
 
     TiltedPhoques::Set<uint32_t> playerCharacters;
     for (auto pPlayer : m_world.GetPlayerManager())
@@ -926,7 +929,7 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
 
     // A dead body goes to whoever is moving it, leader or not: only the owner sends a body's bones, so a body carried
     // by anyone else did not move on the other screens (2026-10-03 09:28, a bandit Emma had killed, carried by Seen).
-    // The claim still has to come from the same party as the current owner.
+    // Who may take one is decided further down, before the party rules.
     // A player's follower belongs to that player's game (Emma's answer of 2026-10-07): asked for as one, it is given
     // whoever leads the party, and another player's claim does not take it while its player is connected. A living
     // actor otherwise went only to the party leader, so a follower asked for back by the other player stayed with the
@@ -941,8 +944,15 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
         if (const auto* pMovement = m_world.try_get<MovementComponent>(aEntity); pMovement && pMovement->Flying)
             return reject("it is a dragon flying in its owner's game");
 
-    auto& partyService = m_world.GetPartyService();
+    // A dead body goes to whoever grabs it, party or not (Emma's answer of 2026-10-11): on the public server, which
+    // makes no party, Emma's grabs on a bandit Seen's game owned were refused four times in two minutes ("the player is
+    // not in a party", 08:27 to 08:29), so only Seen's dragging showed for the others. The game asks only while a hand
+    // is on the body, and the epoch check above settles two players grabbing at once.
     const bool cDeadBody = characterComponent.IsDead();
+    if (cDeadBody)
+        return true;
+
+    auto& partyService = m_world.GetPartyService();
     if (!partyService.IsPlayerInParty(apPlayer) || (!cDeadBody && !aFollower && !partyService.IsPlayerLeader(apPlayer)))
         return reject(cDeadBody || aFollower ? "the player is not in a party" : "the player is not the party leader");
 
@@ -1023,20 +1033,31 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
     const auto& characterComponent = view.get<CharacterComponent>(*it);
     const auto& cellIdComponent = view.get<CellIdComponent>(*it);
 
-    for (Player* pPlayer : m_world.GetPlayerManager())
+    // Players whose game is sending come first; a silent one (paused, a menu, a loading screen) only when nobody else
+    // is in range. Picked silent or not, the first in the list was taken: on 2026-10-11 at 08:00:05 Emma went through
+    // Whiterun's gate and about 45 actors went to a player whose game had sent nothing for minutes, where they froze for
+    // everybody until the sweep above handed them on 15 to 20 s later, and the same again at every door.
+    const auto now = std::chrono::steady_clock::now();
+    for (const bool cSilentToo : {false, true})
     {
-        if (pPlayer == ownerComponent.GetOwner())
-            continue;
+        for (Player* pPlayer : m_world.GetPlayerManager())
+        {
+            if (pPlayer == ownerComponent.GetOwner())
+                continue;
 
-        if (std::find(ownerComponent.InvalidOwners.begin(), ownerComponent.InvalidOwners.end(), pPlayer) != ownerComponent.InvalidOwners.end())
-            continue;
+            if (IsSilent(pPlayer, now) != cSilentToo)
+                continue;
 
-        if (!pPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()))
-            continue;
+            if (std::find(ownerComponent.InvalidOwners.begin(), ownerComponent.InvalidOwners.end(), pPlayer) != ownerComponent.InvalidOwners.end())
+                continue;
 
-        // Retain every owner that declined this handoff chain so the actor cannot bounce between unloaded clients.
-        if (TransferOwnership(pPlayer, aEntity, aReason, false))
-            return;
+            if (!pPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()))
+                continue;
+
+            // Retain every owner that declined this handoff chain so the actor cannot bounce between unloaded clients.
+            if (TransferOwnership(pPlayer, aEntity, aReason, false))
+                return;
+        }
     }
 
     spdlog::info("Removing actor {:X} after {} because no eligible owner remains", World::ToInteger(aEntity), pReasonName);
@@ -1222,8 +1243,14 @@ void CharacterService::ProcessMovementChanges() const noexcept
                 }
 
                 ++stats.Withheld;
-                const auto& playerCoords = pPlayer->GetCellComponent().CenterCoords;
-                const int32_t distance = std::max(std::abs(cellIdComponent.CenterCoords.X - playerCoords.X), std::abs(cellIdComponent.CenterCoords.Y - playerCoords.Y));
+                // A distance only between two places outdoors in the same worldspace: an interior's grid is INT_MAX,
+                // which printed "-2147483648 cells away", and another worldspace's grid printed "0 cells away".
+                const auto& playerCell = pPlayer->GetCellComponent();
+                if (playerCell.IsInInteriorCell() || playerCell.WorldSpaceId != cellIdComponent.WorldSpaceId)
+                    continue;
+                const auto& playerCoords = playerCell.CenterCoords;
+                const int64_t wideDistance = std::max(std::abs(int64_t{cellIdComponent.CenterCoords.X} - playerCoords.X), std::abs(int64_t{cellIdComponent.CenterCoords.Y} - playerCoords.Y));
+                const int32_t distance = static_cast<int32_t>(std::min<int64_t>(wideDistance, INT32_MAX - 1));
                 if (distance < stats.WorstDistance)
                 {
                     stats.WorstDistance = distance;
@@ -1239,7 +1266,12 @@ void CharacterService::ProcessMovementChanges() const noexcept
             s_nextLog = now + 10s;
             for (auto& [connectionId, stats] : s_stats)
             {
-                if (stats.Withheld)
+                if (stats.Withheld && stats.WorstDistance == INT32_MAX)
+                {
+                    spdlog::info("RangeDiag: player {:X} at centre grid ({}, {}) worldspace {:X}: {} character updates sent, {} withheld, none of them outdoors in this worldspace",
+                                 connectionId, stats.CentreX, stats.CentreY, stats.WorldSpace, stats.Sent, stats.Withheld);
+                }
+                else if (stats.Withheld)
                 {
                     spdlog::info("RangeDiag: player {:X} at centre grid ({}, {}) worldspace {:X}: {} character updates sent, {} withheld; nearest withheld {:X} at grid ({}, {}), {} cells away",
                                  connectionId, stats.CentreX, stats.CentreY, stats.WorldSpace, stats.Sent, stats.Withheld, stats.WorstId, stats.WorstX, stats.WorstY, stats.WorstDistance);

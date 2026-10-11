@@ -11,6 +11,7 @@
 #include <Events/ConnectionErrorEvent.h>
 
 #include <Games/TES.h>
+#include <Forms/TESNPC.h>
 #include <PlayerCharacter.h>
 #include <ScriptExtender.h>
 #include <Utils.h>
@@ -38,6 +39,14 @@ void Trim(std::string& aText)
     }
     aText.erase(aText.find_last_not_of(" \t\r\n") + 1);
     aText.erase(0, first);
+}
+
+// The name the server knows this player by: TransportService sends it when connecting.
+TiltedPhoques::String PlayerName() noexcept
+{
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    const auto* pNpc = pPlayer ? Cast<TESNPC>(pPlayer->baseForm) : nullptr;
+    return pNpc ? TiltedPhoques::String(pNpc->fullName.value.AsAscii()) : TiltedPhoques::String();
 }
 } // namespace
 
@@ -140,6 +149,11 @@ void VRConnectService::StartAttempt() noexcept
     spdlog::info("VRConnectService: connecting to {} (attempt {})", config.Address.c_str(), m_failedAttempts + 1);
     Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: connecting to ") + config.Address);
 
+    // Whatever connection is left (a dashboard connect still trying, say) is closed here, while the state still says
+    // idle or waiting, so its disconnection does not schedule a retry. Connect() would close it too, but after the
+    // state below, where the disconnection would read as this attempt failing.
+    m_transport.Close();
+
     m_state = State::kConnecting;
     m_attemptStarted = std::chrono::steady_clock::now();
     m_transport.SetServerPassword(config.Password.c_str());
@@ -193,7 +207,27 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
             StartAttempt();
         break;
 
-    case State::kOnline: break;
+    case State::kOnline:
+        // Another character loaded while connected. The server keeps the name and the body it was given when
+        // connecting, so everyone else goes on seeing the old character: Pengy, on 2026-10-11, connected 4 s
+        // before loading a save and played 25 minutes as "Shezarrine", a human, to Seen, who saw a Khajiit only
+        // after Pengy's next connection. The name is what is compared; the race changes in a werewolf's fight.
+        if (now >= m_nextNameCheck)
+        {
+            m_nextNameCheck = now + 2s;
+            const auto name = PlayerName();
+            if (!name.empty() && !m_connectedName.empty() && name != m_connectedName)
+            {
+                spdlog::info("VRConnectService: the character is now '{}', was '{}' when connecting; connecting again", name.c_str(), m_connectedName.c_str());
+                Utils::ShowHudMessage("urSovngarde: another character was loaded, connecting again");
+                // Waiting before closing: the disconnection then schedules nothing, and the next update connects.
+                m_state = State::kWaiting;
+                m_failedAttempts = 0;
+                m_nextAttempt = now;
+                m_transport.Close();
+            }
+        }
+        break;
     }
 }
 
@@ -202,6 +236,8 @@ void VRConnectService::OnConnected(const ConnectedEvent&) noexcept
     m_state = State::kOnline;
     m_failedAttempts = 0;
     m_autoConnectDone = true;
+    m_connectedName = PlayerName();
+    m_nextNameCheck = {};
 }
 
 void VRConnectService::OnDisconnected(const DisconnectedEvent&) noexcept

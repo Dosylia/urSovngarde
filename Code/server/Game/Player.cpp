@@ -64,7 +64,23 @@ void Player::SetEndpoint(String aEndpoint) noexcept
 
 void Player::SetUsername(String aUsername) noexcept
 {
-    m_username = std::move(aUsername);
+    // No control characters: a player joined as "Shezarrine-0" and a line break (2026-10-11 07:33), which split the
+    // server's log lines and went on to the hub's status and the website's public page. UTF-8 letters stay.
+    String clean;
+    for (const char c : aUsername)
+    {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte >= 0x20 && byte != 0x7F)
+            clean += c;
+    }
+    while (!clean.empty() && clean.back() == ' ')
+        clean.pop_back();
+    while (!clean.empty() && clean.front() == ' ')
+        clean.erase(clean.begin());
+    if (clean.empty())
+        clean = "Player";
+
+    m_username = std::move(clean);
 }
 
 void Player::SetMods(Vector<String> aMods) noexcept

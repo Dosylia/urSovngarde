@@ -203,6 +203,18 @@ void TransportService::OnConnected()
     Send(request);
 }
 
+bool TransportService::Connect(const std::string& acEndpoint) noexcept
+{
+    // TiltedConnect's Connect writes the new connection's handle over the old one without closing it. The old one
+    // then lives on inside the networking library, which keeps answering the server, while the game sends nothing on
+    // it: to the server, a player who is there and silent for good. Pengy's dashboard connected to a placeholder
+    // address three times on 2026-10-11 while online, and each time left such a player behind ("Shezarrine"): the
+    // silent stranger of the morning session that 45 NPCs were given to and froze with, and the second Pengy, old
+    // body and old name, of the next one. Close() does nothing when there is no connection.
+    Close();
+    return Client::Connect(acEndpoint);
+}
+
 void TransportService::OnDisconnected(EDisconnectReason aReason)
 {
     m_connected = false;

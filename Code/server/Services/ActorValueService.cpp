@@ -116,7 +116,11 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
     // TEMPORARY (2026-10-08): one player's hit on another player's character, and who it was sent to. None of Seen's
     // hits on Emma (the host, character server id 0) reached her defender's rule.
     const auto* pCharacter = m_world.try_get<CharacterComponent>(cEntity);
-    if (message.DeltaHealth <= -1.f && pCharacter && pCharacter->IsPlayer())
+    // Not a player's own game reporting its player's health (an NPC's blow, a fall): that is the owner, and was logged
+    // as PvP with the player hitting itself (2026-10-11, one "hit" of 699).
+    const auto* pOwner = m_world.try_get<OwnerComponent>(cEntity);
+    const bool cOwnHealth = pOwner && pOwner->GetOwner() == acMessage.pPlayer;
+    if (message.DeltaHealth <= -1.f && pCharacter && pCharacter->IsPlayer() && !cOwnHealth)
     {
         std::string sentTo;
         if (const auto* pCell = m_world.try_get<CellIdComponent>(cEntity))

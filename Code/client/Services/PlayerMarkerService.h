@@ -11,6 +11,7 @@ struct NotifyPlayerWhereabouts;
 struct TESObjectREFR;
 struct TESObjectCELL;
 struct TESQuest;
+struct Actor;
 
 /**
  * @brief The other players on the map and the compass (VR_TODO, "Players on the map", decided by Emma on 2026-10-10).
@@ -44,7 +45,8 @@ private:
         TESObjectREFR* pMarker{nullptr};
         uint32_t PlayerId{0}; // 0: free
         String Text;
-        GameId CellId{};
+        GameId CellId{};       // where the server last placed them, when the marker follows that
+        uint32_t BodyCellId{0}; // the cell of their body in our game, when the marker follows that instead
         glm::vec3 Position{};
         bool Parked{true}; // waiting in the holding cell, on no map
         bool Shown{false}; // party slots: the quest objective is displayed
@@ -54,6 +56,7 @@ private:
     void StartQuest() noexcept;
     void StopQuest() noexcept;
     void Follow(Slot& aSlot, size_t aIndex, const GameId& acWorldSpaceId, const GameId& acCellId, const glm::vec3& acPosition) noexcept;
+    void FollowBody(Slot& aSlot, Actor* apActor) noexcept;
     void Park(Slot& aSlot, size_t aIndex) noexcept;
     void Free(Slot& aSlot, size_t aIndex, bool aParty) noexcept;
     void SetObjectiveShown(Slot& aSlot, size_t aIndex, bool aShown) noexcept;

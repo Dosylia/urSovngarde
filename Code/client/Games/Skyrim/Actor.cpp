@@ -1117,6 +1117,20 @@ static TSpawnActorInWorld* RealSpawnActorInWorld = nullptr;
 bool TP_MAKE_THISCALL(HookSpawnActorInWorld, Actor)
 {
     const auto* pNpc = Cast<TESNPC>(apThis->baseForm);
+
+    // A copy this client deleted while the game still held handles on it stays in its cell, marked deleted, and the
+    // game builds its 3D again the next time that cell loads: the "copies of ourselves" left at doors on 2026-10-11,
+    // seen in all three players' logs (Emma 10, Seen 23, Pengy 13 copies back after their delete). Nothing tracks such
+    // a copy any more, so it stood frozen where the player had been. It gets no 3D.
+    if (apThis->IsTemporary() && apThis->IsDeleted())
+    {
+        if (pNpc)
+            spdlog::info("DeletedCopy: {:X} ({}) is marked deleted; its 3D is not built again", apThis->formID, pNpc->fullName.value);
+        else
+            spdlog::info("DeletedCopy: {:X} is marked deleted; its 3D is not built again", apThis->formID);
+        return false;
+    }
+
     if (pNpc)
     {
         spdlog::info("Spawn Actor: {:X}, and NPC {}", apThis->formID, pNpc->fullName.value);

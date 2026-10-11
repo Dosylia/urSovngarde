@@ -26,6 +26,10 @@ struct TransportService : Client
 
     TP_NOCOPYMOVE(TransportService);
 
+    using Client::Connect;
+    // Closes the connection there is first. See the definition.
+    bool Connect(const std::string& acEndpoint) noexcept;
+
     bool Send(const ClientMessage& acMessage) const noexcept;
     // For voice: a lost packet is a short gap, never a delay behind a resend.
     bool SendUnreliable(const ClientMessage& acMessage) const noexcept;
