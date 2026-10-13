@@ -541,7 +541,16 @@ void CharacterService::ReconcileActorData(
     }
 
     if (apActor->IsDead() != acActorData.IsDead)
-        acActorData.IsDead ? apActor->Kill() : apActor->Respawn();
+    {
+        if (acActorData.IsDead)
+            apActor->Kill();
+        // Respawn resets the reference, which re-rolls a leveled actor and reloads its 3D.
+        // The owner would then find it again as a new actor, so it keeps its local death and the death sync reports it.
+        else if (aIsLocalOwner)
+            spdlog::warn("Keeping actor {:X} dead although the server has it alive", apActor->formID);
+        else
+            apActor->Respawn();
+    }
 
     if (aIsLocalOwner)
     {
@@ -1005,10 +1014,15 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
     {
         spdlog::debug("Received local actor, form id: {:X}", pActor->formID);
 
-        pActor->GetExtension()->SetRemote(true);
+        // The server's data is only an echo of this game's own request, and may already be stale.
+        // Applying it could Respawn an actor killed meanwhile; local changes reach the server through LocalComponent instead.
+        if (pActor->IsDead() != acMessage.IsDead)
+            spdlog::info("Local actor {:X} died or revived while its assignment was in flight (server: {}, local: {}), keeping local state", pActor->formID,
+                         acMessage.IsDead, pActor->IsDead());
+        m_weaponDrawUpdates.erase(pActor->formID);
+
         // This player's follower coming back: her gear here is the truth, and the server's copy is corrected instead.
         const bool cMyFollower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
-        ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, actorData, !cMyFollower, true);
         if (cMyFollower)
             SendInventoryDifference(pActor, acMessage.ServerId, acMessage.OwnershipEpoch, acMessage.CurrentInventory);
 
@@ -1311,6 +1325,13 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
         auto* const pForm = TESForm::GetById(cActorId);
         pActor = Cast<Actor>(pForm);
+
+        // Moving a reference that is still loading crashes; discovery asks for its assignment once it has loaded.
+        if (pActor && pActor->IsStillLoading())
+        {
+            spdlog::info("Skipped spawn for actor {:X} because it is still loading, server id: {:X}", cActorId, acMessage.ServerId);
+            return;
+        }
 
         if (!pActor)
         {
@@ -1639,8 +1660,14 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     {
         m_world.emplace_or_replace<RemoteComponent>(cEntity, acMessage.ServerId, pFormIdComponent->Id, acMessage.OwnershipEpoch);
 
-        if (!m_world.all_of<InterpolationComponent>(cEntity))
-            InterpolationSystem::Setup(m_world, cEntity);
+        // The new owner's snapshots carry on from its own view of the actor, so the previous owner's would only drag it back.
+        // Playback starts over from where the actor is now.
+        const auto* pOldInterpolation = m_world.try_get<InterpolationComponent>(cEntity);
+        const glm::vec3 cPosition = pActor ? glm::vec3(pActor->position) : (pOldInterpolation ? pOldInterpolation->Position : glm::vec3{});
+        const bool cForeignGraph = pOldInterpolation && pOldInterpolation->ForeignGraph;
+        auto& interpolation = InterpolationSystem::Setup(m_world, cEntity);
+        interpolation.Position = cPosition;
+        interpolation.ForeignGraph = cForeignGraph;
         if (!m_world.all_of<RemoteAnimationComponent>(cEntity))
             AnimationSystem::Setup(m_world, cEntity);
     }

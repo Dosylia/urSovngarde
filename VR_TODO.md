@@ -34,7 +34,9 @@ for the lines named.
 - [ ] **Book:** one player stashes a placed book and drops it, the other takes it (`WorldObject: book X taken here` on
       one side, `... removed here` on the other).
 - [ ] **Skeletons and corpses:** no runs of `Received remote actor` / `Actor removed` for one actor, no corpse moved
-      twice a second, a corpse left after two useless moves (`left there until that moves`).
+      twice a second, a corpse left after two useless moves (`left there until that moves`). Since 2026-10-13 an
+      owner no longer revives an actor killed while its assignment was in flight (upstream 8f08d405): watch for
+      `died or revived while its assignment was in flight` and `Keeping actor ... dead`.
 - [ ] **Leveled creatures:** the same creature on both screens (the Snow Bear / Ice Wraith of 820B9; `rolled again by
       the game`).
 - [ ] **Followers:** a follower stays with her player's game, no back-and-forth (`given to player`, `Gained
@@ -55,7 +57,12 @@ for the lines named.
       has done it yet.
 - [ ] **A real dragon flying** in one game: the other game never takes it over until it lands.
 - [ ] **Playback delay:** the `InterpDiag players` lines say how much of the 225 ms the network really needs; then decide
-      whether the delay follows the connection.
+      whether the delay follows the connection. Upstream (23901108, a4a33744, 0a6784b8) gets about 65 ms at 20 ms
+      ping, and the lessons apply here: we send movement and the VR pose reliably, so one lost packet holds back every
+      later snapshot; upstream sends movement unreliably (at most 8 actors a message, actions in their own reliable
+      message), relays it on the server at once with Nagle off (ours batches at 50 Hz), sends NPCs in combat at 30 Hz,
+      and sizes the delay per actor (snapshot interval + 95th-percentile jitter + 8 ms, eased at up to 10% speed).
+      A shorter delay also moves the hit timing (`kHitSeenAfter` in ActorValueService).
 - [ ] **Threads and stutters:** the `Health` lines near 200 threads in both games once Seen is updated (Waiting on a
       test or action); Seen's freezes (no frame for 46 s, 2026-10-11 18:11 and 21:36) gone with it.
 - [ ] **Crash lines on a real crash:** `CrashPlace: ...` (send the log's path to the launcher worker, which parses it)
@@ -111,6 +118,11 @@ for the lines named.
       reverted: `Actor::PutActorOnMountQuick` (vtable 0xAE on VR) returns false; letting the copy's AI run with its
       position free for 10 s left it beside the horse. Next if taken up: build the rider/mount `ExtraInteraction` on
       the copy, then `PutActorOnMountQuick` (real reverse work on VR); or ask cmpayc's fork whether it has mounts.
+- [ ] **A re-rolled creature keeps the old animation variable list** (upstream 115b5019, Havok crash): the synced
+      variables are picked once per actor (`GraphDescriptorHash` in TESObjectREFR.cpp) and never again, so a leveled
+      actor re-rolled into another creature gets out-of-range values. Upstream recomputes the list when the behavior
+      project changes and writes only word variables; porting needs the project name and variable types of the VR
+      behavior graph structs checked first.
 - [ ] **An in-headset menu:** the urSovngarde menu as a SteamVR dashboard tab with large text, a small overlay for chat.
 - [ ] **A flat (non-VR) player with VR players** (asked on Reddit, 2026-10-09). Possible in principle: the repo still
       builds the flat client, and `Code/encoding` has no VR-only message, so both builds share the protocol and the
