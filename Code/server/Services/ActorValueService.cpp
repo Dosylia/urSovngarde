@@ -98,9 +98,7 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
     if (it != actorValuesView.end())
     {
         auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
-        // Damage is a negative delta: Actor::DamageActor raises HealthChangeEvent(formId, -realDamage) and the
-        // clients add it. Subtracting it here turned every hit into healing in the server's copy, so the health
-        // it hands out on a spawn, a hand-off or a respawn drifted upwards away from what the players saw.
+        // Damage arrives as a negative delta (HealthChangeEvent(formId, -realDamage)), so it is added.
         auto currentHealth = actorValuesComponent.CurrentActorValues.ActorValuesList[24];
         actorValuesComponent.CurrentActorValues.ActorValuesList[24] = currentHealth + message.DeltaHealth;
     }
@@ -113,11 +111,9 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
     notify.Tick = message.Tick;
 
     const entt::entity cEntity = static_cast<entt::entity>(message.Id);
-    // TEMPORARY (2026-10-08): one player's hit on another player's character, and who it was sent to. None of Seen's
-    // hits on Emma (the host, character server id 0) reached her defender's rule.
+    // TEMPORARY (PvP): logs one player's hit on another player's character and who it was sent to.
     const auto* pCharacter = m_world.try_get<CharacterComponent>(cEntity);
-    // Not a player's own game reporting its player's health (an NPC's blow, a fall): that is the owner, and was logged
-    // as PvP with the player hitting itself (2026-10-11, one "hit" of 699).
+    // Skips a player's own game reporting its own health (an NPC's blow, a fall).
     const auto* pOwner = m_world.try_get<OwnerComponent>(cEntity);
     const bool cOwnHealth = pOwner && pOwner->GetOwner() == acMessage.pPlayer;
     if (message.DeltaHealth <= -1.f && pCharacter && pCharacter->IsPlayer() && !cOwnHealth)
@@ -159,7 +155,6 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
     notify.Id = message.Id;
     notify.IsDead = message.IsDead;
 
-    // Sent to everyone, not only players in range: a death is sent once, and a client that misses it keeps a
-    // living body for the rest of the session. Clients without that actor ignore the message.
+    // Sent to everyone, not only those in range: a death is sent once, and a missed one leaves a living body.
     GameServer::Get()->SendToPlayers(notify, acMessage.pPlayer);
 }

@@ -4,8 +4,7 @@
 
 using TiltedPhoques::Vector;
 
-//! A piece of another player's voice (VoiceDataRequest), sent unreliable to the players near enough to hear it and to
-//! the speaker's party at any distance.
+//! A piece of another player's voice (VoiceDataRequest), relayed unreliable to the players who can hear it.
 struct NotifyVoiceData final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifyVoiceData;

@@ -20,15 +20,8 @@ struct ShiftGridCellRequest;
 /**
  * @brief Remembers items players drop, and gives them to everyone who comes near.
  *
- * A drop used to be replayed on the other side only at the moment it happened, by making the dropper's copy drop the
- * same item. The server kept nothing, and every player loads their own save, so an item dropped before the other
- * player connected, out of their range, or in another session existed in one world only -- Emma's report of
- * 2026-09-30, items dropped sessions earlier that Seen could not see. (That live path had also never run: the setting
- * that enabled it was false in every STServer.ini, and an ini beats a new default.)
- *
- * So the server is now the record. Each item is kept with where it lies, sent to everyone in range when it is dropped
- * and again to anyone entering its cell, and forgotten when somebody picks it up. The list is written to disk, because
- * the whole complaint was about items outliving a session.
+ * Each item is sent to everyone in range when dropped and to anyone entering its cell, until somebody picks it up.
+ * The list is saved to disk, so items outlive a server restart.
  */
 class DroppedItemService
 {
@@ -59,16 +52,16 @@ private:
 
     //! Everything within range of where a player now stands, to that player.
     void SendInRange(Player* apPlayer, const CellIdComponent& acViewer) const noexcept;
-    void Send(Player* apPlayer, const Item& acItem) const noexcept;
+    void SendItem(Player* apPlayer, const Item& acItem) const noexcept;
 
-    const Item* FindSame(const Inventory::Entry& acEntry, const GameId& acCellId, const GameId& acWorldSpaceId,
+    const Item* FindSameItem(const Inventory::Entry& acEntry, const GameId& acCellId, const GameId& acWorldSpaceId,
                          const Vector3_NetQuantize& acPosition) const noexcept;
 
     void Load() noexcept;
     void Save() const noexcept;
 
-    //! Where a placed world object was last left by somebody's hand, by reference id, or that a player took it: sent to
-    //! anyone who comes near later, since every game loads the object from its own save. Not written to disk.
+    //! Where a placed world object was last left, or that a player took it, for anyone who comes near later.
+    //! Kept in memory only.
     struct ObjectPlace
     {
         GameId ObjectId{};

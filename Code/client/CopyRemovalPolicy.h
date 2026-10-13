@@ -5,34 +5,23 @@
 
 //! When a remote copy we have been told to remove may actually be freed.
 //!
-//! This is deliberately a pure function of numbers, with no game types in it, because the reasoning is what
-//! kept going wrong and reasoning is the part that can be tested. See CopyRemovalPolicy tests.
+//! It is a pure function of numbers with no game types, so it can be tested (see CopyRemovalPolicy tests).
 //!
-//! The history it encodes, from 2026-09-27:
+//!   - Deleting immediately is a use-after-free: the game still holds handles and makes a virtual call on the copy later.
+//!   - Waiting for zero handles never frees anything: the game's own lists keep their handles while the cell is loaded.
 //!
-//!   - Deleting immediately is a use-after-free. Every copy is reported as "still in the AI process lists,
-//!     dead or dying, 3 outstanding handle(s)", and the game then makes a virtual call on it -- 567 ms later in
-//!     one dump, 24 s later in another.
-//!   - Waiting for the handle count to reach zero never frees anything at all: the holders are the game's own
-//!     lists, and they do not let go while the cell is loaded. Twice this filled the world with live copies and
-//!     collapsed Emma's frame rate in VR.
-//!
-//! So waiting is bounded by construction rather than by hoping. At most kMaxWaiting copies are ever held back;
-//! the moment a new one arrives at that limit, the oldest is freed regardless of its handles. The worst case is
-//! therefore exactly the old immediate-delete behaviour -- which crashes Seen and costs Emma nothing -- and the
-//! ordinary case frees copies cleanly once the game has let go. It cannot degrade into an unbounded pile-up,
-//! because the bound does not depend on the game releasing anything.
-//!
-//! Held-back copies are disabled while they wait, so their cost is a slot in a list rather than sound, AI and
-//! draw calls.
+//! So the wait is bounded: at most kMaxWaiting copies are held back.
+//! When one more arrives at that limit, the oldest is freed regardless of its handles.
+//! The worst case is an immediate delete, and the usual case frees a copy once the game lets go of it.
+//! Held-back copies are disabled while they wait, so they cost a list slot rather than sound, AI and draw calls.
 namespace CopyRemovalPolicy
 {
-//! Never hold back more than this many copies. Small on purpose: the bound is the safety property, and a
-//! handful of disabled corpses is the entire budget.
+//! Never hold back more than this many copies.
+//! Kept small on purpose, because the bound is what keeps the wait from piling up.
 constexpr size_t kMaxWaiting = 24;
 
-//! Give up waiting after this long and free it anyway. A copy nothing has released in a minute is one whose
-//! holder is not going to release it while this cell is loaded.
+//! Give up waiting after this long and free the copy anyway.
+//! A holder that has not let go in a minute will not let go while the cell is loaded.
 constexpr uint32_t kMaxWaitMs = 60000;
 
 enum class Action
@@ -55,13 +44,8 @@ inline Action OnRemoved(const uint32_t aHandles, const size_t aWaitingCount) noe
     return Action::WaitDisabled;
 }
 
-//! Why a waiting copy was freed. Worth distinguishing, because only one of these is the outcome the wait is
-//! for and the log could not tell them apart.
-//!
-//! The session of 2026-09-27 read as 16 copies "let go of" cleanly. They were not: every one of them was freed
-//! exactly 60000 ms after being queued, with 2 handles still outstanding -- Released::WaitedOut, the give-up
-//! path, reported in the same words as the success path. A diagnostic that cannot fail its own check is not a
-//! diagnostic, and this one had already been read as evidence that the wait was working.
+//! Why a waiting copy was freed.
+//! Only HandlesGone is what the wait is for; the other two free a copy that is still held, and the log must say so.
 enum class Released
 {
     NotYet,      //!< still held, keep waiting

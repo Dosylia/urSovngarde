@@ -122,8 +122,9 @@ function Show-Status {
     $game = Test-Running $gamePattern
     $connected = 'unknown'
     if ($game -and (Test-Path $clientLog)) {
-        $probe = Get-Content $clientLog -Tail 400 | Select-String -Pattern 'Probe: connected (yes|no)' | Select-Object -Last 1
-        if ($probe) { $connected = $probe.Matches[0].Groups[1].Value }
+        # The last of the client's "Connected:" and "Disconnected from server" lines says which it is now.
+        $last = Get-Content $clientLog -Tail 2000 | Select-String -Pattern '(Connected: the server accepted|Disconnected from server)' | Select-Object -Last 1
+        if ($last) { $connected = $(if ($last.Matches[0].Groups[1].Value -like 'Connected*') { 'yes' } else { 'no' }) }
     }
     Write-Host ("game {0} | devbench {1} | connected {2} | SteamVR {3} | server {4}" -f `
         $(if ($game) { 'running' } else { 'not running' }), `
@@ -307,9 +308,8 @@ try {
         return
     }
 
-    # Connected, by the client's own five-second probe line. The line count is taken after the load, so an earlier
-    # session's "connected yes" cannot satisfy it.
-    $before = @(Get-Content $clientLog).Count
+    # Connected: in this game session's part of the log (from its "Skyrim Together client, build" line), the last of
+    # "Connected: the server accepted" and "Disconnected from server" is the first.
     Wait-Until {
         # The empty message box the game shows at the end of a load (SkyrimVR.exe+0x168507) is dropped by the client
         # while the loading screen is up; once it came a few milliseconds after (2026-10-03 11:18, loading
@@ -320,8 +320,10 @@ try {
                 Write-Host 'Closed a message box left open after the load.' -ForegroundColor Yellow
             }
         } catch { }
-        $new = Get-Content $clientLog | Select-Object -Skip $before
-        [bool]($new | Select-String -Pattern 'Probe: connected yes' -Quiet)
+        $lines = @(Get-Content $clientLog)
+        $start = ($lines | Select-String -Pattern 'Skyrim Together client, build' | Select-Object -Last 1).LineNumber
+        $last = $lines | Select-Object -Skip ([int]$start) | Select-String -Pattern '(Connected: the server accepted|Disconnected from server)' | Select-Object -Last 1
+        [bool]($last -and $last.Matches[0].Groups[1].Value -like 'Connected*')
     } 90 'the client to connect' -NeedsGame
 
     Write-Host 'Up.' -ForegroundColor Green

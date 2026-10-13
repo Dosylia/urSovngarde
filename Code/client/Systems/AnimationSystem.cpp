@@ -47,9 +47,8 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
             // Animation graph not ready, keep the action in queue and try again later
             return;
         }
-        // A dead copy plays nothing more. The owner's actions are replayed 300 ms late, and the last ones recorded while
-        // it was alive kept arriving after it died here: on 2026-10-03 the bandit 45AB9 died on both screens, Seen's
-        // game went on replaying six actions on the corpse in the next seconds, and Seen saw it standing.
+        // A dead copy plays nothing more, or it stands back up.
+        // The owner's actions are replayed 300 ms late, so ones recorded while it was alive still arrive after it died here.
         if (apActor->actorState.IsDead())
         {
             aAnimationComponent.LastRanAction = *it;
@@ -73,16 +72,13 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
         const auto pAction = Cast<BGSAction>(TESForm::GetById(actionId));
         const auto pTarget = Cast<TESObjectREFR>(TESForm::GetById(targetId));
 
-        // The owner's state word also carries the life state (bits 21-24). Actions are replayed 300 ms late, so the
-        // ones arriving just after a body died here were recorded while it was still alive, and copying the whole
-        // word stood the corpse back up as a living enemy. Once dying or dead, keep that part (death messages own it).
+        // The owner's state word also carries the life state (bits 21-24).
+        // Late actions recorded while the body was alive would stand a corpse back up, so once dying or dead that part is kept.
+        // Death messages own it.
         constexpr uint32_t cLifeStateMask = 0x1E00000;
-        // Another player's copy never goes down (ActorValueService keeps it at 25 health, "a copy never goes down"),
-        // so it keeps its own life state and knock state (bits 25-27) whatever the owner's word says, and the owner's
-        // fall is not replayed on it. It used to be: after every death on 2026-10-03 (09:14, twice at 09:21, 09:27) the
-        // copy on the other screen replayed "Ragdoll" and lay on the floor for one to two minutes after its owner had
-        // respawned -- hands at floor height (copy z -17 to 18 against the owner's 55), "we both sit on the floor
-        // for the other side". The "GetUpBegin" replayed after it never stood the copy up.
+        // Another player's copy never goes down (ActorValueService keeps it at 25 health).
+        // It keeps its own life state and knock state (bits 25-27), and the owner's "Ragdoll" is not replayed on it.
+        // A replayed fall would leave the copy on the floor, since the later "GetUpBegin" does not stand it up.
         constexpr uint32_t cKnockStateMask = 0xE000000;
         const bool cPlayerCopy = apActor->GetExtension()->IsRemotePlayer();
         if (cPlayerCopy)
@@ -120,10 +116,8 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
 
         const auto result = ActorMediator::Get()->ForceAction(&actionData);
 
-        // Getting up from bleedout, refused as an action: the copy stayed down while its owner had it up again, and
-        // lay on the floor following and attacking (Seen, 2026-10-12: "refused 'bleedOutStop'" on Legate Rikke 19:11
-        // and General Tullius 19:13; a shout's ragdoll and get-up was the only thing that stood them up). The action's
-        // conditions are the game's; the graph event itself takes the copy out of the pose, as on the owner's side.
+        // The game can refuse "bleedOutStop" as an action, which leaves the copy down while its owner is up again.
+        // Sending the graph event itself takes the copy out of the pose, as on the owner's side.
         if (!result && !cPlayerCopy && !first.EventName.empty() && _stricmp(first.EventName.c_str(), "bleedOutStop") == 0)
         {
             BSFixedString event("bleedOutStop");
@@ -131,9 +125,8 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
             spdlog::info("ReplayDiag: 'bleedOutStop' refused as an action on {:X}; sent to its graph instead ({})", apActor->formID, cSent ? "taken" : "not taken");
         }
 
-        // TEMPORARY: remote NPCs slide instead of walking on the receiving side, and AnimDiag shows the game refusing
-        // most of their moveStart and turnStop replays (2026-09-19, 7 of 9 moveStart refused). This names, for one
-        // refused replay per 10 s, everything the refusal could depend on. Remove once understood.
+        // TEMPORARY diagnostic for remote NPCs sliding while the game refuses most of their moveStart and turnStop replays.
+        // For one refused replay per 10 s, it logs everything the refusal could depend on. Remove once understood.
         if (!result)
         {
             static std::chrono::steady_clock::time_point s_nextSample{};
@@ -148,63 +141,6 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
                              actionData.idleForm != nullptr, first.Type, targetId, pTarget != nullptr, apActor->animationGraphHolder.IsReady(),
                              apActor->GetNiNode() != nullptr, apActor->currentProcess != nullptr, apActor->actorState.flags1, apActor->actorState.flags2,
                              apActor->actorState.IsDeadOrDying(), aAnimationComponent.ReplayCount, actions.size());
-            }
-        }
-
-        // TEMPORARY sliding diagnostic: actors were reported sliding instead of walking. Counts replayed actions and
-        // the ones the game refused, per event name, and logs a summary every 10 s. Remove once understood.
-        //
-        // Read the failure counts with care. ForceAction applies the animation variables whether or not it returns
-        // true, and the events that carry direction rather than state (moveForward, moveBackward) are not ones the
-        // behaviour graph accepts as actions at all, so they always count as failed and always did. A single actor
-        // being respawned in a loop also floods these totals, which is what happened the session this line was read
-        // from, so the busiest actors are named: one form id with a count far above the rest is a respawn loop rather
-        // than an animation problem.
-        {
-            struct EventStats
-            {
-                uint32_t Replayed = 0;
-                uint32_t Failed = 0;
-            };
-            static TiltedPhoques::Map<TiltedPhoques::String, EventStats> s_players;
-            static TiltedPhoques::Map<TiltedPhoques::String, EventStats> s_npcs;
-            static TiltedPhoques::Map<uint32_t, uint32_t> s_byActor;
-            static std::chrono::steady_clock::time_point s_nextLog = std::chrono::steady_clock::now() + 10s;
-
-            auto& stats = (apActor->GetExtension()->IsPlayer() ? s_players : s_npcs)[first.EventName.empty() ? "(no event)" : first.EventName.c_str()];
-            ++stats.Replayed;
-            if (!result)
-                ++stats.Failed;
-            ++s_byActor[apActor->formID];
-
-            const auto now = std::chrono::steady_clock::now();
-            if (now >= s_nextLog)
-            {
-                s_nextLog = now + 10s;
-                for (auto* pStats : {&s_players, &s_npcs})
-                {
-                    if (pStats->empty())
-                        continue;
-                    std::string line;
-                    for (const auto& [name, eventStats] : *pStats)
-                        line += fmt::format("{} {}/{} failed, ", name.c_str(), eventStats.Failed, eventStats.Replayed);
-                    spdlog::info("AnimDiag {}: {}", pStats == &s_players ? "remote players" : "remote NPCs", line);
-                    pStats->clear();
-                }
-
-                if (!s_byActor.empty())
-                {
-                    TiltedPhoques::Vector<std::pair<uint32_t, uint32_t>> busiest(s_byActor.begin(), s_byActor.end());
-                    std::partial_sort(busiest.begin(), busiest.begin() + std::min<size_t>(5, busiest.size()), busiest.end(),
-                                      [](const auto& acLhs, const auto& acRhs) { return acLhs.second > acRhs.second; });
-
-                    std::string line;
-                    for (size_t i = 0; i < busiest.size() && i < 5; ++i)
-                        line += fmt::format("{:X} x{}, ", busiest[i].first, busiest[i].second);
-
-                    spdlog::info("AnimDiag busiest actors ({} in total): {}", s_byActor.size(), line);
-                    s_byActor.clear();
-                }
             }
         }
 
@@ -226,13 +162,8 @@ void AnimationSystem::Clean(World& aWorld, const entt::entity aEntity) noexcept
         aWorld.remove<RemoteAnimationComponent>(aEntity);
 }
 
-// Update plays at most one action per frame, and until 2026-09-26 only one of the three paths that push into this
-// queue was bounded -- the single-action one, which is not the busy one. The movement snapshot carries actions too,
-// and that path had no cap at all: Seen's log of 2026-09-26 has a Dwarven Centurion Master at 5,123 queued and
-// Neloth at 17,411, every one of them refused. A queue that long is not a backlog, it is a different point in time:
-// 17,000 actions at one a frame is six minutes of replay, so the automaton was playing what it did before the fight
-// started and stood there through the whole of it. That is "dwarven spheres are not fighting at all".
-//
+// Update plays at most one action per frame, so every path that pushes into this queue trims it here.
+// A long queue would replay minutes-old actions, leaving the actor acting out the past (an automaton idle through a fight).
 // An action this far behind is not worth playing, so the oldest go and the actor catches up with the present.
 void AnimationSystem::TrimBacklog(RemoteAnimationComponent& aAnimationComponent, const uint32_t aFormId) noexcept
 {
@@ -327,8 +258,8 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
         movement.Direction = pActor->currentProcess->middleProcess->direction;
     }
 
-    // A dragon in the air here is not taken over by another player's game (CharacterService::CanClaimOwnership on the
-    // server): taken over in flight, the Mistwatch dragon fell and died (2026-10-03 09:06).
+    // A dragon in the air here is not taken over by another player's game (CharacterService::CanClaimOwnership on the server).
+    // Taken over in flight, a dragon falls and dies.
     movement.Flying = pActor->IsDragon() && pActor->actorState.IsFlying();
 
 #ifdef SKYRIMVR
@@ -339,9 +270,8 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
         VRPose pose{};
         if (!VRBodySync::CaptureLocalPose(pPlayer, pose))
         {
-            // The other player then sees this body in the plain animation pose (sword held up in the vanilla idle,
-            // 2026-09-18 screenshots). Nothing logged that before, so it could not be told apart from a receive
-            // side problem.
+            // The other player then sees this body in the plain animation pose.
+            // Logged so it can be told apart from a problem on the receiving side.
             static std::chrono::steady_clock::time_point s_nextWarn{};
             const auto now = std::chrono::steady_clock::now();
             if (now >= s_nextWarn)
@@ -354,10 +284,8 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
     }
     else if (pActor->actorState.IsDead())
     {
-        // A body this machine owns, within reach of this player. Sending its bones is what lets the other players
-        // see it being dragged, thrown or shoved here instead of seeing it snap between two resting places. It only
-        // goes on the wire while the body is actually moving (CaptureBodyPose returns false otherwise), so a field
-        // of corpses left alone costs nothing, and the far ones are never read at all.
+        // A body this machine owns, within reach of this player: its bones let the others see it dragged, thrown or shoved.
+        // It is only sent while the body is moving (CaptureBodyPose returns false otherwise), and far bodies are never read.
         constexpr float cReachSquared = 600.f * 600.f;
         const auto* pPlayer = PlayerCharacter::Get();
         if (pPlayer)

@@ -22,9 +22,9 @@ class IVROverlay;
 /**
  * @brief Shows the Skyrim Together UI as a SteamVR dashboard overlay.
  *
- * There is no game window to draw the overlay into on VR, so CEF renders the page offscreen at a fixed size and
- * the pixels go to a SteamVR dashboard tab ("urSovngarde", opened with the headset's system button). The
- * texture lives on our own D3D11 device, which keeps this independent of the game's renderer and render thread.
+ * There is no game window to draw the overlay into on VR, so CEF renders the page offscreen at a fixed size.
+ * The pixels go to a SteamVR dashboard tab ("urSovngarde", opened with the headset's system button).
+ * The texture lives on our own D3D11 device, independent of the game's renderer and render thread.
  * SteamVR's laser pointer sends mouse events, and its virtual keyboard handles text fields.
  */
 struct VRDashboard final : OverlayApp::RenderProvider
@@ -60,7 +60,6 @@ struct VRDashboard final : OverlayApp::RenderProvider
 private:
     bool InitializeOverlay() noexcept;
     void UploadFrame() noexcept;
-    void SnapshotPage() noexcept;
     void ProcessEvents(OverlayService& aOverlay) noexcept;
     void InjectText(OverlayApp& aApp, const char* acpUtf8) noexcept;
 
@@ -82,8 +81,6 @@ private:
     bool m_visible = false;
     bool m_browserHidden = false;
     bool m_logNextUpload = false;
-    bool m_snapshotTaken = false;
-    std::chrono::steady_clock::time_point m_shownAt{};
     uint16_t m_mouseX = 0;
     uint16_t m_mouseY = 0;
 };

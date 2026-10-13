@@ -1,9 +1,9 @@
 ﻿#pragma once
 
-// A crash dump small enough to send with a crash report (the urSovngarde launcher takes it when the player agrees):
-// every thread's stack and registers, the module list, and whatever memory the caller's callback adds (the
-// crash handler adds the objects the crashing registers point at). Never the game's data segments, which are what
-// make the full dump about 1 GB.
+// A crash dump small enough to send with a crash report.
+// It holds every thread's stack and registers, the module list, and whatever memory the caller's callback adds.
+// The crash handler adds the objects the crashing registers point at.
+// It never holds the game's data segments, which make the full dump about 1 GB.
 //
 // Header-only so that the tests can write one of their own process.
 
@@ -25,16 +25,14 @@ inline bool IsSmallDumpName(const std::wstring& acName) noexcept
     return acName.rfind(L"crash_UTC_", 0) == 0 && acName.size() > 10 && acName.ends_with(L".small.dmp");
 }
 
-// The launcher sends small dumps under 4 MB; above this a dump is written again with fewer stacks.
+// Crash reports only carry small dumps under 4 MB; above this a dump is written again with fewer stacks.
 constexpr uint64_t cTarget = 3500ull * 1024;
 
 namespace detail
 {
-// Wraps the caller's callback: the second, smaller pass keeps every thread and its registers but only the crashing
-// thread's stack (the game runs a hundred threads or more; this test process a handful). Clearing a thread's
-// ThreadWriteStack flag does not keep its stack out (tested 2026-10-07: same size); removing the stack's range
-// does. So each other thread's stack range is noted as dbghelp reports the thread, and handed back when it asks
-// for memory to remove, which it does after the threads.
+// Wraps the caller's callback. The second, smaller pass keeps every thread and its registers but only the crashing thread's stack.
+// Clearing a thread's ThreadWriteStack flag does not keep its stack out; removing the stack's memory range does.
+// So each other thread's stack range is noted as dbghelp reports the thread, and handed back when it asks for memory to remove.
 struct Pass
 {
     PMINIDUMP_CALLBACK_INFORMATION Inner;
@@ -115,9 +113,9 @@ inline uint64_t WriteOnce(const std::filesystem::path& acPath, PEXCEPTION_POINTE
 }
 } // namespace detail
 
-// Writes `acPath` and returns its size in bytes, or 0 with `aError` set. When the whole dump comes out above
-// `aTarget`, it is written again with only the crashing thread's stack. `apCallback` adds memory (its
-// MemoryCallback); `apRestart` runs before each pass, so that it can hand out its memory again.
+// Writes `acPath` and returns its size in bytes, or 0 with `aError` set.
+// When the whole dump comes out above `aTarget`, it is written again with only the crashing thread's stack.
+// `apCallback` adds memory (its MemoryCallback); `apRestart` runs before each pass, so that it can hand out its memory again.
 inline uint64_t Write(const std::filesystem::path& acPath, PEXCEPTION_POINTERS apInfo, PMINIDUMP_CALLBACK_INFORMATION apCallback,
                       DWORD& aError, void (*apRestart)() noexcept = nullptr, uint64_t aTarget = cTarget) noexcept
 {

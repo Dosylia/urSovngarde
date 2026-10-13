@@ -49,11 +49,10 @@ extern void* RipAllocateN(size_t blockLength);
 #include <filesystem>
 #include <fstream>
 
-// A hook goes in only when its game address resolved. TiltedReverse's FunctionHookManager::Add hands any target to
-// MinHook, a null one included, and MinHook then reads code at address 0 and takes the game down at start -- which an
-// address id missing from the VR table does. Each hook is checked here first: one that did not resolve is named in the
-// log and skipped, and only what it backs does not work. (This check lived in a TiltedReverse commit that never left
-// one machine; the submodule follows upstream, so it lives here, and nothing null reaches the hook manager at all.)
+// A hook goes in only when its game address resolved.
+// TiltedReverse's FunctionHookManager::Add passes a null target to MinHook, which then crashes the game at start.
+// An address id missing from the VR table gives a null target, so such a hook is logged and skipped instead.
+// The check lives here because the TiltedReverse submodule follows upstream.
 template <class T, class U> void AddHookIfResolved(T** appSystemFunction, U* apHookFunction, const bool aDelayed, const char* acpName) noexcept
 {
     if (*appSystemFunction == nullptr)

@@ -1,8 +1,7 @@
 #pragma once
 
-//! A stretch of game code known to fault, wrapped by an __except that recovers from it (see the crime alarm in
-//! Actor.cpp). Inside one, an access violation is expected and handled, so the crash handler must not spend a
-//! second writing a report and a coredump for it, nor use up its one-shot report for a fault that is not fatal.
+//! Marks game code known to fault and recovered by an __except (see the crime alarm in Actor.cpp).
+//! The crash handler ignores access violations inside it.
 namespace CrashGuard
 {
 void Enter() noexcept;
@@ -10,22 +9,20 @@ void Leave() noexcept;
 [[nodiscard]] bool Inside() noexcept;
 } // namespace CrashGuard
 
-//! A freeze leaves no crash report: the game just stops. World::Update calls Beat() every frame; a thread started with
-//! the crash handler notices when no frame has finished for 25 s and logs where the game's main thread and the thread
-//! that last ran our update are stuck (registers and a stack scan, the same as a crash report). Every 30 s it also
-//! logs the process's memory and thread count, the two numbers that grew before the freezes of 2026-10-03.
+//! Logs where the game is stuck when no frame has finished for 25 s, since a freeze leaves no crash report.
+//! World::Update calls Beat() every frame.
+//! Also logs the process's memory and thread count every 30 s.
 namespace FreezeWatchdog
 {
 void Beat() noexcept;
 void Start() noexcept;
 } // namespace FreezeWatchdog
 
-//! Where the player is, for the crash map (urSovngarde-hub worker/LAUNCHER.md section 13): PlayerService notes it once
-//! a second as a finished line, and a crash report logs the last one as it is ("CrashPlace: ..."), reading no game
-//! memory while the game is crashing.
+//! Where the player is, for the crash map.
+//! PlayerService notes it once a second, and a crash logs the last note, so the handler reads no game memory.
 namespace CrashPlace
 {
-//! One thread notes (the game's); the text is copied, at most 383 characters.
+//! Called from the game thread only; copies at most 383 characters.
 void Note(const char* acpLine) noexcept;
 //! The last line noted, or null before the first.
 [[nodiscard]] const char* Last() noexcept;

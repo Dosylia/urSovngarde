@@ -106,10 +106,8 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
 
     FormIdComponent formIdComponent = remoteView.get<FormIdComponent>(*remoteIt);
 
-    // Not while this game is paused (the journal, the console). A projectile launched into a paused world hangs where it
-    // was made and everything launched meanwhile lands at once on unpause: on 2026-10-03 Seen had the journal and the
-    // console open from 09:12:55 to 09:14:04, three of Emma's arrows were launched on his side at 09:13:24-29, and he
-    // went down 0.13 s after closing them. A paused player is out of the fight on his own screen; so are the arrows.
+    // Not while this game is paused (the journal, the console).
+    // A projectile launched into a paused world hangs where it was made, and all of them land at once on unpause.
     if (const UI* pUI = UI::Get(); pUI && pUI->numPausesGame > 0)
     {
         static std::chrono::steady_clock::time_point s_nextSaid{};

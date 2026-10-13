@@ -24,8 +24,7 @@ struct OwnerComponent
 
     Player* pOwner;
     uint32_t OwnershipEpoch;
-    //! The player whose follower this actor is, by id (0: nobody's), as that player's game said when it asked for it
-    //! (RequestOwnershipClaim::Follower). Other players' claims do not take it while that player is connected.
+    //! Id of the player whose follower this is (0: none); others cannot claim it while that player is connected.
     uint32_t FollowerOfPlayerId{};
     Vector<const Player*> InvalidOwners{};
 };

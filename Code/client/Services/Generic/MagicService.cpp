@@ -39,13 +39,9 @@
 #ifdef SKYRIMVR
 namespace
 {
-// VR mods that use a spell or magic effect as a local control: VRIK's settings menu is a lesser power, and its
-// effect replayed on the other player opened the VRIK menu on their screen. Anything these plugins define stays
-// on the machine it was cast on. Real spells from other mods are unaffected.
-//
-// Conduit is teleport magic whose scripts move the player of the game they run in: on 2026-10-03 at 09:32 Seen cast
-// its spell 3100FB0C, Emma's game replayed the cast on his copy, and 0.95 s later Emma was teleported back into the
-// tower she had come from. A teleport is the caster's own business.
+// Plugins whose spells and magic effects stay on the machine they were cast on, because they are local controls.
+// VRIK's settings menu is a lesser power; replayed, it would open the menu on the other player's screen.
+// Conduit's teleport scripts move the player of the game they run in; replayed, they would teleport the other player.
 constexpr std::array<const char*, 5> kLocalControlPlugins{"vrik.esp", "Arctals VRIK Tweaks.esp", "higgs_vr.esp", "SpellWheelVR.esp", "Conduit.esp"};
 
 bool IsLocalControlForm(uint32_t aFormId) noexcept
@@ -140,9 +136,9 @@ void MagicService::OnSpellCastEvent(const SpellCastEvent& acEvent) const noexcep
 
     TESForm* pMagicForm = TESForm::GetById(acEvent.SpellId);
 
-    // Summoned creatures are replicated by their owning client (see IsPlayerSummon); replaying the
-    // summon cast elsewhere spawns a duplicate, unowned creature that fights the real one. Summon spells avoid
-    // this via projectile sync, but summon EnchantmentItems (Sanguine Rose, Staff of the Familiar) didn't (#791).
+    // Summoned creatures are replicated by their owning client (see IsPlayerSummon).
+    // Replaying the summon cast elsewhere spawns a duplicate, unowned creature that fights the real one.
+    // Summon spells avoid this via projectile sync; summon EnchantmentItems (Sanguine Rose, Staff of the Familiar) need this (#791).
     if (const MagicItem* pMagicItem = Cast<MagicItem>(pMagicForm); pMagicItem && pMagicItem->HasSummonEffect())
     {
         spdlog::debug("{}: not syncing summon cast {:X}, the summoned actor is synced by its owner", __FUNCTION__, acEvent.SpellId);
@@ -152,10 +148,8 @@ void MagicService::OnSpellCastEvent(const SpellCastEvent& acEvent) const noexcep
     SpellItem* pCastSpell = Cast<SpellItem>(pMagicForm);
 
 #ifdef SKYRIMVR
-    // A weapon's strike enchantment on the other player (touch delivery: Dawnbreaker's fire) is not sent as a cast. It
-    // is part of the strike, which travels as the hit and is weighed by the defender's rule; replayed as a cast in the
-    // other game, it burned him on every swing, the ones his blade stopped included (13 times, 16 to 74 each, while
-    // 26 of the strikes themselves were dropped on his blade, 2026-10-09).
+    // A weapon's strike enchantment on the other player (touch delivery, like Dawnbreaker's fire) is not sent as a cast.
+    // It is part of the strike, which travels as the hit and is weighed by the defender's rule; as a cast it would burn through parries.
     if (const EnchantmentItem* pEnchantment = Cast<EnchantmentItem>(pMagicForm); pEnchantment && pEnchantment->eDelivery == MagicSystem::TOUCH && acEvent.DesiredTargetID)
         if (Actor* pTarget = Cast<Actor>(TESForm::GetById(acEvent.DesiredTargetID)); pTarget && pTarget->GetExtension() && pTarget->GetExtension()->IsRemotePlayer())
         {
@@ -163,9 +157,8 @@ void MagicService::OnSpellCastEvent(const SpellCastEvent& acEvent) const noexcep
             return;
         }
 
-    // Powers and dragon shouts are fire-and-forget, so the concentration filter below dropped them and the other
-    // player never heard or felt a shout. They cast through the OTHER source with spell type POWER, LESSER_POWER or
-    // VOICE_POWER (TiltedEvolutionVR 20a62f9, confirmed at runtime 2026-08-29). Ported 2026-09-18.
+    // Powers and dragon shouts are fire-and-forget, so the concentration filter below would drop them.
+    // They cast through the OTHER source with spell type POWER, LESSER_POWER or VOICE_POWER (TiltedEvolutionVR 20a62f9).
     using ST = MagicSystem::SpellType;
     const bool cIsVoiceCast = pCastSpell && (pCastSpell->eSpellType == ST::POWER || pCastSpell->eSpellType == ST::LESSER_POWER || pCastSpell->eSpellType == ST::VOICE_POWER);
 #else
@@ -253,12 +246,7 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     }
 
     // The caster told us exactly which spell it cast, so that is what gets cast here.
-    //
-    // This used to read `magicItems[CastingSource]` first -- whatever happens to be staged in that hand on this
-    // side -- and only fall back to the id that was sent when the slot was empty. A staged spell is the right
-    // answer only while equipment sync is up to date: switch spells quickly, or let an equip message arrive late,
-    // and the other player's game replays the spell that was in that hand a moment ago instead of the one that
-    // was actually cast. The voice slot already had to be resolved this way on VR for the same reason.
+    // What is staged in that hand here is right only while equipment sync is current, so it is just a fallback.
     MagicItem* pSpell = nullptr;
 
     const uint32_t cSpellFormId = World::Get().GetModSystem().GetGameId(acMessage.SpellFormId);
@@ -275,8 +263,8 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
         MagicItem* pStaged = pActor->magicItems[acMessage.CastingSource];
 
 #ifdef SKYRIMVR
-        // magicItems[OTHER] on a remote actor holds whatever was last staged there, not necessarily the power or
-        // shout just used, so a voice cast is never resolved from it (TiltedEvolutionVR 20a62f9).
+        // magicItems[OTHER] on a remote actor holds whatever was last staged there, not necessarily the power or shout just used.
+        // So a voice cast is never resolved from it (TiltedEvolutionVR 20a62f9).
         if (acMessage.CastingSource == CS::OTHER)
             pStaged = nullptr;
 #endif
@@ -293,8 +281,7 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
         return;
     }
 
-    // Pairs with the sender's cast: what this side is about to cast for a remote caster (a staff of light was
-    // reported breaking things for the other player on 2026-09-18, and nothing here said what arrived).
+    // Pairs with the sender's cast: what this side is about to cast for a remote caster.
     spdlog::info("Remote spell cast: caster {:X}, spell {:X}, source {}, dual {}", pActor->formID, pSpell->formID, acMessage.CastingSource, acMessage.IsDualCasting);
 
 #ifdef SKYRIMVR
@@ -302,8 +289,7 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
         return;
 #endif
 
-    // Never replay a summon locally, whatever the sender decided: the creature arrives as a
-    // replicated actor from its owner.
+    // Never replay a summon locally, whatever the sender decided: the creature arrives as a replicated actor from its owner.
     if (pSpell->HasSummonEffect())
     {
         spdlog::debug("{}: ignoring remote summon cast {:X} from caster {:X}", __FUNCTION__, pSpell->formID, acMessage.CasterId);
@@ -336,9 +322,8 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     }
 
 #ifdef SKYRIMVR
-    // The other player's strike enchantment aimed at this player is part of a strike that arrives as a hit and is
-    // weighed by the defender's rule; replayed here, it hurt through every parry (see OnSpellCastEvent). Also refused
-    // here, for a game on a build that still sends it.
+    // The other player's strike enchantment on this player is part of the strike, which arrives as a hit (see OnSpellCastEvent).
+    // Also refused here, for a sender on a build that still sends it.
     if (const EnchantmentItem* pEnchantment = Cast<EnchantmentItem>(pSpell); pEnchantment && pEnchantment->eDelivery == MagicSystem::TOUCH && pDesiredTarget &&
                                                                              pDesiredTarget == PlayerCharacter::Get())
     {
@@ -357,9 +342,6 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     }
 
     pCaster->CastSpellImmediate(pSpell, false, pDesiredTarget, 1.0f, false, 0.0f);
-#ifdef SKYRIMVR
-    VRBodySync::LogCastOrigin(pActor, acMessage.CastingSource);
-#endif
 
     spdlog::debug("Successfully casted remote spell");
 }
@@ -386,8 +368,7 @@ void MagicService::OnInterruptCastEvent(const InterruptCastEvent& acEvent) const
     request.CasterId = localComponent.Id;
     request.CastingSource = acEvent.CastingSource;
 
-    // TEMPORARY (2026-10-08, info rather than debug): Seen's Sparks went on in Emma's game after he stopped casting.
-    spdlog::info("Interrupt cast sent: caster {:X} (server {:X}), source {}", formId, localComponent.Id, acEvent.CastingSource);
+    spdlog::debug("Interrupt cast sent: caster {:X} (server {:X}), source {}", formId, localComponent.Id, acEvent.CastingSource);
 
     m_transport.Send(request);
 }
@@ -425,7 +406,7 @@ void MagicService::OnNotifyInterruptCast(const NotifyInterruptCast& acMessage) c
 
     pCaster->InterruptCast();
 
-    spdlog::info("Interrupt cast received: copy {:X}, source {}, interrupted", pActor->formID, acMessage.CastingSource);
+    spdlog::debug("Interrupt cast received: copy {:X}, source {}, interrupted", pActor->formID, acMessage.CastingSource);
 }
 
 void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept

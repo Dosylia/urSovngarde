@@ -74,14 +74,10 @@ enum class GuessedType
     Float
 };
 
-// Which list a variable belongs in, from its name alone -- the graph's own type table is not mapped here, and guessing
-// Havok offsets on VR is not worth the risk for a diagnostic.
-//
-// It does not need to be perfect, only safe. TESObjectREFR reads and writes integer and float variables alike as the
-// raw 32-bit word (reinterpret_cast both ways), so filing one as the other still round-trips exactly. Only the bool
-// list loses anything, since it keeps 0 or 1. So a name goes there only when it says it is a bool. Checked against
-// the 757 variables of the 31 built-in descriptors on 2026-09-30: this rule put nothing in the bool list that was
-// not a bool.
+// Which list a variable belongs in, from its name alone, since the graph's own type table is not mapped here.
+// It only needs to be safe: TESObjectREFR moves int and float variables as the raw 32-bit word, so either list round-trips.
+// Only the bool list loses anything (it keeps 0 or 1), so a name goes there only when it says it is a bool.
+// On the 757 variables of the 31 built-in descriptors, this rule puts nothing in the bool list that is not a bool.
 GuessedType GuessType(const TiltedPhoques::String& acName) noexcept
 {
     const auto upperOrDigit = [](const char c) { return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; };
@@ -95,16 +91,11 @@ GuessedType GuessType(const TiltedPhoques::String& acName) noexcept
     return GuessedType::Float;
 }
 
-// A creature this mod has no descriptor for gets no animation sync at all: nothing of it is read, the other screen
-// gets an empty set, and the body slides wherever it goes. On 2026-09-27 that was three kinds of creature in
-// Apocrypha -- graph hashes 4d644aec1cadba38, 569b7acef002ee5e and d85347c754a5ac18, on Dragonborn forms -- which
-// have no descriptor among the 31 built in, and no replacer.
-//
-// A replacer can add one as data alone: ConstructModdedDescriptor needs no original, and builds the whole
-// descriptor from the variable lists. What it needs is the creature's variable names, which only the running game
-// has. So the first time a graph fails to match, its variables are written out here in the replacer folder format,
-// ready to review and copy into Data/SkyrimTogetherRebornBehaviors. Written under logs, which the loader never
-// reads, so nothing changes in play.
+// A creature with no descriptor gets no animation sync at all, and its body slides wherever it goes.
+// A replacer can add a descriptor as data alone (ConstructModdedDescriptor), but it needs the variable names only the game has.
+// So the first time a graph fails to match, its variables are written in the replacer folder format, ready for
+// Data/SkyrimTogetherRebornBehaviors.
+// They go under logs, which the loader never reads, so nothing changes in play.
 template <class TVariables> void CaptureUnmatchedBehaviour(const uint64_t aHash, Actor* apActor, const TVariables& acVariables) noexcept
 {
     static TiltedPhoques::Set<uint64_t> s_captured;
@@ -152,9 +143,8 @@ template <class TVariables> void CaptureUnmatchedBehaviour(const uint64_t aHash,
         writeList("Captured__int.txt", ints);
         writeList("Captured__float.txt", floats);
 
-        // The signature is the one thing that cannot be decided here: it has to be a variable no *other* graph
-        // has, or it becomes the next Cow/Deer/Goat tie. An iState_*Default is the usual choice; it is a
-        // candidate until the captures are compared.
+        // The signature cannot be decided here: it must be a variable no other graph has, or two creatures tie.
+        // An iState_*Default is the usual choice; it is only a candidate until the captures are compared.
         writeList("Captured__sig.txt", {states.empty() ? acVariables.begin()->second.c_str() : states.front()});
 
         std::ofstream about(folder / "about.txt");
@@ -478,20 +468,13 @@ const AnimationGraphDescriptor* BehaviorVar::Patch(BSAnimationGraphManager* apMa
 
     // Get all animation variables for this actor, then create a acReverseMap to go from strings to animation enum.
     //
-    // From the same graph the hash came from. For the player that is graph 0, whatever the manager's index says:
-    // on VR that index is past the end of the graph list (Emma's log, 2026-09-26), which is why the hash and the
-    // reader in TESObjectREFR both force 0. This dump did not, so it asked ResolveGraphIndex for the bad index,
-    // got it back unchanged, and returned nothing -- and an empty set of variables matches no replacer's
-    // signature. The player was fail-listed on both clients from 2026-09-26 onward (same hash, bd3c34a36bb1b9bd,
-    // on Emma's and Seen's), which is the day the reader was fixed and the player first got this far: the
-    // failure moved one step along, to the one call site that sweep missed. Every read after it gave up with
-    // "no descriptor", 275,164 of them in one session, and the other player saw a body sliding.
+    // The dump reads the same graph the hash came from. For the player that is graph 0, whatever the manager's index says.
+    // On VR the player's manager index is past the end of the graph list, so the hash and TESObjectREFR's reader also force 0.
     const int cGraphIndex = hexFormID == 0x14 ? 0 : -1;
     auto pDumpVar = apManager->DumpAnimationVariables(false, cGraphIndex);
 
-    // Said once per attempt (a failure is fail-listed for ten minutes, so this is rare), and it is the line that
-    // decides whether the above was the cause: a dump of zero variables was the old empty-graph failure, a dump of
-    // a few hundred that still matches nothing means the signature genuinely is not in that graph.
+    // Logged once per attempt; a failure is fail-listed for ten minutes, so this is rare.
+    // Zero variables means the wrong graph was read; a few hundred that match nothing means the signature is not in that graph.
     spdlog::info(__FUNCTION__ ": formID {:x} inspected graph {} of {} (manager index {}); {} variables found",
                  hexFormID, apManager->ResolveGraphIndex(cGraphIndex), apManager->animationGraphs.size, apManager->animationGraphIndex,
                  pDumpVar.size());
@@ -842,9 +825,8 @@ void BehaviorVar::Init()
     {
         static size_t firsttime = 0;
 
-        // A replacer without an original hash describes a creature this mod has no built-in behaviour for (Lurker and
-        // Netch, 2026-09-30), so there is no "self" among the built-in ones to find. Checking it anyway logged
-        // "failure to find self" as critical at every start, for two folders that were working as intended.
+        // A replacer without an original hash describes a creature with no built-in behaviour (Lurker, Netch).
+        // There is no "self" among the built-in ones to find, so the check is skipped.
         if (signature.origHash == 0)
         {
             spdlog::info(__FUNCTION__ ": {} is a creature of its own, with no built-in behaviour behind it; matched by signature {} alone", signature.creatureName, signature.signatureVar);
@@ -858,8 +840,7 @@ void BehaviorVar::Init()
         case 1: break;
 
         default:
-            // Expected for the vanilla creature behaviors: one line, with the details at debug level (they used to add
-            // over a hundred warning lines to every launch).
+            // Expected for the vanilla creature behaviors: one line, with the details at debug level.
             if (firsttime++ == 0)
                 spdlog::info(__FUNCTION__ ": some creatures have ambiguous behavior signatures (expected, details at debug level)");
 

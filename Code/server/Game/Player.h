@@ -43,8 +43,7 @@ struct Player
 
     void SetCellComponent(const CellIdComponent& aCellComponent) noexcept;
 
-    // For the public server page only (PublicStatusService): where the player's game says they are (PlayerPlaceRequest),
-    // and whether they asked, in the launcher, to be left out of the page (AuthenticationRequest).
+    // For the public server page (PublicStatusService): the player's reported place, and whether they hid from the page.
     [[nodiscard]] const String& GetPlace() const noexcept { return m_place; }
     void SetPlace(String aPlace) noexcept { m_place = std::move(aPlace); }
     [[nodiscard]] bool IsHiddenFromPublicPage() const noexcept { return m_hiddenFromPublicPage; }
@@ -58,8 +57,8 @@ struct Player
     [[nodiscard]] bool IsVoiceEnabled() const noexcept { return m_voiceEnabled; }
     void SetVoiceEnabled(bool aEnabled) noexcept { m_voiceEnabled = aEnabled; }
 
-    // When the last movement snapshot came from this client. A paused client sends none: the mod's update runs off
-    // the Papyrus VM, which the game suspends. Its actors are handed to whoever is near them meanwhile.
+    // When the last movement snapshot came from this client.
+    // A paused game sends none, so its actors go to nearby players meanwhile.
     [[nodiscard]] std::chrono::steady_clock::time_point GetLastMovementAt() const noexcept { return m_lastMovementAt; }
     void MarkMovement() noexcept { m_lastMovementAt = std::chrono::steady_clock::now(); }
 

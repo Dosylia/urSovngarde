@@ -52,9 +52,7 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
         {
             const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
             const auto* pCellComponent = m_world.try_get<CellIdComponent>(*it);
-            // A non-owner may still change an NPC's inventory through normal gameplay interactions
-            // such as pickpocketing or looting. The epoch and range checks keep the interaction tied
-            // to the currently visible incarnation of that NPC.
+            // A non-owner may still change a nearby NPC's inventory by pickpocketing or looting.
             isRemoteNpcInteraction = pOwner && pCharacterComponent && pCellComponent && !pCharacterComponent->IsPlayer()
                 && acMessage.pPlayer->GetCellComponent().IsInRange(*pCellComponent, pCharacterComponent->IsDragon());
 
@@ -86,14 +84,8 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     notify.OwnershipEpoch = message.OwnershipEpoch;
     notify.Item = message.Item;
 
-    // Never forwarded as a drop any more: DroppedItemService puts the item in the other worlds, where it actually
-    // lies, and remembers it. Forwarding the flag as well would make the dropper's copy drop a second one.
-    //
-    // (It was never forwarded in practice either. The setting that gated it, Gameplay:bEnableItemDrops, had its
-    // default changed to true on 2026-09-26, but every STServer.ini already said false, and a value in the ini beats
-    // a new default: 53 drops sent across every log, none received. The setting is gone, so it cannot be left off.)
+    // Never forwarded as a drop: DroppedItemService places the item, and the flag would drop a second one.
     notify.Drop = false;
-    (void)isRemoteNpcInteraction;
 
     const entt::entity cOrigin = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cOrigin, acMessage.GetSender()))
@@ -117,9 +109,7 @@ void InventoryService::OnEquipmentChanges(const PacketEvent<RequestEquipmentChan
         if (pOwnerComponent->GetOwner() != acMessage.pPlayer || pOwnerComponent->OwnershipEpoch != message.OwnershipEpoch)
         {
             const uint32_t ownerId = pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
-            // This was spdlog::debug, which never reaches the log file, and that is exactly why the client's
-            // equipment snapshot could be rejected on every single send for weeks while its own log line said
-            // "Equipment snapshot sent". A silent drop that is also an invisible log is not a diagnostic.
+            // ReportEpochDrop is the warning that reaches the log file.
             spdlog::debug("Rejected equipment change from player {:X} for actor {:X}; current owner is {:X} and requested epoch {} does not match {}", acMessage.pPlayer->GetId(), message.ServerId,
                           ownerId, message.OwnershipEpoch, pOwnerComponent->OwnershipEpoch);
             ReportEpochDrop("an equipment change", message.ServerId, message.OwnershipEpoch, pOwnerComponent->OwnershipEpoch);

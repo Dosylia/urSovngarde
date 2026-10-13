@@ -1,12 +1,12 @@
 // Address space reserved near the game image for SKSE plugin trampolines (VR).
 //
-// Plugin trampolines must be within +-2GB of the game image. Under this launcher the game's heaps
-// fill that window before late plugins (DynDOLOD at kDataLoaded) create theirs, which kills the game.
+// Plugin trampolines must be within +-2GB of the game image.
+// Under this launcher the game's heaps fill that window before late plugins (DynDOLOD at kDataLoaded) create theirs.
 //
 // A pool just below the image is reserved at startup, so ordinary allocations can't use it.
-// VirtualQuery reports the pool as free, and a VirtualAlloc at an explicit address inside it releases
-// that piece, allocates, and reserves the rest again. Only allocators asking for an address near the
-// image, i.e. trampolines, ever get pool memory.
+// VirtualQuery reports the pool as free.
+// A VirtualAlloc at an explicit address inside the pool releases that piece, allocates, and reserves the rest again.
+// Only allocators asking for an address near the image, such as trampolines, get pool memory.
 
 #include <Windows.h>
 #include <MinHook.h>
@@ -110,8 +110,8 @@ LPVOID WINAPI TP_VirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocatio
     const Piece piece = *pPiece;
     *pPiece = {};
     VirtualFree(reinterpret_cast<LPVOID>(piece.base), 0, MEM_RELEASE);
-    // Another thread could grab this range before the allocation below. The window is tiny and normal
-    // allocations are placed far lower, so this is accepted.
+    // Another thread could grab this range before the allocation below.
+    // The window is tiny and normal allocations are placed far lower, so this is accepted.
 
     const LPVOID result = RealVirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect);
 

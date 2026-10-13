@@ -26,13 +26,11 @@ namespace
 // Next to the server, where it is started from. Deleting it forgets every dropped item and nothing else.
 constexpr const char* kFile = "dropped_items.bin";
 constexpr uint32_t kMagic = 0x504F5244; // "DROP"
-// 2 added each item's rotation (2026-09-30, with moving items). A version 1 file is still read, rotation zero, so
-// the items remembered before the change are not lost with it.
+// Version 2 added each item's rotation. A version 1 file is still read, with rotation zero.
 constexpr uint64_t kVersion = 2;
 
-//! How close an announced item has to lie to one already known to be taken for the same item. An announced item is
-//! read from where it lies now, and a known one is where it was first reported -- the same object after a physics
-//! settle or a reload, so a generous radius: the matching item still has to be the same base, in the same cell.
+//! How close an announced item must lie to a known one of the same base and place to count as the same item.
+//! Generous, because the item may have settled or been reloaded since.
 constexpr float kSameItemRadius = 200.f;
 
 CellIdComponent CellOf(const DroppedItemService::Item& acItem) noexcept
@@ -54,7 +52,7 @@ DroppedItemService::DroppedItemService(World& aWorld, entt::dispatcher& aDispatc
     Load();
 }
 
-const DroppedItemService::Item* DroppedItemService::FindSame(const Inventory::Entry& acEntry, const GameId& acCellId, const GameId& acWorldSpaceId,
+const DroppedItemService::Item* DroppedItemService::FindSameItem(const Inventory::Entry& acEntry, const GameId& acCellId, const GameId& acWorldSpaceId,
                                                              const Vector3_NetQuantize& acPosition) const noexcept
 {
     for (const auto& [id, item] : m_items)
@@ -62,8 +60,7 @@ const DroppedItemService::Item* DroppedItemService::FindSame(const Inventory::En
         if (item.Entry.BaseId != acEntry.BaseId)
             continue;
 
-        // Outdoors the cell an item was recorded in can differ from the one it is announced from after it rolled over a
-        // border, so the worldspace is what has to agree; indoors the cell is the whole place.
+        // Outdoors an item can roll into another cell, so the worldspace must match; indoors the cell must.
         const bool samePlace = acWorldSpaceId ? item.WorldSpaceId == acWorldSpaceId : item.CellId == acCellId;
         if (samePlace && glm::distance(glm::vec3(item.Position), glm::vec3(acPosition)) <= kSameItemRadius)
             return &item;
@@ -78,14 +75,12 @@ void DroppedItemService::OnAdd(const PacketEvent<RequestDroppedItemAdd>& acMessa
     if (message.Item.BaseId == GameId{} || message.Item.Count == 0)
         return;
 
-    // An announcement may be an item the server already has: the player's own from an earlier session, or one the
-    // other player's save still holds. Answering with the known id lets the announcing client adopt it instead of the
-    // item being counted twice.
+    // An announced item may already be known: answering with its id lets the client adopt it instead of doubling it.
     if (message.Announcement)
     {
-        if (const Item* pKnown = FindSame(message.Item, message.CellId, message.WorldSpaceId, message.Position))
+        if (const Item* pKnown = FindSameItem(message.Item, message.CellId, message.WorldSpaceId, message.Position))
         {
-            Send(acMessage.pPlayer, *pKnown);
+            SendItem(acMessage.pPlayer, *pKnown);
             return;
         }
     }
@@ -93,7 +88,7 @@ void DroppedItemService::OnAdd(const PacketEvent<RequestDroppedItemAdd>& acMessa
     Item item{};
     item.Id = m_nextId++;
     item.Entry = message.Item;
-    // A drop is sent as the inventory change that made it, which is negative; the item on the floor is a count.
+    // A drop arrives as a negative inventory change; the item on the floor is a count.
     item.Entry.Count = std::abs(item.Entry.Count);
     item.CellId = message.CellId;
     item.WorldSpaceId = message.WorldSpaceId;
@@ -108,13 +103,12 @@ void DroppedItemService::OnAdd(const PacketEvent<RequestDroppedItemAdd>& acMessa
                  message.Announcement ? " (announced from an earlier drop)" : "", item.CellId.BaseId, item.WorldSpaceId.BaseId, item.Position.x,
                  item.Position.y, item.Position.z);
 
-    // To the dropper as well: its client adopts the item it just dropped under this id, which is how a later pickup
-    // on either side can name it.
+    // Sent to the dropper as well, so its client learns the item's id.
     const CellIdComponent cell = CellOf(it->second);
     for (Player* pPlayer : m_world.GetPlayerManager())
     {
         if (pPlayer == acMessage.pPlayer || pPlayer->GetCellComponent().IsInRange(cell, false))
-            Send(pPlayer, it->second);
+            SendItem(pPlayer, it->second);
     }
 }
 
@@ -128,8 +122,7 @@ void DroppedItemService::OnRemove(const PacketEvent<RequestDroppedItemRemove>& a
     m_items.erase(it);
     Save();
 
-    // To everyone, not only those in range: a player out of range may still hold it in their save, and would
-    // otherwise find it lying there when they come back.
+    // Sent to everyone, not only those in range: a player out of range may still have it in their save.
     NotifyDroppedItemRemoved notify{};
     notify.Id = acMessage.Packet.Id;
     for (Player* pPlayer : m_world.GetPlayerManager())
@@ -146,8 +139,7 @@ void DroppedItemService::OnMove(const PacketEvent<RequestDroppedItemMove>& acMes
     it->second.Position = message.Position;
     it->second.Rotation = message.Rotation;
 
-    // Written to disk only once it stops: a held item sends ten of these a second, and only where it ends up needs to
-    // outlive a restart.
+    // Written to disk only once it stops, not on every update of a held item.
     if (message.AtRest)
         Save();
 
@@ -165,8 +157,7 @@ void DroppedItemService::OnMove(const PacketEvent<RequestDroppedItemMove>& acMes
     }
 }
 
-// A placed world object moved by a player's hand (2026-10-03: a bottle carried around the castle and a cart pushed,
-// neither seen by the other player). Relayed to everyone in range, and remembered once it stops.
+// A placed world object moved by a player's hand: relayed to everyone in range, and remembered once it stops.
 void DroppedItemService::OnObjectMove(const PacketEvent<RequestWorldObjectMove>& acMessage) noexcept
 {
     const auto& message = acMessage.Packet;
@@ -192,8 +183,7 @@ void DroppedItemService::OnObjectMove(const PacketEvent<RequestWorldObjectMove>&
     }
 }
 
-// The packet, not the player's cell component: another service updates that component from the same packet, and the
-// order the two run in is not something to rely on.
+// Reads the packet, not the player's cell component, which another service updates from the same packet in no set order.
 void DroppedItemService::OnEnterInteriorCell(const PacketEvent<EnterInteriorCellRequest>& acMessage) const noexcept
 {
     SendInRange(acMessage.pPlayer, CellIdComponent{acMessage.Packet.CellId});
@@ -213,11 +203,11 @@ void DroppedItemService::OnShiftGridCell(const PacketEvent<ShiftGridCellRequest>
 
 void DroppedItemService::SendInRange(Player* apPlayer, const CellIdComponent& acViewer) const noexcept
 {
-    // A client ignores an id it already has, so sending again on every cell change is cheap and needs no bookkeeping.
+    // A client ignores ids it already has, so resending on every cell change is cheap.
     for (const auto& [id, item] : m_items)
     {
         if (acViewer.IsInRange(CellOf(item), false))
-            Send(apPlayer, item);
+            SendItem(apPlayer, item);
     }
 
     for (const auto& [key, place] : m_objects)
@@ -237,7 +227,7 @@ void DroppedItemService::SendInRange(Player* apPlayer, const CellIdComponent& ac
     }
 }
 
-void DroppedItemService::Send(Player* apPlayer, const Item& acItem) const noexcept
+void DroppedItemService::SendItem(Player* apPlayer, const Item& acItem) const noexcept
 {
     NotifyDroppedItem notify{};
     notify.Id = acItem.Id;
@@ -305,7 +295,7 @@ void DroppedItemService::Load() noexcept
     const uint64_t version = TiltedPhoques::Serialization::ReadVarInt(reader);
     if (magic != kMagic || version < 1 || version > kVersion)
     {
-        // A file from a different layout is not read at all: guessing at it could place nonsense in both worlds.
+        // A file with an unknown layout is not read: guessing could place nonsense in every world.
         spdlog::warn("{} is not a list of dropped items this server can read (version {}, up to {} known); starting without it", kFile, version, kVersion);
         return;
     }

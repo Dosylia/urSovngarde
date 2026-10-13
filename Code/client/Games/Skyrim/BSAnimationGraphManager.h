@@ -32,15 +32,13 @@ struct BSAnimationGraphManager
 
     //! Which entry of animationGraphs to actually read.
     //!
-    //! On VR `animationGraphIndex` does not hold an index. Emma's log of 2026-09-26 15:04 has it reading
-    //! 1,099,950,232 and 2,234,779,136 against a list of **one** graph, five thousand times per ten seconds --
-    //! the SE offset (0xB0) points at something else there. Every actor observed failing had exactly one graph,
-    //! and for a list of one there is only one answer.
+    //! On VR the SE offset (0xB0) of `animationGraphIndex` holds something else, often far out of range.
+    //! With a single graph in the list, that graph is the answer.
     //! @param aForceIndex A caller that already knows which graph it wants (the player always wants 0); -1 to ask.
     uint32_t ResolveGraphIndex(int aForceIndex = -1) const noexcept;
 
-    //! @param aForceIndex As for GetDescriptorKey, and it must match it: the dump and the hash have to describe the
-    //! same graph, or a signature is looked for in one graph and keyed to another.
+    //! @param aForceIndex As for GetDescriptorKey, and it must match it.
+    //! The dump and the hash must describe the same graph, or a signature is looked for in one graph and keyed to another.
     SortedMap<uint32_t, String> DumpAnimationVariables(bool aPrintVariables, int aForceIndex = -1);
     uint64_t GetDescriptorKey(int aForceIndex = -1);
     uint32_t ReSendEvent(BSFixedString* apEventName);

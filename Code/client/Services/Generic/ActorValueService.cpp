@@ -44,8 +44,8 @@ ActorValueService::ActorValueService(World& aWorld, entt::dispatcher& aDispatche
     m_dispatcher.sink<NotifyDeathStateChange>().connect<&ActorValueService::OnDeathStateChange>(this);
 }
 
-// The least health a remote player's copy is ever given. See StandingValues in CharacterService: a copy at 1 went
-// down on the first hit and was never drawn again (2026-09-20).
+// The least health a remote player's copy is ever given (see StandingValues in CharacterService).
+// A copy at 1 health goes down on the next hit and stops being drawn.
 constexpr float kRemotePlayerHealthFloor = 25.f;
 
 void ActorValueService::CreateActorValuesComponent(const entt::entity aEntity, Actor* apActor) noexcept
@@ -119,16 +119,8 @@ void ActorValueService::BroadcastActorValues() noexcept
     if (!m_transport.IsConnected())
         return;
 
-    // Only changes go on the wire, which is right until the other side misses one -- and there is a window where
-    // it always does. On 2026-09-26 at 10:48 Seen died and respawned; his health went -275 -> 315 while Emma's
-    // copy of him did not yet exist, so that change was delivered to nobody. The copy was then created, took a
-    // stale death delta down to -275, was floored to 25 by the "a copy never goes down" rule, and sat at 25 --
-    // an eighth of a bar -- for ninety seconds, until Seen's health next happened to change. Emma watched it
-    // creep back up on its own and read it as him healing.
-    //
-    // So the three values a health bar is made of are re-sent every few seconds whether or not they moved. Three
-    // floats every three seconds per player is nothing, and it makes every copy self-correcting: a missed change,
-    // a floored value, a copy that regenerated on its own, all repaired within one period instead of never.
+    // Only changes are sent, so a copy that misses one stays wrong until the next change.
+    // A player's health, magicka and stamina are therefore re-sent every three seconds.
     static std::chrono::steady_clock::time_point s_nextRefresh{};
     const auto refreshNow = std::chrono::steady_clock::now();
     const bool cRefresh = refreshNow >= s_nextRefresh;
@@ -180,8 +172,7 @@ void ActorValueService::BroadcastActorValues() noexcept
             }
         }
 
-        // Only for a player: an NPC's copy is repaired by the correction in OnNotifyActorValueChanges when its
-        // owner's snapshot next arrives, and there are far more of them than there are players.
+        // Players only: NPC copies are corrected in OnActorValueChanges, and there are far more of them.
         if (cRefresh && isPlayer)
         {
             for (const uint32_t key : {uint32_t(ActorValueInfo::kHealth), uint32_t(ActorValueInfo::kMagicka), uint32_t(ActorValueInfo::kStamina)})
@@ -329,15 +320,13 @@ void ActorValueService::RunActorValuesUpdates() noexcept
 
 namespace
 {
-// The defender's rule (Physics queue P4; agreed 2026-10-06: the defender's screen decides whether a hit was blocked).
-// This game shows the other player's VR pose 225 ms after it happened (CharacterService::RunRemoteUpdates), so a hit
-// that happened at tick t in the attacker's game is seen here at t + 225. It is held until a little after that, and
-// dropped if this player's hand, or what it held, met that player's weapon around that moment.
+// The defender's rule: the defender's game decides whether a hit was blocked.
+// The other player's VR pose shows here 225 ms late (CharacterService::RunRemoteUpdates), so a hit at tick t is seen at t + 225.
+// The hit is held until then, and dropped if this player's hand or held item met that player's weapon around then.
 constexpr uint64_t kHitSeenAfter = 225;
-// The blades meet before the hit would have landed (the blade still had to reach the body), and a contact is only
-// taken at the next frames. Measured in the first fight between two headsets (2026-10-06): where the defender's game
-// saw a clash near a hit that landed, it came 120-290 ms before the hit's own tick (6 hits out of 6 within 300 ms;
-// two more 420-460 ms before), so a clash from 300 ms before the hit happened up to 100 ms after it was seen here.
+// Blades meet before the hit lands, and a contact is only taken in the next frames.
+// Measured between two headsets, a blocking clash comes 120-290 ms before the hit's own tick.
+// So a clash counts from 300 ms before the hit happened up to 100 ms after it was seen here.
 constexpr uint64_t kBlockBefore = kHitSeenAfter + 300;
 constexpr uint64_t kBlockAfter = 100;
 } // namespace
@@ -407,8 +396,7 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
             m_heldHits.push_back(held);
             return;
         }
-        // TEMPORARY (2026-10-08): none of Seen's 28 hits on Emma reached her defender's rule, while all 42 of hers on
-        // him reached his; she was the host, her character server id 0. Says where such a hit goes instead.
+        // TEMPORARY diagnostic: says where another player's hit goes when it does not land on this player.
         spdlog::info("PvP: a hit of {:.0f} from player {} on server id {:X} received; it is {} here, not this player", -acMessage.DeltaHealth, acMessage.AttackerPlayerId,
                      acMessage.Id, pActor ? fmt::format("actor {:X}", pActor->formID) : std::string("no actor"));
     }
@@ -427,9 +415,8 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
 
     float newHealth = pActor->GetActorValue(ActorValueInfo::kHealth) + acMessage.DeltaHealth;
 
-    // A player's copy is essential: at zero it goes down. Only its owner's game decides when that player is down (and
-    // a respawn replaces the copy anyway), so the copy keeps a margin: 1 was not enough, one more hit took it down
-    // (2026-09-20, two copies hittable but not seen).
+    // A player's copy is essential and goes down at zero, but only its owner's game decides when that player is down.
+    // So the copy keeps a margin above zero, enough to take another hit.
     if (pActor->GetExtension() && pActor->GetExtension()->IsRemotePlayer() && newHealth < kRemotePlayerHealthFloor)
     {
         spdlog::info("Remote player {:X} copy kept at {:.0f} health instead of {:.0f}; its owner decides", pActor->formID, kRemotePlayerHealthFloor, newHealth);
@@ -442,14 +429,12 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
     if (!pActor->IsDead() && health <= 0.f)
     {
         ActorExtension* pExtension = pActor->GetExtension();
-        // Players should never be killed. Nor should an actor that is bleeding out: that is the game's downed
-        // state, it is recoverable, and an essential NPC lives there rather than dying.
+        // Players should never be killed.
+        // Nor should an actor that is bleeding out: that downed state is recoverable, and essential NPCs stay there.
         if (pExtension && !pExtension->IsPlayer() && !pActor->actorState.IsBleedingOut())
         {
-            // An essential NPC refuses to die, so IsDead() stays false and the next health broadcast tries again.
-            // On 2026-09-24 that was 236 attempts on Commander Caius in two minutes, plus 38 on another actor,
-            // each one re-entering the death transition. After a few refusals this actor is left alone: whatever
-            // it is, this client cannot kill it, and hammering it only disturbs its ragdoll and its recovery.
+            // An essential NPC refuses to die, so IsDead() stays false and every later health broadcast would try again.
+            // After three refusals the actor is left to its owner; repeated kills only disturb its ragdoll and recovery.
             static TiltedPhoques::Map<uint32_t, uint32_t> s_refused;
             auto& refusals = s_refused[pActor->formID];
             if (refusals < 3)
@@ -477,10 +462,8 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
 
 void ActorValueService::StartCombatWithAttacker(Actor* apActor, uint32_t aAttackerPlayerId, float aDeltaHealth) const noexcept
 {
-    // An NPC's combat belongs to whoever owns it, and until now a hit from the other player arrived as a bare health
-    // delta with no attacker. So a guard that a crime made hostile to one player ignored the other player entirely,
-    // however hard they hit it (2026-09-23: "npc i triggered by being a criminal only wanted to fight me, despite
-    // both of us fighting them"). The server now names the attacker and this puts them in the NPC's combat.
+    // An NPC's combat runs on its owner, so a hit from another player must put that player into it.
+    // Otherwise an NPC hostile to one player ignores the other, however hard they hit it.
     if (!apActor || !aAttackerPlayerId)
         return;
 
@@ -556,10 +539,8 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
         if (key == ActorValueInfo::kDragonSouls)
             continue;
 
-        // Every actor value is copied to a player's copy, and invisibility is one of them (54). A copy with it above
-        // zero is exactly the bug of 2026-09-20 21:12, 21:20 and 21:27: standing there, hittable, animating, full
-        // health, 3D intact, not drawn, cured only by a reconnect that rebuilds the copy from a fresh snapshot.
-        // The other player must always see the body; whatever hides the owner on his own screen stays there.
+        // A player's copy never takes invisibility (actor value 54): it would stay hittable but undrawn until a reconnect.
+        // Whatever hides the owner on his own screen stays there.
         if (isRemotePlayer && key == ActorValueInfo::kInvisibility)
         {
             if (value != 0.f)
@@ -567,11 +548,9 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
             continue;
         }
 
-        // Health used to be skipped for everyone. A remote player's copy then only ever lost health (the damage
-        // deltas arrive, the healing never did), and the copy is essential with no bleedout recovery, so once that
-        // stale health hit zero the copy lay down in the grass for good: "his body is gone, I can still see his spell
-        // light", cured only by his reconnect (2026-09-18 21:56, 09-19 09:14 and 10:26). The owner's own health is
-        // the truth for a player copy; NPC copies keep the delta path, which also carries their deaths.
+        // A player's copy takes its owner's health as the truth.
+        // With damage deltas alone it never heals, and at zero the essential copy lies down for good.
+        // NPC copies keep the delta path, which also carries their deaths.
         if (key == ActorValueInfo::kHealth)
         {
             if (pActor->IsDead())
@@ -579,16 +558,9 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
 
             if (!isRemotePlayer)
             {
-                // An NPC's health here is only ever the sum of the damage deltas that happened to arrive. Nothing
-                // repairs it: a delta lost to a starved stream, a hit applied on one side only, an owner handover
-                // mid-fight, and this side's number drifts away from the owner's for as long as the actor lives.
-                // The owner's snapshot is the truth, so it is used -- but only as a correction, not as a constant
-                // override, because the delta path is what carries a death and the two would otherwise fight
-                // every frame.
-                //
-                // Deliberately blunt: a small difference is normal mid-combat and is left alone, and only a gap
-                // big enough to matter is closed. Every correction is logged, so a session says whether this is
-                // firing sanely or papering over a stream that is dropping deltas.
+                // An NPC's health here is only the sum of the damage deltas that arrived, so it drifts when one is lost.
+                // Only a gap that matters is corrected: the delta path carries deaths, and the two would fight every frame.
+                // Corrections are logged, to show whether deltas are being dropped.
                 const float current = pActor->GetActorValue(ActorValueInfo::kHealth);
                 const float gap = std::abs(current - value);
                 constexpr float cWorthCorrecting = 25.f;
@@ -611,10 +583,8 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
             if (std::abs(current - value) >= 10.f)
                 spdlog::info("Remote player {:X} copy health corrected from {:.0f} to the owner's {:.0f}", pActor->formID, current, value);
 
-            // The owner's own death arrives here as a health at or below zero (-4 at 19:52:54, -1 and -16 at 19:57:24
-            // on 2026-09-19). Applied as is, it put the copy into its unrecoverable bleedout, and the owner's respawn
-            // then handed the fresh copy the same stored value (see StandingValues in CharacterService). A copy never
-            // goes down; the owner's game decides, and his respawn replaces the copy.
+            // The owner's death arrives as health at or below zero, which would put the copy into an unrecoverable bleedout.
+            // A copy never goes down: the owner's game decides, and the respawn replaces the copy.
             if (value < kRemotePlayerHealthFloor)
             {
                 spdlog::info("Remote player {:X} copy kept at {:.0f} health instead of the owner's {:.0f}; a copy never goes down", pActor->formID, kRemotePlayerHealthFloor, value);
@@ -689,11 +659,8 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         }
     }
 
-    // Every way out of here is named. Seen's session of 2026-09-30: Emma's client sent the death of a Mist Watch bandit
-    // (server id 50000D) at 19:41:36, the server forwarded it (it reports every death it drops, and reported none),
-    // and Seen's side logged nothing at all -- no death applied, no epoch miss. Three exits below were silent, and
-    // "we never had that character", "it had no actor" and "it was already dead here" are three different bugs.
-    // Rate limited: a death arrives once per actor, so this is a handful of lines per session.
+    // Every exit below logs why: "no copy here", "no actor" and "already dead here" are different bugs.
+    // Rate limited; a death arrives once per actor, so this is a handful of lines per session.
     const auto say = [&acMessage](const char* acpWhy)
     {
         static std::chrono::steady_clock::time_point s_next{};
@@ -731,9 +698,8 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
     }
     else
     {
-        // Not a failure -- the copy got there on its own, from a hit landed on this side -- but it means the body fell
-        // here, under this side's ragdoll, and will lie somewhere other than the owner's. Worth knowing when a body is
-        // reported "not synced after it died".
+        // Not a failure: the copy died from a hit landed on this side.
+        // Its body then falls under this side's ragdoll and lies elsewhere than the owner's.
         spdlog::info("Death sync: remote actor {:X} was already {} here when its owner's word arrived", pActor->formID, acMessage.IsDead ? "dead" : "alive");
     }
 }

@@ -7,8 +7,7 @@ struct VoiceDataRequest;
 struct VoiceStateRequest;
 
 /**
- * @brief Passes players' voices on (VR_TODO, "Proximity voice chat", step 2): each piece goes, unreliable, to the
- * players with voice on who are near enough to hear it, and to the speaker's party at any distance. Nothing is kept.
+ * @brief Relays each voice piece, unreliable, to nearby players with voice on and to the speaker's party.
  */
 struct VoiceService
 {
@@ -31,8 +30,8 @@ private:
     };
 
     World& m_world;
-    // Per speaker: pieces this second. Steam gives about 17 a second while talking; a client sending far more is
-    // broken or abusing the server, and the rest of its second is dropped.
+    // Pieces per speaker this second; past the limit the rest of the second is dropped.
+    // Steam sends about 17 a second while talking.
     Map<uint32_t, Budget> m_budgets;
 
     entt::scoped_connection m_voiceStateConnection;

@@ -11,12 +11,8 @@ struct UpdateEvent;
 struct PlayerPlaceRequest;
 
 /**
- * @brief Pushes this server's status (name, player count, character names and where they are) to the urSovngarde hub,
- * which the website's public server page reads. Only with LiveServices:bPublicStatus=true in STServer.ini, so a
- * friend's private server never publishes anything.
- *
- * The status is built on the game thread and sent from a thread of its own: a slow or unreachable hub never holds up
- * the game. A push that fails is dropped; the next one carries the newer status anyway.
+ * @brief Pushes this server's status (name, players and their places) to the website's public server page.
+ * Only with LiveServices:bPublicStatus=true; sent from its own thread so a slow hub never holds up the game.
  */
 struct PublicStatusService
 {
@@ -33,9 +29,9 @@ private:
     [[nodiscard]] std::string BuildStatus() noexcept;
     [[nodiscard]] std::string BuildOfflineStatus() const noexcept;
     [[nodiscard]] const std::string& TokenOf(uint32_t aPlayerId) noexcept;
-    void Queue(std::string aBody) noexcept;
-    void Run() noexcept;
-    bool Post(const std::string& acBody, std::chrono::seconds aTimeout) noexcept;
+    void QueueStatus(std::string aBody) noexcept;
+    void SendLoop() noexcept;
+    bool PostStatus(const std::string& acBody, std::chrono::seconds aTimeout) noexcept;
 
     World& m_world;
     entt::scoped_connection m_updateConnection;
@@ -46,14 +42,12 @@ private:
     std::string m_origin;
     std::string m_path;
     std::string m_startedAt;
-    // The fields that do not change between pushes, as last sent, for the "online": false push at shutdown: by then
-    // GameServer::Get() is already null. Game thread only.
+    // The unchanging fields as last sent, for the shutdown push when GameServer::Get() is already null. Game thread only.
     std::string m_header;
     std::chrono::steady_clock::time_point m_lastPush{};
     std::chrono::steady_clock::time_point m_nextPush{};
     uint32_t m_lastPlayerCount{0};
-    // A random token per connection, so the page can move a marker instead of redrawing it. Not the player's id, which
-    // counts up and so tells how many people joined before.
+    // A random token per connection, so the page can move a marker; the player id would reveal how many joined before.
     TiltedPhoques::Map<uint32_t, std::string> m_tokens;
     std::mt19937 m_random;
 

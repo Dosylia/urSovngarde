@@ -2,8 +2,7 @@
 
 #include "Message.h"
 
-//! Another player's bow has an arrow on its string, or no longer has one (ArrowNockedRequest, passed on by the server
-//! to the players near them). The receiver attaches or detaches the arrow on that player's copy.
+//! Another player's bow gained or lost its nocked arrow (a relayed ArrowNockedRequest); the receiver updates the copy.
 struct NotifyArrowNocked final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifyArrowNocked;

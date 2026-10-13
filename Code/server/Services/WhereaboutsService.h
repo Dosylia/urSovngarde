@@ -4,8 +4,8 @@ struct World;
 struct UpdateEvent;
 
 /**
- * @brief Every two seconds, tells every player where every player is (NotifyPlayerWhereabouts), for the markers on
- * the map and the compass. Their games already know who is in their party.
+ * @brief Every two seconds, tells every player where every player is (NotifyPlayerWhereabouts).
+ * Clients already know who is in their party.
  */
 struct WhereaboutsService
 {

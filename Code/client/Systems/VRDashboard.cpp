@@ -18,8 +18,8 @@
 
 namespace
 {
-// CEF paints into the dashboard's shared frame buffer. Everything touching D3D11 or OpenVR happens in
-// VRDashboard::Update on the main thread.
+// CEF paints into the dashboard's shared frame buffer.
+// Everything touching D3D11 or OpenVR happens in VRDashboard::Update on the main thread.
 struct DashboardRenderHandler final : TiltedPhoques::OverlayRenderHandler
 {
     explicit DashboardRenderHandler(VRDashboard& aDashboard)
@@ -89,8 +89,8 @@ TiltedPhoques::OverlayRenderHandler* VRDashboard::Create()
 
 bool VRDashboard::InitializeOverlay() noexcept
 {
-    // The game has already initialized OpenVR through its own openvr_api.dll. Asking that DLL for the interfaces
-    // shares the game's session; a second copy of the library would not be connected to SteamVR.
+    // The game has already initialized OpenVR through its own openvr_api.dll.
+    // Asking that DLL for the interfaces shares the game's session; a second copy of the library would not reach SteamVR.
     HMODULE hOpenVR = GetModuleHandleW(L"openvr_api.dll");
     if (!hOpenVR)
         return false;
@@ -162,9 +162,8 @@ bool VRDashboard::InitializeOverlay() noexcept
     m_pOverlay->SetOverlayMouseScale(m_handle, &mouseScale);
     m_pOverlay->SetOverlayFlag(m_handle, vr::VROverlayFlags_SendVRSmoothScrollEvents, true);
 
-    // Tab icon, drawn here so it needs no image file: a gold Skyrim-style diamond with a dark centre on a dark
-    // rounded square, readable at the dashboard's thumbnail size. The plain gold square it replaces was asked
-    // to become a proper icon on 2026-09-19.
+    // Tab icon, drawn here so it needs no image file.
+    // A gold diamond with a dark centre on a dark rounded square, readable at the dashboard's thumbnail size.
     constexpr int32_t kIconSize = 64;
     std::vector<uint8_t> icon(static_cast<size_t>(kIconSize) * kIconSize * 4);
     for (int32_t y = 0; y < kIconSize; ++y)
@@ -232,8 +231,7 @@ void VRDashboard::Update(OverlayService& aOverlay) noexcept
 
     ProcessEvents(aOverlay);
 
-    // The page only renders while the dashboard tab is open. Rendering it all the time cost frame time for a
-    // menu nobody was looking at.
+    // The page only renders while the dashboard tab is open, to save frame time.
     if (OverlayApp* pApp = aOverlay.GetOverlayApp())
     {
         const auto pBrowser = pApp->GetClient() ? pApp->GetClient()->GetBrowser() : nullptr;
@@ -242,8 +240,8 @@ void VRDashboard::Update(OverlayService& aOverlay) noexcept
             m_browserHidden = !m_visible;
             pBrowser->GetHost()->WasHidden(m_browserHidden);
 
-            // The page is the flat-screen UI at 1600x900: on a 2.5 m panel its menu was a small box in one corner
-            // (2026-09-19). Chrome zoom scales everything on it; each level is x1.2, so 3 is about 173%.
+            // The page is the flat-screen UI at 1600x900, so on a 2.5 m panel its menu is a small box in one corner.
+            // Chrome zoom scales everything on it; each level is x1.2, so 3 is about 173%.
             static bool s_zoomed = false;
             if (m_visible && !s_zoomed)
             {
@@ -258,7 +256,6 @@ void VRDashboard::Update(OverlayService& aOverlay) noexcept
     if (m_visible)
     {
         UploadFrame();
-        SnapshotPage();
     }
 
     const int keyboardRequest = m_keyboardRequest.exchange(0);
@@ -297,8 +294,8 @@ void VRDashboard::UploadFrame() noexcept
         m_frame.Dirty = false;
     }
 
-    // Nothing ever presents on this device, so D3D11 would keep the upload queued indefinitely and SteamVR would
-    // read a blank shared texture. Flush so the pixels are on the GPU before the compositor opens it.
+    // Nothing ever presents on this device, so without a flush the upload stays queued and SteamVR reads a blank texture.
+    // Flush so the pixels are on the GPU before the compositor opens it.
     m_pContext->Flush();
 
     vr::Texture_t texture{m_pTexture, vr::TextureType_DirectX, vr::ColorSpace_Auto};
@@ -310,63 +307,6 @@ void VRDashboard::UploadFrame() noexcept
         spdlog::info("VRDashboard: page frame sent to SteamVR (result {}), {}% of the page has content", static_cast<int>(error),
                      visiblePixels * 100 / (static_cast<size_t>(kWidth) * kHeight));
     }
-}
-
-// TEMPORARY menu diagnostic: the tab showed an empty panel. Two seconds after it opens, save what the page drew to
-// logs\dashboard_frame.bmp (once per session) and log how much of it has content. Remove once the menu works.
-void VRDashboard::SnapshotPage() noexcept
-{
-    if (m_snapshotTaken || std::chrono::steady_clock::now() - m_shownAt < std::chrono::seconds(2))
-        return;
-    m_snapshotTaken = true;
-
-    std::vector<uint8_t> pixels;
-    {
-        std::scoped_lock lock(m_frame.Lock);
-        pixels = m_frame.Pixels;
-    }
-
-    size_t visible = 0;
-    uint32_t minX = kWidth, minY = kHeight, maxX = 0, maxY = 0;
-    for (uint32_t y = 0; y < kHeight; ++y)
-    {
-        for (uint32_t x = 0; x < kWidth; ++x)
-        {
-            if (pixels[(static_cast<size_t>(y) * kWidth + x) * 4 + 3] == 0)
-                continue;
-            ++visible;
-            minX = std::min(minX, x);
-            minY = std::min(minY, y);
-            maxX = std::max(maxX, x);
-            maxY = std::max(maxY, y);
-        }
-    }
-
-    const auto path = TiltedPhoques::GetPath() / "logs" / "dashboard_frame.bmp";
-    std::ofstream file(path, std::ios::binary);
-    if (file)
-    {
-        BITMAPFILEHEADER fileHeader{};
-        BITMAPINFOHEADER infoHeader{};
-        infoHeader.biSize = sizeof(infoHeader);
-        infoHeader.biWidth = kWidth;
-        infoHeader.biHeight = -kHeight; // top-down
-        infoHeader.biPlanes = 1;
-        infoHeader.biBitCount = 32;
-        infoHeader.biCompression = BI_RGB;
-        fileHeader.bfType = 0x4D42;
-        fileHeader.bfOffBits = sizeof(fileHeader) + sizeof(infoHeader);
-        fileHeader.bfSize = fileHeader.bfOffBits + static_cast<DWORD>(pixels.size());
-        file.write(reinterpret_cast<const char*>(&fileHeader), sizeof(fileHeader));
-        file.write(reinterpret_cast<const char*>(&infoHeader), sizeof(infoHeader));
-        file.write(reinterpret_cast<const char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
-    }
-
-    if (visible)
-        spdlog::info("VRDashboard: 2 s after opening, {}% of the page has content, between ({}, {}) and ({}, {}); saved to {}", visible * 100 / (static_cast<size_t>(kWidth) * kHeight),
-                     minX, minY, maxX, maxY, path.string());
-    else
-        spdlog::info("VRDashboard: 2 s after opening, the page is still completely transparent (nothing drawn); saved to {}", path.string());
 }
 
 void VRDashboard::ProcessEvents(OverlayService& aOverlay) noexcept
@@ -413,7 +353,6 @@ void VRDashboard::ProcessEvents(OverlayService& aOverlay) noexcept
             spdlog::info("VRDashboard: tab opened (in game: {})", aOverlay.GetInGame());
             m_visible = true;
             m_logNextUpload = true;
-            m_shownAt = std::chrono::steady_clock::now();
             aOverlay.SetActive(true);
             // CEF may not repaint an unchanged page when it is shown again: resend the last frame.
             std::scoped_lock lock(m_frame.Lock);

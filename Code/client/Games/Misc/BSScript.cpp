@@ -32,9 +32,8 @@ void TP_MAKE_THISCALL(HookRegisterPapyrusFunction, BSScript::IVirtualMachine, Na
 void TP_MAKE_THISCALL(HookBindEverythingToScript, BSScript::IVirtualMachine*)
 {
 #ifdef SKYRIMVR
-    // RegisterPapyrusFunction (104788) has no VR address, which left every PAPYRUS_FUNCTION null.
-    // It is the VM's BindNativeMethod (vtable slot 0x18), so hook it from the vtable before the
-    // game registers its natives.
+    // RegisterPapyrusFunction (104788) has no VR address; it is the VM's BindNativeMethod (vtable slot 0x18).
+    // Hook it from the vtable before the game registers its natives.
     static bool s_registerHookInstalled = false;
     if (!s_registerHookInstalled && apThis && *apThis)
     {

@@ -12,12 +12,11 @@
 #include <Setting.h>
 
 extern Console::Setting<bool> bPublicStatus;
+extern Console::Setting<bool> bAnnounceServer;
 
 namespace
 {
-Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
-
-// A server strangers join: listed upstream, or on the urSovngarde website's public server page.
+// A server strangers join: listed upstream or on the public server page.
 bool IsPublicServer() noexcept
 {
     return bAnnounceServer || bPublicStatus;
@@ -92,9 +91,8 @@ void CommandService::OnTeleportCommandRequest(const PacketEvent<TeleportCommandR
 
     TeleportCommandResponse response{};
 
-    // On a public server, going to a player is for admins and for that player's party only (Emma, 2026-10-11: only
-    // admins use commands there). Anyone else's request was answered with the player's position, so a stranger could
-    // land on anyone by typing their name. Refused, the answer carries no cell and the game says the teleport failed.
+    // On a public server, only admins and the target's party may teleport to a player.
+    // A refused answer carries no cell, and the game reports a failed teleport.
     if (pTargetPlayer && IsPublicServer() && !IsAdmin(acMessage.pPlayer))
     {
         auto& partyService = m_world.GetPartyService();

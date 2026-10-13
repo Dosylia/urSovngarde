@@ -32,8 +32,7 @@ struct AuthenticationRequest final : ClientMessage
     bool MO2Active{};
     String Token{};
     String Version{};
-    //! A digest of the message definitions this client was built with (BUILD_PROTOCOL). The server lets a client in
-    //! on this, not on Version: a build that differs only in code that never crosses the wire is the same protocol.
+    //! A digest of the message definitions (BUILD_PROTOCOL); the server admits clients on this, not on Version.
     String Protocol{};
     Mods UserMods{};
     String Username{};
@@ -41,7 +40,6 @@ struct AuthenticationRequest final : ClientMessage
     GameId CellId{};
     uint16_t Level{};
     TimeModel PlayerTime{};
-    //! The player asked, in the launcher, to be left out of the public server page's list and map. In the
-    //! authentication rather than a later message so that not even the first push names them.
+    //! Hide this player from the public server page; sent here so that even the first update leaves them out.
     bool HideFromPublicPage{};
 };

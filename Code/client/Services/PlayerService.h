@@ -76,11 +76,11 @@ private:
     uint32_t m_cachedSecondarySpellId = 0;
     uint32_t m_cachedPowerId = 0;
 
-    // The last place sent for the public server page (PlayerPlaceRequest), and when to look again.
+    // The last place sent for the public server page, and when to check again.
     String m_lastPlace;
     std::chrono::steady_clock::time_point m_nextPlaceCheck{};
 
-    // The crash map's note (RunCrashPlaceNote): when to note again, and where the player last stood outside.
+    // For RunCrashPlaceNote: when to note again, and where the player last stood outside.
     std::chrono::steady_clock::time_point m_nextCrashPlaceNote{};
     String m_outsideWorldSpace; // its editor id (hex form id when it has none); empty before the first exterior
     float m_outsideX = 0.f;

@@ -24,8 +24,8 @@ static constexpr TargetConfig CurrentTarget{ L"Skyrim Special Edition", 489830, 
 #define PRODUCT_NAME L"Skyrim Together"
 #define SHORT_NAME L"Skyrim Special Edition"
 #else
-// The game load buffer is 80MB (SkyrimVR.exe is ~60MB) instead of SE's 1GB: a bigger buffer eats the
-// +-2GB window around the game that SKSE plugins need for their hook trampolines.
+// The game load buffer is 80MB (SkyrimVR.exe is ~60MB) instead of SE's 1GB.
+// A bigger buffer eats the +-2GB window around the game that SKSE plugins need for their hook trampolines.
 static constexpr TargetConfig CurrentTarget{ L"Skyrim VR", 611670, 0x05000000 };
 #define TARGET_NAME L"SkyrimVR"
 #define TARGET_NAME_A "SkyrimVR"

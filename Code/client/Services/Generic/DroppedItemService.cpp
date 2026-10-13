@@ -30,12 +30,12 @@
 
 namespace
 {
-//! How close an item on the floor has to be to where the server says one lies to be taken for it. The server's
-//! position is the moment of the drop; the one here has since fallen, rolled, or been saved and loaded.
+//! How close a floor item must be to the server's position to count as the same item.
+//! The item may have rolled or been reloaded since the drop.
 constexpr float kSameItemRadius = 200.f;
 
-//! Outdoors, how far from the player an item can be and still be in a loaded cell (the 5 by 5 grid is two cells
-//! either side of the player's, and a cell is 4096 units).
+//! Outdoors, how far from the player an item can be and still be in a loaded cell.
+//! The loaded grid is 5 by 5 cells of 4096 units, two cells either side of the player's.
 constexpr float kLoadedRadius = 8192.f;
 
 const Vector<FormType> kItemTypes{FormType::Weapon, FormType::Armor, FormType::Ammo, FormType::Book, FormType::Ingredient, FormType::Alchemy,
@@ -56,19 +56,19 @@ float DistanceTo(const TESObjectREFR* apRef, const glm::vec3& acPosition) noexce
     return glm::distance(glm::vec3(apRef->position.x, apRef->position.y, apRef->position.z), acPosition);
 }
 
-//! Whether the reference behind an id is still the item that was mapped. A mapping made before the base was known
-//! (0) is trusted; anything else must match.
+//! Whether the reference behind an id is still the item that was mapped.
+//! A mapping made before the base was known (0) is trusted; anything else must match.
 template <class T> bool IsStillOurs(const TESObjectREFR* apRef, const T& acMotion) noexcept
 {
     return acMotion.BaseFormId == 0 || (apRef->baseForm && apRef->baseForm->formID == acMotion.BaseFormId);
 }
 
-//! Movement worth sending: a couple of units, or a few degrees of turn. Below that it is physics jitter.
+//! Movement worth sending: a couple of units or a few degrees of turn; less is physics jitter.
 constexpr float kMovedDistance = 2.f;
 constexpr float kMovedAngle = 0.05f;
 
-//! Where an item really is. A held or falling item's 3D moves under physics, and the node's world transform follows it
-//! every frame, where the reference's own position may lag. NiAVObject::world is at 0x7C, as VRBodySync reads it.
+//! Where an item really is: its node's world transform follows physics, while the reference's position may lag.
+//! NiAVObject::world is at 0x7C, as VRBodySync reads it.
 glm::vec3 WorldPositionOf(TESObjectREFR* apRef) noexcept
 {
     if (NiNode* pNode = apRef->GetNiNode())
@@ -84,7 +84,7 @@ glm::vec3 RotationOf(const TESObjectREFR* apRef) noexcept
     return {apRef->rotation.x, apRef->rotation.y, apRef->rotation.z};
 }
 
-bool Readable(const void* apAddress, const size_t aBytes) noexcept
+bool IsMemoryReadable(const void* apAddress, const size_t aBytes) noexcept
 {
     MEMORY_BASIC_INFORMATION info{};
     if (!apAddress || !VirtualQuery(apAddress, &info, sizeof(info)))
@@ -94,9 +94,8 @@ bool Readable(const void* apAddress, const size_t aBytes) noexcept
     return reinterpret_cast<uintptr_t>(apAddress) + aBytes <= reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
 }
 
-// The game's ExtraDroppedItemList, as CommonLibSSE has it: the BSExtraData header, then a BSSimpleList of reference
-// handles -- the handle, padding, and the next node. Only ever read after RTTI has confirmed the type, and every node
-// is checked readable, so a wrong guess about this layout reads nothing rather than crashing.
+// The game's ExtraDroppedItemList, as CommonLibSSE has it: the BSExtraData header, then a BSSimpleList of handles.
+// Only read after RTTI confirms the type, and every node is checked readable, so a wrong layout reads nothing.
 struct DroppedItemNode
 {
     uint32_t Handle;
@@ -160,13 +159,13 @@ void DroppedItemService::OnCellChange(const CellChangeEvent&) noexcept
         AnnounceOldDrops();
 }
 
-void DroppedItemService::Map(const uint32_t aId, const uint32_t aRefFormId) noexcept
+void DroppedItemService::MapServerIdToRef(const uint32_t aId, const uint32_t aRefFormId) noexcept
 {
     m_refById[aId] = aRefFormId;
     m_idByRef[aRefFormId] = aId;
 
-    // A placed item or an old item adopted from a save needs time to settle. A new drop's owner clears this delay
-    // once the server returns its id, so its initial flight can be sent too.
+    // A placed or adopted item needs time to settle before its movement is sent.
+    // A new drop's owner clears this delay once the server returns its id, so its initial flight is sent too.
     Motion& motion = m_motion[aId];
     motion = Motion{};
     if (TESObjectREFR* pRef = Cast<TESObjectREFR>(TESForm::GetById(aRefFormId)))
@@ -207,8 +206,7 @@ void DroppedItemService::OnItemDropped(const ItemDroppedEvent& acEvent) noexcept
 {
     if (!m_transport.IsConnected())
     {
-        // Kept for the next connection: nobody can be told now, and the game's own list of the player's drops is
-        // nowhere this client can find it (see m_droppedOffline).
+        // Kept for the next connection (see m_droppedOffline).
         if (acEvent.Item.BaseId != GameId{} && m_droppedOffline.size() < 256)
         {
             m_droppedOffline.emplace_back(acEvent.RefFormId, acEvent.Item);
@@ -231,8 +229,8 @@ void DroppedItemService::OnItemPickedUp(const ItemPickedUpEvent& acEvent) noexce
     const auto it = m_idByRef.find(acEvent.RefFormId);
     if (it == m_idByRef.end())
     {
-        // A placed book taken: told as a world object taken, so every other game disables its own copy of it. Activation
-        // sync, which carries every other placed item away, leaves books out (TESObjectREFR.cpp, HookActivate).
+        // A placed book taken: sent as a world object taken, so every other game disables its own copy.
+        // Activation sync leaves books out (TESObjectREFR.cpp, HookActivate).
         if (acEvent.PlacedBook && m_transport.IsConnected())
         {
             RequestWorldObjectMove request{};
@@ -262,8 +260,7 @@ void DroppedItemService::OnNotifyDroppedItem(const NotifyDroppedItem& acMessage)
 {
     if (const auto mapped = m_refById.find(acMessage.Id); mapped != m_refById.end())
     {
-        // Already here; the server sends again on every cell change. Moves are only relayed to players in range, so
-        // one made while this player was elsewhere arrives here, as the place the item was left.
+        // Already here: the server resends it on every cell change, with where it was last left.
         TESObjectREFR* pRef = Cast<TESObjectREFR>(TESForm::GetById(mapped->second));
         Motion& motion = m_motion[acMessage.Id];
         const auto now = std::chrono::steady_clock::now();
@@ -290,7 +287,7 @@ void DroppedItemService::OnNotifyDroppedItem(const NotifyDroppedItem& acMessage)
     auto& modSystem = m_world.GetModSystem();
     const glm::vec3 cPosition(acMessage.Position);
 
-    // Only an item in a loaded cell can be adopted or placed. One elsewhere is sent again when the player gets there.
+    // Only an item in a loaded cell can be adopted or placed; the server sends it again when the player gets there.
     if (!acMessage.WorldSpaceId)
     {
         TESObjectCELL* pCell = pPlayer->GetParentCellEx();
@@ -309,7 +306,7 @@ void DroppedItemService::OnNotifyDroppedItem(const NotifyDroppedItem& acMessage)
 
     const uint32_t cBaseFormId = modSystem.GetGameId(acMessage.Item.BaseId);
 
-    // 1. This player's own drop or announcement, coming back with its id. First in, first answered.
+    // 1. This player's own drop or announcement, coming back with its id (first in, first answered).
     for (auto it = m_pending.begin(); it != m_pending.end(); ++it)
     {
         if (it->BaseId != acMessage.Item.BaseId)
@@ -317,7 +314,7 @@ void DroppedItemService::OnNotifyDroppedItem(const NotifyDroppedItem& acMessage)
         const uint32_t cRefFormId = it->RefFormId;
         const bool cFreshDrop = !it->Announcement;
         m_pending.erase(it);
-        Map(acMessage.Id, cRefFormId);
+        MapServerIdToRef(acMessage.Id, cRefFormId);
         if (cFreshDrop)
         {
             Motion& motion = m_motion[acMessage.Id];
@@ -353,14 +350,13 @@ void DroppedItemService::OnNotifyDroppedItem(const NotifyDroppedItem& acMessage)
 
     if (pFound)
     {
-        Map(acMessage.Id, pFound->formID);
+        MapServerIdToRef(acMessage.Id, pFound->formID);
         spdlog::info("DroppedItem: {} was already lying here as {:X}, {:.0f} units from where it was dropped", acMessage.Id, pFound->formID, nearest);
         return;
     }
 
-    // 3. Missing: place it. The game only drops an item it holds, so it is given to the player and dropped straight
-    // back out at the item's position, both under the inventory override so neither step is sent as a real change --
-    // and so the drop hook does not announce it as this player's own drop.
+    // 3. Missing: give it to the player and drop it straight back out at the item's position.
+    // Both run under the inventory override, so neither is sent as a change or as this player's drop.
     TESBoundObject* pObject = Cast<TESBoundObject>(TESForm::GetById(cBaseFormId));
     if (!pObject)
     {
@@ -384,7 +380,7 @@ void DroppedItemService::OnNotifyDroppedItem(const NotifyDroppedItem& acMessage)
 
     if (TESObjectREFR* pPlaced = TESObjectREFR::GetByHandle(handle.handle.iBits))
     {
-        Map(acMessage.Id, pPlaced->formID);
+        MapServerIdToRef(acMessage.Id, pPlaced->formID);
         spdlog::info("DroppedItem: placed {} ({:X} x{}) as {:X}", acMessage.Id, pObject->formID, cCount, pPlaced->formID);
     }
     else
@@ -402,8 +398,7 @@ void DroppedItemService::OnNotifyDroppedItemRemoved(const NotifyDroppedItemRemov
     m_refById.erase(it);
     m_motion.erase(acMessage.Id);
 
-    // Disabled, then marked for deletion through the game's own Papyrus Delete: the game frees it in its own time.
-    // Freeing a reference underneath something still holding it is the crash class of 2026-09-27 and -30.
+    // Disabled, then Papyrus Delete, so the game frees it once nothing holds it.
     TESObjectREFR* pRef = Cast<TESObjectREFR>(TESForm::GetById(cRefFormId));
     if (pRef && !pRef->IsDeleted())
     {
@@ -456,13 +451,13 @@ void DroppedItemService::AnnounceOldDrops() noexcept
     bool listFound = false;
     for (BSExtraData* pExtra = pPlayer->extraData.data; pExtra && guard < 512; pExtra = pExtra->next, ++guard)
     {
-        if (!Readable(pExtra, sizeof(BSExtraData)) || !Cast<ExtraDroppedItemList>(pExtra))
+        if (!IsMemoryReadable(pExtra, sizeof(BSExtraData)) || !Cast<ExtraDroppedItemList>(pExtra))
             continue;
         listFound = true;
 
         const auto* pList = reinterpret_cast<const DroppedItemListView*>(pExtra);
         const DroppedItemNode* pNode = &pList->Head;
-        for (uint32_t n = 0; pNode && n < 1024 && Readable(pNode, sizeof(DroppedItemNode)); ++n, pNode = pNode->Next)
+        for (uint32_t n = 0; pNode && n < 1024 && IsMemoryReadable(pNode, sizeof(DroppedItemNode)); ++n, pNode = pNode->Next)
         {
             if (!pNode->Handle)
                 continue;
@@ -490,14 +485,11 @@ void DroppedItemService::AnnounceOldDrops() noexcept
         break; // one list per actor
     }
 
-    // Said once per connection whatever the outcome. The first session with this code logged nothing at all, and
-    // "no list on the player", "an empty list" and "never ran" all looked the same: silence.
+    // Logged once per connection even when nothing is found.
     if (found || sent || !m_reportedOldDrops)
     {
         m_reportedOldDrops = true;
-        if (!listFound)
-            spdlog::info("DroppedItem: no dropped-item list on the player among {} extra data entries, so there are no earlier drops to announce", guard);
-        else
+        if (listFound)
             spdlog::info("DroppedItem: the player's dropped-item list holds {} item(s); announced {} not yet shared this session", found, sent);
     }
 }
@@ -507,9 +499,7 @@ void DroppedItemService::OnUpdate(const UpdateEvent&) noexcept
     if (!m_transport.IsConnected())
         return;
 
-    // Thirty times a second. Ten was not enough to follow a hand: Seen saw Emma's bowl move "sluggish and stuttering
-    // like there is not enough updates of its position" (2026-10-03 09:12), and the receiving side places the item
-    // where each update says, with nothing in between. The list is a handful of items.
+    // Thirty times a second: the receiver snaps to each update, so fewer would stutter.
     static std::chrono::steady_clock::time_point s_next{};
     const auto now = std::chrono::steady_clock::now();
     if (now < s_next)
@@ -529,8 +519,7 @@ void DroppedItemService::OnUpdate(const UpdateEvent&) noexcept
         const glm::vec3 position = WorldPositionOf(pRef);
         const glm::vec3 rotation = RotationOf(pRef);
 
-        // Its cell has just loaded: everything in it settles for a moment, on both sides at once. Treated like a
-        // fresh drop, so neither side sends the other its own settling.
+        // Its cell just loaded: its settling is ignored, so neither side sends it.
         if (!motion.Loaded)
         {
             motion.Loaded = true;
@@ -538,8 +527,7 @@ void DroppedItemService::OnUpdate(const UpdateEvent&) noexcept
                 motion.QuietUntil = std::max(motion.QuietUntil, now + std::chrono::seconds(2));
         }
 
-        // Held on the other side's word and nothing heard for two seconds: put down over there, or the carrier went
-        // quiet (a lost packet, a disconnect). Either way, back to physics here.
+        // Nothing heard for two seconds from the side moving it: back to physics here.
         if (motion.Held && now - motion.LastRemote > std::chrono::seconds(2))
         {
             pRef->SetMotionType(TESObjectREFR::kMotionDynamic);
@@ -595,8 +583,8 @@ void DroppedItemService::OnUpdate(const UpdateEvent&) noexcept
 
 namespace
 {
-// What a hand can pick up or push in the world: items, alchemy apparatus (33) and movable statics (36, carts, buckets
-// on hooks). Statics and furniture never move.
+// What a hand can pick up or push: items, alchemy apparatus (33) and movable statics (36: carts, hanging buckets).
+// Statics and furniture never move.
 bool IsMovableObject(const TESObjectREFR* apRef) noexcept
 {
     if (IsItem(apRef))
@@ -608,9 +596,8 @@ bool IsMovableObject(const TESObjectREFR* apRef) noexcept
 }
 } // namespace
 
-// Objects placed in the world, moved by the player's hand (HIGGS) or pushed: on 2026-10-03 Emma and Seen both carried a
-// bottle around the castle and Emma pushed a cart, and neither was seen by the other. Watched the way dropped items
-// are, but only near the player, and identified by their own reference id, which every game shares.
+// Objects placed in the world, moved by the player's hand (HIGGS) or pushed.
+// Watched like dropped items, but only near the player, and named by their shared reference id.
 void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::time_point aNow) noexcept
 {
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
@@ -753,8 +740,7 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
         }
     }
 
-    // Many at once is a cell settling or a blast, not a hand: 15 objects "being moved here" in one pass on Seen's
-    // side (2026-10-11 18:34:34), each then held and followed in Emma's game. Their new places are where they are.
+    // Many objects starting at once is a cell settling or a blast, not a hand: nothing is sent.
     if (starts.size() >= 5)
     {
         for (const Start& start : starts)
@@ -772,9 +758,8 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
     {
         Motion& motion = m_objectMotion[start.FormId];
 
-        // Nearer another player's copy than this player: their body bumped it here. Their own game does not push it
-        // (a VR player's body moves no clutter there), so sending it made a table walked over move for everyone but
-        // the one walking (Emma and Seen, 2026-10-11 21:32).
+        // Nearer another player's copy than this player: their body bumped it here.
+        // Their own game does not push clutter with a VR body, so it is not sent.
         const float cMine = glm::distance(start.Position, playerAt);
         bool cTheirs = false;
         for (const glm::vec3& other : others)
@@ -803,8 +788,8 @@ void DroppedItemService::OnNotifyWorldObjectMove(const NotifyWorldObjectMove& ac
     const uint32_t cFormId = m_world.GetModSystem().GetGameId(acMessage.ObjectId);
     TESObjectREFR* pRef = cFormId ? Cast<TESObjectREFR>(TESForm::GetById(cFormId)) : nullptr;
 
-    // Taken into another player's inventory (a book, see OnItemPickedUp): gone from this world too. Disabled, not
-    // deleted: it is a placed reference of a plugin, and disabled is how this save then keeps it.
+    // Taken into another player's inventory (a book, see OnItemPickedUp): gone from this world too.
+    // Disabled, not deleted: it is a plugin's placed reference, and disabled is how this save keeps it.
     if (acMessage.Taken)
     {
         if (pRef && !pRef->IsDeleted() && !pRef->IsDisabled())
@@ -862,8 +847,8 @@ void DroppedItemService::OnNotifyDroppedItemMove(const NotifyDroppedItemMove& ac
 
     const auto now = std::chrono::steady_clock::now();
 
-    // Held still while the other side moves it: otherwise this side's physics pulls it down between updates and it
-    // stutters between their hand and the floor. Also for a lone "put down": it is placed exactly, then let go.
+    // Held still while the other side moves it, or local physics pulls it down between updates and it stutters.
+    // Also for a lone "put down": it is placed exactly, then let go.
     if (!motion.Held)
     {
         pRef->SetMotionType(TESObjectREFR::kMotionKeyframed);
@@ -877,8 +862,8 @@ void DroppedItemService::OnNotifyDroppedItemMove(const NotifyDroppedItemMove& ac
     if (TESObjectCELL* pCell = pRef->GetParentCellEx())
         pRef->MoveTo(pCell, NiPoint3(position));
 
-    // Not known without a headset: whether a move rebuilds the item's 3D. If it does, the new physics body is dynamic
-    // again and would fall between updates, so it is held again -- and the log says so once, which answers it.
+    // A rebuilt 3D has a dynamic body again, which would fall, so it is held again.
+    // Logged once, to learn whether a move ever rebuilds it.
     if (const NiNode* pNodeAfter = pRef->GetNiNode(); pNodeBefore && pNodeAfter && pNodeAfter != pNodeBefore)
     {
         pRef->SetMotionType(TESObjectREFR::kMotionKeyframed);
@@ -894,7 +879,6 @@ void DroppedItemService::OnNotifyDroppedItemMove(const NotifyDroppedItemMove& ac
     motion.LastPosition = position;
     motion.LastRotation = acMessage.Rotation;
     motion.Moving = false;
-    // Let go two seconds after the last word (OnUpdate), not now: "at rest" is also what a hand kept still sends, and
-    // a further move within those two seconds just carries on.
+    // Let go two seconds after the last update (OnUpdate), not now: a still hand also sends "at rest".
     motion.RemoteAtRest = acMessage.AtRest;
 }

@@ -5,8 +5,7 @@
 #include <Structs/GameId.h>
 #include <Structs/Vector3_NetQuantize.h>
 
-//! An object placed in the world moved on another player's side, or was left there before this player arrived: put it
-//! where they have it.
+//! A placed world object moved on another player's side, or was left there earlier: put it where they have it.
 struct NotifyWorldObjectMove final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifyWorldObjectMove;
@@ -34,7 +33,7 @@ struct NotifyWorldObjectMove final : ServerMessage
     glm::vec3 Rotation{};
     //! The last of a movement: the object has stopped, and the receiver hands it back to its own physics.
     bool AtRest{};
-    //! Taken into a player's inventory: the receiver disables its own copy of the reference. Only books are sent this
-    //! way, the one item activation sync leaves out (TESObjectREFR.cpp, HookActivate).
+    //! Taken into a player's inventory: the receiver disables its own copy of the reference.
+    //! Only books are sent this way, the one item activation sync leaves out (TESObjectREFR.cpp, HookActivate).
     bool Taken{};
 };

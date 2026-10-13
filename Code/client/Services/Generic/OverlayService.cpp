@@ -138,8 +138,8 @@ OverlayService::~OverlayService() noexcept
 {
 }
 
-// m_pOverlay stays null until the overlay is created, which on VR only happens once OpenVR and CEF are up
-// (see CreateVR). Every CEF call must be guarded: before CefInitialize, any use of its API kills the process.
+// m_pOverlay stays null until the overlay is created, which on VR only happens once OpenVR and CEF are up (see CreateVR).
+// Every CEF call must be guarded: before CefInitialize, any use of its API kills the process.
 void OverlayService::Create(RenderSystemD3D11* apRenderSystem) noexcept
 {
     m_pProvider = TiltedPhoques::MakeUnique<D3D11RenderProvider>(apRenderSystem);
@@ -159,11 +159,9 @@ void OverlayService::CreateVR() noexcept
 }
 #endif
 
-// CEF keeps its own GPU process. 6dcc25a1 moved that work into the game ("disable-gpu", "disable-gpu-compositing",
-// "in-process-gpu") to stop the leaving crash at libcef.dll+7A52582; in the game process the GPU thread could not make
-// a GL context ("Failed to create GLES3 context ... kFatalFailure", "Failed to create SharedImageStub"), retried without
-// end and logged every try: cef_debug.log reached 8 GB in 22 minutes on 2026-10-10 and filled the disk, and saves then
-// failed. The leaving crash is open again (KNOWN_ISSUES); it only happens while the game is already closing.
+// CEF keeps its own GPU process.
+// With "in-process-gpu" the GPU thread cannot make a GL context in the game, retries forever and fills the disk with cef_debug.log.
+// The cost is a crash at libcef.dll+7A52582 on quitting, which only happens while the game is already closing.
 void OverlayService::CreateOverlay(OverlayApp::RenderProvider* apProvider) noexcept
 {
     m_pOverlay = new OverlayApp(apProvider, new ::OverlayClient(m_transport, apProvider->Create()));
@@ -268,18 +266,17 @@ void OverlayService::SetInGame(bool aInGame) noexcept
         return;
     m_inGame = aInGame;
 
-    // Leaving the game closes the menu with it. SetActive would refuse this now that m_inGame is false, so drop the
-    // flag here and let PushUiState send the deactivate.
+    // Leaving the game closes the menu with it.
+    // SetActive would refuse this now that m_inGame is false, so drop the flag here and let PushUiState send the deactivate.
     if (!m_inGame)
         m_active = false;
 
     PushUiState();
 }
 
-// CEF drops any ExecuteAsync sent before the page has loaded, and the page loads a second or so after the overlay is
-// created. enterGame was sent in that window and lost, so the UI stayed on its start-up view for the rest of the
-// session: in VR that is a menu that paints nothing at all. Hold the wanted state instead and push it once the page is
-// ready, then on every later change. Called every frame from Render().
+// CEF drops any ExecuteAsync sent before the page has loaded, about a second after the overlay is created.
+// A lost enterGame leaves the UI on its start-up view, which in VR paints nothing at all.
+// So the wanted state is held and pushed once the page is ready, then on every later change. Called every frame from Render().
 void OverlayService::PushUiState() noexcept
 {
     if (!m_pOverlay)
@@ -627,8 +624,8 @@ void OverlayService::OnNotifyTeleport(const NotifyTeleport& acMessage) noexcept
 
 void OverlayService::OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& acMessage) noexcept
 {
-    // "X is down", once, when a party member's health reaches zero (Emma, 2026-10-10: a message, no revive). A first
-    // report of someone already down says nothing: there is no "before" to compare with.
+    // "X is down", once, when a party member's health reaches zero. It is only a message; there is no revive.
+    // A first report of someone already down says nothing, since there is no "before" to compare with.
     const auto previous = m_playerHealth.find(acMessage.PlayerId);
     if (previous != m_playerHealth.end() && previous->second > 0.f && acMessage.Percentage <= 0.f)
     {

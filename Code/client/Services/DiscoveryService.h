@@ -30,8 +30,8 @@ struct DiscoveryService final : BSTEventSink<TESLoadGameEvent>
     /**
      * @brief Asks for the current cell to be announced to the server again, shortly.
      *
-     * Called when a remote copy was torn down here for a local reason (a cell unloading) rather than because the
-     * server said so. The server has no way to know that happened, so without this the copy is never re-sent.
+     * Called when a remote copy was torn down here for a local reason (a cell unloading), not because the server said so.
+     * The server cannot know that happened, so without this the copy is never re-sent.
      * @see CharacterService::CancelServerAssignment
      */
     static void RequestCellReannounce() noexcept;
@@ -39,8 +39,8 @@ struct DiscoveryService final : BSTEventSink<TESLoadGameEvent>
     /**
      * @brief This client is about to move an actor with MoveTo, which drops its 3D for a frame.
      *
-     * For two seconds the actor is then not taken for a remote copy leaving (removed at once without its 3D): it
-     * keeps the normal grace period, so its server assignment is not cancelled by a move of our own.
+     * For two seconds the actor is not treated as a remote copy leaving, which would be removed at once without its 3D.
+     * It keeps the normal grace period, so a move of our own does not cancel its server assignment.
      * @see VisitForms
      */
     static void NoteMovedHere(uint32_t aFormId) noexcept;

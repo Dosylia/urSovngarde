@@ -15,7 +15,6 @@ struct CellChangeEvent;
 struct ScriptAnimationEvent;
 struct AssignObjectsResponse;
 struct NotifyScriptAnimation;
-struct UpdateEvent;
 
 /**
  * @brief Handles objects in the environment.
@@ -35,7 +34,6 @@ private:
     void OnLockChangeNotify(const NotifyLockChange&) noexcept;
     void OnScriptAnimationEvent(const ScriptAnimationEvent&) noexcept;
     void OnNotifyScriptAnimation(const NotifyScriptAnimation&) noexcept;
-    void OnUpdate(const UpdateEvent&) noexcept;
 
     BSTEventResult OnEvent(const TESActivateEvent*, const EventDispatcher<TESActivateEvent>*) override;
 
@@ -53,5 +51,4 @@ private:
     entt::scoped_connection m_assignObjectConnection;
     entt::scoped_connection m_scriptAnimationConnection;
     entt::scoped_connection m_scriptAnimationNotifyConnection;
-    entt::scoped_connection m_updateConnection;
 };

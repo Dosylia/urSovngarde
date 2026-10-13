@@ -45,7 +45,7 @@ AdminKeys::Digest Sha256(const std::string_view acText)
     return digest;
 }
 
-// The public server's admins (AdminKeys.h), read once from the environment the first time anyone connects.
+// The public server's admins (AdminKeys.h), read once from the environment.
 const std::vector<AdminKeys::Entry>& KnownAdminKeys()
 {
     static const std::vector<AdminKeys::Entry> s_entries = []
@@ -258,7 +258,7 @@ void GameServer::Initialize()
     BindServerCommands();
     m_pWorld->GetScriptService().Initialize(*m_pResources);
 
-    // Read now, not at the first connect: a malformed admin key entry shows in the start-up log.
+    // Read at start, so a malformed admin key entry shows in the start-up log.
     KnownAdminKeys();
 }
 
@@ -669,13 +669,7 @@ void GameServer::OnDisconnection(const ConnectionId_t aConnectionId, EDisconnect
         notify.Username = pPlayer->GetUsername();
         SendToPlayers(notify);
 
-        // No character is no character. This read `.value_or(static_cast<entt::entity>(0))`, and entity 0 is a real
-        // entity: the first one a server makes, which is the character of whoever was in first. So a player who left
-        // before having a character -- a client that connected and crashed, timed out or gave up while loading --
-        // had the first player's character removed in their place. Everybody else lost sight of that player, no
-        // newcomer was ever sent them again, and the server logged "Entity is invalid: 0" for every health update
-        // they went on sending. Found 2026-10-02 with the real game as the first player and a bot that could not
-        // find it; Tools/VR/leaver-check.py is the test.
+        // No fallback to entity 0, which is a real character; Tools/VR/leaver-check.py tests this.
         const auto playerCharacter = pPlayer->GetCharacter();
 
         // Cleanup all entities that we own
@@ -890,14 +884,12 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         Kick(aConnectionId);
     };
 #if 1
-    // The protocol, not the version. The version changes with any edit anywhere and with every commit, so comparing
-    // it refused clients that spoke exactly this server's messages: a bot after a bot-only fix, a client built just
-    // before a commit against a server built just after. The protocol id is a digest of Code/encoding alone.
+    // Compares the protocol (a digest of Code/encoding), not the version, so builds with the same messages connect.
     if (acRequest->Protocol != BUILD_PROTOCOL)
     {
         spdlog::info("New player {:x} '{}' tried to connect with client {} (protocol '{}'); this server speaks protocol {} - refused", aConnectionId, remoteAddress,
                      acRequest->Version.c_str(), acRequest->Protocol.c_str(), BUILD_PROTOCOL);
-        // The client shows this string as "the version the server expected"; the protocol is what it needs to match.
+        // The client shows this as the expected version; the protocol is what has to match.
         serverResponse.Version = BUILD_COMMIT " (protocol " BUILD_PROTOCOL ")";
         sendKick(RT::kWrongVersion);
         return;
@@ -931,8 +923,8 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         return;
     }
 
-    // An admin's key (AdminKeys.h): an admin session, and in even when the server has a password, as sAdminPassword.
-    // A key that matches no admin is a wrong password. Neither the token nor the address is logged for a key.
+    // An admin key gives an admin session, even on a password-protected server; an unknown key is a wrong password.
+    // Neither the token nor the address is logged for a key.
     const std::string_view cToken(acRequest->Token.data(), acRequest->Token.size());
     const AdminKeys::Entry* pAdminKey = AdminKeys::IsKeyToken(cToken) ? AdminKeys::Match(cToken, KnownAdminKeys(), &Sha256) : nullptr;
     if (AdminKeys::IsKeyToken(cToken) && !pAdminKey)
@@ -1070,8 +1062,7 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
             if (pOtherPlayer == pPlayer)
                 continue;
 
-            // Forms from a plugin one player lacks can't sync ("Failed to retrieve Actor X, possibly missing mod" on
-            // the clients). List the difference once, here, where both lists are known.
+            // Forms from a plugin one player lacks cannot sync, so list the difference once, where both lists are known.
             const auto listMissing = [](const Vector<String>& acFrom, const Vector<String>& acIn)
             {
                 String missing;

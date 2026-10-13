@@ -86,7 +86,6 @@ MEASURED = [
     ('Hips (receiver)', r'hips wanted at'),
     ('Hands compared', r'hands -- owner L\('),
     ('VR archery state', r'VRArchery: local attack state'),
-    ('Objects moved by hand', r'ObjectMove:'),
     ('Actors below the floor', r'SinkDiag:'),
     ('Character controller', r'ControllerDiag:'),
     ('A body handled here', r'BodyGrabDiag:'),
@@ -146,7 +145,6 @@ ARCHERY = re.compile(r'VRArchery: local attack state (\d+)')
 BOW_SHOT = re.compile(r'Projectile launch: shooter 14, base [0-9A-F]+, weapon [0-9A-F]+, ammo (?!0,)[0-9A-F]+')
 SLIDE = re.compile(r'SlideDiag: (\d+) of (\d+) moves of a remote body')
 SILENCE = re.compile(r'Silence: sent nothing for (\d+) ms; menus \[([^\]]*)\]')
-OBJECT_MOVE = re.compile(r'ObjectMove: ([0-9A-F]+) moved ([0-9.]+) units')
 JUMP = re.compile(r'JumpDiag: a buffered point was ([0-9.]+) units from the one before it, at \(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\).*?(\d+) since')
 BACKLOG = re.compile(r'newest buffered tick (-?\d+) to (-?\d+) ms ahead of playback, (\d+) updates had no future point')
 SLOW_UPDATE = re.compile(r'Mod update took ([0-9.]+) ms, slowest section ([A-Za-z:]+)')
@@ -176,7 +174,6 @@ def analyse(lines):
     misses = [m.groups() for m in (EPOCH_MISS.search(l) for l in lines) if m]
     archery = [int(m.group(1)) for m in (ARCHERY.search(l) for l in lines) if m]
     silences = [(int(m.group(1)), m.group(2)) for m in (SILENCE.search(l) for l in lines) if m]
-    objects = [(m.group(1), float(m.group(2))) for m in (OBJECT_MOVE.search(l) for l in lines) if m]
     grabs = [(m.group(1), int(m.group(2)), float(m.group(3))) for m in (BODY_GRAB.search(l) for l in lines) if m]
 
     out = []
@@ -260,11 +257,6 @@ def analyse(lines):
         out.append(('Client went quiet',
                     '%d times, longest %d ms, %d of them with a menu open (so a menu rather than a stall).'
                     % (len(silences), worst, inmenu)))
-
-    if objects:
-        out.append(('Objects moved by hand',
-                    '%d moves over 8 units across %d objects, largest %.0f units. This is the traffic an object-position sync would have to carry.'
-                    % (len(objects), len(set(o[0] for o in objects)), max(o[1] for o in objects))))
 
     backlog = [tuple(int(v) for v in m.groups()) for m in (BACKLOG.search(l) for l in lines) if m]
     if backlog:

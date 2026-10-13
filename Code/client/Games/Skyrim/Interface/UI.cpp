@@ -67,9 +67,8 @@ static void UnfreezeMenu(IMenu* apEntry)
     {
         apEntry->ClearFlag(IMenu::kPausesGame);
 #ifdef SKYRIMVR
-        // VR only shows its menu panel (PlayerCharacter's UINode) while a menu pauses the game or carries this
-        // flag. MessageBoxMenu and Console lack it, so unpaused they opened invisibly in the headset
-        // (TiltedEvolutionVR 5c30ec6).
+        // VR shows its menu panel (PlayerCharacter's UINode) only while a menu pauses the game or carries this flag.
+        // MessageBoxMenu and Console lack it, so unpaused they would open invisibly in the headset (TiltedEvolutionVR 5c30ec6).
         apEntry->SetFlag(IMenu::kUpdateUsesCursor);
 #endif
     }
@@ -81,10 +80,7 @@ static void UnfreezeMenu(IMenu* apEntry)
         apEntry->ClearFlag(IMenu::kFreezeFramePause);
 }
 
-// TEMPORARY (2026-09-20): a message box opens at the end of every save load and, when it opens before the connection,
-// pauses the world for good. Nothing names it, so the strings reachable from the menu object are dumped: the box's
-// data hangs off the menu, and its body text and button labels are plain C strings. Every read is checked against
-// the page tables first, so a wrong guess prints nothing instead of crashing. Remove once the box is identified.
+// Whether a memory range is committed and readable, so a guessed pointer is checked before it is read.
 namespace
 {
 bool ReadableBytes(const void* apAddress, const size_t aBytes) noexcept
@@ -98,61 +94,15 @@ bool ReadableBytes(const void* apAddress, const size_t aBytes) noexcept
         return false;
     return reinterpret_cast<uintptr_t>(apAddress) + aBytes <= reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
 }
-
-std::string PrintableTextAt(const char* apText) noexcept
-{
-    std::string text;
-    for (size_t i = 0; i < 200; ++i)
-    {
-        if (!ReadableBytes(apText + i, 1))
-            return {};
-        const char c = apText[i];
-        if (c == 0)
-            break;
-        if (c == '\n' || c == '\r' || c == '\t')
-        {
-            text += ' ';
-            continue;
-        }
-        if (c < 0x20 || c > 0x7E)
-            return {};
-        text += c;
-    }
-    return text.size() >= 4 ? text : std::string{};
-}
-
-void CollectStrings(const void* apObject, const size_t aBytes, const int aDepth, std::string& aOut) noexcept
-{
-    if (!ReadableBytes(apObject, aBytes))
-        return;
-    for (size_t offset = 0; offset < aBytes; offset += sizeof(void*))
-    {
-        const char* pCandidate = *reinterpret_cast<const char* const*>(static_cast<const uint8_t*>(apObject) + offset);
-        const std::string text = PrintableTextAt(pCandidate);
-        if (!text.empty())
-            aOut += fmt::format(" [+{:X}] \"{}\"", offset, text);
-        else if (aDepth > 0)
-            CollectStrings(pCandidate, 0x80, aDepth - 1, aOut);
-        if (aOut.size() > 1500)
-            return;
-    }
-}
 } // namespace
-
-void UI::CollectReadableStrings(const void* apObject, const size_t aBytes, const int aDepth, std::string& aOut) noexcept
-{
-    CollectStrings(apObject, aBytes, aDepth, aOut);
-}
 
 static constexpr const char* kAllowList[] = {
     "TweenMenu",     "MagicMenu",     "InventoryMenu",
 #ifndef SKYRIMVR
-    // On VR the skills and level up screen is black whenever it runs unpaused: it works in solo, where this hook is
-    // inactive, and never while connected (2026-09-18). There it pauses the game like vanilla.
+    // On VR the skills and level-up screen is black whenever it runs unpaused, so there it pauses the game like vanilla.
     "StatsMenu",
 #endif
-    // Unpaused, a message box used to be invisible in the headset; UnfreezeMenu now gives it the flag the VR
-    // panel needs, so it no longer has to pause the game for every player.
+    // UnfreezeMenu gives a message box the flag the VR panel needs, so it can run unpaused and stay visible.
     "MessageBoxMenu",
     "ContainerMenu", "FavoritesMenu", "Tutorial Menu", "Console"
     //"MapMenu", // MapMenu is disabled till we find a proper fix for first person.
@@ -163,8 +113,8 @@ static void* (*UI_AddToActiveQueue)(UI*, IMenu*, void*);
 
 static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundItem /*In reality a reference*/)
 {
-    // TEMPORARY (2026-09-20): every menu the game queues, connected or not, for the frozen-world timeline. The VR
-    // HUD widgets (WS*) are queued every frame and are left out.
+    // Logs every menu the game queues, connected or not; the launcher reads the "Menu queued" lines.
+    // The VR HUD widgets (WS*) are queued every frame and are left out.
     if (apMenu)
     {
         const BSFixedString* pQueuedName = apSelf->LookupMenuNameByInstance(apMenu);
@@ -173,19 +123,12 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
         const BSFixedString* pName = apSelf->LookupMenuNameByInstance(apMenu);
         spdlog::info("Menu queued: {}{} (connected {})", pName ? pName->AsAscii() : "?", apMenu->PausesGame() ? " [pauses]" : "", World::Get().GetTransport().IsConnected() ? "yes" : "no");
 #ifdef SKYRIMVR
-        // The in-headset dashboard is made at the main menu, where a pause costs nothing. Made on the first update in
-        // the world, as before, it stopped the game for 0.9 and 1.5 s in Emma's sessions of 2026-09-30 and 10-01 and
-        // 1.3 to 1.5 s in every session with nobody in the headset ("Mod update took ..., slowest section
-        // OverlayService::OnUpdate"), right after the save had loaded. OnUpdate still makes it if this did not.
+        // The in-headset dashboard is made at the main menu, where a pause costs nothing.
+        // Made later, on the first update in the world, it stops the game for up to 1.5 s right after the save loads.
+        // OverlayService::OnUpdate still makes it if this did not.
         if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Main Menu") == 0)
             World::Get().GetOverlayService().CreateVR();
 #endif
-        if (pName && strcmp(pName->AsAscii(), "MessageBoxMenu") == 0)
-        {
-            std::string strings;
-            CollectStrings(apMenu, 0xC0, 2, strings);
-            spdlog::info("MessageBoxMenu strings:{}", strings.empty() ? " (none readable)" : strings.c_str());
-        }
     }
 
     // if the menu is empty we let the real function handle it.
@@ -200,14 +143,8 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
 #endif
 
     // A menu opened out of a conversation is left to pause, whatever the list says.
-    //
-    // Trading with a follower opens ContainerMenu on top of a Dialogue Menu that is still up, and ContainerMenu is
-    // on the list. Unfrozen, the trade panel draws but the dialogue underneath keeps the input: Emma could see
-    // "LYDIA <-> QUEEN EMMA" and could not touch it until she closed the conversation (2026-09-26). Vanilla pauses
-    // there, and pausing is what hands the focus over.
-    //
-    // Only while a conversation is actually open, so looting a chest or a corpse -- the reason this list exists --
-    // still leaves everyone else moving.
+    // Unpaused, a trade panel opened over a Dialogue Menu draws but the dialogue keeps the input; pausing hands the focus over.
+    // Only while a conversation is open, so looting a chest or a corpse still leaves everyone else moving.
     const bool cInConversation = apSelf->GetMenuOpen(BSFixedString("Dialogue Menu"));
 
     // NOTE(Force): could also compare by RTTI later on...
@@ -235,52 +172,17 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
 using TCallback = void(void*, const BSFixedString*, uint32_t, void*);
 static TCallback* UIMessageQueue__AddMessage_Real;
 
-// TEMPORARY (2026-09-20): a message box with nothing in it opened at the main menu and at the end of every save load
-// and paused the world for good. Every message aimed at MessageBoxMenu is logged with its caller and its text, and a
-// show request that carries no data at all is dropped: it cannot display anything, it can only hold the pause.
-static void DescribeCaller(void* apAddress, char* apOut, const size_t aOutSize) noexcept
-{
-    HMODULE hModule = nullptr;
-    char name[MAX_PATH] = {};
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(apAddress), &hModule) && hModule &&
-        GetModuleFileNameA(hModule, name, sizeof(name)))
-    {
-        const char* pBase = strrchr(name, 92);
-        _snprintf_s(apOut, aOutSize, _TRUNCATE, "%s+0x%llx", pBase ? pBase + 1 : name, static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(apAddress) - reinterpret_cast<uintptr_t>(hModule)));
-        return;
-    }
-    const uintptr_t address = reinterpret_cast<uintptr_t>(apAddress);
-    if (address >= 0x140000000ull && address < 0x140000000ull + 0x8000000ull)
-        _snprintf_s(apOut, aOutSize, _TRUNCATE, "SkyrimVR.exe+0x%llx", static_cast<unsigned long long>(address - 0x140000000ull));
-    else
-        _snprintf_s(apOut, aOutSize, _TRUNCATE, "<0x%llx>", static_cast<unsigned long long>(address));
-}
-
 static bool s_sendingEnemyMeter = false;
 static std::chrono::steady_clock::time_point s_lastGameEnemyMeterTargetAt{};
 
 void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI_MESSAGE_TYPE a3, void* a4)
 {
+    // An empty message box opens at the main menu and after every save load, pausing the world; that show is dropped.
     if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "MessageBoxMenu") == 0)
     {
-        char caller[160];
-        DescribeCaller(_ReturnAddress(), caller, sizeof(caller));
-
-        std::string text;
-        if (a4)
-        {
-            // MessageBoxData (CommonLibVR): BSString bodyText at +0x10, whose first field is the char pointer.
-            const uint8_t* pBody = static_cast<const uint8_t*>(a4) + 0x10;
-            if (ReadableBytes(pBody, 16))
-                text = PrintableTextAt(*reinterpret_cast<const char* const*>(pBody));
-        }
-
-        // Only the one caller that opened the phantom at the main menu and at the end of every load (SkyrimVR 1.4.15
-        // at +0x168507) is dropped. Other data-less shows are real: the level-up choice panel is one (from +0x8d8683,
-        // the game fills it afterwards), and dropping it left the player stuck in the level-up menu (2026-09-20 07:58).
-        // +0x168507 turned out to be a shared helper: it also queued a real box 35 s after a level-up, and dropping that
-        // one crashed the game 92 ms later (2026-09-20 11:47). The phantom only ever appears while the main menu or a
-        // loading screen is up, so the drop is limited to those moments.
+        // Only the phantom's caller (SkyrimVR 1.4.15 +0x168507) is dropped, and only while the main menu or a loading screen is up.
+        // Other data-less shows are real, such as the level-up choice panel (from +0x8d8683); dropping it leaves the player stuck.
+        // +0x168507 is a shared helper that also queues real boxes in play, and dropping one of those crashes the game.
         const uintptr_t callerOffset = reinterpret_cast<uintptr_t>(_ReturnAddress()) - 0x140000000ull;
         bool loadingOrMainMenu = false;
         if (UI* pUi = UI::Get())
@@ -294,44 +196,14 @@ void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI
             }
         }
         const bool phantom = a3 == UIMessage::kShow && a4 == nullptr && callerOffset == 0x168507ull && loadingOrMainMenu;
-        // TEMPORARY (2026-09-20): the direct caller sits in generic UI code (+0xf207f7 is in the UIMessageQueue region,
-        // +0x168507 in a shared TES helper), so the frames above it are what name the feature that closes the level-up
-        // box with a save load while connected, and the one that shows the box after a respawn. The data's first
-        // words are printed too: a vtable pointer there identifies the message data or callback type.
-        std::string frames;
-        {
-            void* stack[12] = {};
-            const USHORT count = RtlCaptureStackBackTrace(1, 12, stack, nullptr);
-            for (USHORT i = 0; i < count; ++i)
-            {
-                char frame[160];
-                DescribeCaller(stack[i], frame, sizeof(frame));
-                frames += fmt::format("{}{}", i == 0 ? "" : " < ", frame);
-            }
-        }
-        std::string dataWords;
-        if (a4 && ReadableBytes(a4, 32))
-        {
-            const uint64_t* pWords = static_cast<const uint64_t*>(a4);
-            for (int i = 0; i < 4; ++i)
-            {
-                char word[160];
-                DescribeCaller(reinterpret_cast<void*>(static_cast<uintptr_t>(pWords[i])), word, sizeof(word));
-                dataWords += fmt::format("{}{}", i == 0 ? "" : ", ", word);
-            }
-        }
-        spdlog::info("UI message for MessageBoxMenu: type {}, data {}, text '{}', from {}{}; stack [{}]; data words [{}]", static_cast<int>(a3), a4 ? "yes" : "no", text, caller,
-                     phantom ? "; dropped, the empty box that paused the world at load" : "", frames, dataWords);
         if (phantom)
+        {
+            spdlog::info("UI message for MessageBoxMenu from SkyrimVR.exe+0x168507 dropped, the empty box that paused the world at load");
             return;
+        }
     }
-    // TEMPORARY (2026-09-20): the friend's name above their head is to come from the game's own world-space enemy
-    // meter (WSEnemyMeters, built into Skyrim VR), the one NPCs get. Which message tells it whom to show, and who
-    // sends it when the player hits an enemy, is unknown, so every message aimed at it is logged with the data's
-    // first words (a vtable there names the HUDData type) and the caller stack. HUD Menu messages other than the
-    // per-frame update are logged too, since the meter may listen to those. At most 20 lines a second.
-    // The game pointing its enemy meter at someone: HUDData type 0xB with a non-zero actor handle at +0x28 (read from
-    // the game's own sends on 2026-09-20). Remembered so the friend's meter never steals a real enemy's.
+    // The game pointing its enemy meter (WSEnemyMeters) at someone: HUDData type 0xB with a non-zero actor handle at +0x28.
+    // Remembered so the other player's meter never steals a real enemy's.
     if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "WSEnemyMeters") == 0 && a3 == UIMessage::kUpdate && a4 && !s_sendingEnemyMeter && ReadableBytes(a4, 0x30) &&
         *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(a4) + 0x10) == 0xB && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(a4) + 0x28) != 0)
         s_lastGameEnemyMeterTargetAt = std::chrono::steady_clock::now();
@@ -342,9 +214,9 @@ void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI
 void UI::SetEnemyMeterTarget(uint32_t aHandle, uint16_t aLevel)
 {
 #ifdef SKYRIMVR
-    // The message the game sends from its hit handling (SE 0x1408D5130+0x284, VR +0x902ed4): a HUDData from the
-    // queue's factory, type 0xB at +0x10, the actor's level at +0x20, two flag bytes 1,1 at +0x22, the actor handle
-    // at +0x28 (0 to clear), queued as an update for WSEnemyMeters. EnemyHealth::Update then shows the meter itself.
+    // The message the game sends from its hit handling (SE 0x1408D5130+0x284, VR +0x902ed4), queued as an update for WSEnemyMeters.
+    // A HUDData from the queue's factory: type 0xB at +0x10, level at +0x20, flag bytes 1,1 at +0x22, actor handle at +0x28 (0 clears).
+    // EnemyHealth::Update then shows the meter itself.
     POINTER_SKYRIMSE(void*, s_queue, 400445, 400445);
     TP_THIS_FUNCTION(TCreateUIMessageData, void*, void, const BSFixedString*);
     POINTER_SKYRIMSE(TCreateUIMessageData, s_createData, 80061, 80061);
@@ -352,13 +224,8 @@ void UI::SetEnemyMeterTarget(uint32_t aHandle, uint16_t aLevel)
     if (!pQueue || !s_createData.Get() || !UIMessageQueue__AddMessage_Real)
         return;
 
-    // The meter menu has to actually be there. Opening the journal or the console tears the HUD's sub-menus down
-    // and builds them again, and for a moment "WSEnemyMeters" is gone while this driver keeps posting updates to
-    // it -- each one allocating a HUDData from the queue's factory for a menu that cannot receive it. Seen's
-    // session on 2026-09-25 is the shape of that: journal and console open for 33 s, closed at 20:50:46 leaving
-    // the menu list as [HUD Menu] alone, three enemy-meter updates sent into the gap, and six seconds later an
-    // access violation on `lock xadd [rcx+8], eax` with a junk pointer -- a reference count being decremented on
-    // something already gone.
+    // The meter menu has to be open: the journal or the console rebuilds the HUD's sub-menus, and WSEnemyMeters is briefly gone.
+    // An update sent into that gap allocates a HUDData for a menu that cannot receive it, and crashes the game soon after.
     BSFixedString meterMenu("WSEnemyMeters");
     UI* pUI = UI::Get();
     if (!pUI)
@@ -366,15 +233,9 @@ void UI::SetEnemyMeterTarget(uint32_t aHandle, uint16_t aLevel)
 
     if (!pUI->GetMenuOpen(meterMenu))
     {
-        // ...but refusing and saying nothing is why the friend's bar "needs to be initialised once" (2026-09-26).
-        // The meter is not part of the HUD until something has shown it: Emma's session of that morning started at
-        // 10:43:50 and WSEnemyMeters first appeared in the menu list at 10:47:58, four minutes later, and was
-        // missing from 205 of 575 probes -- a third of the session with no bar over anyone's head, whatever this
-        // driver decided.
-        //
-        // So ask for it. kShow with no data is how the game opens a menu, and it allocates nothing from the
-        // factory, which is what made the update above dangerous. If the menu comes up the next tick, 250 ms
-        // later, finds it open and posts the real target; if it does not, nothing has changed and the log says so.
+        // The meter is not part of the HUD until something has shown it, so a closed one is asked to show.
+        // kShow with no data is how the game opens a menu, and it allocates nothing from the factory.
+        // If the menu comes up, the next tick finds it open and posts the real target.
         if (aHandle == 0)
             return;
 
@@ -415,8 +276,8 @@ std::chrono::steady_clock::time_point UI::LastGameEnemyMeterTargetAt()
 static TiltedPhoques::Initializer s_s(
     []()
     {
-        // Offsets inside the patched functions differ between builds. The VR ones were checked in the VR code: the
-        // call to UI::AddToActiveQueue, the intro movie branch, and the menu mode jne in FavoritesHandler::CanProcess.
+        // Offsets inside the patched functions differ between builds.
+        // The VR ones were checked in the VR code: the AddToActiveQueue call, the intro movie branch, and FavoritesHandler::CanProcess.
 #ifdef SKYRIMVR
         constexpr size_t cAddToActiveQueueCall = 0x70C;
         constexpr size_t cStartupMovieBranch = 0x96;

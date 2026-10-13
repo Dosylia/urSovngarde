@@ -12,11 +12,10 @@ struct ConnectionErrorEvent;
 /**
  * @brief Connects VR players without a keyboard or a menu.
  *
- * The server comes from %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt: "address:port" on the first line and an
- * optional password on the second. A few seconds after a save is loaded the client connects on its own, and a
- * dropped connection is retried with a growing delay. F6 still toggles the connection by hand; disconnecting with
- * it stops the retries, and a refused connection (wrong version, wrong password, ...) stops them too, because
- * trying again would give the same answer.
+ * The server comes from %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt: "address:port", then an optional password line.
+ * A few seconds after a save is loaded the client connects on its own, and a dropped connection is retried with a growing delay.
+ * F6 still toggles the connection by hand, and disconnecting with it stops the retries.
+ * A refused connection (wrong version, wrong password, ...) stops them too, because trying again would give the same answer.
  */
 struct VRConnectService
 {

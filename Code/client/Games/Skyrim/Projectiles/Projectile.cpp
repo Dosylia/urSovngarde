@@ -38,11 +38,8 @@ BSPointerHandle<Projectile>* Projectile::Launch(BSPointerHandle<Projectile>* apR
     return result;
 }
 
-// The form id behind a LaunchData pointer, or 0 unless (on VR) the memory is readable and the form table maps that id
-// back to this very pointer. On VR these pointers were once seen as garbage, so they were not read there at all: the
-// shooter id stayed 0, CombatService dropped every launch, and the other player never saw an arrow leave this client
-// (2026-09-18). TiltedEvolutionVR reads the same layout on VR. With this check a wrong layout costs an unsynced
-// projectile, never a crash; HookLaunch logs the first launches so the next session settles which it is.
+// The form id behind a LaunchData pointer, or 0 on VR unless that id maps back to this pointer.
+// A wrong layout then costs an unsynced projectile, not a crash.
 static uint32_t ValidFormId(const void* apForm) noexcept
 {
     if (!apForm)
@@ -91,8 +88,8 @@ BSPointerHandle<Projectile>* TP_MAKE_THISCALL(HookLaunch, BSPointerHandle<Projec
             if (pExtendedActor && pExtendedActor->IsRemote())
             {
 #ifdef SKYRIMVR
-                // The owner syncs this projectile, so the local copy must go. VR's LaunchSpell reads the
-                // returned projectile without a null check, so launch it and delete it on the main thread.
+                // The owner syncs this projectile, so the local copy must go.
+                // VR's LaunchSpell does not null-check the result, so launch it and delete it on the main thread.
                 auto* pResult = TiltedPhoques::ThisCall(RealLaunch, apThis, arData);
                 if (pResult && pResult->handle.iBits && entt::locator<World>::has_value())
                 {
@@ -127,9 +124,8 @@ BSPointerHandle<Projectile>* TP_MAKE_THISCALL(HookLaunch, BSPointerHandle<Projec
     Event.ParentCellID = ValidFormId(arData.pParentCell);
     Event.SpellID = ValidFormId(arData.pSpell);
 
-    // TEMPORARY: says which of the six resolved on VR. The first launches of any kind, and every launch that carries
-    // a spell (staff and spell projectiles are rare, and a staff of light was reported breaking things for the other
-    // player on 2026-09-18 after the ten arrows had used up this budget). Remove once the layout is settled.
+    // TEMPORARY: logs which ids resolved, for the first ten launches and every spell launch.
+    // Tools/VR/session-report.py reads these lines.
     static uint32_t s_launchesLogged = 0;
     if (s_launchesLogged < 10 || Event.SpellID != 0)
     {
@@ -176,13 +172,9 @@ static TiltedPhoques::Initializer s_projectileHooks(
 
         TP_HOOK(&RealLaunch, HookLaunch);
 
-        // The projectile handle is read from the stack and dereferenced two instructions later; a null one crashed
-        // the game. The stub below re-reads it and returns false instead.
-        //
-        // Same function on both builds, with a different frame: SE 33672 / VR 0x554980 reads the handle at +0x397
-        // (`mov rbx, [rsp+0x58]`) and has a 0x158 frame, checked in the VR code, where AE 34452 reads it at +0x374
-        // (`mov rbx, [rsp+0x50]`) with a 0x138 frame. The read is exactly the five bytes a jump needs, and nothing
-        // branches into them.
+        // A null projectile handle read from the stack here crashes the game; the stub re-reads it and returns false.
+        // SE 33672 / VR 0x554980 reads it at +0x397 ([rsp+0x58], 0x158 frame); AE 34452 at +0x374 ([rsp+0x50], 0x138 frame).
+        // The read is exactly the five bytes a jump needs, and nothing branches into them.
 #ifdef SKYRIMVR
         VersionDbPtr<uint8_t> hookLoc(33672);
         constexpr uint32_t cHandleRead = 0x397;

@@ -28,9 +28,8 @@
 
 namespace
 {
-// Steam's voice functions, called through the flat API of the game's own steam_api64.dll (2.89.45.4 on Emma's
-// SkyrimVR, interface SteamUser018; checked 2026-10-10): the game has initialised Steam, so nothing is linked or
-// shipped. The flat functions take the interface pointer first.
+// Steam's voice functions from the game's own steam_api64.dll (SteamUser018); the game has already initialised Steam.
+// The flat API functions take the interface pointer first.
 enum EVoiceResult : int
 {
     kVoiceOK = 0,
@@ -142,7 +141,7 @@ private:
     }
 };
 
-// The menu's chat box shows it while the menu is open, where the HUD's messages are hidden; the HUD shows it in game.
+// Shows a message in the menu's chat box and on the HUD, which is hidden while the menu is open.
 void TellPlayer(const std::string& acMessage) noexcept
 {
     World::Get().GetOverlayService().SendSystemMessage(acMessage);
@@ -157,14 +156,14 @@ constexpr auto kDrainLength = std::chrono::milliseconds(600);
 constexpr float kFullVolumeDistance = 350.f; // 5 m
 constexpr float kSilentDistance = 2100.f;    // 30 m; the server stops sending a little further (34 m)
 constexpr float kHeadHeight = 120.f;         // a standing character's mouth above their feet
-// A party member heard from afar, or whose body is not in our game: centred and a little quieter, like a radio.
+// A party member far away or not loaded here: centred and a little quieter, like a radio.
 constexpr float kRadioGain = 0.6f;
 // A voice the server says is near but whose body is not loaded here yet.
 constexpr float kUnplacedGain = 0.5f;
-// Held back after a silence before playing, to ride out the network's unevenness; played anyway after kJitterWait.
+// Buffered after a silence to absorb network jitter; played anyway after kJitterWait.
 constexpr uint32_t kJitterMs = 80;
 constexpr auto kJitterWait = std::chrono::milliseconds(150);
-// More than this queued and we are falling behind: new pieces are dropped until it drains.
+// More than this queued means we are behind: new pieces are dropped until it drains.
 constexpr uint32_t kMaxQueuedMs = 400;
 constexpr auto kSpeakerIdle = std::chrono::seconds(30);
 
@@ -272,7 +271,7 @@ void VoiceService::OnUpdate(const UpdateEvent&) noexcept
     switch (m_testState)
     {
     case TestState::kRecording:
-        ReadVoice(cNow);
+        ReadTestVoice(cNow);
         if (cNow - m_stateSince >= kTestLength)
         {
             steam.Stop(steam.User);
@@ -282,7 +281,7 @@ void VoiceService::OnUpdate(const UpdateEvent&) noexcept
         }
         break;
     case TestState::kDraining:
-        ReadVoice(cNow);
+        ReadTestVoice(cNow);
         if (cNow - m_stateSince >= kDrainLength || m_lastResult == kVoiceNotRecording)
             FinishRecording();
         break;
@@ -304,11 +303,11 @@ void VoiceService::OnUpdate(const UpdateEvent&) noexcept
     }
 }
 
-void VoiceService::ReadVoice(std::chrono::steady_clock::time_point aNow) noexcept
+void VoiceService::ReadTestVoice(std::chrono::steady_clock::time_point aNow) noexcept
 {
     auto& steam = SteamVoice::Get();
 
-    // Steam keeps a little of what it recorded; reading every frame until it has nothing more keeps none waiting.
+    // Reads everything Steam has this frame.
     for (int i = 0; i < 8; ++i)
     {
         uint32_t written = 0;
@@ -344,7 +343,7 @@ void VoiceService::ReadVoice(std::chrono::steady_clock::time_point aNow) noexcep
 
     if (aNow - m_lastSecondReport >= std::chrono::seconds(1))
     {
-        // What Steam answered this second: "no data" every time means the microphone it listens to gives it nothing.
+        // "no data" all second means Steam's microphone gives it nothing.
         spdlog::info("Voice test: {} bytes of voice in the last second (GetVoice: {} ok, {} no data, {} not recording)", m_bytesThisSecond,
                      m_resultCounts[kVoiceOK], m_resultCounts[kVoiceNoData], m_resultCounts[kVoiceNotRecording]);
         m_resultCounts.fill(0);
@@ -418,8 +417,8 @@ void VoiceService::FinishRecording() noexcept
 
 void VoiceService::SaveRecording() const noexcept
 {
-    // Kept for the rig, where nobody speaks: the bot replays it as a player's voice (VR_TODO, voice, step 5). Each
-    // packet: its time from the start in ms and its size, both uint32, then Steam's compressed bytes.
+    // Saved so the test bot can replay it as a player's voice.
+    // Each packet: its time from the start in ms and its size, both uint32, then Steam's compressed bytes.
     const auto cPath = TiltedPhoques::GetPath() / "logs" / "voice_test.bin";
     std::ofstream file(cPath, std::ios::binary | std::ios::trunc);
     if (!file)
@@ -441,8 +440,8 @@ void VoiceService::SaveRecording() const noexcept
 
 bool VoiceService::EnsureAudio() noexcept
 {
-    // XAudio2 2.9 is part of Windows 10 and 11; loaded by hand so the client needs no new import. Never released: the
-    // engine lives as long as the game, and tearing it down while the game exits only risks a crash on the way out.
+    // XAudio2 2.9 ships with Windows 10 and 11; it is loaded by hand to avoid a new import.
+    // Never released, since tearing it down at exit only risks a crash.
     if (m_audioFailed)
         return false;
     if (!m_pXAudio)
@@ -607,7 +606,7 @@ void VoiceService::UpdateCapture() noexcept
         spdlog::info("Voice: microphone on");
     }
 
-    // Everything Steam has, every frame, so nothing waits: each GetVoice is one piece of a few hundred bytes.
+    // Sends everything Steam has this frame, one piece of a few hundred bytes per GetVoice.
     for (int i = 0; i < 8; ++i)
     {
         uint32_t written = 0;
@@ -707,10 +706,10 @@ void VoiceService::OnVoiceData(const NotifyVoiceData& acMessage) noexcept
             speaker.WaitingSince = cNow;
         speaker.Waiting.insert(speaker.Waiting.end(), samples.begin(), samples.end());
         if (speaker.Waiting.size() >= m_sampleRate * kJitterMs / 1000)
-            Submit(speaker, std::move(speaker.Waiting));
+            QueueSamples(speaker, std::move(speaker.Waiting));
     }
     else if (speaker.QueuedSamples < m_sampleRate * kMaxQueuedMs / 1000)
-        Submit(speaker, std::move(samples));
+        QueueSamples(speaker, std::move(samples));
 }
 
 void VoiceService::ReleasePlayed(Speaker& aSpeaker) noexcept
@@ -728,7 +727,7 @@ void VoiceService::ReleasePlayed(Speaker& aSpeaker) noexcept
     }
 }
 
-void VoiceService::Submit(Speaker& aSpeaker, std::vector<int16_t>&& aSamples) noexcept
+void VoiceService::QueueSamples(Speaker& aSpeaker, std::vector<int16_t>&& aSamples) noexcept
 {
     if (!aSpeaker.pVoice || aSamples.empty() || aSpeaker.Queued.size() >= XAUDIO2_MAX_QUEUED_BUFFERS)
     {
@@ -736,7 +735,7 @@ void VoiceService::Submit(Speaker& aSpeaker, std::vector<int16_t>&& aSamples) no
         return;
     }
 
-    // Moved, not copied: the samples XAudio2 reads stay where they are while the deque grows.
+    // Moved, not copied, so the samples XAudio2 reads stay in place while the deque grows.
     auto& queued = aSpeaker.Queued.emplace_back(std::move(aSamples));
     aSamples.clear();
 
@@ -760,7 +759,7 @@ void VoiceService::UpdateSpeakers(std::chrono::steady_clock::time_point aNow) no
 
         // The end of a short phrase never reaches kJitterMs on its own.
         if (speaker.Queued.empty() && !speaker.Waiting.empty() && aNow - speaker.WaitingSince >= kJitterWait)
-            Submit(speaker, std::move(speaker.Waiting));
+            QueueSamples(speaker, std::move(speaker.Waiting));
 
         if (speaker.Queued.empty() && speaker.Waiting.empty() && aNow - speaker.LastHeard >= kSpeakerIdle)
         {
@@ -806,7 +805,7 @@ void VoiceService::PlaceSpeaker(uint32_t aPlayerId, Speaker& aSpeaker) noexcept
         if (cDistance > 1.f)
             pan = std::clamp(glm::dot(cToSpeaker / cDistance, right), -1.f, 1.f);
 
-        // A party member stays heard at any distance: as a radio, centred, once their own voice would be quieter.
+        // A party member far away stays heard, centred, at the radio volume.
         if (cIsParty && gain < kRadioGain)
         {
             pan *= gain / kRadioGain;

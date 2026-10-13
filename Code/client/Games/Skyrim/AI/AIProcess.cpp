@@ -6,13 +6,11 @@ bhkCharacterController* AIProcess::GetCharController() noexcept
 {
     TP_THIS_FUNCTION(TGetCharController, bhkCharacterController*, AIProcess);
 
-    // A VR address for this arrived on 2026-09-23 (VR 0x140685270, SE 0x14067bdf0) and is in
-    // VRAddressOverrides under AE id 39856, so the engine's own function is what answers now.
+    // The engine's own function answers (VR 0x140685270, SE 0x14067bdf0, in VRAddressOverrides under AE id 39856).
     //
-    // The field read below stays as the fallback, and as a check on it. CommonLibVR implements this as
-    // `middleHigh ? middleHigh->charController.get() : nullptr` with middleHigh at +0x08 and charController at
-    // +0x250, which is what this struct's middleProcess says. If the two ever disagree, the offset is wrong and
-    // that is worth knowing, because nothing else here would notice: it is said once and then left alone.
+    // The field read below is the fallback, and a check on the offset.
+    // CommonLibVR: `middleHigh ? middleHigh->charController.get() : nullptr`, middleHigh at +0x08, charController at +0x250.
+    // If the two ever disagree, the offset is wrong; that is logged once.
     bhkCharacterController* pFromField = middleProcess ? middleProcess->charController : nullptr;
 
     POINTER_SKYRIMSE(TGetCharController, getCharController, 39856, 39856);

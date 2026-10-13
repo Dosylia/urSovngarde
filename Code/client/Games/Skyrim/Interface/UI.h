@@ -40,13 +40,11 @@ class UI
 public:
     static UI* Get();
 
-    //! Points the game's own world-space enemy meter (the name and health bar NPCs get, WSEnemyMeters on VR) at an
-    //! actor, the way a hit does. Handle 0 clears it. The message shape was read from the game's own sends.
+    //! Points the game's own world-space enemy meter (WSEnemyMeters, the bar NPCs get) at an actor, as a hit does.
+    //! Handle 0 clears it. The message copies the shape of the game's own sends.
     static void SetEnemyMeterTarget(uint32_t aHandle, uint16_t aLevel);
-    //! When the game itself last pointed the meter at someone (a real enemy). Our driver keeps its hands off then.
+    //! When the game itself last pointed the meter at a real enemy; our driver leaves the meter alone then.
     static std::chrono::steady_clock::time_point LastGameEnemyMeterTargetAt();
-    // TEMPORARY (2026-09-20): readable C strings reachable from an object, for naming the phantom message box.
-    static void CollectReadableStrings(const void* apObject, size_t aBytes, int aDepth, std::string& aOut) noexcept;
 
     bool GetMenuOpen(const BSFixedString& acName) const;
     void CloseAllMenus();

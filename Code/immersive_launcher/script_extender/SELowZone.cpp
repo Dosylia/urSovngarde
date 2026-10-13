@@ -11,13 +11,11 @@ namespace script_extender
 {
 namespace
 {
-// The Script Extender takes (its own dll base - kSkseReach) as the lower bound of the search for its
-// codegen buffer, then walks down from that base for a free 64k block. Our exe is linked
-// /DYNAMICBASE:NO and its game segment runs past 0x180000000, which is where the dll wants to sit, so
-// the dll always gets relocated. Land it under kSkseReach and that subtraction underflows: the bound
-// check then passes on the first iteration, so it gives up after a single probe, logs "couldn't
-// allocate trampoline, no free space before image" and skips the rest of its init. Nothing loads
-// after that, and preloaded plugins go on to fault on the interfaces the skipped init owed them.
+// The Script Extender walks down from its own dll base for a free 64k codegen block, stopping at (base - kSkseReach).
+// Our exe is linked /DYNAMICBASE:NO and covers 0x180000000, the dll's preferred base, so the dll is always relocated.
+// If the dll lands below kSkseReach, the subtraction underflows and the search gives up after one probe.
+// It then logs "couldn't allocate trampoline, no free space before image" and skips the rest of its init.
+// No plugin loads after that, and preloaded plugins fault on the interfaces that init should have provided.
 constexpr uintptr_t kSkseReach = 0x78000000;
 
 // Below this nothing can host the dll image anyway, and the loader keeps its own thunks down there.
@@ -28,8 +26,8 @@ constexpr uintptr_t kGranularity = 0x10000;
 // What the trampoline needs, and small enough that the dll image can never fit in one.
 constexpr uintptr_t kGapSize = 0x10000;
 
-// One gap per stride. Reserving solid would push the dll above kSkseReach and then leave the search
-// with nothing to find, which is the failure this spacing exists to avoid.
+// One gap per stride.
+// Reserving the whole range would push the dll above kSkseReach but leave the trampoline search nothing to find.
 constexpr uintptr_t kStride = 0x400000;
 
 // The range holds 0x78000000 / kStride strides, plus slack for a fragmented address space.
@@ -59,12 +57,10 @@ void ReserveLowZone()
             uintptr_t start = (address + kGranularity - 1) & ~(kGranularity - 1);
             const uintptr_t end = regionEnd < kSkseReach ? regionEnd : kSkseReach;
 
-            // Chop it up so every run left free is too small to host the image, but still wide
-            // enough to hand the trampoline search a block. The gap sits at the bottom of each
-            // chunk, never the top: a gap at the top of the range would join the free space above
-            // it into one run, and the image would land on the gap and straddle kSkseReach, which
-            // puts its base back under the reach and underflows the bound after all. The last
-            // chunk therefore has to stay reserved right up to kSkseReach.
+            // Chop it up so every free run left is too small for the dll image but big enough for a trampoline block.
+            // The gap sits at the bottom of each chunk, never the top.
+            // A gap at the top would join the free space above it, and the image could land there and straddle kSkseReach.
+            // Its base would then be under the reach again, so the last chunk stays reserved right up to kSkseReach.
             while (start < end && s_blockCount < kMaxBlocks)
             {
                 const uintptr_t chunkEnd = (start + kStride < end) ? start + kStride : end;

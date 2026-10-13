@@ -2,8 +2,7 @@
 
 #include "Message.h"
 
-//! This player turned voice on or off in the urSovngarde menu. Off (the default) means they neither speak nor hear:
-//! the server sends voice only to the players who have it on.
+//! Voice turned on or off in the urSovngarde menu; with it off (the default) the player neither speaks nor hears.
 struct VoiceStateRequest final : ClientMessage
 {
     static constexpr ClientOpcode Opcode = kVoiceStateRequest;

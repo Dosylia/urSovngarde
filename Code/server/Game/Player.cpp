@@ -64,8 +64,7 @@ void Player::SetEndpoint(String aEndpoint) noexcept
 
 void Player::SetUsername(String aUsername) noexcept
 {
-    // No control characters: a player joined as "Shezarrine-0" and a line break (2026-10-11 07:33), which split the
-    // server's log lines and went on to the hub's status and the website's public page. UTF-8 letters stay.
+    // Strips control characters, which would split log lines and reach the public server page; UTF-8 letters stay.
     String clean;
     for (const char c : aUsername)
     {

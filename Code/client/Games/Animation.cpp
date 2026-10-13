@@ -24,11 +24,8 @@ thread_local bool g_forceAnimation = false;
 
 namespace
 {
-// TEMPORARY (2026-10-03): which actions flood the stream, and whether they even work on the actor that sends them.
-// A Netch standing still sent IdleSpecialStart 282 times in 12 s on 2026-10-02 (1521 actions in another 12 s), and
-// an actor once queued 717 Unequip replays on the other side (2026-09-24). Until 2026-10-03 every action this hook
-// saw was sent, including those the game refused here (res 0). Said once per actor and action every ten seconds,
-// when one actor performs the same action more than ten times in a second.
+// TEMPORARY: logs which actions flood the stream, and how many of them the game refused on the sending actor.
+// Logged once per actor and action every ten seconds, when one actor performs the same action more than ten times in a second.
 void NoteActionRate(uint32_t aActorId, uint32_t aActionId, const char* acpEventName, bool aWorked) noexcept
 {
     struct Rate
@@ -62,15 +59,11 @@ void NoteActionRate(uint32_t aActorId, uint32_t aActionId, const char* acpEventN
     if (!aWorked)
         ++rate.Failed;
 }
-// Whether this action is the one just sent for this actor, again, within a quarter of a second. A Netch standing still
-// performs IdleSpecialStart about forty times a second and the game accepts every second one: the bot received 489 of
-// them in 12 s (2026-10-03, after refused actions had stopped being sent), each carrying the creature's animation
-// variables. The other players gain nothing from the forty-first restart of the same idle.
+// Whether this action is the one just sent for this actor, again, within a quarter of a second.
+// A creature standing still can perform IdleSpecialStart about forty times a second, and other players gain nothing from the repeats.
 bool IsRepeatOfLastSent(const ActionEvent& acAction) noexcept
 {
-    // Idles only. Movement and attacks are never held back: with every repeated action filtered, the creature-gait
-    // check failed in two runs of five (a copy's legs moving in 42% of samples against 50%), after passing every run
-    // before the filter; the flood itself was an idle.
+    // Idles only. Movement and attacks are never held back, because filtering them breaks the creature gait on remote copies.
     const bool cIdle = acAction.IdleId != 0 || acAction.EventName.rfind("Idle", 0) == 0;
     if (!cIdle)
         return false;
@@ -136,11 +129,8 @@ uint8_t TP_MAKE_THISCALL(HookPerformAction, ActorMediator, TESActionData* apActi
 
         NoteActionRate(action.ActorId, action.ActionId, apAction->eventName.AsAscii(), res != 0);
 
-        // An action the game refused here did not happen here, so it is not sent: the other players would replay
-        // something the owner's actor never did, and a refused action tends to be retried every frame. On
-        // 2026-10-03 one creature standing at Mistwatch tried action 132AF 53 to 62 times a second and was refused
-        // every time, and a Seeker standing still tried IdleSpecialStart 121 times a second, half of them refused;
-        // all of it went out with the creature's movement updates.
+        // An action the game refused here did not happen, so it is not sent.
+        // Otherwise other players would replay something the owner's actor never did, and refused actions are often retried every frame.
         if (!res)
             return res;
 

@@ -27,8 +27,8 @@
 
 #pragma comment(lib, "advapi32.lib")
 
-// The launcher's "Hide me from the public server page", kept beside the game path it writes for the mod's own launcher
-// (immersive_launcher/oobe/PathSelection.cpp). Read at every connection, so a change applies at the next one.
+// The launcher's "Hide me from the public server page" setting, stored beside the game path (oobe/PathSelection.cpp).
+// Read at every connection, so a change applies at the next one.
 static bool IsHiddenFromPublicPage() noexcept
 {
 #ifdef SKYRIMVR
@@ -205,12 +205,9 @@ void TransportService::OnConnected()
 
 bool TransportService::Connect(const std::string& acEndpoint) noexcept
 {
-    // TiltedConnect's Connect writes the new connection's handle over the old one without closing it. The old one
-    // then lives on inside the networking library, which keeps answering the server, while the game sends nothing on
-    // it: to the server, a player who is there and silent for good. Pengy's dashboard connected to a placeholder
-    // address three times on 2026-10-11 while online, and each time left such a player behind ("Shezarrine"): the
-    // silent stranger of the morning session that 45 NPCs were given to and froze with, and the second Pengy, old
-    // body and old name, of the next one. Close() does nothing when there is no connection.
+    // TiltedConnect's Connect overwrites the old connection's handle without closing it.
+    // The networking library keeps the old one alive, so the server sees a player who is there but never sends anything.
+    // Close() does nothing when there is no connection.
     Close();
     return Client::Connect(acEndpoint);
 }
@@ -251,6 +248,8 @@ void TransportService::HandleAuthenticationResponse(const AuthenticationResponse
     if (acMessage.Type == AR::kAccepted)
     {
         m_connected = true;
+        // The rig (Tools/VR/headless.ps1) waits for this line.
+        spdlog::info("Connected: the server accepted this player (id {})", acMessage.PlayerId);
 
         m_world.SetServerSettings(acMessage.Settings);
 

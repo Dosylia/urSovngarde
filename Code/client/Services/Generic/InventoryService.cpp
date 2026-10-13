@@ -161,9 +161,8 @@ void InventoryService::OnEquipmentChangeEvent(const EquipmentChangeEvent& acEven
 
 namespace
 {
-// This player's own follower: her gear is what this game has. Another game, where she is nobody's follower, dresses
-// her in the outfit she has in that player's own save and sends it as if she had been re-equipped (2026-10-03 15:09,
-// 2026-10-04 09:33: Lydia came out wearing that outfit and Emma's Orcish armour at once).
+// True for this player's own follower, whose gear is what this game has.
+// Another player's game dresses her in its own save's outfit and sends that as a re-equip; it is ignored here.
 bool IsMyFollower(const Actor* apActor, const uint32_t aServerId, const char* apWhat) noexcept
 {
     if (!apActor || !apActor->IsPlayerTeammate() || apActor->IsTemporary())
@@ -207,8 +206,7 @@ void InventoryService::OnNotifyInventoryChanges(const NotifyInventoryChanges& ac
                 pActor = Cast<Actor>(TESForm::GetById(localView.get<FormIdComponent>(*localIt).Id));
         }
 
-        // Before giving up: was the character here all along, with an epoch one behind? That is a dropped
-        // equipment change rather than an unknown character, and the two look identical from here.
+        // A character here under another epoch is a missed update, not an unknown character: report it.
         if (!pActor)
         {
             const auto byIdIt = std::find_if(remoteView.begin(), remoteView.end(), [remoteView, &acMessage](const entt::entity aEntity)
@@ -227,13 +225,8 @@ void InventoryService::OnNotifyInventoryChanges(const NotifyInventoryChanges& ac
 
         ScopedInventoryOverride _;
 
-        // Dropped items were reported invisible to the other player (2026-09-18). With the sender's "drop: true"
-        // line this shows whether the drop arrived here at all.
         if (acMessage.Drop)
-        {
-            spdlog::info("Remote actor {:X} (server id {:X}) drops item {:X} x{}", pActor->formID, acMessage.ServerId, acMessage.Item.BaseId.BaseId, acMessage.Item.Count);
             pActor->DropOrPickUpObject(acMessage.Item, nullptr, nullptr);
-        }
         else
             pActor->AddOrRemoveItem(acMessage.Item);
 
@@ -325,11 +318,8 @@ void InventoryService::OnNotifyEquipmentChanges(const NotifyEquipmentChanges& ac
     }
     else
     {
-        // A weapon already in that hand is not equipped again: the game's equip of the weapon a copy holds empties the
-        // hand while it goes on saying the weapon is equipped (`live-equip-twice`, 2026-10-10: without this, the right
-        // hand was empty after a second equip and after a third, 2 of 8 checks failed; with it, 8 of 8). First seen
-        // 2026-10-03 (`live-equip` after `live-game-drops`); Emma's copy in Seen's game held no weapon for two minutes
-        // amid repeated equips on 2026-10-09.
+        // A weapon already in that hand is not equipped again.
+        // Re-equipping it empties the copy's hand while the game still reports it equipped (`live-equip-twice`).
         if (pItem->formType != FormType::Armor)
         {
             const uint32_t hand = pEquipSlot == DefaultObjectManager::Get().leftEquipSlot ? 0 : 1;
@@ -446,14 +436,9 @@ void InventoryService::RunNakedNPCBugChecks() noexcept
             continue;
 
         // Give up on an actor this cannot dress.
-        //
-        // ResetInventory re-equips everything, and re-equipping emits equip and unequip animation events, which
-        // travel to the other players as actions to replay. Nothing here ever stopped: if IsWearingBodyPiece
-        // stays false -- a body slot this check does not understand, an outfit a mod manages itself -- the same
-        // actor is reset every second for as long as it is loaded. On 2026-09-24 that put 717 refused 'Unequip'
-        // replays on one Redoran Guard into the other player's queue, one per second, while thirty other actors
-        // starved for updates behind them. Three attempts is generous; after that the actor is left dressed
-        // however it is, which is a far smaller problem than a stream that never catches up.
+        // Each ResetInventory emits equip and unequip events that the other players replay as actions.
+        // If IsWearingBodyPiece never turns true (a mod-managed outfit, say), a reset every second would flood their queue.
+        // After three tries the actor is left dressed as it is.
         constexpr uint32_t cMaxResets = 3;
         auto& resets = s_resets[pActor->formID];
         if (resets >= cMaxResets)
@@ -474,7 +459,7 @@ void InventoryService::RunNakedNPCBugChecks() noexcept
         }
     }
 
-    // Actors nobody has seen for a while, so a cell revisit starts fresh.
+    // Forget every count once the map grows, so a cell revisit starts fresh.
     if (s_resets.size() > 256)
         s_resets.clear();
 }
@@ -534,18 +519,12 @@ void InventoryService::RunEquipmentSnapshotUpdates() noexcept
 
     RequestEquipmentChanges request;
     request.ServerId = serverId;
-    // Without this the server drops the message and says nothing: InventoryService::OnEquipmentChanges refuses
-    // any equipment change whose epoch does not match the owner's, and an unset one never does. This snapshot is
-    // the safety net that reconciles equipment when a change event has been missed -- which is exactly what
-    // happens while a player is out of range, since equipment travels in range only -- and it has never once
-    // reached the server. Found on 2026-09-26 by checking the client against the same rule that had caught the
-    // bot four times.
+    // Required: the server silently drops an equipment change whose epoch does not match the owner's.
+    // This snapshot reconciles changes missed while a player was out of range, where equipment does not travel.
     request.OwnershipEpoch = ownershipEpoch;
     request.CurrentInventory = equipment;
 
     m_transport.Send(request);
-
-    spdlog::info("Equipment snapshot sent: {} worn entries, left spell {:X}, right spell {:X}", equipment.Entries.size(), equipment.CurrentMagicEquipment.LeftHandSpell.BaseId, equipment.CurrentMagicEquipment.RightHandSpell.BaseId);
 
     m_lastSnapshotServerId = serverId;
     m_lastEquipmentSnapshot = std::move(equipment);
@@ -564,10 +543,8 @@ bool ContainsHandItem(const Vector<HandItem>& acItems, TESForm* apForm, bool aLe
     return std::any_of(acItems.begin(), acItems.end(), [apForm, aLeft](const HandItem& aItem) { return aItem.pForm == apForm && aItem.Left == aLeft; });
 }
 
-// What this side has put in each remote player copy's hands since it appeared, by form id. The container's worn
-// flags cannot stand in for it: SetInventory equips the worn entries before the copy has its 3D, so the flags say
-// "held" while the hands stay empty. Every spawn of 2026-09-20 logged "1 hand items wanted, 1 held now" and the
-// weapon only showed once the owner re-equipped it ("we always spawn with empty hands").
+// What this side has put in each remote player copy's hands since it appeared, by form id.
+// The worn flags cannot stand in: SetInventory equips before the copy has its 3D, so they say "held" while the hands stay empty.
 TiltedPhoques::Map<uint32_t, Vector<HandItem>> s_handsApplied;
 
 void NoteHandItem(Actor* apActor, TESForm* apItem, bool aLeft, bool aEquipped) noexcept

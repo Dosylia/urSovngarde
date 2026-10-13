@@ -87,8 +87,8 @@ void Hook_StopTimer(int type)
 static TiltedPhoques::Initializer s_viewportHooks(
     []()
     {
-        // Off on VR: these addresses are unverified there, and a wrong Renderer_Init hook silently
-        // corrupts memory. Without it there is no window patch and no overlay/imgui device hookup.
+        // Off on VR: these addresses are unverified there, and a wrong Renderer_Init hook silently corrupts memory.
+        // Without it there is no window patch and no overlay/imgui device hookup.
 #ifndef SKYRIMVR
         const VersionDbPtr<void> initWindowLoc(77226);
         // patch dwStyle in BSGraphics::InitWindows
@@ -112,8 +112,8 @@ static TiltedPhoques::Initializer s_viewportHooks(
         // TiltedPhoques::SwapCall(mem::pointer(initLoc.GetPtr()) + 0xD1A, Renderer_Init, &Hook_Renderer_Init);
         TP_HOOK_IMMEDIATE(&Renderer_Init, &Hook_Renderer_Init);
 #else
-        // Only the frame end call on VR, for VRBodySync: SE 75461 is the renderer's frame end, and +0x15 is its
-        // StopTimer(1) call (checked in the VR code; another plugin already swaps this call, so ours chains to it).
+        // Only the frame end call on VR, for VRBodySync: SE 75461 is the renderer's frame end, and +0x15 is its StopTimer(1) call.
+        // Another plugin already swaps this call on VR, so ours chains to it.
         const VersionDbPtr<void> timerLoc(75461);
         TiltedPhoques::SwapCall(mem::pointer(timerLoc.GetPtr()) + 0x15, StopTimer, &Hook_StopTimer);
 #endif

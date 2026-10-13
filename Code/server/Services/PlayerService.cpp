@@ -61,7 +61,7 @@ void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>&
     auto& message = acMessage.Packet;
 
     const GameId oldCell = pPlayer->GetCellComponent().Cell;
-    // Where the viewer was, to tell what has just left its range (see the removal below).
+    // Where the viewer was, to remove what has just left its range.
     const CellIdComponent previous = pPlayer->GetCellComponent();
 
     CellIdComponent cell = CellIdComponent{message.PlayerCell, message.WorldSpaceId, message.CenterCoords};
@@ -83,16 +83,6 @@ void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>&
         // Use the same worldspace/position range as movement broadcasts, including dragon range.
         const bool isInRange = cell.IsInRange(characterCellComponent, characterComponent.IsDragon());
 
-        // TEMPORARY (2026-09-20): see WorldDiag in CharacterService. This is the path that gives a player back the
-        // copies it lost when it changed worldspace, so both outcomes are named for player characters.
-        if (characterComponent.IsPlayer())
-        {
-            Player* pOwner = ownedComponent.GetOwner();
-            spdlog::info("WorldDiag: '{}' shifted to worldspace {:X} grid ({}, {}); player '{}' ({:X}) in worldspace {:X} grid ({}, {}) is {}", pPlayer->GetUsername().c_str(), cell.WorldSpaceId.BaseId,
-                         cell.CenterCoords.X, cell.CenterCoords.Y, pOwner ? pOwner->GetUsername().c_str() : "?", World::ToInteger(character), characterCellComponent.WorldSpaceId.BaseId,
-                         characterCellComponent.CenterCoords.X, characterCellComponent.CenterCoords.Y, isInRange ? "sent" : "withheld");
-        }
-
         if (!isInRange)
         {
             continue;
@@ -107,12 +97,8 @@ void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>&
     RemoveWhatLeftRange(pPlayer, previous);
 }
 
-// What a viewer walked away from is removed from its view, as the other direction always was
-// (CharacterService::OnCharacterExteriorCellChange): until 2026-10-10 a viewer kept copies of everything it left behind,
-// and nothing corrected one that stays put, a corpse above all (`rangeback`, 2026-09-30). Only what was in range of where
-// it was and is not of where it is now, so nothing is removed that it never had. Called by both exterior handlers, each
-// with the place it had before it: a client sends the cell entry first and the grid shift after, and the entry alone
-// already moves the viewer (the first try, in the shift alone, never removed anything).
+// Removes from a viewer's view what was in range of its previous place but not of its current one.
+// Called by both exterior handlers, because a client sends the cell entry before the grid shift (`rangeback`).
 void PlayerService::RemoveWhatLeftRange(Player* apPlayer, const CellIdComponent& acPrevious) const noexcept
 {
     if (!acPrevious.WorldSpaceId)
@@ -157,24 +143,9 @@ void PlayerService::HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellR
         pPlayer->SetCellComponent(cell);
         RemoveWhatLeftRange(pPlayer, previous);
 
-        // Give this player back everything that is in range of where they now are.
-        //
-        // This loop is why the handler exists in the same shape as its two siblings, and it was the only one of
-        // the three without it. Both of the others send in both directions: HandleInteriorCellEnter sends the
-        // arriving player the characters in their new cell, HandleGridCellShift sends them the characters in
-        // range of their new grid, and the matching CharacterService events send *them* to everybody else. This
-        // one only ever did the second half -- the mover was announced to the world, and the world was never
-        // announced back to the mover.
-        //
-        // The gap is reachable on foot. DiscoveryService::VisitExteriorCell raises the exterior-enter whenever
-        // the *current* grid changes, while the grid shift is raised only when the *centre* grid changes, so
-        // walking from one outdoor cell into the next takes this path alone. A copy lost in that moment -- torn
-        // down because its cell unloaded, which is the invisible-player case of 2026-09-26 -- had nothing to
-        // bring it back until the centre grid happened to move, which can be several cells of walking later.
-        //
-        // Re-sending a character that is already spawned is harmless: CharacterService::OnCharacterSpawn finds
-        // the existing copy, refreshes its ownership epoch and leaves its position alone unless nothing has
-        // arrived for it in two seconds.
+        // Sends this player every character in range of where they now are, as the other two cell handlers do.
+        // Walking into the next outdoor cell raises only this event, not a grid shift.
+        // Re-sending an existing copy is harmless: the client keeps it and refreshes its ownership epoch.
         auto characterView = m_world.view<CellIdComponent, CharacterComponent, OwnerComponent>();
         for (auto character : characterView)
         {
@@ -185,15 +156,9 @@ void PlayerService::HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellR
             const auto& characterCellComponent = characterView.get<CellIdComponent>(character);
             const auto& characterComponent = characterView.get<CharacterComponent>(character);
 
-            // The same range test the movement broadcasts use, dragons included, so a character is sent here
-            // exactly when its updates would be.
+            // Same range test as the movement broadcasts, dragons included.
             if (!cell.IsInRange(characterCellComponent, characterComponent.IsDragon()))
                 continue;
-
-            if (characterComponent.IsPlayer())
-                spdlog::info("WorldDiag: '{}' entered exterior cell {:X} in worldspace {:X} grid ({}, {}); sending player ({:X}) back to them",
-                             pPlayer->GetUsername().c_str(), cell.Cell.BaseId, cell.WorldSpaceId.BaseId, cell.CenterCoords.X, cell.CenterCoords.Y,
-                             World::ToInteger(character));
 
             CharacterSpawnRequest spawnMessage;
             CharacterService::Serialize(m_world, character, &spawnMessage);
@@ -295,18 +260,15 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
         }
     }
 
-    // Let all other players in cell respawn this player, since the body state seems to be bugged otherwise. Outside
-    // the inventory lookup above: a character the server holds no inventory for respawns for everyone else too.
+    // Let all other players in cell respawn this player, since the body state seems to be bugged otherwise.
+    // Done outside the inventory lookup, so a character without a server inventory respawns too.
     NotifyRespawn notifyRespawn{};
     notifyRespawn.ActorId = World::ToInteger(*character);
 
     if (!GameServer::Get()->SendToPlayersInRange(notifyRespawn, *character, acMessage.GetSender()))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 
-    // The respawn above rebuilds the body, but the health the server keeps for this character is still whatever it
-    // was when they died, and nothing here ever put it back. Every copy built from that point on -- someone walking
-    // into range, someone reconnecting, a hand-off -- is built at the death value. The bot relay test of 2026-09-25
-    // watched a respawned character arrive at health -4 this way.
+    // The stored health is still the death value; reset it, or every later copy is built dead.
     auto valuesView = m_world.view<ActorValuesComponent>();
     if (const auto valuesIt = valuesView.find(*character); valuesIt != valuesView.end())
     {
@@ -317,8 +279,7 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
         const auto maxIt = maximums.find(kHealthValue);
         const auto curIt = current.find(kHealthValue);
 
-        // Only when it is actually a death value. A player who respawns at partial health, or a server that never
-        // stored a maximum, is left alone rather than being handed a number nobody asked for.
+        // Only a death value is reset; a partial health or a missing maximum is left alone.
         if (maxIt != maximums.end() && maxIt->second > 0.f && curIt != current.end() && curIt->second <= 0.f)
         {
             current[kHealthValue] = maxIt->second;

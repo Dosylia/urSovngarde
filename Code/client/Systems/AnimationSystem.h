@@ -49,8 +49,8 @@ struct AnimationSystem
     /**
      * @brief Drops the oldest queued actions once the backlog is longer than can ever be played.
      *
-     * Update plays at most one action per frame, so a queue that grows faster than that never drains and every
-     * action played is minutes old. Must be called from every path that pushes into TimePoints.
+     * Update plays at most one action per frame, so a queue that grows faster never drains and plays minutes-old actions.
+     * Must be called from every path that pushes into TimePoints.
      * @param aAnimationComponent The animation component attached to the actor in question.
      * @param aFormId The actor's form id, for the log line only.
      */

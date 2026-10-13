@@ -112,7 +112,7 @@ NiPoint3 PlayerCharacter::RespawnPlayer() noexcept
         pCell = GetSaveParentCell();
     }
 
-    // Rather than nowhere at all.
+    // Fall back to the cell the player is in.
     if (!pCell)
         pCell = GetParentCellEx();
 
@@ -133,8 +133,8 @@ NiPoint3 PlayerCharacter::RespawnPlayer() noexcept
         pCell->GetCOCPlacementInfo(&pos, &rot, true);
     }
 
-    // The overrides are found by the cell's editor id, which Skyrim VR may not keep at run time (VR_TODO,
-    // "per-dungeon respawn positions"); an empty name here means they can never apply on VR.
+    // The overrides are found by the cell's editor id, which Skyrim VR may not keep at run time.
+    // An empty name in this log means the overrides can never apply on VR.
     const char* cpEditorId = pCell->GetFormEditorID();
     spdlog::info("RespawnPlayer: in cell {:X} '{}', at {}", pCell->formID, cpEditorId ? cpEditorId : "",
                  cOverride ? "its override position" : "its COC marker");
@@ -152,14 +152,8 @@ void PlayerCharacter::PayCrimeGoldToAllFactions() noexcept
 {
     // Yes, yes, this isn't great, but there's no "pay fines everywhere" function
     //
-    // The Skyrim.esm factions below carry mod index 0x00, which is always right. The Solstheim one does not: it
-    // lives in Dragonborn.esm, and the index in a form id is this machine's load order, not a constant. It was
-    // written as 0x04018279, which is only correct when Dragonborn.esm happens to load fourth; on a modlist where
-    // it loads second the id is 0x02018279 and the lookup fails. It failed on both deaths logged on 2026-09-24
-    // ("This isn't a crime faction! 4018279"), which is every co-op death on that setup.
-    //
-    // There is no plugin-name lookup bound in this client, so the index is found by trying them. It is 256 form
-    // lookups once per death, which costs nothing next to the load that follows.
+    // The Skyrim.esm factions below have mod index 0x00, which never changes.
+    // The Solstheim one lives in Dragonborn.esm, whose mod index depends on the load order, so it is searched for below.
     const uint32_t cVanillaCrimeFactions[]{0x28170, 0x267E3, 0x29DB0, 0x2816D, 0x2816e, 0x2816C, 0x2816B, 0x267EA, 0x2816F};
 
     for (uint32_t crimeFactionId : cVanillaCrimeFactions)
@@ -174,8 +168,8 @@ void PlayerCharacter::PayCrimeGoldToAllFactions() noexcept
         PayFine(pCrimeFaction, false, false);
     }
 
-    // DLC2RavenRockFaction, whichever load order slot Dragonborn.esm ended up in. Cached: the answer cannot change
-    // while the game is running.
+    // DLC2RavenRockFaction, in whichever load order slot Dragonborn.esm is.
+    // No plugin-name lookup is bound in this client, so every mod index is tried once and the result is cached.
     constexpr uint32_t cRavenRockBaseId = 0x018279;
     static uint32_t s_ravenRockId = 0;
     static bool s_searched = false;
@@ -240,11 +234,10 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
         World::Get().GetRunner().Trigger(std::move(event));
     }
 
-    // Named before the pick-up runs: afterwards the reference is gone. DroppedItemService decides whether it was one of
-    // the items the server remembers, and if so tells everyone to take their copy off the floor. A placed reference
-    // counts too: one may have been taken for another player's drop of the same item ("already lying here"), and a
-    // placed book is otherwise never told at all -- Seen's game kept Emma's skill book on its table after she took
-    // it, then took her drop of it for that leftover (2026-10-03 15:15).
+    // Sent before the pick-up runs, because afterwards the reference is gone.
+    // DroppedItemService decides whether the server remembers the item, and if so tells everyone to remove their copy.
+    // Placed references count too: one may stand in for another player's drop of the same item.
+    // A placed book also carries its cell and position, so other players remove their copy from the table.
     if (apObject->IsTemporary() || !ScopedActivateOverride::IsOverriden())
     {
         ItemPickedUpEvent event{apObject->formID};

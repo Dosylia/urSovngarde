@@ -18,8 +18,7 @@ bool MenuTopicManager::IsPlayerDialogueSpeaker(const TESObjectREFR* apSpeaker) n
         return false;
 
     const auto* pManager = Get();
-    // lastSpeaker survives menu closure; using it here would also capture
-    // subsequent ambient speech from a remotely owned NPC.
+    // Not lastSpeaker: it outlives the menu and would catch later ambient speech of a remote NPC.
     return pManager && pManager->IsCurrentSpeaker(apSpeaker->GetHandle());
 }
 

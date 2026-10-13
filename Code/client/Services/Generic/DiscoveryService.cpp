@@ -53,27 +53,17 @@ std::chrono::steady_clock::time_point s_reannounceAt{};
 TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_movedHereAt;
 } // namespace
 
-// The invisible player, named at last (2026-09-26, 11:20).
+// The server sends a character's spawn to the others only when that character changes cell.
+// When this player's own old cell unloads, it can delete a remote copy the server believes we still have.
+// Example: player B follows player A through a door; B's spawn reaches A while A's old cell still holds B's copy.
+// That old copy is then deleted, and B stays invisible to A.
 //
-// The server sends a character's spawn to the other players when **that character** changes cell. It has no handler
-// for the reverse: a player whose own cell unloads and takes every remote copy in it down with it. So the order
-// that morning was
-//
-//   11:20:17  Emma enters interior cell 34FD2; the server tells Seen to drop her copy and waits.
-//   11:20:21  Seen enters 34FD2 too; the server sends his spawn to Emma, whose client answers
-//             "Character with remote id 20 is already spawned" and only nudges the old copy's position.
-//   11:20:22  Emma's old cell finishes unloading and deletes that very copy.
-//
-// From then on the server believes Emma has Seen and Emma has nobody: "could not find actor server id 20" three
-// times over the next minute, and Seen invisible until the *next* load door at 11:21:25 happened to fix it.
-//
-// Announcing the cell again is enough: the server re-sends every character in it, and by then the teardown is
-// finished so the spawn lands on an empty slot. Nothing else is disturbed -- the server's leave-cell cleanup bails
-// as soon as it finds a player still in the cell, which is us.
+// Announcing the cell again is enough: the server re-sends every character in it, and the spawn lands on an empty slot.
+// Nothing else is disturbed, since the server's leave-cell cleanup stops as soon as it finds a player still in the cell.
 void DiscoveryService::RequestCellReannounce() noexcept
 {
-    // A load door tears copies down over several frames; one announcement after the last of them is what is wanted,
-    // so each request pushes the moment back rather than queuing another.
+    // A load door tears copies down over several frames, and one announcement after the last of them is wanted.
+    // So each request pushes the moment back rather than queuing another.
     s_reannounceAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
 }
 
@@ -235,8 +225,8 @@ void DiscoveryService::DetectGridCellChange(TESWorldSpace* aWorldSpace, bool aNe
 
     changeEvent.CenterCoords = m_centerGrid = {pTES->centerGridX, pTES->centerGridY};
 
-    // The server ranges every remote actor against this centre. If it disagrees with the grid the player actually
-    // stands in, actors next to the player are withheld (see RangeDiag on the server, InterpDiag on the client).
+    // The server ranges every remote actor against this centre.
+    // If it disagrees with the grid the player stands in, nearby actors are withheld (see InterpDiag).
     {
         const auto& position = PlayerCharacter::Get()->position;
         const auto standing = GridCellCoords::CalculateGridCellCoords(position.x, position.y);
@@ -251,9 +241,8 @@ void DiscoveryService::DetectGridCellChange(TESWorldSpace* aWorldSpace, bool aNe
 
 void DiscoveryService::VisitForms() noexcept
 {
-    // Actors briefly lose their 3D when crossing the edge of the loaded cells (a circling dragon does
-    // it every few seconds). Removing them right away made the server destroy and recreate them each
-    // time, so a still existing actor is only removed after a grace period.
+    // Actors briefly lose their 3D when crossing the edge of the loaded cells (a circling dragon does it every few seconds).
+    // Removing them right away makes the server destroy and recreate them, so a still existing actor waits out a grace period.
     constexpr auto cRemovalGracePeriod = std::chrono::seconds(5);
 
     ProcessLists* const pProcessLists = ProcessLists::Get();
@@ -318,20 +307,16 @@ void DiscoveryService::VisitForms() noexcept
 
         const bool isSameObject = TESForm::GetById(formId) == static_cast<TESForm*>(known.pReference);
 
-        // Copies of actors owned by another player are removed right away once their 3D is gone: the server may
-        // already be asking to spawn them again (after a load door, for example), and that request is dropped for good
-        // while the old copy still exists. This used to skip the grace period for every remote actor, including one
-        // that still had its 3D and had merely dropped out of the high process list for a frame. Removing it cancelled
-        // its server assignment, the next visit asked for a new one, and it fell out again: a remote follower could
-        // thrash between removed and re-assigned about eleven times a second, which is what "not synced at all" looked
-        // like. Still holding 3D means it is only flickering, so let it sit out the grace period like anything else.
+        // Copies of actors owned by another player are removed right away once their 3D is gone.
+        // The server may already want to respawn them (after a load door), and that request is dropped while the old copy exists.
+        // A copy that still has its 3D has only left the high process list for a frame, so it waits out the grace period.
+        // Removing it would cancel its server assignment and make it thrash between removed and re-assigned.
         auto* pActor = isSameObject ? Cast<Actor>(known.pReference) : nullptr;
         const bool isRemote = pActor && pActor->GetExtension()->IsRemote();
         const bool isUnloaded = !pActor || !pActor->GetNiNode();
 
-        // Not one this client has just moved: MoveTo drops the 3D for a frame, and removing it then cancelled the
-        // assignment the move came from, so it was found, assigned and moved again -- ten times a second, a skeleton
-        // on Seen's side for 28 s (2026-10-11 21:08:57, "Received remote actor" then "Actor removed" 28 ms later).
+        // Not one this client has just moved: MoveTo drops the 3D for a frame.
+        // Removing it then would cancel the assignment the move came from, and it would loop being found, assigned and moved.
         const auto cMoved = s_movedHereAt.find(formId);
         const bool cJustMoved = cMoved != s_movedHereAt.end() && now - cMoved->second < std::chrono::seconds(2);
 
@@ -344,8 +329,8 @@ void DiscoveryService::VisitForms() noexcept
 
     for (uint32_t formId : s_removedForms)
     {
-        // A conform can remove both the 3D and the high-process handle. Keep the
-        // existing discovery entry so rebuilding it does not cancel its assignment.
+        // A conform can remove both the 3D and the high-process handle.
+        // Keep the existing discovery entry so rebuilding it does not cancel its assignment.
         // TODO: GetById performance in loop?
         if (auto* pActor = Cast<Actor>(TESForm::GetById(formId)); pActor && !pActor->IsDeleted())
         {
@@ -360,10 +345,7 @@ void DiscoveryService::VisitForms() noexcept
             }
         }
 
-        // Once. The merge of 2026-09-22 (a920247d) added a second trigger above the erase and left the
-        // original below it, so every removal has been dispatched twice ever since -- to this service's
-        // listeners and to every other one. Upstream's intent was to move it before the erase, not to have
-        // both.
+        // Dispatched exactly once per removal.
         m_forms.erase(formId);
         m_dispatcher.trigger(ActorRemovedEvent(formId));
     }
@@ -411,8 +393,8 @@ BSTEventResult DiscoveryService::OnEvent(const TESLoadGameEvent*, const EventDis
     spdlog::info("Finished loading, triggering visit cell");
 
 #ifndef SKYRIMVR
-    // A VR install always has more plugins (SKSE VR, the address library, ESL support), so this warning would fire
-    // on every load, and it arrived as a "connection failed" notification.
+    // A VR install always has more plugins (SKSE VR, the address library, ESL support).
+    // This warning would fire on every load there, shown as a "connection failed" notification.
     if (!IsDefaultModlist(ModManager::Get()->mods))
     {
         ConnectionErrorEvent errorEvent{};

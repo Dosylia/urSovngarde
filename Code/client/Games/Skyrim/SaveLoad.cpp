@@ -2,9 +2,8 @@
 
 #include <SaveLoad.h>
 
-// TEMPORARY (2026-09-20): confirming a level-up put up "The save game is corrupt and cannot be loaded" and a loading
-// screen (11:55, and the same at 07:58 before the drop confused things). Nothing in this client loads a save, so
-// every load request is named here with the file and the caller, to see who asks and for which save.
+// TEMPORARY: logs every save load request with its file and caller.
+// It looks for what sends a connected player to the main menu; this client never loads a save itself.
 TP_THIS_FUNCTION(TSaveLoadManagerLoad, bool, BGSSaveLoadManager, const char* apFileName, bool aCheckForMods, bool aUnk);
 static TSaveLoadManagerLoad* RealSaveLoadManagerLoad = nullptr;
 
@@ -29,13 +28,9 @@ bool TP_MAKE_THISCALL(HookSaveLoadManagerLoad, BGSSaveLoadManager, const char* a
     return result;
 }
 
-// TEMPORARY (2026-09-20): Seenfront read the game (VR 1.4.15) around the hide that ends at the main menu. A queued
-// request of type 0xD0000010, built by the constructor at SkyrimVR+0x594D80, can run the route
-// 5910D0 -> 5924A0 -> 584910 -> 591E80 -> 168160 -> F1BF10 -> F1D0E0 -> F20750 -> AddMessage (the hide we log).
-// Two producers build it: the save-warning dialog callback at +0x595B60 (response 1 queues it; it calls the
-// constructor from +0x595BCF) and another result handler (calls it from +0x591964). The queue separates building
-// the request from running it, so the producer never shows in the hide's stack; it is logged here at construction,
-// with its caller, stack and raw register arguments, and the warning callback logs its response byte.
+// TEMPORARY: logs when the game builds a queued request of type 0xD0000010 (VR 1.4.15 RVAs below).
+// That request can end at the main menu and the queue hides who built it, so its caller and stack are logged.
+// The save-warning callback (+0x595B60) queues it on response 1, so that response is logged too.
 namespace
 {
 uintptr_t GameBase() noexcept

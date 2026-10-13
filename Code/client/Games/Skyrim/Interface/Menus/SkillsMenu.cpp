@@ -7,12 +7,10 @@ static TiltedPhoques::Initializer s_skillsMenuInit(
         // https://github.com/Vermunds/SkyrimSoulsRE/blob/master/src/Menus/StatsMenuEx.cpp
         // Hoooks from souls RE
 #ifdef SKYRIMVR
-        // VR gets one of the four patches: the one that stops the menu asking for a freeze frame background.
-        // Unpaused without it the skills and level up screen was black in the headset, which is what a freeze frame
-        // that VR never produced looks like. The other three sit at offsets only known for the AE build.
-        //
-        // SE 51638 (StatsMenu::ProcessMessage) is VR 0x8ec3e0, and the instruction is at +0xBB6 rather than AE's
-        // +0xA10. The bytes are checked before patching, so a wrong address changes nothing.
+        // VR gets one of the four patches: no freeze frame background, which VR never draws (the menu stays black).
+        // The other three patches have AE-only offsets.
+        // SE 51638 (StatsMenu::ProcessMessage) is VR 0x8ec3e0, with the flag write at +0xBB6 (AE: +0xA10).
+        // The bytes are checked before patching.
         VersionDbPtr<uint8_t> ProcessMessage(51638);
         constexpr size_t cFreezeFrameFlag = 0xBB6;
         // or dword ptr [rsi+0x1C], 0x20 -> kFreezeFrameBackground on the menu's flags

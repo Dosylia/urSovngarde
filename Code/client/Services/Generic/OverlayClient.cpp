@@ -129,8 +129,8 @@ void OverlayClient::ProcessConnectMessage(CefRefPtr<CefListValue> aEventArgs)
 void OverlayClient::ProcessDisconnectMessage()
 {
 #ifdef SKYRIMVR
-    // Closing the transport directly looked like a dropped line to the connect service, which dialled again five
-    // seconds later (2026-09-20 01:55). Toggle() marks the disconnect as chosen; it only closes when online.
+    // Closing the transport directly looks like a dropped line to the connect service, which then reconnects.
+    // Toggle() marks the disconnect as chosen, and only closes when online.
     World::Get().GetRunner().Queue(
         []()
         {

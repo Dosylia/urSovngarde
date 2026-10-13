@@ -117,9 +117,6 @@ private:
     void RunOrphanedRemoteDiag() noexcept;
     void RunWeaponTouch() noexcept;
 
-public:
-    static std::chrono::steady_clock::time_point LastMoveSentAt() noexcept;
-
 private:
     void RunRemoteUpdates() noexcept;
     void RunFactionsUpdates() const noexcept;
@@ -152,8 +149,8 @@ private:
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};
-    // The owner's leveled pick last received for each remote leveled actor, by form id: checked again after the game
-    // re-rolls the actor on its own (ProcessLeveledConforms).
+    // Actor form ID -> the owner's last leveled pick for that remote actor.
+    // ProcessLeveledConforms checks it again, since the game can re-roll the actor on its own.
     mutable Map<uint32_t, uint32_t> m_ownerLeveledPicks{};
 
     entt::scoped_connection m_referenceAddedConnection;

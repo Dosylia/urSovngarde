@@ -68,12 +68,7 @@ std::string GetSKSEStyleExeVersion()
     std::replace(exeBuild.begin(), exeBuild.end(), '.', '_');
 
     // Chop an empty patch component, so "1_6_323_0" becomes "1_6_323".
-    //
-    // This used to be find_last_of("_0"), which matches an underscore just as readily as a zero: a version with no
-    // trailing ".0" -- "1.4.15" -> "1_4_15" -- matched the underscore at index 3 and was cut down to "1_", so the
-    // module looked for was "sksevr_1_.dll" and SKSE was reported missing while it was plainly loaded. Seen's log
-    // of 2026-09-25 says "SKSE VR is not loaded" twice; his crash dump from the same session lists
-    // sksevr_1_4_15.dll. Only a real trailing "_0" is removed now.
+    // Only a real trailing "_0" is removed; "1_4_15" stays as it is.
     if (exeBuild.size() > 2 && exeBuild.compare(exeBuild.size() - 2, 2, "_0") == 0)
         exeBuild.erase(exeBuild.size() - 2);
 
@@ -82,15 +77,7 @@ std::string GetSKSEStyleExeVersion()
 
 #ifdef SKYRIMVR
 // Find sksevr_<anything>.dll among the modules the process has actually loaded.
-//
-// Building the name from the exe version was the wrong idea twice over. The first time the trimming was wrong
-// ("1_4_15" cut to "1_"); that was fixed on 2026-09-25 and the warning came back the next morning, this time
-// reading `Looked for 'sksevr_.dll', built from exe version ''` -- VersionDb has no loaded version string at this
-// point, so there was nothing to build a name out of at all. Both failures share a cause: guessing at a filename
-// the loader can simply be asked for.
-//
-// The consequence was not cosmetic. Everything gated on "is SKSE here" was off for the whole session while
-// sksevr_1_4_15.dll was plainly in the process (Seen's crash dump lists it).
+// The name is not built from the exe version: VersionDb has no loaded version string yet at this point.
 bool IsScriptExtenderModuleLoaded(std::wstring& aFoundName)
 {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
@@ -128,16 +115,16 @@ bool IsScriptExtenderModuleLoaded(std::wstring& aFoundName)
 } // namespace
 
 #ifdef SKYRIMVR
-// Read by the launcher's LdrLoadDll hook: EngineFixesVR is refused until SKSE starts, so it isn't
-// loaded too early by the d3dx9_42 plugin preloader.
+// Read by the launcher's LdrLoadDll hook: EngineFixesVR is refused until SKSE starts.
+// That keeps the d3dx9_42 plugin preloader from loading it too early.
 bool g_ScriptExtenderStarting = false;
 #endif
 
 bool IsScriptExtenderLoaded()
 {
 #ifdef SKYRIMVR
-    // VR never loads SKSE itself (see main.cpp), so the handle above is always null here. Ask the loader which
-    // modules are in the process rather than building a filename and hoping: see IsScriptExtenderModuleLoaded.
+    // VR never loads SKSE itself (see main.cpp), so the handle above is always null here.
+    // Ask the loader which modules are in the process instead (IsScriptExtenderModuleLoaded).
     std::wstring foundName;
     const bool found = IsScriptExtenderModuleLoaded(foundName);
 
@@ -211,18 +198,17 @@ void LoadScriptExtender()
     auto skseVersion = fmt::format("v{}.{}.{}.{}", fileVersion.versions[0], fileVersion.versions[1], fileVersion.versions[2], fileVersion.versions[3]);
 
 #ifdef SKYRIMVR
-    // SKSE VR has no StartSKSE export and is older than kSKSEMinBuild: its DllMain initializes it,
-    // so loading the DLL starts it (and its plugins, from inside LoadLibraryW).
+    // SKSE VR has no StartSKSE export and is older than kSKSEMinBuild: its DllMain initializes it.
+    // So loading the DLL starts it, and its plugins, from inside LoadLibraryW.
     g_ScriptExtenderStarting = true;
     if (g_SKSEModuleHandle = LoadLibraryW(needle->c_str()))
     {
         spdlog::info("SKSE VR {} loaded (initialized from DllMain). Messages without a colored [timestamp] prefix "
                      "come from the Script Extender and its plugins.",
                      skseVersion);
-        // Where it landed. Below 0x78000000 its trampoline search underflows and it skips the rest of its setup,
-        // so the preloaded Engine Fixes crashes at EngineFixes.dll+F15C6 (the player of 2026-10-11 had it at
-        // 0x8600000 twice). The launcher keeps that range reserved during the load (script_extender/SELowZone,
-        // cmpayc's PR #2); this line says whether that held.
+        // Where it landed. Below 0x78000000 its trampoline search underflows and it skips the rest of its setup.
+        // The preloaded Engine Fixes then crashes at EngineFixes.dll+F15C6.
+        // The launcher keeps that range reserved during the load (script_extender/SELowZone); this line says whether that held.
         const auto cBase = reinterpret_cast<uintptr_t>(g_SKSEModuleHandle);
         spdlog::info("SKSE VR is at 0x{:X}{}", cBase, cBase < 0x78000000 ? ", below 0x78000000: its plugins will not load" : "");
     }

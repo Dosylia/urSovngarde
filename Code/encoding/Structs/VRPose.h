@@ -6,13 +6,10 @@
 
 using TiltedPhoques::Buffer;
 
-//! Pose of a VR player, synced alongside Movement: the upper body always, the legs when trackers drive them.
-//!
-//! Each bone rotation is relative to the actor's 3D root, read from the skeleton VRIK drives. The
-//! receiver applies the same rotations, so no headset or controller calibration is needed.
-//! HasData is false (and nothing else is written) for non-VR actors. HasLegs is true only for a player
-//! whose hips and feet are driven by body trackers (SkyrimVR FBT); everyone else leaves the legs to the
-//! walk animation on both sides, and the receiver needs nothing installed to show tracked legs.
+//! Pose of a VR player, synced with Movement: the upper body always, the legs when trackers drive them.
+//! Bone rotations are relative to the actor's 3D root, so no headset or controller calibration is needed.
+//! HasData is false, and nothing else is written, for non-VR actors.
+//! HasLegs is true only with body trackers (SkyrimVR FBT); otherwise the walk animation drives the legs.
 struct VRPose
 {
     //! Bone order is parent-before-child; see VRBodySync.cpp for the node names.
@@ -53,72 +50,45 @@ struct VRPose
 
     bool HasData{false};
 
-    //! This pose carries no bones at all: only RootPosition means anything, and Bones must not be applied.
-    //!
-    //! For a body whose skeleton is not a person's. The bone search is by name ("NPC L Hand [LHnd]" and the rest),
-    //! so a Dwarven sphere, a spider, a centurion -- anything without a humanoid rig -- failed it, and
-    //! CaptureBodyPose returned false and sent nothing whatever. Dragging one did nothing on the other screen
-    //! (2026-09-26, "we tried dragging dwemer spiders it did nothing, and spheres, nothing"). Where it is is
-    //! still worth sending even when how it is bent cannot be read, and the receiver shifts the whole node tree
-    //! by the difference instead of posing named bones.
+    //! No bones, only RootPosition: for a body without a humanoid rig (a Dwarven sphere, a spider).
+    //! The receiver shifts the whole node tree instead of posing named bones.
     bool NoBones{false};
 
     bool HasLegs{false}; // the entries from kPelvis on are valid
     std::array<Quaternion_NetQuantize, kBoneCount> Bones{};
 
-    //! Finger bones, left hand then right, five fingers of three bones each from the thumb, as rotations relative to
-    //! the parent bone (the hand for the first of each finger). Sent only when they change or once a second
-    //! (HasFingers); the receiver keeps the last set it got.
+    //! Finger bones relative to their parent, left hand then right, five fingers of three bones from the thumb.
+    //! Sent on change or once a second (HasFingers); the receiver keeps the last set.
     static constexpr size_t kFingersPerHand = 5;
     static constexpr size_t kBonesPerFinger = 3;
     static constexpr size_t kFingerBoneCount = 2 * kFingersPerHand * kBonesPerFinger;
     bool HasFingers{false};
     std::array<Quaternion_NetQuantize, kFingerBoneCount> Fingers{};
 
-    //! Body size: the world scale of the skeleton root ("NPC Root [Root]"), times 1000. It folds in the actor's own
-    //! scale and whatever VRIK scales the body by, so a short or tall player is the same size on the other side.
-    //! Sent on change and once a second (HasScale); the receiver keeps the last value.
+    //! Body size: the world scale of the skeleton root ("NPC Root [Root]") times 1000, VRIK's scale included.
+    //! Sent on change or once a second (HasScale); the receiver keeps the last value.
     bool HasScale{false};
     uint16_t RootScale{1000};
 
-    //! World position of the 3D root, sent only for a dead body that is being moved (HasRootPosition).
-    //!
-    //! A corpse is not driven by its character controller but by its ragdoll, so moving the reference on the
-    //! receiving side leaves the visible body where its own ragdoll dropped it: the two never agreed, and nobody
-    //! could drag anything (2026-09-23). The bones already survive the local animation by being written at the
-    //! renderer's frame end, and the root position is written in the same place for the same reason.
+    //! World position of the 3D root, sent only for a dead body being moved (HasRootPosition).
+    //! A corpse follows its ragdoll, so the receiver writes this at frame end, like the bones.
     bool HasRootPosition{false};
     float RootPosition[3]{};
 
-    //! Where the hips sit relative to the 3D root, in root space, sent while the legs are tracked (HasHips).
-    //!
-    //! The pose is otherwise rotations only, and that is why a hip tracker changed nothing on the other screen:
-    //! crouching, leaning and hip sway move the body relative to the root without changing any rotation the
-    //! protocol carried. The feet followed because the thigh and calf rotations did travel, which is the shape of
-    //! the report -- feet tracked, hips not (2026-09-25). This is the missing translation. It is applied to the
-    //! whole body rather than to the pelvis alone, because the spine hangs off NPC COM beside the pelvis and not
-    //! below it: moving the pelvis by itself would pull the legs away from the torso.
+    //! Where the hips sit relative to the 3D root, sent while the legs are tracked (HasHips).
+    //! Crouching and leaning change no bone rotation, so this moves the whole body; the spine does not hang off the pelvis.
     bool HasHips{false};
     float HipOffset[3]{};
 
-    //! Where the sender's own hands are relative to its 3D root, in root space. Sent about once a second
-    //! (HasHandCheck), for the measurement only -- nothing is posed from it.
-    //!
-    //! The hand-offset diagnostic of 2026-09-24 compared a remote copy against **the local player's own body**,
-    //! which is a different character: Seen's log of 2026-09-25 has the copy's arms at 22.8 and 16.0 against his
-    //! own 23.9 and 16.8, so "same arm lengths, different hand height" could never be true and the test could not
-    //! fire. These are the sender's own numbers, so the receiver can compare like with like: what the owner has,
-    //! against what their copy is showing.
+    //! The sender's own hand positions relative to its 3D root, about once a second (HasHandCheck).
+    //! For measurement only: the receiver compares them with its copy's hands.
     bool HasHandCheck{false};
     float LeftHandOffset[3]{};
     float RightHandOffset[3]{};
 
-    //! Where the sender's weapons are held, left then right (HasWeapons): the attach node of its first-person body
-    //! ("SHIELD" in the left hand, "WEAPON" in the right) in the space of its third-person hand bone -- the hand the
-    //! receiver's copy poses. In VR the weapon the player sees and swings hangs off the first-person hand at the
-    //! angle VR holds it, while the copy hung its own off its third-person hand at the skeleton's angle: the hands
-    //! met and the blades did not ("the hands are perfectly synced but not the swords", 2026-10-04). Sent when it
-    //! changes or once a second; the receiver keeps the last. Nothing is placed on a side whose WeaponHeld is false.
+    //! Weapon placement, left then right, in the space of the third-person hand bone (HasWeapons).
+    //! VR holds weapons at their own angle, so the copy places its blades from this instead of the skeleton.
+    //! Sent on change or once a second; nothing is placed on a side whose WeaponHeld is false.
     bool HasWeapons{false};
     std::array<bool, 2> WeaponHeld{};
     std::array<Quaternion_NetQuantize, 2> WeaponRotation{};

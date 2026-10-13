@@ -4,8 +4,8 @@
 #include <atomic>
 #include <chrono>
 
-//! Per-frame profiling for stutter hunting. Sections time themselves with PerfScope, and World::Update
-//! logs the slowest one when a frame spikes, to tell mod hitches from game hitches.
+//! Per-frame profiling for stutter hunting, to tell mod hitches from game hitches.
+//! Sections time themselves with PerfScope, and World::Update logs the slowest one when a frame spikes.
 struct PerfFrame
 {
     const char* SlowestSection = nullptr;
@@ -56,8 +56,9 @@ private:
     std::chrono::steady_clock::time_point m_start;
 };
 
-//! Time spent in game-side work the mod triggers or hooks. Unlike PerfScope these can run on game worker threads
-//! (the animation update), so they only add to atomic totals. World::Update reports them every 30 s.
+//! Time spent in game-side work the mod triggers or hooks.
+//! Unlike PerfScope these can run on game worker threads (the animation update), so they only add to atomic totals.
+//! World::Update reports them every 30 s.
 enum class PerfCounter : uint8_t
 {
     kVRPoseApply,    // remote VR pose written into the skeleton (animation update hook)

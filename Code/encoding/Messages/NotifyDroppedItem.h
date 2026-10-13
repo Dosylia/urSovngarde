@@ -6,8 +6,8 @@
 #include <Structs/Inventory.h>
 #include <Structs/Vector3_NetQuantize.h>
 
-//! An item lying in the world: the receiver adopts the one already on its floor if there is one, and
-//! places it otherwise. Sent when an item is dropped, and again to anyone entering its cell.
+//! An item lying in the world: the receiver adopts the one already on its floor, or places it.
+//! Sent when an item is dropped, and again to anyone entering its cell.
 struct NotifyDroppedItem final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifyDroppedItem;
@@ -30,7 +30,7 @@ struct NotifyDroppedItem final : ServerMessage
     GameId CellId{};
     GameId WorldSpaceId{};
     Vector3_NetQuantize Position{};
-    //! Euler angles, radians, as the reference holds them. Plain floats: the packed position type is ~1 unit
-    //! precise, which is fine for a place and useless for an angle.
+    //! Euler angles in radians, as the reference holds them.
+    //! Plain floats: the packed position type is only about 1 unit precise, too coarse for an angle.
     glm::vec3 Rotation{};
 };

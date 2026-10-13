@@ -4,9 +4,8 @@
 
 using TiltedPhoques::Buffer;
 
-//! Network optimized quaternion, using the "smallest three" compression scheme:
-//! the largest-magnitude component is dropped (and reconstructed from the unit
-//! quaternion constraint), the remaining three are quantized to 10 bits each.
+//! Network optimized quaternion, using the "smallest three" compression scheme.
+//! The largest-magnitude component is dropped and rebuilt from the unit length; the other three get 10 bits each.
 struct Quaternion_NetQuantize : glm::quat
 {
     Quaternion_NetQuantize() = default;

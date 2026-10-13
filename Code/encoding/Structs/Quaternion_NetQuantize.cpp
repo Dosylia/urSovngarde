@@ -4,8 +4,7 @@
 
 using TiltedPhoques::Serialization;
 
-// 10 bits per component, range [-1/sqrt(2), 1/sqrt(2)] since the dropped
-// (largest) component is always >= 1/sqrt(2) for a normalized quaternion.
+// 10 bits per component in [-1/sqrt(2), 1/sqrt(2)]; the dropped largest component is always >= 1/sqrt(2).
 constexpr float cMaxComponent = 0.70710678f; // 1/sqrt(2)
 constexpr uint32_t cComponentBits = 10;
 constexpr uint32_t cComponentMax = (1u << cComponentBits) - 1;
@@ -47,8 +46,7 @@ uint32_t PackWithLargest(const glm::quat& acQuat, const uint32_t aLargestIndex) 
 {
     float components[4] = {acQuat.x, acQuat.y, acQuat.z, acQuat.w};
 
-    // Negate so the dropped (largest) component is always positive; q and -q represent the same rotation so
-    // this loses no information.
+    // Negate so the dropped component is positive; q and -q are the same rotation.
     if (components[aLargestIndex] < 0.f)
     {
         for (auto& c : components)
@@ -64,11 +62,7 @@ uint32_t PackWithLargest(const glm::quat& acQuat, const uint32_t aLargestIndex) 
 
         const float clamped = TiltedPhoques::Clamp(components[i], -cMaxComponent, cMaxComponent);
 
-        // Round to the nearest bucket rather than truncating towards zero. Truncating cost half a bucket of
-        // accuracy on every component, and worse, it was not stable: a component decoded out of bucket 75 comes
-        // back as 74.9999847 in float and truncates into bucket 74, so a value lost a bucket every time it went
-        // through the codec. Relayed poses drifted, and the shifting components changed which one was largest,
-        // which is what made packing oscillate.
+        // Round to the nearest bucket; truncating loses a bucket on every round trip (75 decodes as 74.9999847).
         const float scaled = (clamped + cMaxComponent) * cScalingFactor + 0.5f;
         const auto quantized = static_cast<uint32_t>(TiltedPhoques::Clamp(scaled, 0.f, float(cComponentMax))) & cComponentMax;
         data |= quantized << shift;
@@ -101,22 +95,9 @@ uint32_t Quaternion_NetQuantize::Pack() const noexcept
 
     uint32_t data = PackWithLargest(q, LargestIndexOf(q));
 
-    // Settle on an encoding that survives its own round trip.
-    //
-    // "Smallest three" drops whichever component is largest. When two components are nearly equal in magnitude
-    // -- (-0.6034, 0.6034, 0.4022, 0.3318) is a real example -- quantising the other three moves them just
-    // enough that the *decoded* quaternion has a different largest component. Packing that decoded value drops
-    // a different component, and since the new one is negative the whole quaternion is negated: a completely
-    // different set of bits for the same rotation.
-    //
-    // That matters because Pack() is what equality is built on. VRBodySync only sends a pose when the quantised
-    // bones differ from the ones it last sent, and VRPose::operator== compares packed forms. A bone sitting near
-    // such a tie would be reported as changed on every frame, for ever, while never actually moving.
-    //
-    // So walk the encodings until one agrees with itself -- decoding it picks the component it already dropped.
-    // Near a tie there may be no such encoding, only a short cycle of them, all describing the same rotation to
-    // within the quantisation step. In that case take the lowest, which every member of the cycle can work out
-    // for itself, so they all settle on the same answer.
+    // Settle on an encoding that survives its own round trip, since equality compares packed forms.
+    // Near a tie between two components, decoding can pick another largest one and pack to other bits.
+    // So walk the encodings until one decodes to the component it dropped, or take the lowest of the cycle.
     constexpr size_t cMaxCycle = 8;
     uint32_t seen[cMaxCycle] = {};
     size_t count = 0;

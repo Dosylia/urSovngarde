@@ -100,8 +100,8 @@ void VRConnectService::Toggle() noexcept
 
 bool VRConnectService::CheckInstall() noexcept
 {
-    // Problems that otherwise only show up as a refused connection or broken mods, reported in the headset once a
-    // save is loaded. Only a setting the server refuses stops the automatic connection.
+    // Reports install problems in the headset once a save is loaded, before they show up as a refused connection.
+    // Only a setting the server refuses stops the automatic connection.
     bool ok = true;
 
     if (!IsScriptExtenderLoaded())
@@ -149,9 +149,8 @@ void VRConnectService::StartAttempt() noexcept
     spdlog::info("VRConnectService: connecting to {} (attempt {})", config.Address.c_str(), m_failedAttempts + 1);
     Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: connecting to ") + config.Address);
 
-    // Whatever connection is left (a dashboard connect still trying, say) is closed here, while the state still says
-    // idle or waiting, so its disconnection does not schedule a retry. Connect() would close it too, but after the
-    // state below, where the disconnection would read as this attempt failing.
+    // Any leftover connection (say a dashboard connect still trying) is closed while the state is still idle or waiting.
+    // Its disconnection then schedules no retry; closed after the state change, it would read as this attempt failing.
     m_transport.Close();
 
     m_state = State::kConnecting;
@@ -208,10 +207,9 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
         break;
 
     case State::kOnline:
-        // Another character loaded while connected. The server keeps the name and the body it was given when
-        // connecting, so everyone else goes on seeing the old character: Pengy, on 2026-10-11, connected 4 s
-        // before loading a save and played 25 minutes as "Shezarrine", a human, to Seen, who saw a Khajiit only
-        // after Pengy's next connection. The name is what is compared; the race changes in a werewolf's fight.
+        // Another character loaded while connected: reconnect, or the others keep seeing the old one.
+        // The server keeps the name and body it was given when connecting.
+        // The name is compared rather than the race, which changes in a werewolf's fight.
         if (now >= m_nextNameCheck)
         {
             m_nextNameCheck = now + 2s;
@@ -260,9 +258,9 @@ void VRConnectService::OnDisconnected(const DisconnectedEvent&) noexcept
 
 void VRConnectService::OnConnectionError(const ConnectionErrorEvent&) noexcept
 {
-    // A refusal arrives while connecting, before the connected event (the reason is shown by OverlayService). The
-    // same request would be refused again, so stop until the player presses F6. Errors raised once online (the
-    // uGridsToLoad check) don't end the session and must not turn the reconnection off.
+    // A refusal arrives while connecting, before the connected event; OverlayService shows the reason.
+    // The same request would be refused again, so stop until the player presses F6.
+    // Errors raised once online (the uGridsToLoad check) don't end the session and must not turn reconnection off.
     if (m_state != State::kConnecting)
         return;
 

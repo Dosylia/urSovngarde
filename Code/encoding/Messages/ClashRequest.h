@@ -4,9 +4,8 @@
 
 #include <Structs/Vector3_NetQuantize.h>
 
-//! One of this player's hands or weapons met another player's weapon here (VRBodySync: a Havok contact between that
-//! weapon's body in this game and one of this player's HIGGS bodies). The server passes it on (NotifyClash), so the
-//! other player feels it too -- on the hand holding the weapon that was met.
+//! This player's hand or weapon hit another player's weapon (a Havok contact with one of this player's HIGGS bodies).
+//! The server relays it as NotifyClash, so that player feels it on the hand holding the weapon.
 struct ClashRequest final : ClientMessage
 {
     static constexpr ClientOpcode Opcode = kClashRequest;

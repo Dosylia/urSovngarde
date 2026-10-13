@@ -142,23 +142,12 @@ void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, Charact
 
 namespace
 {
-// The party leader claims every NPC it sees and keeps it however far it walks, so the other player fights a bear the
-// leader's game is not animating (its movement was withheld for 10 to 30 s at a time on 2026-09-18 and 09-19), and
-// when the leader finally drops it the bear is teleported to the leader's last position. Every two seconds: an actor
-// whose owner is out of its range while another player is in range goes to that player. Two sweeps in a row are
-// required, so a player crossing a cell edge does not bounce actors back and forth. The current owner is told to
-// relinquish; the candidate is told to claim, exactly as after a disconnect. Players' own characters, summons and
-// dead actors stay where they are.
-//
-// An owner that has gone silent counts as away too: a paused game sends nothing (the mod's update runs off the
-// Papyrus VM, which pausing suspends), and until now its NPCs simply froze for the other player. Three seconds of
-// silence is well past any network hiccup at 10 snapshots a second. A silent player is never a candidate.
+// Every two seconds, an actor whose owner is out of range or silent goes to a player who is in range.
+// Silent means no movement snapshot for cSilence, as in a paused game; a silent player is never a candidate.
+// Two sweeps in a row are needed, so a player crossing a cell edge does not bounce actors back and forth.
+// Players' characters, summons and dead actors stay where they are.
 
-// Fifteen seconds, not three: a loading screen is silent too, and Emma's take 8 to 10 s. At three seconds every
-// door handed all her actors to Seen, her follower Lydia included, who then came out through the door with her
-// anyway -- owned by Seen, pulled back and forth between the two games, and re-dressed by his (2026-10-03 15:09,
-// 2026-10-04 09:33). Actors really left behind still go to whoever is near them once the owner arrives somewhere
-// else and they are out of its range.
+// Longer than a loading screen (8 to 10 s), so actors are not handed away at every door.
 constexpr auto cSilence = 15s;
 
 bool IsSilent(const Player* apPlayer, const std::chrono::steady_clock::time_point aNow) noexcept
@@ -232,8 +221,7 @@ void CharacterService::HandOffAbandonedActors() const noexcept
                      cellIdComponent.CenterCoords.Y, pOwner->GetConnectionId(), ownerCell.X, ownerCell.Y, ownerSilent ? "silent (paused or loading)" : "out of its range",
                      pCandidate->GetConnectionId());
 
-        // Upstream's versioned grant does the whole hand-off: it bumps the epoch, tells the old owner and the new
-        // one, and makes any late update from the former owner arrive stale instead of overwriting the actor.
+        // TransferOwnership bumps the epoch, so a late update from the former owner arrives stale.
         ownerComponent.InvalidOwners.clear();
         TransferOwnership(pCandidate, entity, OwnershipTransferReason::OwnerUnavailable);
     }
@@ -254,11 +242,6 @@ void CharacterService::OnCharacterExteriorCellChange(const CharacterExteriorCell
     NotifyRemoveCharacter removeMessage;
     removeMessage.ServerId = World::ToInteger(acEvent.Entity);
 
-    // TEMPORARY (2026-09-20): a player "vanishing" with nobody hurt, around Whiterun's gate, may be this decision:
-    // inside the walls is another worldspace than the plains. Every remove or re-send of a player's copy is named.
-    const auto* pCharacter = m_world.try_get<CharacterComponent>(acEvent.Entity);
-    const bool isPlayerCharacter = pCharacter && pCharacter->IsPlayer();
-
     for (auto pPlayer : m_world.GetPlayerManager())
     {
         if (acEvent.Owner == pPlayer)
@@ -269,20 +252,9 @@ void CharacterService::OnCharacterExteriorCellChange(const CharacterExteriorCell
         const bool inGrid = GridCellCoords::IsCellInGridCell(acEvent.CurrentCoords, viewer.CenterCoords, false);
 
         if (!sameWorld || !inGrid)
-        {
-            if (isPlayerCharacter)
-                spdlog::info("WorldDiag: removed player '{}' ({:X}) from the view of '{}': moved to worldspace {:X} grid ({}, {}); viewer in worldspace {:X} grid ({}, {}) ({})",
-                             acEvent.Owner ? acEvent.Owner->GetUsername().c_str() : "?", removeMessage.ServerId, pPlayer->GetUsername().c_str(), acEvent.WorldSpaceId.BaseId, acEvent.CurrentCoords.X,
-                             acEvent.CurrentCoords.Y, viewer.WorldSpaceId.BaseId, viewer.CenterCoords.X, viewer.CenterCoords.Y, sameWorld ? "out of grid" : "other worldspace");
             pPlayer->Send(removeMessage);
-        }
         else
-        {
-            if (isPlayerCharacter)
-                spdlog::info("WorldDiag: sent player '{}' ({:X}) to '{}' again after a cell change in worldspace {:X} grid ({}, {})", acEvent.Owner ? acEvent.Owner->GetUsername().c_str() : "?",
-                             removeMessage.ServerId, pPlayer->GetUsername().c_str(), acEvent.WorldSpaceId.BaseId, acEvent.CurrentCoords.X, acEvent.CurrentCoords.Y);
             pPlayer->Send(spawnMessage);
-        }
     }
 }
 
@@ -299,11 +271,7 @@ void CharacterService::OnCharacterInteriorCellChange(const CharacterInteriorCell
         if (acEvent.Owner == pPlayer)
             continue;
 
-        const bool sameCell = acEvent.NewCell == pPlayer->GetCellComponent().Cell;
-        if (const auto* pCharacter = m_world.try_get<CharacterComponent>(acEvent.Entity); pCharacter && pCharacter->IsPlayer())
-            spdlog::info("WorldDiag: player '{}' ({:X}) entered interior cell {:X}; {} for '{}' (viewer cell {:X})", acEvent.Owner ? acEvent.Owner->GetUsername().c_str() : "?", removeMessage.ServerId,
-                         acEvent.NewCell.BaseId, sameCell ? "sent again" : "removed", pPlayer->GetUsername().c_str(), pPlayer->GetCellComponent().Cell.BaseId);
-        if (sameCell)
+        if (acEvent.NewCell == pPlayer->GetCellComponent().Cell)
             pPlayer->Send(spawnMessage);
         else
             pPlayer->Send(removeMessage);
@@ -434,8 +402,7 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
         movementComponent.Sent = true;
     }
 
-    // A normal release starts a fresh search. A declined grant continues the current
-    // search, retaining failed candidates so unloaded clients cannot bounce ownership.
+    // A normal release starts a fresh search; a declined grant keeps the failed candidates so ownership cannot bounce.
     if (message.Reason == OwnershipReleaseReason::Relinquish)
         ownerComponent.InvalidOwners.clear();
 
@@ -889,10 +856,7 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
         spdlog::info("Rejected {} from player {:X} because actor {:X} is unavailable", pReasonName, apPlayer->GetId(), serverId);
         return false;
     }
-    // A temporary actor (no form id the server keeps) is claimed only once it is a dead body: the claim is by server
-    // id, and a body changes hands that way already when its owner leaves (the player's game then sends its bones).
-    // Bodies of temporary actors are common -- encounter spawns, leveled NPCs -- and until 2026-10-06 nobody but their
-    // owner could ever move them for the others: the rig's bot NPC was asked for 17 times while dragged, never granted.
+    // A temporary actor (no form id on the server) can be claimed only as a dead body, so others can drag it.
     if (!m_world.try_get<FormIdComponent>(aEntity) && !view.get<CharacterComponent>(*it).IsDead())
     {
         spdlog::info("Rejected {} from player {:X} because actor {:X} is temporary and alive", pReasonName, apPlayer->GetId(), serverId);
@@ -905,9 +869,7 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
     Player* const pCurrentOwner = ownerComponent.GetOwner();
     const uint32_t currentOwnerId = pCurrentOwner ? pCurrentOwner->GetId() : 0;
 
-    // Said at info: a body dragged by a player who does not own it is asked for every moment it moves, and when none of
-    // it was granted nothing in any log said why (rig, live-body-grab, 2026-10-06). Claims are rare otherwise (a party
-    // leader's game claiming what it loads).
+    // Logged at info so a refused claim on a dragged body says why (live-body-grab).
     const auto reject = [&](const char* apReason)
     {
         spdlog::info("Rejected {} from player {:X} for {} {:X}: {} (requested epoch {}, current owner {:X}, current epoch {})", pReasonName, apPlayer->GetId(),
@@ -924,33 +886,22 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
     if (characterComponent.IsMount() || characterComponent.IsPlayer())
         return reject("the actor cannot be claimed");
 
-    // Not for the leader's claim: its game claims only actors it has loaded, which are next to it, while where the
-    // server has the actor is what the current owner last reported -- for a follower that owner was left behind, the
-    // follower came along, and the claim failed as "out of range" (the rig, 2026-10-04).
+    // Not for the leader's claim: its game claims only actors loaded next to it, wherever the server last had them.
     if (aReason != OwnershipTransferReason::LeaderClaim && !apPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()))
         return reject("the actor is out of range");
 
-    // A dead body goes to whoever is moving it, leader or not: only the owner sends a body's bones, so a body carried
-    // by anyone else did not move on the other screens (2026-10-03 09:28, a bandit Emma had killed, carried by Seen).
-    // Who may take one is decided further down, before the party rules.
-    // A player's follower belongs to that player's game (Emma's answer of 2026-10-07): asked for as one, it is given
-    // whoever leads the party, and another player's claim does not take it while its player is connected. A living
-    // actor otherwise went only to the party leader, so a follower asked for back by the other player stayed with the
-    // leader's game, which kept pulling her back where the follower's own game had her walk.
+    // A follower stays with its player's game: another player cannot claim it while that player is connected.
     if (!aFollower && ownerComponent.FollowerOfPlayerId && ownerComponent.FollowerOfPlayerId != apPlayer->GetId() &&
         m_world.GetPlayerManager().GetById(ownerComponent.FollowerOfPlayerId))
         return reject("it is another player's follower");
 
-    // A dragon flying in its owner's game stays there until it lands or dies (Emma's answer of 2026-10-07): taken over
-    // in flight, the Mistwatch dragon fell and died (2026-10-03 09:06), since a creature's flight is not handed over.
+    // A flying dragon stays with its owner until it lands or dies; flight is not handed over and it would fall.
     if (characterComponent.IsDragon() && pCurrentOwner && pCurrentOwner != apPlayer)
         if (const auto* pMovement = m_world.try_get<MovementComponent>(aEntity); pMovement && pMovement->Flying)
             return reject("it is a dragon flying in its owner's game");
 
-    // A dead body goes to whoever grabs it, party or not (Emma's answer of 2026-10-11): on the public server, which
-    // makes no party, Emma's grabs on a bandit Seen's game owned were refused four times in two minutes ("the player is
-    // not in a party", 08:27 to 08:29), so only Seen's dragging showed for the others. The game asks only while a hand
-    // is on the body, and the epoch check above settles two players grabbing at once.
+    // A dead body goes to whoever grabs it, party or not, since only the owner sends its bones.
+    // The epoch check above settles two players grabbing at once.
     const bool cDeadBody = characterComponent.IsDead();
     if (cDeadBody)
         return true;
@@ -1007,10 +958,7 @@ bool CharacterService::TransferOwnership(Player* apPlayer, const entt::entity aE
     if (pOldOwner)
         pOldOwner->Send(notify);
 
-    // And the new owner, wherever the server has the actor. A leader's claim is not range-checked -- its game has the
-    // actor beside it while the server still has where the former owner left it -- and an owner never told it owns
-    // the actor never sends for it, so the actor stayed where it was and was handed away again: the follower test in
-    // the rig, every four seconds (2026-10-04 11:00).
+    // Also tell the new owner directly when the actor is out of its range (a leader's claim), or it never sends for it.
     if (apPlayer != pOldOwner && !apPlayer->GetCellComponent().IsInRange(view.get<CellIdComponent>(*it), view.get<CharacterComponent>(*it).IsDragon()))
         apPlayer->Send(notify);
 
@@ -1036,10 +984,7 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
     const auto& characterComponent = view.get<CharacterComponent>(*it);
     const auto& cellIdComponent = view.get<CellIdComponent>(*it);
 
-    // Players whose game is sending come first; a silent one (paused, a menu, a loading screen) only when nobody else
-    // is in range. Picked silent or not, the first in the list was taken: on 2026-10-11 at 08:00:05 Emma went through
-    // Whiterun's gate and about 45 actors went to a player whose game had sent nothing for minutes, where they froze for
-    // everybody until the sweep above handed them on 15 to 20 s later, and the same again at every door.
+    // Players whose game is sending come first; a silent one only when nobody else is in range.
     const auto now = std::chrono::steady_clock::now();
     for (const bool cSilentToo : {false, true})
     {
@@ -1057,7 +1002,7 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
             if (!pPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()))
                 continue;
 
-            // Retain every owner that declined this handoff chain so the actor cannot bounce between unloaded clients.
+            // Declined owners are kept, so the actor cannot bounce between unloaded clients.
             if (TransferOwnership(pPlayer, aEntity, aReason, false))
                 return;
         }
@@ -1202,88 +1147,6 @@ void CharacterService::ProcessMovementChanges() const noexcept
         }
     }
 
-    // TEMPORARY: a client saw a fifth of its remote actor updates starve for up to 30 s (2026-09-19) while the owner
-    // sent every actor every 100 ms, so the gap is here. Every 10 s, per player: characters sent, characters
-    // withheld for range, and the nearest withheld one with both grids, so the log says whether the range check is
-    // wrong or the player's reported centre is.
-    {
-        struct RangeStats
-        {
-            uint32_t Sent = 0;
-            uint32_t Withheld = 0;
-            int32_t WorstDistance = INT32_MAX;
-            uint32_t WorstId = 0;
-            int32_t WorstX = 0;
-            int32_t WorstY = 0;
-            // Copied while the player exists: a player who disconnects before the 10 s log would otherwise be read
-            // through a dangling pointer (a line with grid (0, 402850048) on 2026-09-19 was exactly that).
-            int32_t CentreX = 0;
-            int32_t CentreY = 0;
-            uint32_t WorldSpace = 0;
-        };
-        static TiltedPhoques::Map<uint32_t, RangeStats> s_stats; // by connection id
-        static std::chrono::steady_clock::time_point s_nextLog = std::chrono::steady_clock::now() + 10s;
-
-        for (auto entity : characterView)
-        {
-            auto& cellIdComponent = characterView.get<CellIdComponent>(entity);
-            auto& characterComponent = characterView.get<CharacterComponent>(entity);
-            auto& ownerComponent = characterView.get<OwnerComponent>(entity);
-
-            for (auto pPlayer : m_world.GetPlayerManager())
-            {
-                if (pPlayer == ownerComponent.GetOwner())
-                    continue;
-
-                auto& stats = s_stats[pPlayer->GetConnectionId()];
-                stats.CentreX = pPlayer->GetCellComponent().CenterCoords.X;
-                stats.CentreY = pPlayer->GetCellComponent().CenterCoords.Y;
-                stats.WorldSpace = pPlayer->GetCellComponent().WorldSpaceId.BaseId;
-                if (cellIdComponent.IsInRange(pPlayer->GetCellComponent(), characterComponent.IsDragon()))
-                {
-                    ++stats.Sent;
-                    continue;
-                }
-
-                ++stats.Withheld;
-                // A distance only between two places outdoors in the same worldspace: an interior's grid is INT_MAX,
-                // which printed "-2147483648 cells away", and another worldspace's grid printed "0 cells away".
-                const auto& playerCell = pPlayer->GetCellComponent();
-                if (playerCell.IsInInteriorCell() || playerCell.WorldSpaceId != cellIdComponent.WorldSpaceId)
-                    continue;
-                const auto& playerCoords = playerCell.CenterCoords;
-                const int64_t wideDistance = std::max(std::abs(int64_t{cellIdComponent.CenterCoords.X} - playerCoords.X), std::abs(int64_t{cellIdComponent.CenterCoords.Y} - playerCoords.Y));
-                const int32_t distance = static_cast<int32_t>(std::min<int64_t>(wideDistance, INT32_MAX - 1));
-                if (distance < stats.WorstDistance)
-                {
-                    stats.WorstDistance = distance;
-                    stats.WorstId = World::ToInteger(entity);
-                    stats.WorstX = cellIdComponent.CenterCoords.X;
-                    stats.WorstY = cellIdComponent.CenterCoords.Y;
-                }
-            }
-        }
-
-        if (now >= s_nextLog)
-        {
-            s_nextLog = now + 10s;
-            for (auto& [connectionId, stats] : s_stats)
-            {
-                if (stats.Withheld && stats.WorstDistance == INT32_MAX)
-                {
-                    spdlog::info("RangeDiag: player {:X} at centre grid ({}, {}) worldspace {:X}: {} character updates sent, {} withheld, none of them outdoors in this worldspace",
-                                 connectionId, stats.CentreX, stats.CentreY, stats.WorldSpace, stats.Sent, stats.Withheld);
-                }
-                else if (stats.Withheld)
-                {
-                    spdlog::info("RangeDiag: player {:X} at centre grid ({}, {}) worldspace {:X}: {} character updates sent, {} withheld; nearest withheld {:X} at grid ({}, {}), {} cells away",
-                                 connectionId, stats.CentreX, stats.CentreY, stats.WorldSpace, stats.Sent, stats.Withheld, stats.WorstId, stats.WorstX, stats.WorstY, stats.WorstDistance);
-                }
-            }
-            s_stats.clear();
-        }
-    }
-
     m_world.view<AnimationComponent>().each([](AnimationComponent& animationComponent)
     {
         // Remove actions we've sent
@@ -1315,7 +1178,7 @@ void CharacterService::OnClashRequest(const PacketEvent<ClashRequest>& acMessage
     notify.Point = packet.Point;
     notify.Speed = packet.Speed;
     notify.Tick = packet.Tick;
-    // To everyone near the weapon that was met -- its owner first among them -- but not back to the sender.
+    // To everyone near the weapon that was met, its owner included, but not back to the sender.
     if (!GameServer::Get()->SendToPlayersInRange(notify, other, acMessage.pPlayer))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }

@@ -47,10 +47,7 @@ bool VRPose::operator==(const VRPose& acRhs) const noexcept
     if (NoBones)
         return true;
 
-    // Compared here rather than with the other flags above, because a boneless pose does not put this on the wire
-    // at all -- the serialiser skips it and the receiver reads back false. Comparing it unconditionally meant a
-    // boneless pose could never equal the pose rebuilt from it, so it would look changed on every frame and be
-    // re-sent for ever while standing still.
+    // Compared only with bones: a boneless pose does not send HasLegs, so comparing it would always report a change.
     if (HasLegs != acRhs.HasLegs)
         return false;
 
@@ -88,8 +85,7 @@ void VRPose::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
     aWriter.WriteBits(HasRootPosition ? 1 : 0, 1);
     if (HasRootPosition)
     {
-        // Raw bits, as Quaternion_NetQuantize does: world coordinates run to six figures, so quantising them
-        // would move the body further than the drag being sent.
+        // Raw bits: world coordinates reach six figures, too large to quantise without moving the body.
         for (const float value : RootPosition)
         {
             uint32_t bits = 0;
@@ -116,8 +112,7 @@ void VRPose::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
     aWriter.WriteBits(HasHips ? 1 : 0, 1);
     if (HasHips)
     {
-        // Root-relative, so a few hundred units at most, but written raw like the root position above: the body
-        // lands where this says, and a quantisation step here is a step the hips would visibly sit wrong by.
+        // Raw like the root position, so the hips do not sit off by a quantisation step.
         for (const float value : HipOffset)
         {
             uint32_t bits = 0;
@@ -134,7 +129,7 @@ void VRPose::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
             if (!WeaponHeld[side])
                 continue;
             WeaponRotation[side].Serialize(aWriter);
-            // Raw, like the hips: a few units from the hand, and a step here is a step the blade sits off by.
+            // Raw like the hips, so the blade does not sit off by a quantisation step.
             for (const float value : WeaponOffset[side])
             {
                 uint32_t bits = 0;

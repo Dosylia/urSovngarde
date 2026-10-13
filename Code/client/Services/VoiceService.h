@@ -12,13 +12,9 @@ struct IXAudio2MasteringVoice;
 struct IXAudio2SourceVoice;
 
 /**
- * @brief Voice chat, built on Steam's own voice functions (the game's steam_api64.dll): Steam opens the microphone,
- * detects speech and compresses it; we carry it and play it back placed in the world (VR_TODO, "Proximity voice
- * chat").
- *
- * Off until the player turns it on in the urSovngarde menu: no microphone is opened before that, and nothing is heard.
- * Everyone within about 30 m hears you, louder the closer they are; your party hears you at any distance, as a radio
- * when your body is not in their game. The settings menu's microphone test records five seconds and plays them back.
+ * @brief Proximity voice chat on Steam's voice functions, played placed in the world.
+ * Off until turned on in the urSovngarde menu; players within about 30 m hear you, your party at any distance.
+ * The menu's microphone test records five seconds and plays them back.
  */
 struct VoiceService
 {
@@ -27,7 +23,7 @@ struct VoiceService
 
     TP_NOCOPYMOVE(VoiceService);
 
-    // From the urSovngarde menu; the menu remembers them and sends them again each time it loads.
+    // Called from the urSovngarde menu, which resends the settings each time it loads.
     void StartMicrophoneTest() noexcept;
     void SetEnabled(bool aEnabled) noexcept;
     void SetVolume(float aVolume) noexcept;
@@ -61,7 +57,7 @@ private:
         // Buffers XAudio2 still reads, oldest first; dropped as it finishes them.
         std::deque<std::vector<int16_t>> Queued;
         size_t QueuedSamples{0};
-        // Held back after a silence until there is enough to ride out the network's unevenness.
+        // Buffered after a silence until there is enough to absorb network jitter.
         std::vector<int16_t> Waiting;
         std::chrono::steady_clock::time_point WaitingSince{};
         std::chrono::steady_clock::time_point LastHeard{};
@@ -70,7 +66,7 @@ private:
     };
 
     // Microphone test
-    void ReadVoice(std::chrono::steady_clock::time_point aNow) noexcept;
+    void ReadTestVoice(std::chrono::steady_clock::time_point aNow) noexcept;
     void FinishRecording() noexcept;
     void SaveRecording() const noexcept;
     bool Play(const std::vector<int16_t>& acSamples, uint32_t aSampleRate) noexcept;
@@ -82,7 +78,7 @@ private:
     void SendVoiceState() const noexcept;
     void UpdateSpeakers(std::chrono::steady_clock::time_point aNow) noexcept;
     void ReleasePlayed(Speaker& aSpeaker) noexcept;
-    void Submit(Speaker& aSpeaker, std::vector<int16_t>&& aSamples) noexcept;
+    void QueueSamples(Speaker& aSpeaker, std::vector<int16_t>&& aSamples) noexcept;
     void PlaceSpeaker(uint32_t aPlayerId, Speaker& aSpeaker) noexcept;
     void RemoveSpeakers() noexcept;
 

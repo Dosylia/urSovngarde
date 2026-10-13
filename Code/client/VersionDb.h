@@ -395,9 +395,9 @@ public:
             if (!std::getline(ss, idStr, ',')) continue;
             if (!std::getline(ss, offsetStr, ',')) continue;
 
-            // The library's second line is metadata ("13291,0.158.0"). stoull stops at the first
-            // dot and yields offset 0, which resolves to the image base instead of failing, so
-            // every field has to be consumed whole before the row is trusted.
+            // The library's second line is metadata ("13291,0.158.0").
+            // stoull stops at the first dot and yields offset 0, which would resolve to the image base.
+            // So every field has to be consumed whole before the row is trusted.
             size_t idEnd = 0, offsetEnd = 0;
             unsigned long long id = 0, offset = 0;
             try
@@ -418,12 +418,9 @@ public:
         }
 
 #ifdef SKYRIMVR
-        // Our own table wins where the two disagree. Its keys are the ids this client looks up, and most are AE
-        // ids that were never translated -- so when the library has the same number, that is an SE id and a
-        // different function. It used to be the other way round ("the CSV always wins"), which held only as long as
-        // the library never grew into one of our numbers: 0.158.0 did not have 35269, 0.275.0 does, and with it the
-        // dialogue-option hook would have been installed on an unrelated function without a word (found
-        // 2026-10-01, before it shipped). A disagreement is kept, and logged once there is a log to write to.
+        // Our own table wins where the two disagree.
+        // Most of its keys are untranslated AE ids, so the same number in the library is an SE id for a different function.
+        // A disagreement is kept, and logged once there is a log to write to.
         _overrideConflicts.clear();
         for (const auto& entry : kVRAddressOverrides)
         {
@@ -471,21 +468,14 @@ template <class T> struct VersionDbPtr
                 _snprintf_s(buf, sizeof(buf), "VersionDbPtr: unresolved id %u (GetPtr returning null)\n", m_id);
                 OutputDebugStringA(buf);
 
-                // OutputDebugStringA needs a debugger attached, and the user does not run one in the headset, so
-                // an id that never resolved stayed invisible until someone noticed the feature silently doing
-                // nothing. In the log it answers "which addresses is this build still missing?" by itself.
+                // OutputDebugStringA needs a debugger attached, so the id is also logged once.
+                // The log then answers "which addresses is this build still missing?" by itself.
                 if (!m_reported)
                 {
                     m_reported = true;
 
-                    // Four ids do not resolve on VR and none of them costs anything. They were each chased down
-                    // on 2026-09-26, and left as bare warnings they would be chased again -- worse, a genuinely
-                    // missing address would be one of thirty-six identical lines instead of the only one.
-                    // Named here with the reason, so a warning means "look at this" again.
-                    //
-                    // Two others, 37313 (Actor::ForceState) and 104359 (SignaturesMatch), are absent from this
-                    // list because their hooks were deleted the same day: both were a commented-out body and a
-                    // call through to the real function, which is what not hooking them already did.
+                    // These ids do not resolve on VR and cost nothing, so they are logged as info with the reason.
+                    // A warning then means a genuinely missing address.
                     const char* pHarmless = nullptr;
                     switch (m_id)
                     {

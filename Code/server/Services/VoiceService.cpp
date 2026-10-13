@@ -10,8 +10,7 @@
 
 namespace
 {
-// A little past the 30 m where the listener's game fades a voice out (1 m is about 70 game units), so a voice fades
-// rather than stops when its speaker walks away.
+// A little past the 30 m where the client fades a voice out, so it fades rather than cuts off.
 constexpr float kHearingRange = 2400.f;
 constexpr uint32_t kMaxPacketsPerSecond = 60;
 } // namespace
@@ -65,7 +64,7 @@ bool VoiceService::CanHear(const Player& acListener, const Player& acSpeaker) co
     if (speakerParty.has_value() && acListener.GetParty().JoinedPartyId == speakerParty)
         return true;
 
-    // Proximity: the same area, then the distance between the two characters when both are known.
+    // Proximity: the same area, then the distance between both characters.
     if (!acSpeaker.GetCellComponent().IsInRange(acListener.GetCellComponent(), false))
         return false;
 

@@ -25,7 +25,6 @@ static uint32_t SteamXor(uint8_t* data, uint32_t size, uint32_t key)
 }
 
 // Just don't touch it, its evil
-// ...sorry, it left me no choice.
 uintptr_t CrackCEGInPlace(const CEGLocationInfo& acInfo)
 {
     SteamStubHeaderV31 stub{};

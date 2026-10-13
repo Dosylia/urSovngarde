@@ -4,8 +4,7 @@
 
 #include <Structs/Vector3_NetQuantize.h>
 
-//! Another player's hand or weapon met a weapon in their game (ClashRequest, passed on by the server to the players
-//! near it). The receiver whose weapon it was feels it on the hand holding it.
+//! Another player's hand or weapon hit a weapon (a relayed ClashRequest); its owner feels it on the hand holding it.
 struct NotifyClash final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifyClash;

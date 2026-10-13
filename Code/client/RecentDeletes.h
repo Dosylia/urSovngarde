@@ -5,17 +5,11 @@
 
 //! The last few actors this client deleted, so a crash dump can be matched against them by address.
 //!
-//! Seen's dump of 2026-09-27 11:45 established that the crash is a use-after-free: the game makes a virtual call
-//! on an object whose first vtable has been overwritten with heap garbage, ~0.5 s after we tear down a batch of
-//! remote copies. What it could not establish is whether the dead object *is* one of those copies -- the link was
-//! inferred from timing, and inferring from timing has been wrong repeatedly this week.
+//! Every remote copy deletion records the actor's pointer here, and the crash handler prints the ring.
+//! If a crashing register holds one of these addresses, the crash is a use-after-free of an actor we deleted.
 //!
-//! An address settles it. Every temporary remote deletion records the actor's pointer here, and the crash handler
-//! prints the ring. If the faulting object's address appears in that list, the deletion path is the cause and
-//! there is nothing left to argue about; if it never appears, the path is innocent and the search moves elsewhere.
-//!
-//! Deliberately trivial: a fixed array, one atomic counter, no allocation and no lock. It is written from the
-//! actor threads and read from a crashing one, where a torn entry is a cosmetic problem and a lock is a real one.
+//! A fixed array and one atomic counter, with no allocation and no lock.
+//! It is written from actor threads and read from a crashing one, where a torn entry is harmless and a lock is not.
 namespace RecentDeletes
 {
 struct Entry
@@ -29,24 +23,18 @@ struct Entry
 };
 
 //! What still had a hold on an actor at the moment it was deleted.
-//!
-//! Twenty-four seconds passed between deleting FF001199 and the game calling a virtual function on it
-//! (2026-09-27 16:05). Nothing survives that long by accident, so something was holding a handle. These are the
-//! holders worth naming, recorded at the moment of the delete because afterwards the evidence is gone.
+//! Recorded at the moment of the delete, because afterwards the evidence is gone.
 enum Claim : uint32_t
 {
     kNone = 0,
-    kPlayerCombatTarget = 1 << 0, //!< the player is fighting it -- Emma shot the Seeker that then went wrong
+    kPlayerCombatTarget = 1 << 0, //!< the player is fighting it
     kOtherCombatTarget = 1 << 1,  //!< some other actor is fighting it
     kHasProcess = 1 << 2,         //!< still in the AI process lists
     kHas3D = 1 << 3,              //!< still has a loaded model, so "unloaded" was wrong about it
     kDeadOrDying = 1 << 4,
     kIsPlayerTeammate = 1 << 5,
 
-    // Which way it went, for everything outside the unload path. Until 2026-10-02 only that path was recorded, and
-    // that evening's crash on a freed actor (SkyrimVR.exe+0x3AC1A8, the physics asking a contact's owner a question
-    // and the owner being freed memory) could not be checked against the three copies deleted on the server's word
-    // in the minutes before it, nor against the seven game-made actors let go of 0.7 s before it.
+    // Which path deleted it, for every path other than the unload one.
     kOnServersWord = 1 << 6, //!< the server removed the character
     kOnConnect = 1 << 7,     //!< the clean-up of temporary actors when a connection starts
     kOnDisconnect = 1 << 8,  //!< another player's copy, when the connection ended
@@ -59,9 +47,6 @@ constexpr size_t kCount = 32;
 void Record(const void* apActor, uint32_t aFormId, uint32_t aHandles, uint32_t aRefCount, uint32_t aFlags) noexcept;
 
 //! Write the ring to the log, newest first, flagging any entry that appears in the crashing registers.
-//!
-//! The first version compared only Rcx and reported "not our actor deletion" for the crash of 2026-09-27
-//! 12:33 -- while Rdi held 0x9b30f4f0, an actor deleted 1930 ms earlier and printed three lines below. A dead
-//! pointer is just as dead in Rdi as in Rcx.
+//! Every register is checked, because a dead pointer can sit in any of them, not only Rcx.
 void Report(const uint64_t* apRegisters, size_t aRegisterCount) noexcept;
 } // namespace RecentDeletes

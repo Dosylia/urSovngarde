@@ -198,43 +198,13 @@ void Actor::ForcePosition(const NiPoint3& acPosition) noexcept
         if (auto* pController = currentProcess->GetCharController())
         {
             // A newly created controller may be positioned before ActorProcess.
-            // Both SetPositionImpl and the following velocity reset need a step
+            // Both SetPositionImpl and the following velocity reset need a step.
             updateController = pController->UpdateStepTiming();
         }
     }
 
-#ifdef SKYRIMVR
-    // TEMPORARY (2026-09-26): "interpolation will catch the controller up once physics timing becomes available"
-    // is an assumption, and NPCs standing below the floor is what it would look like if it were false. The
-    // character controller is what keeps a body on the ground; if it is never caught up, the reference sits where
-    // the network says while the controller is somewhere else, and the two disagree about where the floor is.
-    //
-    // Counted rather than reasoned about: how many placements skipped the controller, against how many did not.
-    // A number that is occasionally non-zero is a controller waiting a frame or two for its first step, which is
-    // what the code above expects. A number that stays high is the assumption failing, and then SinkDiag's
-    // "has controller" field says which actors it is failing for.
-    if (pExtension && pExtension->IsRemote())
-    {
-        static uint32_t s_skipped = 0;
-        static uint32_t s_updated = 0;
-        static std::chrono::steady_clock::time_point s_nextLog = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-
-        updateController ? ++s_updated : ++s_skipped;
-
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= s_nextLog)
-        {
-            s_nextLog = now + std::chrono::seconds(10);
-            if (s_skipped)
-                spdlog::info("ControllerDiag: {} of {} remote placements could not move the character controller with the reference", s_skipped, s_skipped + s_updated);
-            s_skipped = 0;
-            s_updated = 0;
-        }
-    }
-#endif
-
-    // With no usable step yet, update the reference/3D now; interpolation will
-    // catch the controller up once physics timing becomes available
+    // With no usable step yet, update the reference and 3D now.
+    // Interpolation catches the controller up once physics timing becomes available.
     SetPosition(acPosition, updateController);
 }
 
@@ -407,19 +377,9 @@ Actor* Actor::GetCombatTarget() const noexcept
 }
 
 // Re-aim an actor at whoever just hit it, without dropping it out of combat to do so.
-//
-// This used to call StopCombat() and then StartCombat(), and the second half is not guaranteed: these are Papyrus
-// functions, and on VR the registration they depend on has no address of its own (see HookBindEverythingToScript,
-// which recovers it from the VM's vtable). If the stop lands and the start does not, the actor is left out of
-// combat with nothing to put it back -- it follows, it faces you, it never swings, and only a cell reload fixes
-// it. That is the Burnt Spriggan of 2026-09-25 and -26, and the log has our own line for it at 08:21:32 on actor
-// 203A5E8.
-//
-// It was also destructive by design: actor 203A3C8 was hit repeatedly on 2026-09-26 and had its combat torn down
-// three times in six seconds, once per rate-limit window.
-//
-// An actor already fighting has a combat controller, and that controller can simply be pointed at somebody else.
-// Only an actor with no combat at all needs starting, and then there is nothing to stop first.
+// An actor already fighting has a combat controller, which is simply pointed at the new target.
+// Only an actor with no combat at all is started, so nothing is ever stopped first.
+// StopCombat() then StartCombat() is not safe on VR: the Papyrus start can fail and leave the actor out of combat.
 void Actor::StartCombatEx(Actor* apTarget) noexcept
 {
     if (GetCombatTarget() == apTarget)
@@ -579,9 +539,9 @@ TESForm* Actor::GetEquippedAmmo() const noexcept
 bool Actor::IsWearingBodyPiece() const noexcept
 {
 #ifdef SKYRIMVR
-    // GetArmorInSlot has no VR address. The same answer from the container entries: an armour flagged as a body
-    // piece with a worn extra on one of its stacks. Cheap enough for the once-a-second naked-NPC check, which this
-    // turns back on (it was off on VR, so bandits stayed naked; 2026-09-19).
+    // GetArmorInSlot has no VR address, so the answer comes from the container entries.
+    // Wearing body armour means an armour flagged as a body piece with a worn extra on one of its stacks.
+    // Cheap enough for the once-a-second naked-NPC check.
     const ExtraContainerChanges::Data* pChanges = GetContainerChanges();
     if (!pChanges || !pChanges->entries)
         return true; // nothing to look at, and re-equipping blindly is worse than leaving it
@@ -958,9 +918,9 @@ bool Actor::IsDragon() const noexcept
     if (BehaviorVar::IsDragon(pExtension->GraphDescriptorHash))
         return true;
 
-    // A modded dragon behavior is only recognized after the actor was already sent to the server,
-    // which then gave it the normal (too small) range. The race keyword ActorTypeDragon is known
-    // right away. TESRace: BGSKeywordForm at +0x70 (keywords +0x78, count +0x80).
+    // A modded dragon behavior is only recognized after the actor is sent to the server, which then gives it too small a range.
+    // The race keyword ActorTypeDragon is known right away.
+    // TESRace: BGSKeywordForm at +0x70 (keywords +0x78, count +0x80).
     constexpr uint8_t cRaceFormType = 14;
     constexpr uint8_t cKeywordFormType = 4;
     constexpr uint32_t cActorTypeDragon = 0x35D59;
@@ -991,8 +951,8 @@ void Actor::Kill() noexcept
     if (pExtension->IsPlayer())
         return;
 
-    // Remote actors only play animations sent by their owner (HookPerformAction). The death animation and
-    // ragdoll have to go through here, or the body dies standing up.
+    // Remote actors only play animations sent by their owner (HookPerformAction).
+    // The death animation and ragdoll have to go through here, or the body dies standing up.
     const bool forceAnimation = pExtension->IsRemote();
     if (forceAnimation)
         g_forceAnimation = true;
@@ -1118,10 +1078,8 @@ bool TP_MAKE_THISCALL(HookSpawnActorInWorld, Actor)
 {
     const auto* pNpc = Cast<TESNPC>(apThis->baseForm);
 
-    // A copy this client deleted while the game still held handles on it stays in its cell, marked deleted, and the
-    // game builds its 3D again the next time that cell loads: the "copies of ourselves" left at doors on 2026-10-11,
-    // seen in all three players' logs (Emma 10, Seen 23, Pengy 13 copies back after their delete). Nothing tracks such
-    // a copy any more, so it stood frozen where the player had been. It gets no 3D.
+    // A copy this client deleted while the game still held handles on it stays in its cell, marked deleted.
+    // The game would build its 3D again when the cell loads, leaving an untracked frozen copy of a player, so it gets no 3D.
     if (apThis->IsTemporary() && apThis->IsDeleted())
     {
         if (pNpc)
@@ -1163,9 +1121,8 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
                 return false;
         }
 
-        // TEMPORARY (2026-10-08): this game's own hits on this player from another player's copy (its sword body, its
-        // spells), which no defender's rule weighs. On 2026-10-08 Emma lost health every frame to Seen's Sparks here
-        // while his game never counted that spell on her. Summed per second: a concentration spell hits each frame.
+        // TEMPORARY: logs this game's own hits on this player from another player's copy (its sword body, its spells).
+        // No defender's rule weighs these hits. Summed per second, because a concentration spell hits each frame.
         if (const ActorExtension* pHitterExtension = apHitter ? apHitter->GetExtension() : nullptr; pHitterExtension && pHitterExtension->IsRemotePlayer())
         {
             static float s_damage = 0.f;
@@ -1188,29 +1145,23 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
     }
     else if (pExHittee->IsRemotePlayer())
     {
-        // A VR player never plays an attack animation, so the other player's game never sees the swing land and
-        // could not apply it; the only game that knows this sword hit that body is this one. With PvP on, the hit is
-        // sent as a health change, which the other side applies to its own player through the usual broadcast
-        // (health is floored at zero there, players are never killed). Sword fights between players, 2026-09-18.
-        // Only this player's own hits (sword, arrow, spell): the other player's game already handles what its own
-        // copies of NPCs do to it, and forwarding an NPC's hits from here doubled them (a spider's bites arrived
-        // 90 times a second on top of the victim's own spider, 2026-09-19).
+        // A VR player never plays an attack animation, so only this game knows that this sword hit that body.
+        // With PvP on, the hit is sent as a health change, which the other side applies to its own player (floored at zero).
+        // Only this player's own hits are sent: the other game already handles what its own NPCs do, so forwarding those doubles them.
         const ActorExtension* pPvpHitterExtension = apHitter ? apHitter->GetExtension() : nullptr;
         if (World::Get().GetServerSettings().PvpEnabled && realDamage > 0.f && pPvpHitterExtension && pPvpHitterExtension->IsLocalPlayer())
         {
 #ifdef SKYRIMVR
-            // The other player's sword is a body in this world (VRBodySync), and PLANCK takes a swing into any body of an
-            // actor for a hit on that actor, so hitting his sword hurt him: 22 of Emma's 56 hits on Seen came with her
-            // sword touching his (2026-10-06, "just hitting the sword of the other player was damaging him"). PLANCK
-            // puts where the hit landed in the player (+0x6BC, its VR offset, read by the game's hit code) right before
-            // this runs; a hit at a point where his weapon body was just touched landed on the weapon, and is not sent.
+            // The other player's sword is a body in this world (VRBodySync), and PLANCK counts a swing into any such body as a hit.
+            // PLANCK stores where the hit landed in the player (+0x6BC, its VR offset) right before this runs.
+            // A hit where his weapon body was just touched landed on the weapon, so it is not sent.
             const auto* pLastHit = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(apHitter) + 0x6BC);
             if (VRBodySync::IsWeaponTouchAt(glm::vec3{pLastHit[0], pLastHit[1], pLastHit[2]}))
             {
                 spdlog::info("PvP: a hit of {:.0f} on remote player {:X}'s weapon, not on {:X}; not sent", realDamage, apThis->formID, apThis->formID);
                 return false;
             }
-            // The blade stop: the blade that landed it is drawn resting on his, so on neither screen did it reach him.
+            // The blade stop: the blade that landed it is drawn resting on his, so on neither screen does it reach him.
             if (VRBodySync::IsBladeStoppedAt(apThis->formID, glm::vec3{pLastHit[0], pLastHit[1], pLastHit[2]}))
             {
                 spdlog::info("PvP: a hit of {:.0f} on remote player {:X} by a blade resting on his; not sent", realDamage, apThis->formID);
@@ -1222,8 +1173,8 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
             World::Get().GetRunner().Trigger(HealthChangeEvent(apThis->formID, -realDamage));
         }
 
-        // Never "killed": that answer made the game put the copy down here on the strength of its stale health,
-        // while the player it stands for was fine. The owner's game decides, and a respawn replaces the copy.
+        // Never "killed", or the game would put the copy down here on its stale health while the real player is fine.
+        // The owner's game decides, and a respawn replaces the copy.
         if (wouldKill)
             spdlog::info("Remote player {:X} copy would have been downed by a local hit; left standing", apThis->formID);
         return false;
@@ -1359,8 +1310,8 @@ void* TP_MAKE_THISCALL(HookDropObject, Actor, void* apResult, TESBoundObject* ap
     if (apExtraData)
         apThis->GetItemFromExtraData(item, apExtraData);
 
-    // Our own placing of another player's item comes through here with the override held: that is not a drop by this
-    // player and must not be announced as one, or every placed item would be sent straight back as a new drop.
+    // Our own placing of another player's item comes through here with the override held.
+    // That is not a drop by this player, and announcing it would send every placed item straight back as a new drop.
     const bool cOwnDrop = !ScopedInventoryOverride::IsOverriden() && apThis == PlayerCharacter::Get();
     Inventory::Entry dropped = item;
 
@@ -1370,7 +1321,7 @@ void* TP_MAKE_THISCALL(HookDropObject, Actor, void* apResult, TESBoundObject* ap
 
     void* pResult = TiltedPhoques::ThisCall(RealDropObject, apThis, apResult, apObject, apExtraData, aCount, apLocation, apRotation);
 
-    // The reference exists now, and where it lies is what the other players need -- not where the player stands.
+    // The reference exists now, and the other players need where it lies, not where the player stands.
     if (cOwnDrop && apResult)
     {
         const auto* pHandle = static_cast<const BSPointerHandle<TESObjectREFR>*>(apResult);
@@ -1476,8 +1427,8 @@ bool TP_MAKE_THISCALL(HookSpeakSoundFunction, Actor, const char* apName, uint32_
 {
     spdlog::debug("a3: {:X}, a4: {}, a5: {}, a6: {}, a7: {}, a8: {:X}, a9: {:X}, a10: {}, a11: {:X}, a12: {}, a13: {}, a14: {}", (uint64_t)a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14);
 
-    // The player having the conversation may not own this NPC. Ambient
-    // speech still comes only from the actor's simulation owner.
+    // The player having the conversation may not own this NPC.
+    // Ambient speech still comes only from the actor's simulation owner.
     const ActorExtension* pSpeakerExtension = apThis->GetExtension();
     if ((pSpeakerExtension && pSpeakerExtension->IsLocal()) || MenuTopicManager::IsPlayerDialogueSpeaker(apThis))
         World::Get().GetRunner().Trigger(DialogueEvent(apThis->formID, apName));
@@ -1494,20 +1445,14 @@ void Actor::SpeakSound(const char* pFile)
 
 char TP_MAKE_THISCALL(HookActorProcess, Actor, float aDeltaTime)
 {
-    // Remote actors are driven by their owner, so their AI doesn't run here. A remote corpse still updates, or its
-    // ragdoll never falls. Upstream also keeps the character controller's timestep valid while the AI is skipped: a
-    // controller created during the skip is left with a zero step, and the actor then glides after a collision
-    // (#901). That is the sliding we have been chasing.
+    // Remote actors are driven by their owner, so their AI doesn't run here. A remote corpse still updates, or its ragdoll never falls.
+    // The character controller's timestep is kept valid while the AI is skipped (upstream #901).
+    // A controller created during the skip would otherwise have a zero step and glide after a collision.
     //
-    // GetExtension() returns null by design for anything this client did not allocate as an ExActor, and this
-    // hook is handed every actor the engine processes. Seen crashed here on 2026-09-23 with a null extension
-    // while guards were reacting to a crime (HookActorProcess+0x1e calling ActorExtension::IsRemote with rcx 0,
-    // on a Redoran Guard). Nothing about the merge caused it; the same unguarded dereference is in the pre-merge
-    // code, it just needs an actor without an extension to meet it. An actor we do not extend is not remote, so
-    // it takes the normal path.
-    // Bleeding out is the game's downed state and it is recoverable, so it needs its own processing exactly as a
-    // dying body does. Suppressing it left downed NPCs unable to play their get-up, which is what "npcs that get
-    // downed but cant be killed dont stand back up, they just lay on the floor weirdly" was (2026-09-23).
+    // GetExtension() returns null for anything this client did not allocate as an ExActor, and this hook sees every actor.
+    // An actor we do not extend is not remote, so it takes the normal path.
+    //
+    // Bleeding out is the game's recoverable downed state, so it is processed here like a dying body, or the NPC never gets up.
     const ActorExtension* pExtension = apThis->GetExtension();
     if (pExtension && pExtension->IsRemote() && !apThis->actorState.IsDeadOrDying() && !apThis->actorState.IsBleedingOut())
     {
@@ -1549,16 +1494,11 @@ bool TP_MAKE_THISCALL(HookIsFleeing, Actor)
     return TiltedPhoques::ThisCall(RealIsFleeing, apThis);
 }
 
-// The crime alarm (Actor::StealAlarm, SE 36427) walks every actor that might have witnessed the offence and reads
-// each one's flags at Actor+0xE8. Twice it read them off nothing: 2026-09-20 17:59, the friend's follower Frea
-// turned hostile and killed his session, and 2026-09-21 19:55, a Skaal villager was struck four minutes into a
-// session and killed hers. Same function, same +0x12D9, same null, both while connected, both with actors that had
-// just been handed to the other player or deleted here as temporaries. None of our code is on the stack: it is the
-// game's own walk over a list holding an empty slot, and the exe cannot be read to find which list.
+// The crime alarm (Actor::StealAlarm, SE 36427) walks every actor that might have witnessed the offence.
+// It reads each one's flags at Actor+0xE8, and can crash at +0x12D9 on a null actor in the game's own list.
+// This happens while connected, with actors just handed to the other player or deleted here as temporaries.
 //
-// Until it can be, the alarm is allowed to fail rather than end the session. The hit lands either way; what is lost
-// is the crime being reported for that one blow, and the log says when it happened and to whom. The sibling VR port
-// guards two havok crash sites the same way.
+// The alarm is allowed to fail rather than end the session. The hit lands either way; only that crime report is lost, and it is logged.
 //
 // MSVC will not allow __try in a function that needs C++ unwinding, so the call sits alone in here.
 TP_THIS_FUNCTION(TStealAlarm, void, Actor, TESObjectREFR*, TESForm*, int32_t, int32_t, TESForm*, bool);
@@ -1579,12 +1519,6 @@ static bool CallStealAlarm(Actor* apThis, TESObjectREFR* apRef, TESForm* apObjec
 
 void TP_MAKE_THISCALL(HookStealAlarm, Actor, TESObjectREFR* apRef, TESForm* apObject, int32_t aNum, int32_t aTotal, TESForm* apOwner, bool aAllowWarning)
 {
-    // TEMPORARY (2026-09-21): the guard below did not catch the fault that killed four sessions, and a fault inside
-    // relocated hook code would not reach it whether this runs or not. These few lines say which it is.
-    static std::atomic<uint32_t> s_entries{0};
-    if (const uint32_t cEntry = ++s_entries; cEntry <= 3)
-        spdlog::info("Crime alarm ran ({}): offender {:X}, witness {:X}, object {:X}", cEntry, apThis ? apThis->formID : 0, apRef ? apRef->formID : 0, apObject ? apObject->formID : 0);
-
     CrashGuard::Enter();
     const bool cSurvived = CallStealAlarm(apThis, apRef, apObject, aNum, aTotal, apOwner, aAllowWarning);
     CrashGuard::Leave();
@@ -1607,10 +1541,8 @@ static TiltedPhoques::Initializer s_actorHooks(
         POINTER_SKYRIMSE(TSpawnActorInWorld, s_SpawnActorInWorld, 19742, 19742);
         POINTER_SKYRIMSE(TDamageActor, s_damageActor, 37335, 36345);
         POINTER_SKYRIMSE(TApplyActorEffect, s_applyActorEffect, 35086, 35086);
-        // SE 36452 was TESObjectREFR::GetSubmergeLevel, not a regen function: VR 0x1405e9b60 takes
-        // (this, float, TESObjectCELL*) and was being hooked with (this, int, float). SE 37513
-        // (Actor::RestoreActorValue, VR 0x1406296b0) is the one this hook wants, and it is what the
-        // SE-era code in 5da6679e called. Checked in the VR disassembly, not just the id tables.
+        // SE 37513 is Actor::RestoreActorValue (VR 0x1406296b0), checked in the VR disassembly.
+        // SE 36452 is TESObjectREFR::GetSubmergeLevel (this, float, TESObjectCELL*), not a regen function.
         POINTER_SKYRIMSE(TRegenAttributes, s_regenAttributes, 37448, 37513);
         POINTER_SKYRIMSE(TAddInventoryItem, s_addInventoryItem, 37525, 36525);
         POINTER_SKYRIMSE(TPickUpObject, s_pickUpObject, 37521, 37521);
@@ -1628,11 +1560,6 @@ static TiltedPhoques::Initializer s_actorHooks(
         if (RealStealAlarm)
         {
             TP_HOOK(&RealStealAlarm, HookStealAlarm);
-            // The address is logged because this hook has never once fired, through whole sessions of guards
-            // reacting to crimes, so whatever it resolved to before was not the crime alarm. The VR address was
-            // supplied on 2026-09-23 as 0x1405e5dc0 and put in VRAddressOverrides, but the CSV wins over that
-            // table when it carries the id, so the only way to know which one answered is to print it.
-            spdlog::info("Crime alarm guard installed on {} (expected SkyrimVR+0x5e5dc0)", fmt::ptr(RealStealAlarm));
         }
         else
             spdlog::warn("Crime alarm guard off: SE 36427 did not resolve");

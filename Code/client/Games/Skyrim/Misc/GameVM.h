@@ -2,12 +2,8 @@
 
 #include <Misc/BSScript.h>
 
-// The merge of 2026-09-22 took upstream's Anniversary Edition layout for this structure, which moved
-// virtualMachine from 0x200 to 0x210 and inactive from 0x680 (a byte) to 0x690 (a dword). VR uses the
-// Special Edition layout, so both had to stay where they were. Taking the AE offsets read a garbage
-// pointer for virtualMachine and killed the game while Papyrus scripts were being bound at save load
-// (BSScript::IsRemotePlayerFunc's constructor, 2026-09-22 21:44); inactive is worse than it looks,
-// because it is the flag HookVMUpdate tests before running the whole mod's update.
+// VR uses the SE layout; AE moved virtualMachine to 0x210 and inactive to 0x690 (a dword).
+// HookVMUpdate tests inactive before running the mod's update.
 struct SkyrimVM
 {
     virtual ~SkyrimVM();

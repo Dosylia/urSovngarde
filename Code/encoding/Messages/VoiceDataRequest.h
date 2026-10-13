@@ -4,9 +4,8 @@
 
 using TiltedPhoques::Vector;
 
-//! A piece of this player's voice: what Steam's GetVoice returned (Steam's own compression, about 20 ms to 100 ms of
-//! speech). Sent unreliable: a lost piece is a short gap, never a delay. The server passes it on (NotifyVoiceData) to
-//! the players near enough to hear it and to the speaker's party.
+//! A piece of this player's voice as compressed by Steam's GetVoice, sent unreliable so a loss is a gap, not a delay.
+//! The server relays it as NotifyVoiceData.
 struct VoiceDataRequest final : ClientMessage
 {
     static constexpr ClientOpcode Opcode = kVoiceDataRequest;

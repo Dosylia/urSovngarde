@@ -89,31 +89,18 @@
 
 namespace
 {
-// Levelled references the other player rolled as another kind of creature (a rabbit here, a snow fox there). Adopting
-// the wrong creature froze it or made it slide; refusing it gave each player a private copy. So the owner's creature
-// is spawned here as a copy (a temporary actor from the owner's base, the path summons already use) and the local
-// reference becomes a "ghost": disabled while the copy stands in for it, never assigned to the server. Key: the
-// ghost's form id; value: the copy's. The ghost is enabled again the moment its copy is deleted, on disconnect, or when
-// this client goes away. Disable is saved with the reference, so a crash while a ghost is disabled leaves that one
-// spawn point disabled in the save made during the session; a small, known cost (2026-09-19).
+// Levelled references the owner rolled as another kind of creature: ghost form id -> form id of the copy standing in for it.
+// Adopting the wrong creature freezes it or makes it slide, so the owner's creature is spawned here as a copy instead.
+// The local reference (the "ghost") is disabled while its copy stands in, and is never assigned to the server.
+// A ghost is enabled again when its copy is deleted, on disconnect, or when this client goes away.
+// Disable is saved with the reference: a crash while a ghost is disabled leaves that spawn point disabled in the save.
 TiltedPhoques::Map<uint32_t, uint32_t> s_ghosts;
 
-// Actors this client's own game made (placed by console, a quest spawn, a random encounter) that now belong to
-// another player and are no longer in this client's view: server character id -> the actor it is here.
-//
-// A temporary actor has no id two games agree on, so the server sends it as "a character with no reference of its
-// own" and every client makes a copy for it -- including, when it came back, the client whose game had made it and
-// still had it. That client then announced its own actor to the server as a new character as well. One creature
-// became two for everybody, and a third body on the screen of the player who made it: three Seekers placed, six
-// standing after one walk away and back (2026-10-02). It is also what the three crashes of that night have in
-// common: `live-copy-abandon` crashed five times out of five within a second of travelling away from such a pair,
-// while a copy alone (`live-seeker-copy-remote`, `-local`) and the game's own actors alone travel cleanly. Why the
-// pair crashes is not known -- the game frees both on the way out and its physics then meets a skeleton whose owner
-// is freed memory -- but the pair should not exist in the first place.
-//
-// So the client that made the actor remembers which server character it became, does not announce it a second
-// time, and takes it back as that same actor when the server sends the character again. The record lasts until
-// the server removes the character or the connection ends.
+// Temporary actors this game made that now belong to another player and are out of view: server id -> local actor.
+// The server sends such an actor back as a character without a reference, so every client makes a copy of it.
+// The client that made it remembers it here, does not announce it again, and takes it back as that same actor.
+// Otherwise one creature becomes two, and an actor/copy pair crashes on travel (`live-copy-abandon`).
+// A record lasts until the server removes the character or the connection ends.
 struct HandedAway
 {
     uint32_t FormId{};
@@ -136,33 +123,16 @@ bool IsHandedAway(const Actor* apActor, uint32_t& aServerId) noexcept
     return false;
 }
 
-// The temporary actors this client made itself -- copies of other players and of their creatures -- by form id.
-//
-// "Temporary and remote" used to be taken to mean exactly that, and it does not: an actor the game spawned on its
-// own (a summon, a random encounter, anything placed by a script) is temporary too, and becomes remote the moment
-// the server hands it to another player -- which it does during this player's load screens. When the cell then
-// unloads, the game disposes of its own actor and says so, and CancelServerAssignment disabled it in the middle of
-// that as if it were a copy of ours. 25 ms later the game's movement code ran on it and crashed
-// (SkyrimVR.exe+0x714EB2, twice out of twice on 2026-10-01 with a Seeker placed by console, a bot in range and one
-// trip through a load door; the crash report shows the actor already marked deleted by the game, which this client
-// never does on that path). Only what is in this set is this client's to disable or delete.
-//
-// An id has to leave this set the moment its copy stops being ours, at every place that happens, because the game
-// hands a deleted actor's form id to the next actor it makes. Three places deleted copies without saying so here
-// (a removal ordered by the server, the clean-up on connect, the other players' copies on disconnect), and on
-// 2026-10-02 `live-temp-reuse` got the crash back with them: the bot left, its copy FF0008E4 was deleted, the game
-// gave FF0008E4 to a Seeker placed by console ten seconds later, and when the player walked away the client took
-// that Seeker for its copy and disabled it -- SkyrimVR.exe+0x714EB2 again, 256 ms later, the Seeker in R15. A third
-// Seeker in the same run, with an id never used for a copy, was left to the game and did nothing. When in doubt an
-// id is taken out: a copy mistaken for the game's is left standing, the other mistake is the crash.
+// Form ids of the temporary actors this client made itself: copies of other players and of their creatures.
+// Only these are this client's to disable or delete; game-spawned temporary actors can be remote too.
+// Disabling a game actor while the game disposes of it crashes in its movement code (SkyrimVR.exe+0x714EB2).
+// An id leaves this set as soon as its copy is gone, because the game reuses a deleted actor's form id (`live-temp-reuse`).
+// When in doubt an id is removed: a copy left standing is harmless, disabling a game actor is the crash.
 std::unordered_set<uint32_t> s_ownCopies;
 
-// The copies this client still had when its last connection ended, by form id, with the base each one had then.
-// The disconnect hands them to the game and empties s_ownCopies, so without this the clean-up on connect took every
-// one of them for the game's own actor, kept it, and sent it to the server as a new character -- while the server
-// sent the character it stood for again and a second copy was made. Seen's six reconnects on 2026-10-11 (08:51 to
-// 09:17) left a bandit camp with two to four of each bandit, the extras owned by Seen and shown to everyone. The base
-// is kept because the game reuses a freed id; an id also leaves this map as soon as the game removes the actor.
+// Copies this client still had when its last connection ended: form id -> base form id.
+// The clean-up on connect deletes them instead of announcing them to the server as new characters.
+// The base is kept because the game reuses freed ids; an id also leaves this map when the game removes the actor.
 TiltedPhoques::Map<uint32_t, uint32_t> s_lastConnectionCopies;
 
 Actor* RememberOwnCopy(Actor* apActor) noexcept
@@ -179,12 +149,10 @@ struct BaseMatch
     TESNPC* pOwnerBase = nullptr;
 };
 
-// Same name first: a levelled list of humanoids mixes races freely (Nord and Breton bandits are both "Bandit"),
-// and all of those share the humanoid skeleton and graph. Comparing races alone marked six Bandit/Bandit pairs
-// as foreign on 2026-09-18 and left them without animations. Only when the names differ does the race decide
-// (Elk vs Deer, Bear vs Frostbite Spider are foreign; Dragon vs Blood Dragon is not). Races are compared through
-// Actor::race (read on VR by PlayerService) and TESNPC::raceForm (set on VR for every remote player's base by
-// TESNPC::Initialize); if the two disagree for the local actor itself, that offset is not trusted.
+// Compares the owner's base with the local one: a differing base is "foreign" when it is another kind of creature.
+// Same name means same kind: a levelled list mixes humanoid races freely (Nord and Breton bandits share one graph).
+// Only when the names differ does the race decide (Elk vs Deer is foreign; Dragon vs Blood Dragon is not).
+// Races come from Actor::race and TESNPC::raceForm; if those disagree for the local actor, the race is not trusted.
 BaseMatch CompareBase(World& aWorld, Actor* apActor, const GameId& acRemoteBaseId, const bool aLog) noexcept
 {
     BaseMatch match{};
@@ -237,8 +205,8 @@ BaseMatch CompareBase(World& aWorld, Actor* apActor, const GameId& acRemoteBaseI
     return match;
 }
 
-// The fallback when no copy could be made: adopt the local creature but never feed it the owner's animation data,
-// which belongs to a graph it does not have (it slides instead of freezing).
+// Fallback when no copy could be made: the local creature is adopted but never fed the owner's animation data.
+// That data belongs to a graph it does not have; without it the creature slides instead of freezing.
 void MarkForeignGraph(World& aWorld, const entt::entity aEntity, Actor* apActor, const GameId& acRemoteBaseId) noexcept
 {
     if (!CompareBase(aWorld, apActor, acRemoteBaseId, true).Foreign)
@@ -250,11 +218,9 @@ void MarkForeignGraph(World& aWorld, const entt::entity aEntity, Actor* apActor,
         pInterpolation->ForeignGraph = true;
 }
 
-// The base a copy of the owner's temporary actor is made from. The owner's resolved leveled pick is preferred over the
-// lossy template base -- when the pick is the same character under another record. A named NPC that takes its stats
-// from a levelled list has that list's pick as its "pick" too: Boethiah Cultist B0E87, stats from Bandit Marauder
-// 39D25, was made here as the marauder, and Seen saw a bandit where Emma fought a cultist (2026-10-04 16:00). A base
-// with a name of its own that differs from the pick's is the character; the pick is only where its stats come from.
+// The base a copy of the owner's temporary actor is made from: the owner's leveled pick, else the template base.
+// A named base whose name differs from the pick's is kept: the pick is only where its stats come from.
+// Example: Boethiah Cultist B0E87 takes its stats from Bandit Marauder 39D25 and must not appear as a bandit.
 TESNPC* BaseForCopy(World& aWorld, const CharacterSpawnRequest& acMessage) noexcept
 {
     TESNPC* pBase = Cast<TESNPC>(TESForm::GetById(aWorld.GetModSystem().GetGameId(acMessage.BaseId)));
@@ -273,8 +239,8 @@ TESNPC* BaseForCopy(World& aWorld, const CharacterSpawnRequest& acMessage) noexc
     return pPick ? pPick : pBase;
 }
 
-// Spawns the owner's creature and turns the local one into a ghost. Null when no copy could be made; the caller then
-// adopts the local creature as before.
+// Spawns the owner's creature and turns the local one into a ghost.
+// Returns null when no copy could be made; the caller then adopts the local creature.
 Actor* StandInForForeignCreature(Actor* apLocal, TESNPC* apOwnerBase) noexcept
 {
     Actor* pCopy = RememberOwnCopy(Actor::Create(apOwnerBase));
@@ -290,12 +256,9 @@ Actor* StandInForForeignCreature(Actor* apLocal, TESNPC* apOwnerBase) noexcept
 
     s_ghosts[apLocal->formID] = pCopy->formID;
 
-    // Only a creature this game has loaded is disabled now. The server names references the owner sees, and this game
-    // can hold one in memory without its 3D -- Troll 85FAD at the corner of the grid, never loaded here, the owner's
-    // Bear 15700 units away. The game was disposing of it, and disabling it in the middle of that crashed in its
-    // movement code 32 ms later (SkyrimVR.exe+0x714EB2, the troll in R15 with its form id gone, 2026-10-04 16:26:41).
-    // One that is not loaded goes dark once it loads, like a stand-in for a reference that was not here at all
-    // (ProcessNewEntity).
+    // Only a loaded creature is disabled now: one without 3D may be in the middle of being disposed of by the game.
+    // Disabling it then crashes in the game's movement code (SkyrimVR.exe+0x714EB2).
+    // One that is not loaded is disabled once it loads (ProcessNewEntity).
     const bool cLoaded = apLocal->GetNiNode() != nullptr && !apLocal->IsDeleted();
     if (cLoaded)
         apLocal->Disable();
@@ -331,27 +294,9 @@ void ReleaseGhostOf(const uint32_t aCopyFormId) noexcept
     }
 }
 
-// The teardown of a remote copy is back to exactly what it was before 2026-09-27, and this note is why.
-//
-// Three variations were tried in one afternoon and each replaced one bug with another:
-//   - delete one frame later  -> still a use-after-free; Seen's dump had the actor in Rdi 1930 ms after.
-//   - never delete            -> 652 copies piled up in Emma's world in five minutes and ate her framerate.
-//   - disable, delete after 5 s -> her Seekers went invisible (nothing re-enables a disabled copy), and the
-//                                  crash came back anyway with the actor still in Rcx **24 seconds** later.
-//
-// Twenty-four seconds means no delay is safe, and disabling breaks the copy's own recovery path, which relies
-// on the actor being *gone* so a fresh one can be spawned. The original behaviour is at least the one the rest
-// of the system is built around, and it is the baseline the user calls "perfect". What stays from the attempt
-// is the evidence: RecentDeletes still records every deletion and the crash handler still checks it against
-// every register, so the next crash says plainly whether this path is involved.
-//
-// What it does NOT say yet is who holds the pointer for twenty-four seconds. A combat target is the obvious
-// suspect -- Emma shot the Seeker that then went wrong -- and that is the next thing to look at, on evidence
-// rather than by rearranging this code again.
-
-// Copies disabled and waiting for the game to release them. The rules are in CopyRemovalPolicy.h, kept
-// separate and free of game types so the one thing that kept going wrong -- the reasoning -- is unit tested.
-// The bound is the safety property: this list can never hold more than kMaxWaiting, whatever the game does.
+// Removed copies the game still holds handles on: disabled, and freed once the game lets go (CopyRemovalPolicy.h).
+// The list never holds more than kMaxWaiting, whatever the game does, so copies cannot pile up.
+// RecentDeletes records every deletion, so the crash handler can tell when a register points at a freed copy.
 struct WaitingCopy
 {
     uint32_t FormId{};
@@ -360,8 +305,8 @@ struct WaitingCopy
 
 TiltedPhoques::Vector<WaitingCopy> s_waitingCopies;
 
-// The first word at this address, or 0 if it cannot be read: an access violation is caught here instead of asking
-// VirtualQuery first. CrashGuard tells the crash handler that a fault in here is expected.
+// Returns the first word at this address, or 0 if reading it faults.
+// The caller wraps it in CrashGuard so the crash handler treats a fault in here as expected.
 uintptr_t ReadFirstWord(const void* apAddress) noexcept
 {
     __try
@@ -374,15 +319,9 @@ uintptr_t ReadFirstWord(const void* apAddress) noexcept
     }
 }
 
-//! Whether a pointer from a form lookup is still a real game object: readable, and its vtable inside the process
-//! image, where every game vtable lives. Freed memory reused for anything else fails at once -- 2026-09-30's had
-//! 0x3b33e809f967790a where the vtable belongs.
-//!
-//! The read is guarded rather than checked with VirtualQuery first. VirtualQuery was the whole cost of this check: in
-//! a big process it works out how far the region around the address reaches, and the game's heap regions are large
-//! and grow, so one call took about ten milliseconds. RunSpawnUpdates asks this once a frame for every copy still
-//! waiting for its 3D, which made it the slowest part of the frame up to 43 ms on 2026-10-01 to 10-03: 14 ms with
-//! one copy waiting, 24 with two, 36 with four. Placing the copies themselves measured 0.0 ms.
+//! Whether a pointer from a form lookup is still a real game object: readable, with its vtable inside the game image.
+//! Freed memory reused for anything else fails this at once.
+//! The read is guarded instead of checked with VirtualQuery, which costs about 10 ms per call on the game's large heap.
 bool IsLiveGameObject(const TESForm* apForm) noexcept
 {
     if (!apForm)
@@ -412,9 +351,7 @@ void FreeCopy(Actor* apActor, const uint32_t aFormId, const char* acpWhy) noexce
 {
     const uint32_t refWord = static_cast<uint32_t>(apActor->handleRefObject.refCount);
     RecentDeletes::Record(apActor, aFormId, refWord & 0x3FF, refWord, 0);
-    // Colon, not brackets, and a reason that names one outcome only. Logs written before 2026-09-28 used
-    // "(the game let go of it)" for both the success and the give-up path, so the punctuation is what tells a
-    // reader -- and session-report.py -- that a line can be trusted to mean what it says.
+    // session-report.py parses this line; keep the colon before the reason.
     spdlog::info("Temporary Remote Deleted {:X}: {}", aFormId, acpWhy);
     apActor->Delete();
     s_ownCopies.erase(aFormId); // the game may give this id to an actor of its own next
@@ -452,9 +389,7 @@ void RunWaitingCopies() noexcept
         {
             FreeCopy(pActor, waiting.FormId, CopyRemovalPolicy::Describe(reason));
 
-            // Said separately and loudly, because this is the case the wait exists to prevent and the old
-            // wording hid it: every release of 2026-09-27 was reported as the game letting go, and every one of
-            // them was actually this -- 60 s elapsed with two handles still outstanding.
+            // A copy freed while the game still holds it is the case the wait exists to prevent, so it gets its own warning.
             if (CopyRemovalPolicy::FreedWhileHeld(reason))
                 spdlog::warn("CopyFreedHeld: {:X} freed after {} ms with {} handle(s) still outstanding -- {}",
                              waiting.FormId, waitedMs, handles, CopyRemovalPolicy::Describe(reason));
@@ -473,17 +408,13 @@ void ReleaseAllGhosts() noexcept
         EnableGhost(ghost);
     s_ghosts.clear();
 }
-//! The values a player's fresh copy starts with, health never below a quarter of its maximum.
-//! The server hands a respawning player's copy the values it last stored, and those are the ones from his death
-//! (-4, -16 on 2026-09-19 19:52 and 19:57). The copy is essential, so a copy born at -4 goes down on the spot. Starting
-//! it at 1 (the first fix) was not enough: both copies that could be hit but not seen on 2026-09-20 (19:07:52 and
-//! 19:10:55) started at 1 from a stored -30 and -11, and one stray hit or the landing after the spawn takes 1 health
-//! to zero before the owner's real health arrives a second later. A copy never goes down; the owner's game decides.
+//! The values a player's fresh copy starts with: visible, and health never below a quarter of its maximum.
+//! The server's stored values for a respawning player can be the negative health from the death.
+//! A copy that starts that low goes down before the owner's real health arrives; the owner's game decides deaths.
 ActorValues StandingValues(const ActorValues& acValues, const uint32_t aFormId) noexcept
 {
     ActorValues values = acValues;
-    // Invisibility (54) travels with every other value. A copy born invisible stays invisible until a reconnect
-    // rebuilds it (2026-09-20 evening, "can be hit but not seen", many times). Never on a copy.
+    // Invisibility (54) travels with every other value; a copy born invisible stays invisible until a reconnect.
     if (auto inv = values.ActorValuesList.find(ActorValueInfo::kInvisibility); inv != values.ActorValuesList.end() && inv->second != 0.f)
     {
         spdlog::info("Remote player {:X} copy would have spawned invisible ({:.2f}); spawned visible instead", aFormId, inv->second);
@@ -550,11 +481,8 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&CharacterService::OnPartyJoinedEvent>(this);
 }
 
-// A copy just made for this character has this form id; no other character may still point at it. The game gives a
-// deleted actor's id to the next actor it makes, and a character whose copy the game had already thrown away kept the
-// old id: on 2026-10-03 at 09:32:53 Seen's game made Emma's copy as FF001231, lost it within 29 ms, and made a Bandit
-// Outlaw under the same id. Emma's character went on pointing at FF001231, so every frame the bandit was moved to
-// where Emma stood, and Emma was invisible to Seen -- a bandit in her place -- until he reconnected.
+// A copy just made for this character has this form id, so no other character may still point at it.
+// The game reuses a deleted actor's id, and a character whose copy is gone would otherwise drive the new actor.
 void CharacterService::ClaimCopyId(const entt::entity aEntity, const uint32_t aFormId) const noexcept
 {
     auto view = m_world.view<RemoteComponent>();
@@ -627,9 +555,9 @@ void CharacterService::ReconcileActorData(
         m_weaponDrawUpdates[apActor->formID] = {acActorData.IsWeaponDrawn};
 }
 
-// The server's copy of an actor's inventory brought in line with this game's: for each kind of item (same base, same
-// extra data), the difference in count goes up as an ordinary inventory change, which the server applies to its copy
-// and relays to the other players. For a follower whose gear another game overwrote on the server while it owned her.
+// Sends, per kind of item (same base, same extra data), the count difference as an ordinary inventory change.
+// The server applies it to its copy and relays it to the other players.
+// Used for a follower whose gear another game overwrote on the server while it owned her.
 void CharacterService::SendInventoryDifference(Actor* apActor, const uint32_t aServerId, const uint32_t aOwnershipEpoch, const Inventory& acServerInventory) const noexcept
 {
     if (!apActor || !m_transport.IsConnected())
@@ -708,7 +636,7 @@ bool CharacterService::RequestOwnership(const uint32_t aFormId, const uint32_t a
     RequestOwnershipClaim request;
     request.ServerId = aServerId;
     request.ExpectedOwnershipEpoch = pRemoteComponent->OwnershipEpoch;
-    // This player's own follower is this game's whoever leads the party (the server's rule, see CanClaimOwnership).
+    // The server lets a player claim their own follower whoever leads the party (see CanClaimOwnership).
     request.Follower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
 
     if (!m_transport.Send(request))
@@ -746,8 +674,7 @@ void CharacterService::OnActorAdded(const ActorAddedEvent& acEvent) noexcept
     entt::entity entity;
 
     const auto view = m_world.view<RemoteComponent>();
-    // Same id and, for a copy this client made, the same base: an actor the game made under a reused id is its own
-    // (see ClaimCopyId).
+    // Matches the id and, for a copy this client made, the base too: the game reuses ids (see ClaimCopyId).
     const auto it = std::find_if(
         std::begin(view), std::end(view),
         [&acEvent, view, pActor](entt::entity entity)
@@ -780,9 +707,7 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
 {
     if (auto* pActor = Cast<Actor>(TESForm::GetById(acEvent.FormId)))
     {
-        // GetExtension() returns null for an actor this client did not allocate, and this runs while the game is
-        // tearing actors down, which is the worst moment to assume otherwise. Same family as the crash of
-        // 2026-09-23 in HookActorProcess.
+        // GetExtension() returns null for an actor this client did not allocate, and this runs during the game's teardown.
         if (ActorExtension* pExtension = pActor->GetExtension())
             pExtension->Reconciliation = ActorExtension::ReconciliationStage::None;
     }
@@ -794,8 +719,7 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
 
     if (entityIt == view.end())
     {
-        // Not an error: the game removes plenty of actors this client never tracked, and a cell change retires
-        // dozens at once. It was logged at error level and filled the console with red on every load door.
+        // Not an error: the game removes many actors this client never tracked, dozens at once on a cell change.
         spdlog::debug("Actor removed that was not tracked here: {:X}", acEvent.FormId);
         return;
     }
@@ -882,9 +806,8 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
     {
         auto& formIdComponent = m_world.get<FormIdComponent>(entity);
 
-        // A copy from the previous connection, which the disconnect handed to the game. The server sends its
-        // character again in a moment, so this one goes. The game has been running it since, as it ran the
-        // "Aspiring Mage" below, so it is disabled and freed once the game lets go, like a copy the server removes.
+        // A copy from the previous connection: the server sends its character again in a moment, so this one goes.
+        // The game has been running it since the disconnect, so it is freed like a copy the server removes.
         if (const auto leftover = s_lastConnectionCopies.find(formIdComponent.Id); leftover != s_lastConnectionCopies.end())
         {
             const uint32_t cBaseId = leftover->second;
@@ -912,11 +835,8 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
             }
         }
 
-        // Delete this client's own copies left from an earlier connection. A temporary actor the game made itself (loaded
-        // with the save, or placed by a mod's script) is the game's, and is taken like one it makes after connecting:
-        // deleting it here, while the game's AI threads were still running it, crashed Emma's game 43 ms later
-        // (2026-10-06 19:38:42: FF0011DD "Aspiring Mage", spawned 6 s before the first connection, deleted with 5
-        // handles on it; SkyrimVR.exe+0x683850 in GetCurrentlyEquippedWeapon, the deleted actor in RSI). See s_ownCopies.
+        // Only this client's own copies are deleted; a temporary actor the game made itself is kept and announced.
+        // Deleting a game actor while its AI still runs crashes the game (SkyrimVR.exe+0x683850). See s_ownCopies.
         if (formIdComponent.Id > 0xFF000000 && s_ownCopies.find(formIdComponent.Id) == s_ownCopies.end())
         {
             spdlog::info("Temporary actor {:X} was made by the game, not by this client; kept on connect", formIdComponent.Id);
@@ -944,11 +864,9 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
 
 void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept
 {
-    // The disconnect that comes with quitting arrives while the game is tearing itself down. Deleting remote players
-    // and flipping actors back to local then fires equip events into plugins whose singletons are already gone:
-    // every quit crash on 2026-09-18/19 was Enchantment Art Extender reading the destroyed UI singleton from its
-    // equip handler (SkyrimVR+0x1F83200, +0x160 = numPausesGame), and the ENB effect-shader light plugin freeing
-    // shader art the same way. The process is ending; the actors do not need putting back.
+    // The disconnect that comes with quitting arrives while the game is tearing itself down.
+    // Touching actors then fires equip events into plugins whose singletons are gone (e.g. Enchantment Art Extender).
+    // The process is ending, so the actors are left as they are.
     if (IsProcessExiting())
     {
         spdlog::info("Disconnected while the game is exiting; actors are left alone");
@@ -964,10 +882,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
         if (!pActor)
             continue;
 
-        // GetExtension() returns null by design for an actor this client did not allocate, and this loop walks
-        // whatever the world still holds at disconnect. The same unguarded dereference was swept out of fourteen
-        // hook sites on 2026-09-25 and this one was missed: it is on the disconnect path, which is exactly when
-        // the world is in its least tidy state.
+        // GetExtension() returns null for an actor this client did not allocate.
         ActorExtension* pExtension = pActor->GetExtension();
         if (!pExtension)
             continue;
@@ -982,10 +897,9 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
             pExtension->SetRemote(false);
     }
 
-    // The players' copies are deleted and every other copy has just been handed to the game: none of them is this
-    // client's to disable or delete any more, and their ids will be given out again. See s_ownCopies. The ones still
-    // standing are remembered for the clean-up on the next connect; see s_lastConnectionCopies. Added to, not
-    // replaced: a failed attempt reports a disconnection too, with s_ownCopies already empty.
+    // Every remaining copy now belongs to the game, so s_ownCopies is emptied; their ids will be reused.
+    // The ones still standing are remembered for the clean-up on the next connect (s_lastConnectionCopies).
+    // Added to, not replaced: a failed connection attempt also reports a disconnection, with s_ownCopies already empty.
     for (const uint32_t cFormId : s_ownCopies)
     {
         const Actor* pActor = Cast<Actor>(TESForm::GetById(cFormId));
@@ -1092,8 +1006,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         spdlog::debug("Received local actor, form id: {:X}", pActor->formID);
 
         pActor->GetExtension()->SetRemote(true);
-        // This player's follower coming back: her gear here is the truth, and the server's copy is put right
-        // instead (see the remote branch below for what goes wrong otherwise).
+        // This player's follower coming back: her gear here is the truth, and the server's copy is corrected instead.
         const bool cMyFollower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
         ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, actorData, !cMyFollower, true);
         if (cMyFollower)
@@ -1119,9 +1032,8 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
     {
         spdlog::info("Received remote actor, form id: {:X}, isweapondrawn: {}", pActor->formID, acMessage.IsWeaponDrawn);
 
-        // Another kind of creature than the owner's (this side asked first, the response carries the owner's base):
-        // a copy stands in, set up through the deferred path a temporary actor takes, and the local reference keeps
-        // its bare entity as a ghost.
+        // The owner has another kind of creature here (the response carries the owner's base): a copy stands in for it.
+        // The copy is set up through the deferred path a temporary actor takes; the local reference becomes a ghost.
         if (const BaseMatch match = CompareBase(m_world, pActor, acMessage.BaseId, false); match.Foreign && match.pOwnerBase)
         {
             if (Actor* pCopy = StandInForForeignCreature(pActor, match.pOwnerBase))
@@ -1165,15 +1077,9 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         m_world.emplace_or_replace<ReplayedActionsDebugComponent>(cEntity, acMessage.ActionsToReplay);
 #endif
 
-        // This player's own follower, owned by another player. It happens on a loading screen: this game sends
-        // nothing for ten seconds, the server gives her to whoever is still near where she was, and this game then
-        // brings her through the door anyway. Twice (2026-10-03 15:09, 2026-10-04 09:33) the two games then pulled
-        // her back and forth -- each "is owned over there" moved her to the other player, out of the loaded cells,
-        // and her follower AI brought her straight back: 85 appearances in 12 s. And the other game, where she is
-        // not anyone's follower, dressed her in the outfit she has in that player's own save and sent it; this game
-        // applied it, so she came out wearing that and Emma's Orcish armour at once. Her gear here is the truth:
-        // nothing of the server's or the other game's is applied to her, she is not moved away, and she is asked
-        // for at once.
+        // This player's own follower, owned by another player (the server hands her over during a loading screen).
+        // Her gear here is the truth: nothing from the server or the other game is applied, and she is not moved away.
+        // Moving her would make the two games pull her back and forth; the other game's outfit for her is not ours.
         const bool cMyFollower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
 
         ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, actorData, !cMyFollower, false);
@@ -1182,10 +1088,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
 
         if (cMyFollower)
         {
-            // Only when she is near this player, as when she is given away (OnNotifyOwnershipTransfer). Asked for from
-            // anywhere, she came back to a game that could not run her and was handed straight on: Lydia went from
-            // Emma's game to Seen's and back every 15 s (2026-10-11 19:37, "given to player 2; not near this player"
-            // then "came back as another player's ... asked for"), flooding equip actions and vanishing for Seen.
+            // She is asked for only when near this player; a far game cannot run her and would hand her straight back.
             // One farther away is asked for by RunFollowerReclaims once she is near.
             const auto* pPlayer = PlayerCharacter::Get();
             const bool cHere = pActor->GetNiNode() && pPlayer && glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) < 2048.f;
@@ -1210,10 +1113,9 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
     }
 }
 
-// What the owner's appearance turned into here. TESNPC::Create starts from this player's own race, class and outfits
-// and loads the owner's over them, so a load that did not take leaves a copy of this player's race with no name and no
-// face: a friend's orc was "a naked white nordic skin with black face" (Discord, 2026-10-11; empty names on every player
-// copy in that log, their two mod lists differing). Both places that make a player copy from its appearance say it.
+// Logs what the owner's appearance turned into here, from both places that make a player copy.
+// TESNPC::Create starts from this player's own race and loads the owner's over it.
+// A load that did not take leaves a copy of this player's race with no name and no face (e.g. differing mod lists).
 static void LogPlayerCopyAppearance(const CharacterSpawnRequest& acMessage, const TESNPC* apNpc) noexcept
 {
     if (!acMessage.IsPlayer || !apNpc)
@@ -1245,14 +1147,8 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
         if (hasActor)
         {
-            // The actor is here, so it is not respawned -- but the message is not simply thrown away either.
-            // A spawn is re-sent when something about the character changed on the server, and the ownership
-            // epoch is the part that matters: upstream's ownership rework refuses a claim whose epoch does not
-            // match the server's, so a stale epoch here means every later attempt to take this actor is rejected
-            // for reasons nothing logs. Refreshing it costs nothing and cannot move or redraw anything.
-            //
-            // Position, cell and death state are deliberately left alone. They arrive continuously through the
-            // movement and death paths, and forcing them from a spawn message would fight those.
+            // The actor is here, so it is not respawned, but its ownership epoch is refreshed from the re-sent spawn.
+            // The server refuses a claim whose epoch does not match its own, so a stale epoch blocks every later claim.
             auto& remoteComponent = remoteView.get<RemoteComponent>(cExisting);
             if (remoteComponent.OwnershipEpoch != acMessage.OwnershipEpoch)
             {
@@ -1262,17 +1158,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
             else
                 spdlog::warn("Character with remote id {:X} is already spawned.", acMessage.ServerId);
 
-            // ...but "they arrive continuously through the movement path" stops being true the moment the server
-            // withholds them, and that is exactly when this re-send happens.
-            //
-            // The server range-filters updates by grid (uGridsToLoad 5, so two cells). Walk out of that and the
-            // updates stop: on 2026-09-26 a bot five cells away produced "0 character updates sent, 321 withheld".
-            // Meanwhile the real actor carries on being moved by its owner. Walk back and the server re-sends this
-            // spawn to put the copy right -- and the copy, which never stopped existing, ignored it and stayed
-            // where it was last seen. That is a body in the wrong place and a follower that looks frozen.
-            //
-            // So: apply the spawn's position only when nothing has been arriving for this character. If updates
-            // are flowing the interpolation is fresh and is left alone, which is what the note above is protecting.
+            // Position, cell and death state normally arrive through the movement and death paths, and are left alone.
+            // The server withholds updates for characters outside the loaded grid, and re-sends the spawn on return.
+            // So the spawn's state is applied only when no update has arrived for this character for a while.
             if (auto* pInterpolation = m_world.try_get<InterpolationComponent>(cExisting))
             {
                 constexpr uint64_t cStaleAfterMs = 2000;
@@ -1292,42 +1180,26 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                             spdlog::info("Character {:X} was {} ms without an update and the server has re-sent it; moving the copy to where the server says ({:.0f}, {:.0f}, {:.0f})",
                                          acMessage.ServerId, currentTick - newestTick, wanted.x, wanted.y, wanted.z);
 
-                        // Drop what is buffered: every point in it predates the silence and would drag the copy
-                        // back through where it used to be.
+                        // The buffered points predate the silence and would drag the copy back through where it was.
                         pInterpolation->TimePoints.clear();
                         pInterpolation->Position = wanted;
                         pActor->ForcePosition(NiPoint3(wanted));
 
-                        // Position is not the only thing that went stale. Health travels as
-                        // NotifyActorValueChanges and equipment as its own message, and **both are sent in range
-                        // only** -- so a character that healed, took a beating or drew a sword while this client
-                        // was away comes back wrong in all of those too. That is "she seems frozen, not swapping
-                        // weapons" (2026-09-25). The spawn carries the right values; under this staleness gate
-                        // there is nothing fresher to fight with, which is what made applying them unsafe before.
+                        // Actor values and weapon state are also sent in range only, so they are stale too.
+                        // Under this staleness gate nothing fresher arrives to conflict with the spawn's values.
                         pActor->SetActorValues(acMessage.IsPlayer ? StandingValues(acMessage.InitialActorValues, pActor->formID) : acMessage.InitialActorValues);
                         if (pActor->actorState.IsWeaponDrawn() != acMessage.IsWeaponDrawn)
                             pActor->SetWeaponDrawnEx(acMessage.IsWeaponDrawn);
 
-                        // Death, which is the worst of them to miss. A death is broadcast to every player rather
-                        // than only those in range, precisely so that nobody can miss it -- but the receiving
-                        // handler only applies it when the copy's ownership epoch matches the message's, and
-                        // `NotifyOwnershipTransfer` **is** range-filtered. So a player who was away while the
-                        // actor changed hands has a stale epoch, drops the death on arrival, and is left with a
-                        // corpse still walking around. The epoch is refreshed a few lines above, but the death
-                        // that was already thrown away does not come back on its own; the spawn is the only place
-                        // left that still knows.
+                        // A death is broadcast to all, but a copy with a stale epoch drops it (ownership transfers are range-filtered).
+                        // The spawn is then the only place that still carries the death.
                         if (pActor->IsDead() != acMessage.IsDead)
                         {
                             spdlog::info("Character {:X} came back {} and this copy had it the other way; correcting", acMessage.ServerId, acMessage.IsDead ? "dead" : "alive");
                             acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
                         }
 
-                        // Factions, for the same reason and with more at stake than they look: a character that
-                        // turned hostile while this client was away is still friendly on this copy, and a copy in
-                        // the wrong faction is a creature that squares up to somebody and never swings. That is
-                        // the shape of the Burned Spriggan of 2026-09-25, which spent a fight trying to attack
-                        // Lydia and never landing one. Faction changes are range-filtered like everything else
-                        // here, so being away is exactly when they are missed.
+                        // Faction changes are range-filtered too; a copy in the wrong faction squares up to someone and never swings.
                         if (auto* pCache = m_world.try_get<CacheComponent>(cExisting))
                         {
                             if (!(pCache->FactionsContent == acMessage.FactionsContent))
@@ -1338,10 +1210,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                             }
                         }
 
-                        // Inventory is deliberately **not** applied yet, only compared. SetActorInventory is what
-                        // the naked-NPC check calls, and that is the path that produced 717 refused Unequip
-                        // replays on a single guard; doing it on every return from out of range, unprompted, is
-                        // how that comes back. One session's worth of this line says whether it is worth the risk.
+                        // Inventory is only compared, not applied: SetActorInventory on every return can flood refused Unequip replays.
                         if (!(pActor->GetActorInventory() == acMessage.InventoryContent))
                             spdlog::info("Character {:X} also came back with a different inventory from the server's; not applied, only noticed", acMessage.ServerId);
                     }
@@ -1351,8 +1220,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
             return;
         }
 
-        // The server still counts this character as spawned here, but the local copy is gone. Spawn it again, or
-        // it stays invisible for the rest of the session.
+        // The server still counts this character as spawned here, but the local copy is gone, so it is spawned again.
         spdlog::info("Character with remote id {:X} has no actor anymore, spawning it again", acMessage.ServerId);
         DeleteRemoteEntityComponents(cExisting);
         if (m_world.orphan(cExisting))
@@ -1388,7 +1256,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
             {
                 spdlog::info("HandedAway: server character {:X} came back, but the actor it was here ({:X}) is {}; a copy is made", acMessage.ServerId, cOwnId,
                              !pOwn ? "not loaded" : pOwn->IsDeleted() ? "deleted" : "another creature now");
-                // Whatever carries that id now was held back from the server on the strength of the record.
+                // The actor now carrying that id was held back from the server because of the record, so it is processed now.
                 if (pOwn && itor != std::end(view))
                     ProcessNewEntity(*itor);
             }
@@ -1446,10 +1314,8 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
         if (!pActor)
         {
-            // The reference is not loaded on this side (its cell outside our grid, or a placed reference we lack), yet
-            // the owner drives it and it can walk up and hit us unseen: Novice Conjurer 10DE94 failed here five times
-            // between 14:49 and 14:51 on 2026-09-20 while "something invisible" attacked. A copy of the owner's base
-            // stands in, registered as a ghost so the local reference is disabled if it turns up later.
+            // The reference is not loaded here, yet its owner drives it and it can walk up and attack unseen.
+            // A copy of the owner's base stands in, registered as a ghost so the local reference is disabled if it loads.
             TESNPC* pOwnerBase = acMessage.BaseId != GameId{} ? Cast<TESNPC>(TESForm::GetById(World::Get().GetModSystem().GetGameId(acMessage.BaseId))) : nullptr;
             Actor* pCopy = pOwnerBase ? RememberOwnCopy(Actor::Create(pOwnerBase)) : nullptr;
             if (!pCopy)
@@ -1494,8 +1360,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
         return;
     }
 
-    // The base name is here so two players' logs can be compared by form id: leveled creatures can resolve to a
-    // different animal on each client (a fox on one screen, a rabbit on the other).
+    // The base name lets two players' logs be compared: a leveled creature can resolve to a different animal on each side.
     const auto* pSpawnedBase = Cast<TESNPC>(pActor->baseForm);
     spdlog::info("CharacterSpawnRequest, server id: {:X}, form id: {:X}, local base {:X} ({})", acMessage.ServerId, pActor->formID, pActor->baseForm ? pActor->baseForm->formID : 0,
                  pSpawnedBase ? pSpawnedBase->fullName.value.AsAscii() : "?");
@@ -1519,16 +1384,13 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
     {
         pActor->SetIgnoreFriendlyHit(true);
         pActor->SetPlayerRespawnMode();
-        // The copy stays essential (it cannot die here), but it may get up again: when its owner's real health arrives
-        // after a knock-down, the game lets it recover instead of leaving it down and undrawn for the session.
+        // The copy stays essential (it cannot die here), but may get up again once its owner's real health arrives.
         pActor->SetNoBleedoutRecovery(false);
         m_world.emplace_or_replace<PlayerComponent>(*entity, acMessage.PlayerId);
     }
 
-    // A body that is to be dead is killed once it has its 3D, by the WaitingFor3D step every spawn goes through
-    // (below). Killed before, it is dead with nothing played, and that step then finds it dead already and does
-    // nothing: a Flame Atronach that had burst on its owner's screen came back here as a fresh copy and stood for
-    // good (2026-10-04 16:03, server id 5000B1).
+    // A body that is to be dead is killed once it has its 3D, by the WaitingFor3D step below.
+    // Killed before that, it dies with nothing played, and that step then finds it dead and leaves it standing.
     if (pActor->IsDead() != acMessage.IsDead && (!acMessage.IsDead || pActor->GetNiNode()))
         acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
 
@@ -1596,9 +1458,7 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
             animationComponent.TimePoints.push_back(action);
         }
 
-        // The busy path, and the one that had no bound on it. See AnimationSystem::TrimBacklog: a Dwarven Centurion
-        // reached 5,123 queued actions here on 2026-09-26 and Neloth 17,411, which is minutes of replay behind the
-        // present on an actor that plays one action a frame.
+        // Bounds the replay queue: an actor plays one action a frame, so an unbounded queue falls minutes behind.
         if (const auto* pFormId = m_world.try_get<FormIdComponent>(*itor))
             AnimationSystem::TrimBacklog(animationComponent, pFormId->Id);
         else
@@ -1633,10 +1493,7 @@ void CharacterService::OnActionEvent(const ActionEvent& acActionEvent) const noe
 
 void CharacterService::OnFactionsChanges(const NotifyFactionsChanges& acEvent) const noexcept
 {
-    // Every remote actor, not only those with a CacheComponent. Copies made from a server spawn never get one (it is
-    // set up for this client's own actors), so this handler matched none of them and a faction change made while
-    // both players were there never reached the other screen; only the spawn re-sent after a trip carried it
-    // (live-factions, 2026-10-03: the bot's bear joined BanditFaction in front of the player and the copy never did).
+    // Every remote actor, not only those with a CacheComponent: copies made from a server spawn never get one (live-factions).
     auto view = m_world.view<RemoteComponent, FormIdComponent>();
 
     for (const auto& [id, factions] : acEvent.Changes)
@@ -1688,7 +1545,8 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     const bool isLocalOwner = acMessage.OwnerPlayerId == m_transport.GetLocalPlayerId();
     if (!entity)
     {
-        // A transfer does not contain enough form data to recreate an unknown actor. Decline so the server can try another loaded client.
+        // A transfer lacks the form data to recreate an unknown actor.
+        // Declining lets the server try another loaded client.
         if (isLocalOwner)
             DeclineOwnership(acMessage.ServerId, acMessage.OwnershipEpoch);
         else
@@ -1704,14 +1562,9 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     if (auto* pWaitingFor3D = m_world.try_get<WaitingFor3D>(cEntity))
         pWaitingFor3D->SpawnRequest.LeveledNpcPickId = acMessage.LeveledNpcPickId;
 
-    // A reference that rolled as another creature here stands behind a ghost copy of the owner's kind. Taking it
-    // over would put our own roll in charge and flip the creature for everyone (a wolf on his side became a troll
-    // on hers after a hand-off, 2026-09-20 11:50). Decline, and the server keeps looking.
-    //
-    // Matched by either id. The character is usually bound to the stand-in copy, not to the local reference the
-    // ghost list is keyed by, and looking up only the key missed it: on 2026-10-03 Emma's game took over Seen's bandit
-    // C00F8 through its stand-in copy FF001177 ("Gained ownership of actor 25"), ran a copy it had made itself, and
-    // the bandit stood frozen and could not be killed.
+    // A reference that rolled as another creature here is ghosted behind a copy; taking it over would flip the creature for everyone.
+    // So the hand-off is declined and the server keeps looking.
+    // Matched by either id: the character is usually bound to the stand-in copy, not to the ghost the map is keyed by.
     if (isLocalOwner && pFormIdComponent)
     {
         const uint32_t cBoundId = pFormIdComponent->Id;
@@ -1796,19 +1649,15 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         pRemoteComponent->OwnershipEpoch = acMessage.OwnershipEpoch;
     }
 
-    // This player's own follower given to somebody else -- the server does that while this game is on a loading
-    // screen and silent (2026-10-04 09:33, 2026-10-03 15:09). Her gear here is kept, and she is asked for back at once
-    // rather than after the twelve seconds of being pulled between the two games (see OnAssignCharacter).
+    // This player's own follower given to somebody else (the server does that during a loading screen): her gear here is kept.
     const bool cMyFollower = pActor && pActor->IsPlayerTeammate() && !pActor->IsTemporary();
     ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, acMessage.CurrentActorData, pActor && pActor->GetNiNode() && !cMyFollower, false);
     if (pActor)
         ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId);
 
     spdlog::info("Actor {:X} is now owned by player {:X} at epoch {}", acMessage.ServerId, acMessage.OwnerPlayerId, acMessage.OwnershipEpoch);
-    // Asked for back only while she is here, loaded and near the player. One left behind (the player went on, she
-    // has not caught up yet) cannot be run by this game, which would hand her straight back: in the rig the server
-    // and this game passed her to and fro every four seconds (2026-10-04 10:51). When she does catch up, she arrives
-    // as another player's and is asked for then (OnAssignCharacter).
+    // She is asked for back only while loaded and near the player; this game cannot run one left behind and would hand her back.
+    // One that catches up later is asked for then (OnAssignCharacter, RunFollowerReclaims).
     if (cMyFollower)
     {
         const auto* pPlayer = PlayerCharacter::Get();
@@ -1822,9 +1671,7 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
 
 void CharacterService::RunFollowerReclaims() const noexcept
 {
-    // A follower of this player run by another player's game while she was away (left behind, or given away during a
-    // loading screen) is asked for back here once she is loaded and near this player, and not before: from anywhere
-    // she would be handed straight back (see OnAssignCharacter, Lydia on 2026-10-11).
+    // Once a second, asks back each follower of this player that another game runs, once she is loaded and near.
     static std::chrono::steady_clock::time_point s_next;
     const auto cNow = std::chrono::steady_clock::now();
     if (cNow < s_next || !m_transport.IsConnected())
@@ -1876,15 +1723,6 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
 
     if (itor != std::end(view))
     {
-        // TEMPORARY (2026-09-20): a player copy the server takes away, with where we stand (see WorldDiag on the server).
-        if (m_world.all_of<PlayerComponent>(*itor))
-        {
-            auto* pPlayer = PlayerCharacter::Get();
-            const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(*itor);
-            spdlog::info("WorldDiag: server removed player copy {:X} (actor {:X}) while we stand in worldspace {:X} cell {:X}", acMessage.ServerId, pFormIdComponent ? pFormIdComponent->Id : 0,
-                         pPlayer && pPlayer->GetWorldSpace() ? pPlayer->GetWorldSpace()->formID : 0, pPlayer && pPlayer->parentCell ? pPlayer->parentCell->formID : 0);
-        }
-
         if (auto* pFormIdComponent = m_world.try_get<FormIdComponent>(*itor))
         {
             Actor* pActor = Cast<Actor>(TESForm::GetById(pFormIdComponent->Id));
@@ -1934,9 +1772,7 @@ void CharacterService::OnBeastFormChange(const BeastFormChangeEvent& acEvent) co
 
     const auto it = std::find_if(view.begin(), view.end(), [view](auto entity) { return view.get<FormIdComponent>(entity).Id == 0x14; });
 
-    // find_if returns end() when the player's entity is not in the world yet, or has already been torn down, and
-    // dereferencing that is undefined. A werewolf or vampire lord transformation at either of those moments would
-    // have taken the game with it.
+    // The player's entity may not exist yet, or may already be torn down.
     if (it == view.end())
     {
         spdlog::warn("{}: the player has no entity right now; beast form change not sent", __FUNCTION__);
@@ -2057,7 +1893,7 @@ void CharacterService::OnNotifyMount(const NotifyMount& acMessage) const noexcep
         return;
 
     const bool cAccepted = pRider->InitiateMountPackage(pMount);
-    // Mounts were untested until 2026-10-10 (`live-mount`); this says the order arrived, was given, and what the game said.
+    // Logs that the order arrived and whether the game accepted it (`live-mount`).
     spdlog::info("Mount: copy {:X} of rider {:X} told to ride copy {:X} of mount {:X}; the game {}", pRider->formID, acMessage.RiderId, pMount->formID,
                  acMessage.MountId, cAccepted ? "accepted it" : "refused it");
 }
@@ -2118,8 +1954,7 @@ void CharacterService::OnNotifyNewPackage(const NotifyNewPackage& acMessage) con
     TESPackage* pPackage = Cast<TESPackage>(pPackageForm);
     if (!pPackage)
     {
-        // The id resolved to a form that is not a package: a mod mismatch between the two games, or a form this
-        // side loaded as something else. Handing null to SetPackage is not worth finding out about the hard way.
+        // The id resolved to a form that is not a package (a mod mismatch); SetPackage must not get null.
         spdlog::warn("Form {:X} is not a package; leaving actor {:X} on the package it has", cPackageFormId, pActor->formID);
         return;
     }
@@ -2164,8 +1999,7 @@ void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
     request.ServerId = serverIdRes.value();
     request.SoundFilename = acEvent.VoiceFile;
 
-    // Said, so that a line the other player did not hear can be traced (Seen heard nothing of the peace meeting,
-    // 2026-10-12 19:03, with Emma's game owning every speaker; no dialogue line in either log then).
+    // Logged so that a line the other player did not hear can be traced.
     spdlog::info("Dialogue: {:X} (server id {:X}) says {}; sent", acEvent.ActorID, request.ServerId, acEvent.VoiceFile.c_str());
     m_transport.Send(request);
 }
@@ -2280,7 +2114,7 @@ void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
         return;
     }
 
-    // MoveTo rebuilds the actor's 3D; discovery would take the frame without it for a remote actor leaving (see there).
+    // MoveTo drops the actor's 3D for a frame; this keeps discovery from taking that for a remote copy leaving.
     DiscoveryService::NoteMovedHere(apActor->formID);
     apActor->MoveTo(pCell, acPosition);
 }
@@ -2299,8 +2133,8 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
         return;
     }
 
-    // A ghost: a copy of the owner's creature is bound to the server in its place (see s_ghosts). One that was not
-    // loaded when the copy was made turns up here enabled once its cell loads; it goes dark like the others.
+    // A ghost: a copy of the owner's creature is bound to the server in its place (see s_ghosts).
+    // One that was not loaded when the copy was made turns up here, enabled, once its cell loads, and is disabled now.
     if (s_ghosts.find(formIdComponent.Id) != s_ghosts.end())
     {
         if (pActor && !pActor->IsDisabled() && !IsProcessExiting())
@@ -2330,9 +2164,8 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
     if (m_world.any_of<RemoteComponent, LocalComponent, WaitingForAssignmentComponent>(aEntity))
         return;
 
-    // One of this game's own actors that another player was given while it was out of view. The server still has it
-    // as that character and sends it when it is in range; announcing it here would make a second one of it for
-    // everybody. See s_handedAway.
+    // One of this game's own actors given to another player while out of view (see s_handedAway).
+    // The server still has it and sends it when in range; announcing it here would duplicate it for everybody.
     if (uint32_t serverId = 0; IsHandedAway(pActor, serverId))
     {
         const auto remoteView = m_world.view<RemoteComponent>();
@@ -2482,12 +2315,8 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
     if (pNpc->IsTemporary())
         pNpc = pNpc->GetTemplateBase();
 
-    // A temporary actor has to be rebuilt from its base form on the other side, so that form has always travelled.
-    // A persistent world reference used to send only its reference id, and the other side adopted whatever actor sat
-    // at that id locally. When the reference's base is a levelled list the two machines roll it separately, so the
-    // same id was a rabbit here and a fox there, and the fox was then driven with the rabbit's animation data and
-    // stood frozen. Send the base form for those too, so the other side can tell its copy apart. The server only
-    // rejects a base form on the player entity, which is excluded here.
+    // The base form is sent for every actor but the player (the server rejects it there), not only temporary ones.
+    // A levelled reference can roll as another creature on each machine; the base lets the other side tell them apart.
     if (pNpc && !isPlayer)
     {
         if (!m_world.GetModSystem().GetServerModId(pNpc->formID, message.FormId) && isTemporary)
@@ -2518,9 +2347,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
     // Gone from the game, so its id may be given to an actor of the game's own next. See s_lastConnectionCopies.
     s_lastConnectionCopies.erase(aFormId);
 
-    // TEMPORARY (2026-10-03): what a temporary actor was when its removal was noticed. Three crashes on 2026-10-02
-    // came within a second of a trip that left copies of Seekers behind which this client ran itself, and for those
-    // nothing is logged below: either the game had freed them already, or they were not in the list of copies.
+    // TEMPORARY: logs what a temporary actor was when its removal was noticed (checked by live-copies-left, live-seeker-copy-*).
     const bool cTemporaryId = (aFormId & 0xFF000000) == 0xFF000000;
     const bool cGameMade = s_ownCopies.find(aFormId) == s_ownCopies.end();
     if (cTemporaryId)
@@ -2540,9 +2367,8 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
         {
             if (pActor->IsTemporary() && !IsProcessExiting() && s_ownCopies.find(aFormId) == s_ownCopies.end())
             {
-                // The game's own temporary actor, which only became remote because the server gave it to somebody
-                // else. The game is disposing of it right now and will finish; all that is ours here is the record
-                // of it. See s_ownCopies.
+                // The game's own temporary actor, remote only because the server gave it to somebody else.
+                // The game is disposing of it and will finish; only the record of it is ours. See s_ownCopies.
                 spdlog::info("Temporary remote {:X} was made by the game, not by this client; left to the game (form flags {:X})", aFormId, pActor->flags);
                 const uint32_t refWord = static_cast<uint32_t>(pActor->handleRefObject.refCount);
                 RecentDeletes::Record(pActor, aFormId, refWord & 0x3FF, refWord, RecentDeletes::kLeftToGame);
@@ -2556,21 +2382,8 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
             }
             else if (pActor->IsTemporary() && !IsProcessExiting())
             {
-                // Deleted on a later frame, not here.
-                //
-                // Seen's dump of 2026-09-27 12:09 proved this by address rather than by timing: the object the
-                // game made a virtual call on, Rcx = 0x9ceabe10, is exactly the actor FF001178 that this line
-                // had just deleted. Its first vtable had already been overwritten with heap garbage. The game
-                // was still holding the pointer and still using it.
-                //
-                // This runs from the game's own "that reference is gone" notification, which fires while the
-                // game is partway through disposing of the actor -- during a cell unload, dozens at a time.
-                // Freeing it underneath that is the race. The work still happens, one frame later, from the
-                // service update, by which point the game has finished with it.
-                // Who still had a claim on it, captured before the delete because afterwards it is gone. The
-                // outstanding handle count is the one that matters: a BSPointerHandle is exactly how the game
-                // keeps hold of an actor across time, and a pointer that survived 24 seconds (2026-09-27 16:05)
-                // was being kept by something.
+                // This runs while the game is disposing of the actor; freeing a copy it still holds is a use-after-free.
+                // Who still has a claim on it is recorded first; the outstanding BSPointerHandle count is what matters.
                 uint32_t claims = 0;
                 if (const PlayerCharacter* pPlayer = PlayerCharacter::Get())
                 {
@@ -2584,8 +2397,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
                 if (pActor->actorState.IsDeadOrDying())
                     claims |= RecentDeletes::kDeadOrDying;
 
-                // Anyone else fighting it. Only the actors this mod already tracks, which is the set that
-                // matters and keeps this to a short loop.
+                // Anyone else fighting it, among the actors this mod tracks (a short loop).
                 {
                     auto combatView = m_world.view<FormIdComponent>();
                     for (auto other : combatView)
@@ -2605,51 +2417,31 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
 
                 if (CopyRemovalPolicy::OnRemoved(handles, s_waitingCopies.size()) == CopyRemovalPolicy::Action::WaitDisabled)
                 {
-                    // Logged after the decision, not before it. The old line said "Temporary Remote Deleted"
-                    // ahead of the branch, so the log could not tell a copy that was safely freed from one that
-                    // was forced out because the list was full from one that was merely held back -- three very
-                    // different outcomes, all written the same way, in the log this whole investigation reads.
+                    // Each outcome (held, freed, forced out) logs its own line; session-report.py counts them.
                     spdlog::info("Temporary Remote Held {:X}: {} handle(s) still on it, disabled and queued ({} of {} slots used)",
                                  aFormId, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
 
-                    // Disabled, not freed: silent, no AI, not drawn, and nothing dangling. It costs a slot in a
-                    // list that cannot grow past kMaxWaiting.
+                    // Disabled, not freed: silent, no AI, not drawn, and nothing dangling.
                     pActor->Disable();
                     s_waitingCopies.push_back(WaitingCopy{aFormId, std::chrono::steady_clock::now()});
                     ReleaseGhostOf(aFormId);
                     DeleteRemoteEntityComponents(aEntity);
 
-                    // The server still counts this character as spawned here, exactly as on the branch below, and
-                    // this branch forgot to say so. It is the one a copy takes when something still holds it, which
-                    // a player copy nearly always does -- so this was Seen invisible three times on 2026-10-03
-                    // (09:19, 09:30, 09:35): each time the server re-sent him as he came through the door, the
-                    // re-send landed on his old copy still in the previous cell, and 0.1 to 3 s later that cell's
-                    // teardown held the copy here and dropped the record. Nobody asked again until he reconnected.
+                    // The server still counts this character as spawned here; announcing the cell again makes it re-send it.
                     if (m_transport.IsConnected())
                         DiscoveryService::RequestCellReannounce();
                     return;
                 }
 
                 // Nothing holds it, or the waiting list is full: free it here.
-                //
-                // Waiting for the handles to reach zero was tried on 2026-09-27 and put Emma straight back into
-                // the pile-up that had already cost her one session: the copies are dead Seekers the game keeps
-                // claims on, the claims do not clear while the cell is loaded, so nothing was ever freed and her
-                // frame rate went again. Twice with the same failure is enough -- nothing that can accumulate
-                // ships again without a mechanism that provably cannot accumulate.
-                //
-                // So this is the old behaviour, which costs Seen a crash and costs Emma nothing. The
-                // DeleteClaim line above still records the handles, which is how the cause is known at all.
+                // The bound keeps disabled copies from piling up while the game keeps its claims on them.
                 if (handles == 0)
                 {
                     spdlog::info("Temporary Remote Deleted {:X}: nothing held it", aFormId);
                 }
                 else
                 {
-                    // The bound turning a wait into an immediate delete. This is the old crash path, taken on
-                    // purpose rather than by accident, and it needs to be visible as such -- a session where
-                    // this is the common outcome is a session where the wait is not protecting anything and
-                    // kMaxWaiting is what needs raising.
+                    // Freed while still held, because the list is full: if this is common, kMaxWaiting needs raising.
                     spdlog::warn("CopyFreedHeld: {:X} freed immediately with {} handle(s) still outstanding -- the waiting list was full ({} slots)",
                                  aFormId, handles, CopyRemovalPolicy::kMaxWaiting);
                 }
@@ -2658,9 +2450,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
                 s_ownCopies.erase(aFormId);
                 ReleaseGhostOf(aFormId);
 
-                // This is a decision taken here, not one the server asked for: the reference went away because a
-                // cell unloaded under it. The server still counts this character as spawned on this client and
-                // will not send it again, so the copy stays gone -- the invisible player of 2026-09-26 11:20.
+                // The cell unloaded under the copy, but the server still counts this character as spawned here.
                 // Announcing the cell again makes the server re-send everything in it.
                 if (m_transport.IsConnected())
                     DiscoveryService::RequestCellReannounce();
@@ -2676,9 +2466,8 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
         return;
     }
 
-    // Not remote: if this was a copy of ours, it has since been given to this client to run, and the game is
-    // letting go of it like any actor of its own. It is not deleted here, so its id must not stay in the list of
-    // copies that are. See s_ownCopies.
+    // Not remote: a copy of ours that this client now runs is let go by the game like its own actors, not deleted here.
+    // So its id leaves s_ownCopies.
     s_ownCopies.erase(aFormId);
 
     // Keep the cookie until the server response arrives so awarded ownership can be relinquished.
@@ -2727,8 +2516,8 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
 
         m_transport.Send(request);
 
-        // One of this game's own temporary actors, given up because its cell unloaded. If another player is there
-        // the server gives it to them, and it is then theirs under this same id. See s_handedAway.
+        // One of this game's own temporary actors, given up because its cell unloaded (see s_handedAway).
+        // If another player is there, the server gives it to them under this same server id.
         if (cTemporaryId && cGameMade && !IsProcessExiting())
         {
             const Actor* pOwn = Cast<Actor>(TESForm::GetById(aFormId));
@@ -2785,12 +2574,8 @@ Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const no
     }
     else
     {
-        // A placed reference whose stand-in copy is gone. Stand-ins are made at once for a reference that is not loaded
-        // here, which means at the owner's position, outside this game's loaded cells: they get no 3D, and the next
-        // grid shift unloads the cell they were parented to and the game deletes them without a word. Emma's session of
-        // 2026-10-03 lost five that way at 09:08:30.493, the very moment of a grid change, and those creatures were
-        // invisible to her from then on (the local references disabled as ghosts, the copies gone). This only runs
-        // once the character is inside the loaded grid, so the new stand-in is made where it can stay.
+        // A placed reference whose stand-in copy is gone: one made outside the loaded cells is deleted by the next grid shift.
+        // This runs once the character is inside the loaded grid, so the new stand-in is made where it can stay.
         const uint32_t cRefId = m_world.GetModSystem().GetGameId(acMessage.FormId);
         TESNPC* pOwnerBase = nullptr;
         if (acMessage.LeveledNpcPickId != GameId{})
@@ -2837,8 +2622,7 @@ Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const no
     {
         pActor->SetIgnoreFriendlyHit(true);
         pActor->SetPlayerRespawnMode();
-        // The copy stays essential (it cannot die here), but it may get up again: when its owner's real health arrives
-        // after a knock-down, the game lets it recover instead of leaving it down and undrawn for the session.
+        // The copy stays essential (it cannot die here), but may get up again once its owner's real health arrives.
         pActor->SetNoBleedoutRecovery(false);
         m_world.emplace_or_replace<PlayerComponent>(aEntity, acMessage.PlayerId);
     }
@@ -2862,21 +2646,14 @@ ActorData CharacterService::BuildActorData(Actor* apActor) const noexcept
     return actorData;
 }
 
-// TEMPORARY (2026-09-20): when this side last told the server where its actors are. The world probe prints its age,
-// to see whether a player in a menu or a loading screen goes silent for the 3 s after which the server hands their
-// actors away.
-static std::chrono::steady_clock::time_point s_lastMoveSentAt;
 void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId) const noexcept
 {
     if (acPickId == GameId{})
         return;
 
-    // Back on for VR since 2026-09-23: SetLeveledCreature has a real address now (AE 20231 -> VR 0x1402b8f10),
-    // and CreateTemplateActorBase (AE 14375 -> VR 0x19c0c0) is corroborated by cmpayc/TiltedEvolutionVR, which
-    // derived the same address independently and declares it `TESNPC* thiscall(TESNPC*, TESNPC*)` against
-    // upstream's `TESActorBase* fastcall(TESActorBase*, TESActorBase*)` -- the same registers on x64, and TESNPC
-    // derives from TESActorBase. The piece that crashed Seen on 2026-09-22, GarbageCollector::Add, is simply not
-    // called here any more; see LeveledNpcSystem::ApplyPick.
+    // On VR: SetLeveledCreature is AE 20231 -> VR 0x1402b8f10, CreateTemplateActorBase is AE 14375 -> VR 0x19c0c0.
+    // cmpayc/TiltedEvolutionVR derived the same CreateTemplateActorBase address (thiscall and fastcall match on x64).
+    // GarbageCollector::Add is not called (it crashed); see LeveledNpcSystem::ApplyPick.
 
     TESNPC* pBase = Cast<TESNPC>(apActor->baseForm);
     if (!pBase)
@@ -2928,15 +2705,13 @@ void CharacterService::ProcessLeveledConforms() noexcept
 {
     using ReconciliationStage = ActorExtension::ReconciliationStage;
 
-    // Never touch references while the loading screen is up - the cell attach
-    // owns them and mutating mid-stream crashes the loader
+    // Never touch references while the loading screen is up: the cell attach owns them, and changing them crashes the loader.
     UI* pUI = UI::Get();
     if (pUI && pUI->GetMenuOpen(BSFixedString("Loading Menu")))
         return;
 
     // A pick that matched when it arrived can stop matching: the game re-rolls a leveled actor when it builds it.
-    // Seen's game found 820B9 "already matches owner's pick 23A8C" (Snow Bear) at 19:42:23.02 and spawned it as an
-    // Ice Wraith 30 ms later (2026-10-11), while Emma's had a Snow Bear. Looked at again once a second.
+    // So the owner's picks are checked again once a second.
     static std::chrono::steady_clock::time_point s_nextPickCheck;
     if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextPickCheck)
     {
@@ -2953,8 +2728,7 @@ void CharacterService::ProcessLeveledConforms() noexcept
             const TESNPC* pLocalPick = pActor->GetLeveledPick();
             if (pLocalPick && pLocalPick->formID != it->second && m_pendingLeveledConforms.find(it->first) == m_pendingLeveledConforms.end())
             {
-                // Twice at most per actor: a reconciliation that does not make it match would otherwise disable and
-                // rebuild the creature every second.
+                // Twice at most per actor, or a reconciliation that never matches would rebuild the creature every second.
                 static std::unordered_map<uint32_t, int> s_rerolls;
                 if (s_rerolls.size() > 4096)
                     s_rerolls.clear();
@@ -3078,14 +2852,8 @@ void CharacterService::RunLocalUpdates() const noexcept
     if (now - lastSendTimePoint < cDelayBetweenPlayerSnapshots)
         return;
 
-    // How long this client was silent, named at the moment it stops being silent.
-    //
-    // A timeout is the server deciding nobody is home, and it is the single most destructive thing that happens to
-    // a session: Seen's client dropped five times on 2026-09-25 and handed back 45 actors in one burst, which is
-    // where the launched bandit, the body in the wrong place, the frozen follower and the spriggan that could not
-    // land a hit all came from. Every log so far shows the aftermath and never the gap itself. This is the gap: if
-    // the pause counter is up it was a menu, if a load was running it was the load, and if it was neither then the
-    // client stalled and the section timings above say on what.
+    // Logs how long this client was silent, with the open menus, when it starts sending again.
+    // The server drops a silent client and hands its actors away, so the cause of a gap is worth knowing.
     if (lastSendTimePoint.time_since_epoch().count() != 0)
     {
         const auto silence = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSendTimePoint).count();
@@ -3111,11 +2879,8 @@ void CharacterService::RunLocalUpdates() const noexcept
     lastSendTimePoint = now;
 
 #ifdef SKYRIMVR
-    // Nocked arrow, reported 2026-09-25: the arrow *leaves* fine because a shot travels as its own projectile
-    // message, but the arrow sitting on the string is an animation attachment and the other side never gets one.
-    // Before anything is built for it, this says whether VR archery moves the attack state at all -- the state the
-    // game itself uses to decide an arrow is on the bow. If it never leaves 0 through a whole draw and release,
-    // there is nothing to replicate and the arrow has to be put there by hand on the receiving side.
+    // The arrow on the string is an animation attachment the other side never gets, so it is sent from the attack state.
+    // Each attack state change is logged (session-report.py reads it).
     if (PlayerCharacter* pPlayer = PlayerCharacter::Get())
     {
         static uint32_t s_lastAttackState = 0xFFFFFFFFu;
@@ -3127,12 +2892,10 @@ void CharacterService::RunLocalUpdates() const noexcept
                          pPlayer->actorState.IsWeaponDrawn());
         }
 
-        // The arrow is on the string from state 10 (measured 2026-10-10: a VR draw goes 8, 9, 10, the arrow flies at
-        // 10, then 0). Said to the others when it starts and when it ends, so their copy of this player shows it.
+        // Sent to the others when the arrow goes on and comes off, so their copy of this player shows it.
         static bool s_nockedSent = false;
-        // From 10 until the bow is put away or shot (0). A VR draw goes back down once the arrow is on the string --
-        // 8, 9, 10 (the arrow in the hand), then 9 and 8 (on the string) and 0 (Emma, 2026-10-11 21:06, eight draws)
-        // -- and taking it off at 9 made it vanish for Seen "when it gets close to the bow/gets loaded in".
+        // Nocked from state 10 until the bow is put away or shot (0).
+        // A VR draw goes 8, 9, 10 (arrow in hand), then back to 9 and 8 while it sits on the string, so 8 and 9 keep it.
         const bool cNocked = attackState >= 10 || (s_nockedSent && attackState >= 8);
         if (cNocked != s_nockedSent && m_transport.IsConnected())
         {
@@ -3166,22 +2929,12 @@ void CharacterService::RunLocalUpdates() const noexcept
     }
 
     if (fullSnapshot || !message.Updates.empty())
-    {
         m_transport.Send(message);
-        s_lastMoveSentAt = std::chrono::steady_clock::now();
-    }
 }
 
-std::chrono::steady_clock::time_point CharacterService::LastMoveSentAt() noexcept
-{
-    return s_lastMoveSentAt;
-}
-
-// The other player's name and health above their head, on the game's own world-space meter (the bar and name an
-// NPC gets, WSEnemyMeters). There is one such meter and the game wants it too, so the rules keep it out of a real
-// fight: the game's own target wins while it is fresh, and the friend's bar comes up when you look at them, or
-// whenever they are hurt however you are facing. The first try held off for 8 s after any game target, which in a
-// dungeon meant it almost never got a turn ("the healthbars don't seem to be consistent", 2026-09-20 21:15).
+// Shows the other player's name and health above their head on the game's world-space meter (WSEnemyMeters).
+// There is only one meter, so the game's own fresh target wins it.
+// Otherwise the other player's bar shows when you look at them, or whenever they are hurt.
 void CharacterService::RunEnemyMeterUpdates() noexcept
 {
 #ifdef SKYRIMVR
@@ -3212,8 +2965,8 @@ void CharacterService::RunEnemyMeterUpdates() noexcept
         clear();
         return;
     }
-    // The game pointed the meter at something of its own (a hit on an enemy). Leave it alone, but only briefly:
-    // it re-points on every hit, so a long hold-off means the friend's bar never appears in a fight.
+    // The game pointed the meter at its own target (a hit on an enemy): leave it alone, but only briefly.
+    // The game re-points it on every hit, so a long hold-off would hide the other player's bar for a whole fight.
     if (now - UI::LastGameEnemyMeterTargetAt() < 2s)
     {
         s_shownHandle = 0;
@@ -3224,8 +2977,7 @@ void CharacterService::RunEnemyMeterUpdates() noexcept
         return;
 
     Actor* pBest = nullptr;
-    float bestScore = 0.f, bestDistance = 0.f, bestAngle = -1.f;
-    const char* pReason = "";
+    float bestScore = 0.f;
 
     auto view = m_world.view<PlayerComponent, FormIdComponent, RemoteComponent>();
     for (auto entity : view)
@@ -3261,10 +3013,7 @@ void CharacterService::RunEnemyMeterUpdates() noexcept
         if (score > bestScore)
         {
             bestScore = score;
-            bestDistance = distance;
-            bestAngle = angle;
             pBest = pActor;
-            pReason = looking ? (hurt ? "looked at, and hurt" : "looked at") : "hurt";
         }
     }
 
@@ -3276,31 +3025,14 @@ void CharacterService::RunEnemyMeterUpdates() noexcept
     const uint32_t handle = pBest->GetHandle().handle.iBits;
     if (!handle)
         return;
-    if (handle != s_shownHandle)
-        spdlog::info("Enemy meter: showing remote player {:X} ({}), {:.0f} units away, {:.0f} degrees off centre, level {}", pBest->formID, pReason, bestDistance, bestAngle,
-                     pBest->GetLevel());
     UI::SetEnemyMeterTarget(handle, pBest->GetLevel());
     s_shownHandle = handle;
 #endif
 }
 
 #ifdef SKYRIMVR
-// TEMPORARY (2026-09-20): a player's copy that appears after that player's client dropped and reconnected can be hit
-// but not seen (19:09 Seen for Emma, 19:17 Emma for Seen; nothing in the spawn lines differs from a visible spawn).
-// Every 5 s, what the game holds for each remote player's copy: distance and height difference to us, form flags
-// (0x800 disabled, 0x20 deleted), 3D and its root, health and state, body scale. Compare a visible copy against an
-// invisible one.
-// TEMPORARY (2026-09-26): Lydia follows and will not attack, and it survives a disconnect -- the enemy that was
-// also refusing to attack started the moment the connection dropped, and she did not. Something about her state
-// is being left behind rather than driven.
-//
-// The suspect this tests: an actor still carrying our "remote" flag while the component that justified it is gone.
-// HookActorProcess suppresses the AI of anything flagged remote, and the disconnect cleanup only walks actors that
-// still have a RemoteComponent -- so an actor whose component was removed first (the server dropping it, or going
-// out of range) keeps the flag with nothing left to clear it.
-//
-// Reasoning has been wrong about this twice, so it is counted instead. An orphan here is the bug; none at all
-// means the flag is innocent and the cause is somewhere else entirely.
+// Every 10 s, counts actors still flagged remote that have no RemoteComponent, and warns if there are any.
+// HookActorProcess suppresses the AI of anything flagged remote, and nothing would clear the flag on such an actor.
 void CharacterService::RunOrphanedRemoteDiag() noexcept
 {
 #ifdef SKYRIMVR
@@ -3348,9 +3080,8 @@ void CharacterService::RunOrphanedRemoteDiag() noexcept
 #endif
 }
 
-// Every frame, because a haptic pulse that arrives a tenth of a second after the blades meet is not a feel, it
-// is a notification. The work is one form lookup per tracked actor and a distance test; everything further than
-// arm's reach is dropped before any skeleton is touched.
+// Runs every frame, because a haptic pulse that arrives late does not feel like contact.
+// The cost is one form lookup and a distance test per tracked actor; anything beyond arm's reach is skipped early.
 void CharacterService::RunWeaponTouch() noexcept
 {
 #ifdef SKYRIMVR
@@ -3364,15 +3095,15 @@ void CharacterService::RunWeaponTouch() noexcept
 #endif
 }
 
+// Clears invisibility on remote player copies.
+// TEMPORARY: also logs a CopyDiag line per copy, for copies that can be hit but not seen (session-report.py reads it).
 void CharacterService::RunRemotePlayerDiag() noexcept
 {
     static std::chrono::steady_clock::time_point s_next;
     const auto now = std::chrono::steady_clock::now();
     if (now < s_next)
         return;
-    // Two seconds, not five: the corrective half of this pass is a pointer read and a float compare per remote
-    // player, and the thing it corrects is a body nobody can see. The expensive measuring below keeps its own
-    // thirty-second timer.
+    // Every 2 s: the corrective pass is cheap; the expensive measuring below has its own timer.
     s_next = now + 2s;
     if (!m_transport.IsConnected())
         return;
@@ -3390,8 +3121,7 @@ void CharacterService::RunRemotePlayerDiag() noexcept
         const float dx = pActor->position.x - pPlayer->position.x;
         const float dy = pActor->position.y - pPlayer->position.y;
         const float dz = pActor->position.z - pPlayer->position.z;
-        // The sweep: whatever put invisibility on the copy (a synced value, a magic effect the copy itself ran), it is
-        // taken off again within 5 s, and the log says so. Belt and braces to the refusals at spawn and on update.
+        // Whatever made the copy invisible (a synced value, a magic effect it ran), it is cleared here and logged.
         const float invisibility = pActor->GetActorValue(ActorValueInfo::kInvisibility);
         if (invisibility != 0.f)
         {
@@ -3399,27 +3129,10 @@ void CharacterService::RunRemotePlayerDiag() noexcept
             pActor->SetActorValue(ActorValueInfo::kInvisibility, 0.f);
         }
 
-        // A fade fix lived here on 2026-09-26 and was wrong. The reasoning: the copy's node carries a fade at
-        // +0x158 which read 0.000 on the two samples where Seen could not be seen, so it was forced back to 1.
-        // What that reasoning skipped was the distance on the very same log line -- 7,703 units on one sample and
-        // 10,048 on the other, against a fade far-distance of 1,000. The game fades out anything past that, and
-        // fade 0 at ten thousand units is the renderer working correctly. Forcing it to 1 would draw a body at
-        // full opacity from across the map.
-        //
-        // The real finding is in the distances themselves and is written up in VR_TODO: the copy is not faded,
-        // it is somewhere else. See "the invisible body is a misplaced body".
+        // The node's fade (+0x158) is not forced: a copy beyond the fade distance is correctly faded out by the game.
 
-        // The line below costs 20 to 30 ms, because DescribeBody walks the whole skeleton by name and measures it.
-        // At five seconds that is a dropped frame or two every five seconds, for ever: Seen's session of
-        // 2026-09-25 has 54 "Mod update took ..." warnings naming this function, on a client that was already
-        // timing out. A diagnostic that destabilises the thing it is watching is worse than no diagnostic, so the
-        // measuring runs every 30 s and the cheap corrective pass above -- which is what actually puts an
-        // invisible copy right -- keeps its five.
-        //
-        // Thirty seconds was still a stall of 17 to 34 ms every thirty seconds for as long as another player is near
-        // -- thirteen "Mod update took ..." warnings naming this function in seventeen minutes on 2026-10-01, two or
-        // three dropped frames each at 90 Hz. Each copy is now measured once when it is first seen, which is the
-        // sample that says how it arrived, and after that every five minutes.
+        // The CopyDiag line costs 20 to 30 ms, because DescribeBody walks and measures the whole skeleton.
+        // So each copy is measured once when first seen, and after that every five minutes.
         static std::unordered_set<uint32_t> s_measuredOnce;
         if (s_measuredOnce.size() > 256)
             s_measuredOnce.clear();
@@ -3444,10 +3157,8 @@ void CharacterService::RunWeaponTouch() noexcept {}
 
 void CharacterService::RunRemoteUpdates() noexcept
 {
-    // The same sample drives the reference/controller and its visible skeleton. The previous 300 ms position
-    // paired with a 100 ms pose made fast-moving players' visible bodies diverge from their actor references. The session log
-    // showed at least 95 ms of buffered headroom at a 300 ms delay during ordinary play; 225 ms leaves room for
-    // that jitter while reducing the displacement in combat.
+    // The same sample drives the reference and its visible skeleton, so a fast-moving body stays on its reference.
+    // 225 ms keeps headroom for network jitter while reducing the displacement in combat.
 #ifdef SKYRIMVR
     constexpr uint64_t cPlaybackDelay = 225;
 #else
@@ -3474,10 +3185,9 @@ void CharacterService::RunRemoteUpdates() noexcept
         InterpolationSystem::Update(pActor, interpolationComponent, tick);
 
 #ifdef SKYRIMVR
-        // Cheap: it returns at once unless this is a dead body within arm's reach. A body somebody else owns that is
-        // being moved here is asked for, so that this side sends it: only the owner sends a body, and on 2026-10-03 a
-        // bandit Emma had killed was carried around by Seen (09:28) and did not move at all on her screen.
-        if (VRBodySync::ObserveRemoteBodyMotion(pActor, interpolationComponent.Position) && pFormIdComponent)
+        // Cheap: it returns at once unless this is a dead body within arm's reach.
+        // A body another player owns that is being moved here is asked for, since only the owner sends a body's motion.
+        if (VRBodySync::IsRemoteBodyGrabbedHere(pActor, interpolationComponent.Position) && pFormIdComponent)
         {
             const auto& remoteComponent = interpolatedEntities.get<RemoteComponent>(entity);
             spdlog::info("Body {:X} (server id {:X}) is being moved here; asking for it, so that this side sends it", pFormIdComponent->Id, remoteComponent.Id);
@@ -3532,8 +3242,7 @@ void CharacterService::RunRemoteUpdates() noexcept
         // By now, the actor has materialized in the world and is ready for further setup
 
         pActor->SetActorInventory(waitingFor3D.SpawnRequest.InventoryContent);
-        // The inventory apply above doesn't put weapons and torches in the hands of a remote player's copy on VR, so
-        // they only showed up after the owner switched. Apply the hands the same way a later equipment change does.
+        // On VR the inventory apply above does not put weapons and torches in a remote player's hands, so they are applied here.
         // Players only: an NPC's server inventory can predate its AI drawing a weapon.
         if (pActor->GetExtension()->IsRemotePlayer())
             InventoryService::ApplyHandEquipment(pActor, waitingFor3D.SpawnRequest.InventoryContent, true);
@@ -3560,8 +3269,8 @@ void CharacterService::RunRemoteUpdates() noexcept
 
         readyEntities.push_back(entity);
 
-        // A player's copy is not drawn until the interpolation has put it where its owner is (SpawnReveal). Not an
-        // NPC's: one standing still sends no movement, and in the rig every NPC copy then appeared 1.5 s late.
+        // A player's copy is hidden until the interpolation has put it where its owner is (SpawnReveal).
+        // Not an NPC's: one standing still sends no movement, so it would appear late.
         if (waitingFor3D.SpawnRequest.IsPlayer)
             SpawnReveal::HideUntilPlaced(pActor);
 
@@ -3636,21 +3345,14 @@ void CharacterService::RunSpawnUpdates() const noexcept
             const TES* pTES = TES::Get();
             const auto playerCoords = GridCellCoords(pTES->centerGridX, pTES->centerGridY);
 
-            // A dragon the other player fights sits well outside the 5x5 grid; the server keeps it at the wide range and
-            // says so in the spawn request, so it is created here at that range too instead of never.
-            // Not for a stand-in, though (a placed reference that is not loaded here, FormId set): its copy is moved
-            // to the owner's position, and outside the loaded cells the game deletes it at once. A Frost Dragon's was
-            // remade every 25 ms, 958 times in a minute (Emma, 2026-10-11 18:28:27, "stands in again" for 34DDB).
+            // A dragon can fight well outside the 5x5 grid, so it is created at the server's wide range too.
+            // Not a stand-in (FormId set): outside the loaded cells the game deletes it at once, and it would be remade every frame.
             const auto& cSpawnRequest = m_world.get<WaitingFor3D>(entity).SpawnRequest;
             const bool isDragon = cSpawnRequest.IsDragon && cSpawnRequest.FormId == GameId{};
             if (GridCellCoords::IsCellInGridCell(characterCoords, playerCoords, isDragon))
             {
-                // The cached copy may be long gone, and the lookup may still answer with where it used to be. Emma's crash
-                // of 2026-09-30 19:47:30 was this line: the id lookup handed back an object whose "vtable" was
-                // 0x3b33e809f967790a and whose form type was 166 -- freed memory reused for something else -- and the
-                // cast faulted reading it. The same day the game's own script engine crashed the same way, on a freed
-                // temporary form an id lookup returned; both lookups go through EngineFixesVR's FormCaching. So the object
-                // is checked to be a live game object before it is cast, and a dead one is treated as no copy at all.
+                // The id lookup can return a freed copy (EngineFixesVR's FormCaching), and casting it faults.
+                // So the object is checked to be a live game object first; a dead one counts as no copy.
                 TESForm* pCached = TESForm::GetById(remoteComponent.CachedRefId);
                 if (pCached && !IsLiveGameObject(pCached))
                 {
@@ -3660,9 +3362,7 @@ void CharacterService::RunSpawnUpdates() const noexcept
                     pCached = nullptr;
                 }
 
-                // A copy whose base is not the one it was made with is not this character's copy any more: the game
-                // threw ours away and gave its id to an actor of its own. Moving that actor around would make it walk
-                // in this character's place (see ClaimCopyId).
+                // A copy whose base changed is no longer ours: the game reused its id for one of its own actors (see ClaimCopyId).
                 if (pCached && remoteComponent.CachedBaseId != 0)
                 {
                     const auto* pCachedActor = Cast<Actor>(pCached);
@@ -3680,10 +3380,7 @@ void CharacterService::RunSpawnUpdates() const noexcept
                 auto* pActor = Cast<Actor>(pCached);
                 if (!pActor)
                 {
-                    // Not every frame. A character that cannot be built here (a placed reference whose stand-in copy is
-                    // gone) failed 60 times a second for as long as it stayed in range: 78,769 "could not spawn" lines
-                    // in Emma's session of 2026-10-03 and 51,002 in Seen's, from five stand-ins that vanished five
-                    // seconds after being made, and the mod's own cost went from 0.14 to 0.75 ms a frame meanwhile.
+                    // A character that cannot be built here is retried every 5 s, not every frame.
                     static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextAttempt;
                     const auto cNow = std::chrono::steady_clock::now();
                     auto& nextAttempt = s_nextAttempt[remoteComponent.Id];
@@ -3692,8 +3389,7 @@ void CharacterService::RunSpawnUpdates() const noexcept
                     if (s_nextAttempt.size() > 1024)
                         s_nextAttempt.clear();
 
-                    // A copy made under two seconds ago that is gone again: whatever removes it will remove the next
-                    // one too, so wait as for a copy that cannot be made, instead of making one every frame.
+                    // A copy gone within two seconds of being made would be removed again, so it waits like a failed one.
                     static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_madeAt;
                     if (s_madeAt.size() > 1024)
                         s_madeAt.clear();
@@ -3792,9 +3488,8 @@ void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) 
         m_weaponDrawUpdates.erase(id);
 }
 
-// Physics queue P4 (2026-10-06): a clash seen here -- the other player's weapon, a body in this game, met one of this
-// player's HIGGS bodies (VRBodySync) -- is felt here as it is taken and sent, so the other player feels it on the
-// hand holding that weapon.
+// Sends each clash VRBodySync saw: the other player's weapon body met one of this player's HIGGS bodies.
+// It is felt here, and the other player feels it on the hand holding that weapon.
 void CharacterService::SendClashes() noexcept
 {
 #ifdef SKYRIMVR
@@ -3805,8 +3500,8 @@ void CharacterService::SendClashes() noexcept
         const auto it = std::find_if(view.begin(), view.end(), [&view, &clash](auto entity) { return view.get<FormIdComponent>(entity).Id == clash.FormId; });
         if (it == view.end())
             continue;
-        // His weapon on a hand holding no weapon or shield is a hit on the hand, not a parry (Emma, 2026-10-09): not
-        // weighed by the defender's rule, not felt, heard nor sent. Said at most every 5 s.
+        // A weapon on a hand holding no weapon or shield is a hit on the hand, not a parry: nothing is felt, heard or sent.
+        // Such touches are logged at most every 5 s.
         if (!clash.Parries)
         {
             static uint32_t s_bare = 0;
@@ -3826,7 +3521,7 @@ void CharacterService::SendClashes() noexcept
         m_dispatcher.trigger(ClashEvent{clash.FormId, cTick});
         if (!clash.Start)
         {
-            // Said every 5 s while it goes on: the evidence that a resting touch is not taken for meetings.
+            // A resting touch is not a meeting; it is logged every 5 s while it lasts.
             static uint32_t s_touches = 0;
             static auto s_nextSaid = std::chrono::steady_clock::now();
             ++s_touches;
@@ -3866,10 +3561,10 @@ void CharacterService::OnNotifyClash(const NotifyClash& acMessage) const noexcep
                  acMessage.OtherSide ? "right" : "left", point.x, point.y, point.z, acMessage.Speed, cAgo);
 #ifdef SKYRIMVR
     // Heard by everyone near it, felt by the one whose weapon it was.
-    const bool cHeard = VRBodySync::SoundClash(point);
-    VRBodySync::SparkClash(point);
+    const bool cHeard = VRBodySync::PlayClashSound(point);
+    VRBodySync::PlayClashSparks(point);
     if (cOurs)
-        VRBodySync::FeelClash(acMessage.OtherSide);
+        VRBodySync::PulseClashHaptics(acMessage.OtherSide);
     spdlog::info("Clash from server {}: {}{}", acMessage.FromId, cHeard ? "heard" : "not heard (no sound)", cOurs ? ", felt" : "");
 #endif
 }
@@ -3893,9 +3588,9 @@ void CharacterService::OnNotifyArrowNocked(const NotifyArrowNocked& acMessage) c
         return;
     }
 
-    // Actor::AttachArrow and DetachArrow, both taking the actor's biped (TESObjectREFR::GetBiped2, slot 0x7F on every
-    // runtime). Called by slot, not through the declaration in Actor.h: that one is at 0xCD, the slot on Skyrim SE,
-    // and VR has them two further on (CommonLibVR, RelocateVirtual(0x0CD, 0x0CF) and (0x0CE, 0x0D0)).
+    // Actor::AttachArrow and DetachArrow take the actor's biped (TESObjectREFR::GetBiped2, slot 0x7F on every runtime).
+    // They are called by slot because Actor.h declares the SE slot (0xCD) and VR has them two further on.
+    // CommonLibVR: RelocateVirtual(0x0CD, 0x0CF) and (0x0CE, 0x0D0).
 #ifdef SKYRIMVR
     constexpr size_t cAttachSlot = 0xCF;
     constexpr size_t cDetachSlot = 0xD0;
@@ -3918,24 +3613,9 @@ void CharacterService::OnNotifyArrowNocked(const NotifyArrowNocked& acMessage) c
     reinterpret_cast<TArrow>(pVtable[acMessage.Nocked ? cAttachSlot : cDetachSlot])(pActor, pBipedHolder);
     spdlog::info("ArrowNocked: {:X} (server {:X}): arrow {} the string", pActor->formID, acMessage.ServerId, acMessage.Nocked ? "put on" : "taken off");
 #ifdef SKYRIMVR
-    // Whether the game made or removed an arrow in the copy's 3D, said by node names: a check the rig can read.
+    // TEMPORARY: which arrow nodes the copy has, until the arrow is checked in a session.
     size_t after = 0;
     const std::string names = VRBodySync::NodesNamedLike(pActor, "arrow", 16, after);
     spdlog::info("ArrowNocked: {:X} has {} node(s) named like an arrow, {} before{}{}", pActor->formID, after, before, names.empty() ? "" : ": ", names);
-    // TEMPORARY, for drawing the string back (VR_TODO, the arrow): the bow model's own nodes, the string's among them.
-    // A VR owner draws with the hand, not the third-person draw animation that moves the string, so the copy's string
-    // stays straight. Said once a session per name list.
-    if (acMessage.Nocked)
-    {
-        size_t stringCount = 0, bowCount = 0;
-        const std::string strings = VRBodySync::NodesNamedLike(pActor, "string", 16, stringCount);
-        const std::string bows = VRBodySync::NodesNamedLike(pActor, "bow", 16, bowCount);
-        static std::string s_said;
-        if (const std::string cLine = strings + " | " + bows; cLine != s_said)
-        {
-            s_said = cLine;
-            spdlog::info("ArrowNocked: {:X} bow nodes: {} named like a string ({}), {} like a bow ({})", pActor->formID, stringCount, strings, bowCount, bows);
-        }
-    }
 #endif
 }

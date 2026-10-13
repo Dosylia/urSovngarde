@@ -35,9 +35,8 @@ bool LeveledNpcSystem::ApplyPick(Actor* apActor, TESNPC* apPick) noexcept
 
 
 
-    // Skyrim resolves a leveled NPC by copying the original base, then
-    // applying the pick according to that base's template flags. Using
-    // the pick itself discards data such as a hold guard's name/outfit.
+    // Skyrim resolves a leveled NPC by copying the original base, then applying the pick according to its template flags.
+    // Using the pick itself would discard data such as a hold guard's name and outfit.
     auto* pOriginalBase = GetOriginalBase(apActor);
     auto* pResolvedBase = pOriginalBase ? TESActorBaseData::CreateTemplateActorBase(pOriginalBase, apPick) : nullptr;
     if (!pResolvedBase)
@@ -47,17 +46,13 @@ bool LeveledNpcSystem::ApplyPick(Actor* apActor, TESNPC* apPick) noexcept
     apActor->SetLeveledCreature(pOriginalBase, apPick);
     apActor->SetObjectReference(pResolvedBase);
 
-    // Match RecalcLeveledActor's disposal policy, but never dispose of
-    // a static pick left by the old reconciliation implementation.
+    // Match RecalcLeveledActor's disposal policy, but never dispose of the original base or the pick itself.
     if (pOldBase && pOldBase->IsTemporary() && pOldBase != pOriginalBase && pOldBase != apPick)
     {
 #ifdef SKYRIMVR
-        // Not on VR. Upstream calls AE 36460, the TESBoundObject overload; the VR id it was paired with in the
-        // merge, 35492, is the TESObjectREFR overload, which CommonLibVR shows takes (TESObjectREFR*, bool). We
-        // called it with a base form and a junk second argument, and it killed Seen on join on 2026-09-22 inside
-        // BSExtraDataList::GetExtraDataWithoutLocking. Skipping the disposal leaks one temporary base form per
-        // reconciliation, which is a far better bargain than that. Restore this once the VR address of the
-        // TESBoundObject overload is known.
+        // Not on VR: upstream calls AE 36460, the TESBoundObject overload, whose VR address is not known yet.
+        // VR id 35492 is the TESObjectREFR overload (CommonLibVR: takes TESObjectREFR*, bool) and crashes with a base form.
+        // Skipping the disposal leaks one temporary base form per reconciliation.
         (void)pOldBase;
 #else
         GarbageCollector::Get()->Add(pOldBase);

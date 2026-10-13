@@ -62,8 +62,8 @@ void Record(const void* apActor, const uint32_t aFormId, const uint32_t aHandles
     s_ring[slot].Flags = aFlags;
     s_ring[slot].Stamp = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
 
-    // Said as it happens, not only on a crash: an actor deleted while somebody still holds a handle to it is a
-    // use-after-free waiting to be collected, whether or not this session is the one that collects it.
+    // Logged as it happens, not only on a crash.
+    // An actor deleted while something still holds a handle to it is a use-after-free waiting to happen.
     if (!(aFlags & kLeftToGame) && (aHandles > 0 || (aFlags & (kPlayerCombatTarget | kOtherCombatTarget))))
         spdlog::warn("DeleteClaim: deleting {:X} while something still holds it -- {}", aFormId, DescribeClaims(aFlags, aHandles));
 }

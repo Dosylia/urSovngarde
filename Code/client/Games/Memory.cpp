@@ -100,11 +100,10 @@ static void RehookFormAllocate(TFormAllocate* apEngineFixesAllocate) noexcept
     TP_HOOK_IMMEDIATE(&RealFormAllocate, HookFormAllocate);
 }
 
-// Set when the game calls exit (hooked in its import table below). The game's exit handlers and plugin DLL detach
-// then free static data, including a plugin string that isn't a heap block, and mimalloc crashed on it every time
-// the game was closed (a 100 MB crash dump each quit). Memory released while the process exits doesn't need to go
-// back to the heap. An atexit handler was not enough: the game registers its own exit handlers later, so they ran
-// first.
+// Set when the game calls exit (hooked in its import table below).
+// The exit handlers and plugin DLL detach then free static data that mimalloc does not own, such as a plugin string.
+// Memory released while the process exits doesn't need to go back to the heap, so frees are skipped.
+// An atexit handler is not enough, because the game registers its own exit handlers later and they run first.
 static std::atomic<bool> s_processExiting{false};
 
 bool IsProcessExiting() noexcept
@@ -114,15 +113,9 @@ bool IsProcessExiting() noexcept
 
 // The real CRT entries, so a pointer that is not ours can be given back to whoever really owns it.
 //
-// These hooks sit on the game's import table and send its allocations to mimalloc, but the game is not the only
-// thing in this process and mimalloc has not always been here. A block allocated before these hooks went in, or by
-// a DLL carrying its own copy of the CRT, is still freed through the game's imports -- and mimalloc, handed a
-// pointer it never allocated, walks it as though it were one of its own.
-//
-// Seen's crash of 2026-09-25 21:26 is that, during play rather than at exit: `_mi_free_delayed_block` reached
-// through `Hook_aligned_free`, dereferencing 0x7ffa2f938d28 -- an address in the region where **DLLs are mapped**,
-// not where any heap lives. The existing exit-time guard below was written for the same failure ("a plugin string
-// that isn't a heap block"); it was simply never true that this only happens while quitting.
+// These hooks sit on the game's import table and send its allocations to mimalloc.
+// A block allocated before the hooks went in, or by a DLL with its own CRT, can still be freed through the game's imports.
+// Handed a pointer it never allocated, mimalloc would walk it as one of its own and crash, even during play.
 using TRealFree = void(__cdecl*)(void*);
 using TRealMsize = size_t(__cdecl*)(void*);
 static TRealFree s_realFree = nullptr;

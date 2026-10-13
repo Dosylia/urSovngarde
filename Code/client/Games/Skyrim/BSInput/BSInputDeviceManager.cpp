@@ -25,7 +25,6 @@ static TiltedPhoques::Initializer s_initInputDeviceManager(
 
         TP_HOOK_IMMEDIATE(&BSInputDeviceManager_PollInputDevices, &Hook_BSInputDeviceManager_PollInputDevices);
         #endif
-        // Off on VR on purpose, although the address is confirmed (SE 67315, VR 0xc519e0). The desktop mirror window is
-        // rarely focused while somebody is in a headset, so skipping input polling when it isn't would stop the
-        // controllers. It would also do nothing today: the main window is null on VR, where Hook_Renderer_Init is off.
+        // Off on VR on purpose, though the address is known (SE 67315, VR 0xc519e0).
+        // The mirror window is rarely focused in a headset, so the focus check would stop the controllers.
     });

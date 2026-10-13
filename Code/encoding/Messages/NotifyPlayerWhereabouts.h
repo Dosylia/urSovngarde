@@ -8,9 +8,7 @@
 using TiltedPhoques::String;
 using TiltedPhoques::Vector;
 
-//! Where every player is, every two seconds, for the markers on the map and the compass (VR_TODO, "Players on the
-//! map"): the world (empty indoors) and cell their character is in, their exact position, and the place name their
-//! game reports (PlayerPlaceRequest: the room indoors, the town, dungeon or hold outdoors). The receiver skips itself.
+//! Every player's world space (empty indoors), cell, position and place name, sent every two seconds for map markers.
 struct NotifyPlayerWhereabouts final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifyPlayerWhereabouts;

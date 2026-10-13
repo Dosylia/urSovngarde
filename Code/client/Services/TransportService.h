@@ -27,7 +27,7 @@ struct TransportService : Client
     TP_NOCOPYMOVE(TransportService);
 
     using Client::Connect;
-    // Closes the connection there is first. See the definition.
+    // Closes any existing connection first, so it does not linger on the server.
     bool Connect(const std::string& acEndpoint) noexcept;
 
     bool Send(const ClientMessage& acMessage) const noexcept;

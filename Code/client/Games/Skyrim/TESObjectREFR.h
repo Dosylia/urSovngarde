@@ -160,8 +160,8 @@ struct TESObjectREFR : TESForm
     virtual void sub_94();
     virtual void sub_95();
     virtual void sub_96();
-    // The actual parent cell is the field below at offset 0x60; use GetParentCellEx() when the
-    // effective cell is needed.
+    // The actual parent cell is the field below at offset 0x60.
+    // Use GetParentCellEx() when the effective cell is needed.
     virtual struct TESObjectCELL* GetSaveParentCell() const;
     virtual void SetParentCell(struct TESObjectCELL* apParentCell);
     virtual bool VirtIsDead(bool abNotEssential); // TODO: Use this or papyrus IsDead?
@@ -189,8 +189,8 @@ struct TESObjectREFR : TESForm
     Vector<uint32_t> RemoveNonQuestItems(Inventory& aCurrentInventory) noexcept;
     void Delete() const noexcept;
     void Disable() const noexcept;
-    //! The game's own ObjectReference.SetMotionType. For a loose object: kMotionKeyframed holds it where it is put,
-    //! kMotionDynamic hands it back to physics.
+    //! The game's own ObjectReference.SetMotionType.
+    //! For a loose object, kMotionKeyframed holds it where it is put and kMotionDynamic hands it back to physics.
     static constexpr int32_t kMotionDynamic = 1;
     static constexpr int32_t kMotionKeyframed = 4;
     void SetMotionType(int32_t aMotionType) const noexcept;

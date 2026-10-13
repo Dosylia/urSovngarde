@@ -76,8 +76,8 @@ static bool IsExecutableAddress(void* apAddress)
     return (prot & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
 }
 
-// The game image, mapped by our own loader at its preferred base (immersive_launcher), is no module to Windows; the
-// same range as UI.cpp's DescribeCaller.
+// The game image is mapped by our own loader, so Windows does not know it as a module.
+// Same range as UI.cpp's DescribeCaller.
 constexpr uintptr_t kGameImageBase = 0x140000000ull;
 constexpr uintptr_t kGameImageSpan = 0x8000000ull;
 #ifdef SKYRIMVR
@@ -86,9 +86,9 @@ constexpr char kGameImageName[] = "SkyrimVR.exe";
 constexpr char kGameImageName[] = "SkyrimSE.exe";
 #endif
 
-// "<module>+0x<offset>", the form Crash Logger uses, for the lines the launcher reads into a report (urSovngarde-hub,
-// worker/LAUNCHER.md 8a). The file name only, never the path: a path carries the Windows user name. False outside
-// every module; apModule is left null for the game image, which has no version resource of its own to read.
+// Formats an address as "<module>+0x<offset>", like Crash Logger, for the launcher's crash report.
+// Only the file name: a path would show the Windows user name.
+// Returns false outside every module; apModule stays null for the game image.
 static bool NameModuleOffset(uintptr_t aAddress, char* apOut, size_t aOutSize, HMODULE* apModule) noexcept
 {
     if (aAddress >= kGameImageBase && aAddress < kGameImageBase + kGameImageSpan)
@@ -115,8 +115,8 @@ static bool NameModuleOffset(uintptr_t aAddress, char* apOut, size_t aOutSize, H
     return true;
 }
 
-// A loaded module's file version, read from its version resource where it already sits in memory: no file opened,
-// nothing allocated, which is what a crash handler can afford. False when it has none.
+// Reads a loaded module's file version from its resource in memory, without opening a file or allocating.
+// Returns false when it has none.
 static bool ModuleFileVersion(HMODULE aModule, char* apOut, size_t aOutSize) noexcept
 {
     const HRSRC hResource = FindResourceW(aModule, MAKEINTRESOURCEW(1) /* VS_VERSION_INFO */, MAKEINTRESOURCEW(16) /* RT_VERSION */);
@@ -146,9 +146,8 @@ static bool ModuleFileVersion(HMODULE aModule, char* apOut, size_t aOutSize) noe
     return false;
 }
 
-// The frames above us, guarded: a broken stack makes the walk fault, and an access violation inside CrashGuard is left
-// to this __except (VectoredExceptionHandler lets it through) instead of re-entering the crash report. Alone in its own
-// function, since MSVC allows no __try where C++ objects need unwinding.
+// Captures the call stack inside a CrashGuard, so a broken stack faults into this __except instead of the crash report.
+// Kept in its own function: MSVC allows no __try where C++ objects need unwinding.
 static USHORT CaptureFramesGuarded(void** apFrames, ULONG aCount) noexcept
 {
     CrashGuard::Enter();
@@ -165,15 +164,11 @@ static USHORT CaptureFramesGuarded(void** apFrames, ULONG aCount) noexcept
     return captured;
 }
 
-// Which module crashed and the frames that led there, for the launcher's report (urSovngarde-hub, worker/LAUNCHER.md
-// 8a): it names the crash "<module>+<offset>", as Crash Logger does, so a report without Crash Logger's log still says
-// what crashed. Logged right after the exception code and the faulting access, which launchers parse as they are, and
-// flushed at once: a report of 2026-10-10 (20261010-064510-d37b8fe6) held those lines and nothing after them.
 namespace CrashPlace
 {
 namespace
 {
-// Two buffers: the note writes the one not being shown, then shows it, so a crash never reads a half-written line.
+// Two buffers: a note fills the hidden one, then shows it, so a crash never reads a half-written line.
 char s_lines[2][384]{};
 std::atomic<int> s_current{-1};
 } // namespace
@@ -194,6 +189,8 @@ const char* Last() noexcept
 }
 } // namespace CrashPlace
 
+// Logs which module crashed and the frames that led there, as "<module>+<offset>", for the launcher's crash report.
+// Flushed at once, so the lines are on disk even if the process dies before the rest of the report.
 static void LogCrashModule(PEXCEPTION_POINTERS apInfo) noexcept
 {
     void* const pFault = apInfo->ExceptionRecord->ExceptionAddress;
@@ -208,8 +205,8 @@ static void LogCrashModule(PEXCEPTION_POINTERS apInfo) noexcept
     else
         spdlog::error("VectoredExceptionHandler: in {}", where);
 
-    // The walk starts here, in the handler, and passes through the exception dispatcher into the faulting frame: the
-    // frames from the faulting address outwards are the ones that matter. No line when it never gets there.
+    // The walk starts in this handler; only the frames from the faulting address outwards are logged.
+    // No line when the walk never reaches it.
     void* frames[62];
     const USHORT captured = CaptureFramesGuarded(frames, static_cast<ULONG>(std::size(frames)));
     USHORT first = 0;
@@ -237,9 +234,8 @@ static void LogCrashModule(PEXCEPTION_POINTERS apInfo) noexcept
 }
 
 // Logs registers and a raw stack scan, because minidumps of this process are mostly unusable.
-// A real stack walk needs unwind info, which the custom-loaded game image doesn't have. Scanning
-// the stack for pointers into executable memory recovers the return-address chain instead
-// (with some false positives from stale slots).
+// A real stack walk needs unwind info, which the custom-loaded game image does not have.
+// Scanning the stack for pointers into executable memory recovers the return addresses, with some false positives.
 static void LogCrashContext(PEXCEPTION_POINTERS pExceptionInfo)
 {
     const auto* pRecord = pExceptionInfo->ExceptionRecord;
@@ -313,9 +309,8 @@ static void LogCrashContext(PEXCEPTION_POINTERS pExceptionInfo)
 
 namespace
 {
-//! A stand-in for the actor the crime alarm walks into and finds missing. Every field reads as zero, and every
-//! virtual call on it returns zero instead of jumping through a null vtable, so a walk that stumbles onto it
-//! finishes quietly instead of ending the session. Built once, on first use.
+//! A stand-in for the missing actor the crime alarm walks into: every field reads zero and every virtual call returns zero.
+//! Built once, on first use.
 void* NullActorDecoy() noexcept
 {
     static void* s_pDecoy = []() -> void*
@@ -360,17 +355,9 @@ bool Inside() noexcept
 }
 } // namespace CrashGuard
 
-// Capture the objects the crashing registers point at, and nothing else.
-//
-// On 2026-09-27 Seen's dump answered the big question -- not one frame of our code anywhere on the 583-slot
-// stack, the whole fault is inside the game's image -- and then stopped dead at the next one. The fault is a
-// virtual call through a null slot, and the object it was called on (Rcx = 0x9d48e610) was **not in the dump**:
-// MiniDumpNormal keeps stacks and data segments, not the heap. Without that object there is no way to see
-// whether it had been freed, which is the whole question.
-//
-// Full memory is 7 GB and minutes to write, and indirect-memory produced truncated dumps (see below), so
-// neither is an option. This is the narrow version: a few kilobytes around each pointer-looking register, plus
-// the vtable each one points to. A handful of small ranges, added only at crash time.
+// Adds to the dump a few kilobytes around each register that looks like a pointer, plus the vtable each points to.
+// A normal minidump has no heap, so the object a faulting call was made on would be missing.
+// A full-memory dump is about 7 GB, and indirect memory gives truncated dumps on this process.
 namespace
 {
 struct ExtraRange
@@ -421,8 +408,7 @@ void CollectCrashObjects(PEXCEPTION_POINTERS apInfo) noexcept
     {
         AddExtraRange(value, 0x1000);
 
-        // And whatever its first qword points at -- for an object that is its vtable, which is the thing worth
-        // reading: a freed object has a null or foreign one.
+        // Also what its first qword points at: for an object that is its vtable, null or foreign once freed.
         if (!RangeIsReadable(value, sizeof(ULONG64)))
             continue;
         ULONG64 first = 0;
@@ -456,17 +442,13 @@ BOOL CALLBACK CrashDumpCallback(PVOID, const PMINIDUMP_CALLBACK_INPUT apInput, P
 
 LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
 {
-    // A fault inside a guarded section is caught and recovered further up this thread's stack. Reporting it would
-    // cost a second of coredump and burn the one report kept for a fault that really is fatal.
+    // A fault inside a guarded section is recovered further up this thread's stack, so it is not reported.
     if (pExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && CrashGuard::Inside())
         return EXCEPTION_CONTINUE_SEARCH;
 
-    // The crime alarm (Actor::StealAlarm) walks every actor that might have witnessed an offence, and one slot in
-    // that walk is empty: the game reads the missing actor's flags at +0xE8 through a null pointer. Four sessions
-    // died this way on 2026-09-20 and 21, both players, always this instruction, always a read of 0xE8 from a null
-    // RCX, and always inside code a hook has relocated, which has no unwind data, so no __try of ours can ever
-    // catch it and the fault arrives here instead. Hand the read a stand-in that is all zeroes and let the walk
-    // finish. What put the empty slot in the list is still unknown; this only stops it ending the session.
+    // The crime alarm (Actor::StealAlarm) can meet an empty actor slot and read its flags at +0xE8 through a null RCX.
+    // That code was relocated by a hook and has no unwind data, so no __try can catch it.
+    // The read gets a zeroed stand-in and the walk finishes; what leaves the slot empty is unknown.
     {
         const auto& record = *pExceptionInfo->ExceptionRecord;
         static std::atomic<uint32_t> s_recovered{0};
@@ -488,8 +470,7 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
         }
     }
 
-    // One gate per exception type: a recovered access violation must not use up the report for a
-    // later, fatal /GS failure.
+    // One report per exception type, so a recovered access violation does not use up the one for a /GS failure.
     static int alreadyCrashedAV = 0;
     static int alreadyCrashedGS = 0;
     auto retval = EXCEPTION_CONTINUE_SEARCH;
@@ -502,8 +483,7 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
     const bool isNewAV = exceptionCode == EXCEPTION_ACCESS_VIOLATION && alreadyCrashedAV++ == 0;
     const bool isNewGS = exceptionCode == STATUS_STACK_BUFFER_OVERRUN && alreadyCrashedGS++ == 0;
 
-    // Access violations, and /GS stack cookie failures (STATUS_STACK_BUFFER_OVERRUN), which used to
-    // leave no trace at all.
+    // Access violations, and /GS stack cookie failures (STATUS_STACK_BUFFER_OVERRUN).
     if (isNewAV || isNewGS)
     {
         spdlog::critical (__FUNCTION__ ": crash occurred!"); 
@@ -515,8 +495,7 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
 
         LogCrashContext(pExceptionInfo);
 
-        // Which object the faulting code was working on, against the ones we deleted. Rcx holds `this` for a
-        // virtual call in the Microsoft x64 convention, which is what these crashes have been.
+        // Checks the registers against the objects we deleted; Rcx holds `this` for a virtual call on x64.
         if (pExceptionInfo && pExceptionInfo->ContextRecord)
         {
             const CONTEXT& cr = *pExceptionInfo->ContextRecord;
@@ -525,9 +504,8 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
             RecentDeletes::Report(regs, std::size(regs));
         }
 
-        // The small dump first, in every build: it takes a moment, and it is the one a player can send with a
-        // report (the launcher takes it from logs\ when they agree). Stacks, registers, modules and the objects the
-        // crashing registers point at; not the ~1 GB of game data below.
+        // The small dump first, in every build: it is the one a player can send with a report.
+        // It holds stacks, registers, modules and the objects the crashing registers point at, not the game's data.
         try
         {
             CollectCrashObjects(pExceptionInfo);
@@ -587,9 +565,8 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
                     dumpError = GetLastError();
 
                 // baseline settings from https://stackoverflow.com/a/63123214/5273909
-                // Larger dump types fail on this process because of the 1GB+ game image buffer (full
-                // memory: ~7GB and minutes to write; indirect memory: truncated dumps). DataSegs is ~1GB
-                // but holds the decrypted game code, the only copy that can be disassembled.
+                // Larger dump types fail on this process because of the game image's 1 GB+ buffer.
+                // DataSegs is about 1 GB but holds the decrypted game code, the only copy that can be disassembled.
                 auto dumpSettings = MiniDumpNormal | MiniDumpWithDataSegs | MiniDumpWithThreadInfo;
 
                 if (hDumpFile != INVALID_HANDLE_VALUE)
@@ -610,7 +587,7 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
             {
             }
 
-            // CreateFileA fails with INVALID_HANDLE_VALUE, not NULL: the old check always claimed success.
+            // CreateFileA fails with INVALID_HANDLE_VALUE, not NULL.
             if (hDumpFile == INVALID_HANDLE_VALUE)
                 spdlog::critical(__FUNCTION__ ": coredump file could not be created (error {}).", dumpError);
             else
@@ -662,8 +639,7 @@ int64_t NowMs() noexcept
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// The game's main thread: the oldest thread of the process (the launcher's, which runs the game's WinMain). In the
-// freeze of 2026-10-03 12:07 it was waiting inside the game's allocator while every other thread waited too.
+// The game's main thread: the oldest thread of the process (the launcher's, which runs the game's WinMain).
 DWORD FindMainThreadId() noexcept
 {
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -711,10 +687,9 @@ uint32_t CountThreads() noexcept
     return count;
 }
 
-// Where a thread is, without touching anything it may hold: it is suspended only for as long as it takes to copy its
-// registers and the top of its stack into a buffer that exists already. Nothing is allocated or logged meanwhile (the
-// thread may hold the heap lock or the logger's), and the copy is made with ReadProcessMemory, which fails instead of
-// faulting on a page that is not there.
+// Logs where a thread is, suspending it only while its registers and stack top are copied into an existing buffer.
+// Nothing is allocated or logged while it is suspended: it may hold the heap lock or the logger's.
+// ReadProcessMemory fails instead of faulting on a missing page.
 void LogThread(const char* apWhat, const DWORD aThreadId) noexcept
 {
     if (!aThreadId || aThreadId == GetCurrentThreadId())
@@ -768,10 +743,7 @@ void LogThread(const char* apWhat, const DWORD aThreadId) noexcept
     }
 }
 
-// Where this process's threads started, the most common first. Both games of 2026-10-11 evening gained 100 to 450
-// threads a minute while playing (Emma 178 to 5,218 between 18:01 and 18:34, then stutters; Seen 763 to 3,369 and a
-// frozen loading screen) and the count alone cannot say whose they are: our code starts two threads. A thread's start
-// address names its owner (a module and offset), so this line names the leak the next time it happens.
+// Logs where this process's threads started, most common first: a start address names the module that owns a thread.
 void LogThreadStarts(const uint32_t aCount) noexcept
 {
     using NtQueryInformationThread_t = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
@@ -792,8 +764,7 @@ void LogThreadStarts(const uint32_t aCount) noexcept
     {
         if (entry.th32OwnerProcessID != GetCurrentProcessId())
             continue;
-        // The full query right: with THREAD_QUERY_LIMITED_INFORMATION the start address is refused, and the first
-        // version of this line said "0 start addresses" all evening (2026-10-11 19:29 to 19:48, both games).
+        // The full query right: with THREAD_QUERY_LIMITED_INFORMATION the start address is refused.
         HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
         if (!hThread)
         {
@@ -832,9 +803,8 @@ void LogThreadStarts(const uint32_t aCount) noexcept
     spdlog::warn("ThreadStarts: {} threads from {} start addresses ({} not readable, last status 0x{:X}); most: {}", aCount, sorted.size(), unopened,
                  static_cast<uint32_t>(lastStatus), line);
 
-    // The biggest group's start address can be a runtime's own thread starter: 2,297 of 2,411 threads of Emma's game
-    // (2026-10-11 21:26) began at ucrtbase.dll+0x2cd00, which every std::thread and _beginthreadex goes through, so it
-    // names no owner. What such a thread is doing does: its stack holds the frames of the module that started it.
+    // The biggest group may start in ucrtbase's thread starter, which names no owner.
+    // A sample thread's stack then shows the module that started it.
     if (!sorted.empty() && sorted[0].second >= 100)
     {
         const auto& ids = samples[sorted[0].first];

@@ -6,8 +6,7 @@
 #include <Structs/Inventory.h>
 #include <Structs/Vector3_NetQuantize.h>
 
-//! A player dropped an item, or announces one it dropped before: where it lies, so the server can remember it
-//! and give it to everyone who comes near, now or in a later session.
+//! A player dropped an item, or announces an earlier drop, with where it lies.
 struct RequestDroppedItemAdd final : ClientMessage
 {
     static constexpr ClientOpcode Opcode = kRequestDroppedItemAdd;
@@ -29,13 +28,11 @@ struct RequestDroppedItemAdd final : ClientMessage
     GameId CellId{};
     GameId WorldSpaceId{};
     Vector3_NetQuantize Position{};
-    //! Euler angles, radians, as the reference holds them. Plain floats: the packed position type is ~1 unit
-    //! precise, which is fine for a place and useless for an angle.
+    //! Euler angles in radians, as the reference holds them.
+    //! Plain floats: the packed position type is only about 1 unit precise, too coarse for an angle.
     glm::vec3 Rotation{};
 
-    //! False for a drop that just happened: always a new item, even beside an identical one, or dropping two
-    //! iron daggers in one spot would sync only the first. True for an item the player dropped earlier and is
-    //! announcing now (on connecting, or entering its cell): the server may already know it, from this
-    //! player's last session or from the other player's save, so it matches by item and place first.
+    //! False for a fresh drop, which is always a new item.
+    //! True for an earlier drop announced again; the server first matches it to a known item by base and place.
     bool Announcement{};
 };

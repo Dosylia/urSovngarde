@@ -45,14 +45,12 @@ struct DllGreyEntry
     void (*m_afterAccept)(const std::filesystem::path& acGamePath) = nullptr; // Run once the config is accepted.
 };
 
-// Engine Fixes 7.x settings this launcher cannot run the game with, switched off in the override file the mod reads
-// after its own (EngineFixesCustom.toml, which is the user's to edit; the lines written here say why they are there).
+// Engine Fixes 7.x settings this launcher cannot run the game with.
+// They are switched off in EngineFixesCustom.toml, the user's override file that the mod reads after its own.
 //
-// Two of its guards only accept game code where Windows puts the game when it starts the exe itself, at
-// 0x7FF0'0000'0000 and above (EngineFixesSkyrim64 src/util.h, EmitLoadedSlotGuard). This launcher maps the game at
-// 0x1'4000'0000, so the guards took every game function for freed memory. bCullingFreedObjectCrash then skipped
-// every object's OnVisible and nothing was drawn: a black view with sound and menus working (a tester with 7.9.0,
-// then the rig with 7.10.0 on 2026-10-05 -- black with it on, the scene back with only it off, twice).
+// Two of its guards only accept game code at 0x7FF0'0000'0000 and above (EngineFixesSkyrim64 src/util.h, EmitLoadedSlotGuard).
+// This launcher maps the game at 0x1'4000'0000, so the guards take every game function for freed memory.
+// With bCullingFreedObjectCrash on, every OnVisible is skipped and the view is black while sound and menus work.
 // bSceneGraphDetachFreedCrash uses the same check to skip child nodes while the scene graph is torn down.
 struct TomlSetting
 {
@@ -195,8 +193,8 @@ const DllGreyEntry kDllGreyList[] =
         "",                             // No sig regex
         L"",                            // No prompt
         "",                             // No sig to insert
-        nullptr,                        // Nothing rewritten in EngineFixes.toml itself...
-        &EnsureEngineFixes7Settings     // ...but two of its guards are switched off in the user overrides.
+        nullptr,                        // EngineFixes.toml itself is not rewritten.
+        &EnsureEngineFixes7Settings     // Two of its guards are switched off in the user overrides instead.
     }
 };
 

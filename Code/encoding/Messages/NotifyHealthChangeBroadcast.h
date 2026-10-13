@@ -21,9 +21,7 @@ struct NotifyHealthChangeBroadcast final : ServerMessage
 
     uint32_t Id;
     float DeltaHealth;
-    //! The player whose hit this was, filled in by the server, which is the only side that knows. The owner of the
-    //! actor uses it to put that player in its combat, so an NPC fights everyone hitting it and not only whoever
-    //! angered it first.
+    //! The attacking player, filled in by the server; the actor's owner adds them to its combat.
     uint32_t AttackerPlayerId{};
     //! When it happened in the attacker's game, on the server's clock; 0 when not known (RequestHealthChangeBroadcast).
     uint64_t Tick{};

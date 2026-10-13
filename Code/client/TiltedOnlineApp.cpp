@@ -58,10 +58,9 @@ std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> CreateClientLogSink(const 
 }
 }
 
-// Engine Fixes 7.x (EngineFixes.dll): the launcher switches off two of its guards that cannot work under it, in
-// EngineFixesCustom.toml (stubs/DllBlocklist.cpp in the launcher). Said once, at the first update, so a log shows
-// whether they were: the preloader loads it during the game's startup, 2 s after this app is constructed and after
-// InstallHooks2 too (the rig, 2026-10-05). The working directory is the game's.
+// Logs whether EngineFixesCustom.toml switches off the two Engine Fixes 7 guards that cannot work under the launcher.
+// Called at the first update, because the preloader loads EngineFixes.dll after this app starts.
+// The working directory is the game's.
 static void LogEngineFixes7() noexcept
 {
     if (GetModuleHandleW(L"EngineFixes.dll"))
@@ -96,8 +95,7 @@ TiltedOnlineApp::TiltedOnlineApp()
     auto rotatingLogger = CreateClientLogSink(logPath);
     // rotatingLogger->set_level(spdlog::level::debug);
     auto console = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    // Writing to the console window blocks the game thread and nobody reads it in a headset: only warnings and
-    // errors go there. The file keeps everything.
+    // The console blocks the game thread and nobody reads it in a headset, so it only gets warnings and errors.
     console->set_level(spdlog::level::warn);
     auto logger = std::make_shared<spdlog::logger>("", spdlog::sinks_init_list{console, rotatingLogger});
     logger->set_pattern("%^[%Y-%m-%d %H:%M:%S.%e] [%l] [tid %t] %$ %v");
@@ -107,8 +105,8 @@ TiltedOnlineApp::TiltedOnlineApp()
     spdlog::info("Skyrim Together client, build " BUILD_BRANCH "@" BUILD_COMMIT);
 
 #ifdef SKYRIMVR
-    // Loaded before there was a log; said now. Each of these is an id the installed VR Address Library also defines,
-    // as something else -- harmless while our own address is used, and worth a look when the library is updated.
+    // Logged here because the address database loads before the logger exists.
+    // Each is an id the installed VR Address Library defines differently; ours is used.
     for (const auto& conflict : VersionDb::Get().GetOverrideConflicts())
         spdlog::warn("Address id {} differs: the VR Address Library says {:X}, this client uses its own {:X}", conflict.Id, conflict.Library, conflict.Ours);
 #endif
@@ -130,8 +128,7 @@ bool TiltedOnlineApp::BeginMain()
     World::Get().ctx().emplace<RenderSystemD3D11>(World::Get().ctx().at<OverlayService>(), World::Get().ctx().at<ImguiService>());
 
 #ifdef SKYRIMVR
-    // The launcher is the only thing that starts SKSE VR, so this has to happen, but it has to happen here and
-    // not in RunTiltedInit (see main.cpp). This is where it ran before the merge of 2026-09-22.
+    // Nothing else starts SKSE VR; it must load here, not in RunTiltedInit (see main.cpp).
     LoadScriptExtender();
 #endif
 

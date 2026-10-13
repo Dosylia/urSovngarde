@@ -2,12 +2,12 @@
 
 #include <cstdint>
 
-// VR addresses for the ids this client looks up that the official VR Address Library CSV does not answer, merged
-// in by VersionDb::LoadCSV(). An entry here wins over the CSV: most keys are AE ids, and a CSV row with the same
-// number is an SE id for some other function. A disagreement is logged at start-up ("Address id ... differs").
+// VR addresses for ids the official VR Address Library CSV does not answer, merged in by VersionDb::LoadCSV().
+// An entry here wins over the CSV, because most keys are AE ids and a CSV row with the same number is an SE id.
+// A disagreement is logged at start-up ("Address id ... differs").
 //
-// Keys are the ids the client code looks up on VR (the last POINTER_SKYRIMSE argument). Most are
-// AE ids that were never translated, mapped to the address of the matching SE/VR function.
+// Keys are the ids the client code looks up on VR (the last POINTER_SKYRIMSE argument).
+// Most are AE ids that were never translated, mapped to the address of the matching SE/VR function.
 //
 // A comment names the matching SE function, so a crash landing near an address can be placed.
 struct VRAddressOverrideEntry
@@ -39,7 +39,7 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 18518u, 0x025b7c0u }, // SE 18133 BGSWorldLocation distance
     { 18563u, 0x025da30u }, // SE 18178 ImageSpaceModifierInstance stop
     { 19075u, 0x027a4c0u }, // SE 18606 TESObjectCELL::GetCOCPlacementInfo
-    { 20231u, 0x02b8f10u }, // SE 19826 (SE 0x2a77a0) TESObjectREFR::SetLeveledCreature (supplied 2026-09-23)
+    { 20231u, 0x02b8f10u }, // SE 19826 (SE 0x2a77a0) TESObjectREFR::SetLeveledCreature
     { 19362u, 0x02a7f00u }, // SE 19362 TESObjectREFR::SetAngleZ
     { 19364u, 0x028ccd0u }, // SE 18949 EventDispatcher::PushEvent
     { 19512u, 0x0297310u }, // SE 19110 TESObjectREFR::AddLockChange
@@ -92,7 +92,7 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 36048u, 0x05a1070u }, // SE 35158 BGSSaveFormBuffer::WriteFormId
     { 36291u, 0x05ad8f0u }, // SE 35402 Calendar::Update
     { 36372u, 0x05e2010u }, // SE 36372 Character animation graph update (VRBodySync)
-    { 36427u, 0x05e5dc0u }, // SE 36427 (SE 0x5dd770) Actor::StealAlarm, the crime alarm (supplied 2026-09-23)
+    { 36427u, 0x05e5dc0u }, // SE 36427 (SE 0x5dd770) Actor::StealAlarm, the crime alarm
     { 36525u, 0x05ef640u }, // SE 36525 Actor::AddObjectToContainer
     { 36527u, 0x05efa10u }, // SE 36527 Actor::GetGoldAmount
     { 36544u, 0x05b4290u }, // SE 35545 WinMain
@@ -100,10 +100,9 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 36741u, 0x0604f30u }, // SE 36741 Actor::GetDetectionState
     { 37147u, 0x05d5120u }, // SE 36174 animation helper
     { 37175u, 0x05d63a0u }, // SE 36196 Character dtor
-    // Upstream skips SE 37356 (0x619ab0) for remote actors: their AI. TiltedEvolutionVR mapped it to SE 36365's VR
-    // address (0x5e0e20), the actor's whole per-frame update, so on VR a remote actor's animation graph never
-    // advanced: every moving NPC copy slid with frozen bones (MotionDiag, 2026-09-19/20). 0x6226a0 is the VR
-    // address the public database gives for 37356, and it sits 0x40 after 37354 exactly as in SE.
+    // Upstream skips SE 37356 (0x619ab0, the actor's AI) for remote actors.
+    // It must not map to SE 36365 (0x5e0e20, the whole per-frame update), or remote actors slide with frozen bones.
+    // 0x6226a0 is the VR address the public database gives for 37356, and it sits 0x40 after 37354 as in SE.
     { 37356u, 0x06226a0u }, // SE 37356 Actor::Process (AI)
     { 37511u, 0x05ee4f0u }, // SE 36511 TESObjectREFR::PayGoldToContainer
     { 37521u, 0x05eeca0u }, // SE 36521 Actor::PickUpObject
@@ -132,8 +131,8 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 39004u, 0x0646160u }, // SE 38048 ApplyAnimationVariables
     { 39114u, 0x064c170u }, // SE 38156 AIProcess::CheckForNewPackage
     { 39643u, 0x066dd50u }, // SE 38612 dialogue response processing
-    { 39856u, 0x0685270u }, // SE 0x67bdf0 AIProcess::GetCharController (supplied 2026-09-23)
-    { 389089u, 0x1ec8278u }, // SE 512261 (SE 0x1e083a8) physics timestep global (supplied 2026-09-23)
+    { 39856u, 0x0685270u }, // SE 0x67bdf0 AIProcess::GetCharController
+    { 389089u, 0x1ec8278u }, // SE 512261 (SE 0x1e083a8) physics timestep global
     { 40245u, 0x069bec0u }, // SE 39171 Character ctor
     { 40246u, 0x069bfc0u }, // SE 39172 Character ctor (uint8)
     { 40454u, 0x06c00f0u }, // SE 39382 Actor::DropObject
@@ -3016,9 +3015,10 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 21600u, 0x03067f0u }, // SE 21600 PlayerCamera::IsFirstPerson helper
     { 63591u, 0x0b5f9a0u }, // SE 63591 BShkbAnimationGraph internal send event
 
-    // Havok calls with no SE/AE id in either address library. Ids from 9000001 up are private to this table (no
-    // library uses that range). VR addresses from PLANCK's src/RE/offsets.cpp (github.com/adamhynek/activeragdoll),
-    // in use on Emma's game every session; used by VRBodySync for the other player's sword (Physics queue P1).
+    // Havok calls with no SE/AE id in either address library.
+    // Ids from 9000001 up are private to this table; no library uses that range.
+    // VR addresses from PLANCK's src/RE/offsets.cpp (github.com/adamhynek/activeragdoll).
+    // VRBodySync uses them for the other player's sword.
     { 9000001u, 0x0ab0cb0u }, // hkpWorld::addEntity
     { 9000002u, 0x0aa9030u }, // hkpEntity::setPositionAndRotation
     { 9000009u, 0x0dfb722u }, // the call to ahkpWorld::stepDeltaTime in bhkWorld::Update (HIGGS prePhysicsStepHookLoc)

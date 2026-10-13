@@ -70,8 +70,8 @@ private:
     */
     void RunNakedNPCBugChecks() noexcept;
     /**
-     * Sends the local player's worn equipment when it changed. Single equip events get lost or arrive
-     * out of date on VR; the snapshot corrects the other clients within a second.
+     * Sends the local player's worn equipment when it changed.
+     * Single equip events get lost or arrive late on VR; the snapshot corrects the other clients within a second.
      */
     void RunEquipmentSnapshotUpdates() noexcept;
 

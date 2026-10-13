@@ -227,8 +227,7 @@ DWORD WINAPI TP_GetModuleFileNameA(HMODULE aModule, char* alpFileName, DWORD aBu
 }
 
 #ifdef SKYRIMVR
-// The runtime carries its version digits right after the prefix, which is what tells it apart from
-// sksevr_steam_loader.dll.
+// The runtime has its version digits right after the prefix, which tells it apart from sksevr_steam_loader.dll.
 bool IsScriptExtenderRuntime(const wchar_t* apName)
 {
     constexpr wchar_t kPrefix[] = L"sksevr_";
@@ -262,13 +261,10 @@ NTSTATUS WINAPI TP_LdrLoadDll(const wchar_t* apPath, uint32_t* apFlags, UNICODE_
         }
 
 #ifdef SKYRIMVR
-        // The d3dx9_42 plugin preloader (shipped by FUS) loads EngineFixesVR during the game's CRT init,
-        // which crashes under this launcher. Refuse it until SKSE starts; SKSE then loads it fine.
-        // STATUS_DLL_NOT_FOUND, so the later load isn't blocked too.
+        // The d3dx9_42 plugin preloader (shipped by FUS) loads EngineFixesVR during the game's CRT init, which crashes under this launcher.
+        // Refuse it with STATUS_DLL_NOT_FOUND until SKSE starts; SKSE then loads it fine.
         //
-        // Not Engine Fixes 7.x (EngineFixes.dll, one build for SE, AE and VR): it must be preloaded. Held back
-        // here, it logged "plugin did not preload, please install the preloader" and the game stopped at SKSE's
-        // plugin loading (the rig, 2026-10-05).
+        // Engine Fixes 7.x (EngineFixes.dll) is not refused: it must be preloaded, or the game stops at SKSE's plugin loading.
         const std::wstring_view baseName(name, fileName.length() - (pos + 1));
         if (!g_ScriptExtenderStarting && baseName.size() == 17 && _wcsnicmp(baseName.data(), L"EngineFixesVR.dll", 17) == 0)
             return 0xC0000135; // STATUS_DLL_NOT_FOUND
@@ -276,8 +272,8 @@ NTSTATUS WINAPI TP_LdrLoadDll(const wchar_t* apPath, uint32_t* apFlags, UNICODE_
     }
 
 #ifdef SKYRIMVR
-    // The Script Extender allocates its trampolines from DllMain, so the whole of what it needs has
-    // to be arranged around this one call and torn down straight after.
+    // The Script Extender allocates its trampolines from DllMain.
+    // So the address space it needs is arranged around this one call and released straight after.
     const bool cIsScriptExtender = pos != std::wstring_view::npos && (pos + 1) != fileName.length() && IsScriptExtenderRuntime(&fileName[pos + 1]);
 
     if (cIsScriptExtender)

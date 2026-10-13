@@ -12,7 +12,6 @@
 #include <Messages/NotifyPlayerWhereabouts.h>
 
 #include <Services/PapyrusService.h>
-#include <Services/PartyService.h>
 #include <Services/TransportService.h>
 
 #include <Structs/GridCellCoords.h>
@@ -23,7 +22,6 @@
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESQuest.h>
 #include <Forms/TESWorldSpace.h>
-#include <Components/TESFullName.h>
 #include <Games/Overrides.h>
 #include <Games/TES.h>
 
@@ -32,23 +30,19 @@ namespace
 // SkyrimTogether.esp's records, at the object ids Tools/VR/player-markers.py gives them.
 constexpr uint32_t kQuestId = 0x005000;
 constexpr uint32_t kHoldingCellId = 0x005001;
-constexpr uint32_t kPartyMarkerBaseFirst = 0x005010;
-constexpr uint32_t kPartyMarkerFirst = 0x005020;
 constexpr uint32_t kMapMarkerFirst = 0x005040;
 
-// A marker follows a player only once they have moved this far (game units, about 70 to the metre), so a player
-// standing about does not move it every two seconds.
+// A marker moves only once its player has moved this far (about 3.5 m).
 constexpr float kFollowDistance = 256.f;
 
-// Closer than this, a player's marker is put away: they are in plain sight (2100 units, about 30 m, as far as their
-// voice carries). Hiding it as soon as their body was loaded hid it across a whole lake (Emma, Riverwood,
-// 2026-10-10): a body is loaded hundreds of metres away.
+// Closer than this (about 30 m), the player is in sight and the marker is put away.
+// A loaded body is not enough, since bodies load hundreds of metres away.
 constexpr float kHideDistance = 2100.f;
 
-// The world map's icon for other players. Map marker types are the game's own (11: a landmark's standing stone).
+// The world map icon for other players (game marker type 11: a standing stone).
 constexpr uint16_t kMapMarkerType = 11;
 
-// The map marker's own data on its reference (ExtraMapMarker, 0x2C): its name, whether it shows on the map, its icon.
+// The ExtraMapMarker (0x2C) data on a marker reference: name, map flags, icon.
 struct MapMarkerData
 {
     void* pFullNameVTable;
@@ -77,8 +71,7 @@ Actor* FindPlayerActor(World& aWorld, uint32_t aPlayerId) noexcept
     return nullptr;
 }
 
-// The cell a player's position is in: an interior by its id; outdoors the cell under the position, which the
-// game makes if it has not loaded it (as "teleport to player" does).
+// The cell for a position: an interior by its id, outdoors the cell under it, loaded as "teleport to player" does.
 TESObjectCELL* ResolveCell(World& aWorld, const GameId& acWorldSpaceId, const GameId& acCellId, const glm::vec3& acPosition) noexcept
 {
     auto& modSystem = aWorld.GetModSystem();
@@ -103,7 +96,7 @@ NiPoint3 ToNiPoint(const glm::vec3& acPosition) noexcept
     return point;
 }
 
-// "Seen, near Whiterun"; the name alone when their game has not said where they are.
+// "Seen, near Whiterun", or the name alone when no place is known.
 String MarkerText(const String& acName, const String& acPlace) noexcept
 {
     return acPlace.empty() ? acName : acName + ", near " + acPlace;
@@ -137,11 +130,6 @@ bool PlayerMarkerService::FindForms() noexcept
     m_pQuest = Cast<TESQuest>(TESForm::GetById(m_modBase | kQuestId));
     m_pHoldingCell = Cast<TESObjectCELL>(TESForm::GetById(m_modBase | kHoldingCellId));
     bool allFound = m_pQuest && m_pHoldingCell;
-    for (size_t i = 0; i < kPartyMarkers; ++i)
-    {
-        m_partySlots[i].pMarker = Cast<TESObjectREFR>(TESForm::GetById(m_modBase | (kPartyMarkerFirst + static_cast<uint32_t>(i))));
-        allFound = allFound && m_partySlots[i].pMarker;
-    }
     for (size_t i = 0; i < kMapMarkers; ++i)
     {
         m_mapSlots[i].pMarker = Cast<TESObjectREFR>(TESForm::GetById(m_modBase | (kMapMarkerFirst + static_cast<uint32_t>(i))));
@@ -155,9 +143,9 @@ bool PlayerMarkerService::FindForms() noexcept
     }
 
     auto& papyrus = m_world.ctx().at<PapyrusService>();
-    if (!papyrus.Get("Quest", "SetObjectiveDisplayed") || !papyrus.Get("Quest", "IsObjectiveDisplayed") || !papyrus.Get("Quest", "Stop"))
+    if (!papyrus.Get("Quest", "Stop"))
     {
-        spdlog::warn("Player markers: the game's Quest.SetObjectiveDisplayed, IsObjectiveDisplayed or Stop was not found; no players on the map");
+        spdlog::warn("Player markers: the game's Quest.Stop was not found; no players on the map");
         return false;
     }
 
@@ -193,12 +181,9 @@ void PlayerMarkerService::OnPlayerLeft(const NotifyPlayerLeft& acMessage) noexce
     if (!m_formsFound)
         return;
 
-    for (size_t i = 0; i < kPartyMarkers; ++i)
-        if (m_partySlots[i].PlayerId == acMessage.PlayerId)
-            Free(m_partySlots[i], i, true);
     for (size_t i = 0; i < kMapMarkers; ++i)
         if (m_mapSlots[i].PlayerId == acMessage.PlayerId)
-            Free(m_mapSlots[i], i, false);
+            Free(m_mapSlots[i], i);
 }
 
 void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage) noexcept
@@ -208,12 +193,8 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
 
     PerfScope perfScope("PlayerMarkerService::OnWhereabouts");
 
-    // Map icons only, for everyone, party or not (Emma, 2026-10-11). Party members used to be the quest "Fellow
-    // travellers", whose objectives put them on the compass: the journal listed it under Miscellaneous, with "[...]"
-    // for names (<Alias=MemberN> is filled when the quest starts, before any name is set), and "it does not belong
-    // here at all". A compass marker needs a shown objective, which the journal always lists, so the compass goes too.
-    // The quest is never started now; the party marker code stays for a later "compass on demand".
-    // A save made while it ran still has it running, and in the journal: stopped once here.
+    // Every player gets a world map icon only: a compass marker would need a quest the journal lists.
+    // A "Fellow travellers" quest still running from an older save is stopped here.
     if (!m_questStarted && m_pQuest->getState() == TESQuest::State::Running)
     {
         m_questStarted = true;
@@ -222,42 +203,34 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
     }
 
     const uint32_t cLocalId = m_world.GetTransport().GetLocalPlayerId();
-    const auto isParty = [](uint32_t) { return false; };
-    const auto isListedAs = [&](uint32_t aPlayerId, bool aParty) {
+    const auto isListed = [&](uint32_t aPlayerId) {
         for (const auto& entry : acMessage.Players)
             if (entry.PlayerId == aPlayerId)
-                return isParty(aPlayerId) == aParty;
+                return true;
         return false;
     };
 
-    // A slot whose player has gone, or has joined or left the party, is freed first, so its marker can be reused.
-    for (size_t i = 0; i < kPartyMarkers; ++i)
-        if (m_partySlots[i].PlayerId && !isListedAs(m_partySlots[i].PlayerId, true))
-            Free(m_partySlots[i], i, true);
+    // Slots of players who left are freed first, so their markers can be reused.
     for (size_t i = 0; i < kMapMarkers; ++i)
-        if (m_mapSlots[i].PlayerId && !isListedAs(m_mapSlots[i].PlayerId, false))
-            Free(m_mapSlots[i], i, false);
+        if (m_mapSlots[i].PlayerId && !isListed(m_mapSlots[i].PlayerId))
+            Free(m_mapSlots[i], i);
 
     for (const auto& entry : acMessage.Players)
     {
         if (entry.PlayerId == cLocalId)
             continue;
 
-        const bool cParty = isParty(entry.PlayerId);
-        Slot* pSlots = cParty ? m_partySlots.data() : m_mapSlots.data();
-        const size_t cCount = cParty ? kPartyMarkers : kMapMarkers;
-
-        size_t index = cCount;
-        for (size_t i = 0; i < cCount && index == cCount; ++i)
-            if (pSlots[i].PlayerId == entry.PlayerId)
+        size_t index = kMapMarkers;
+        for (size_t i = 0; i < kMapMarkers && index == kMapMarkers; ++i)
+            if (m_mapSlots[i].PlayerId == entry.PlayerId)
                 index = i;
-        for (size_t i = 0; i < cCount && index == cCount; ++i)
-            if (pSlots[i].PlayerId == 0)
+        for (size_t i = 0; i < kMapMarkers && index == kMapMarkers; ++i)
+            if (m_mapSlots[i].PlayerId == 0)
                 index = i;
-        if (index == cCount)
+        if (index == kMapMarkers)
             continue; // more players than markers: the rest go unmarked
 
-        Slot& slot = pSlots[index];
+        Slot& slot = m_mapSlots[index];
         slot.PlayerId = entry.PlayerId;
 
         const auto cName = m_names.find(entry.PlayerId);
@@ -265,14 +238,10 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
         if (cText != slot.Text)
         {
             slot.Text = cText;
-            if (cParty)
-                SetPartyMarkerName(index, cText);
-            else
-                SetMapMarkerName(slot.pMarker, cText);
+            SetMapMarkerName(slot.pMarker, cText);
         }
 
-        // Close by: no marker, the player can see them. Their body in our game but further: the marker follows the
-        // body, which is where the player sees them. Not loaded here: it follows what the server says.
+        // In sight: no marker. Body loaded but further away: follow the body. Otherwise: follow the server's position.
         if (Actor* pActor = FindPlayerActor(m_world, entry.PlayerId))
         {
             const PlayerCharacter* pPlayer = PlayerCharacter::Get();
@@ -286,30 +255,8 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
                 FollowBody(slot, pActor);
         }
         else
-            Follow(slot, index, entry.WorldSpaceId, entry.CellId, glm::vec3(entry.Position.x, entry.Position.y, entry.Position.z));
-
-        // The quest takes a moment to start, and an objective shown before it runs is not shown at all (rig,
-        // 2026-10-10): only once it runs, and again whenever the game says it is not displayed.
-        if (cParty && m_pQuest->getState() == TESQuest::State::Running && (!slot.Shown || !IsObjectiveDisplayed(index)))
-        {
-            SetObjectiveShown(slot, index, true);
-            spdlog::info("Player markers: objective {} for player {} shown: {}", index + 1, entry.PlayerId, IsObjectiveDisplayed(index) ? "yes" : "no");
-        }
+            FollowServerPosition(slot, index, entry.WorldSpaceId, entry.CellId, glm::vec3(entry.Position.x, entry.Position.y, entry.Position.z));
     }
-}
-
-void PlayerMarkerService::StartQuest() noexcept
-{
-    if (m_questStarted)
-        return;
-
-    ScopedQuestOverride _;
-    bool succeeded = false;
-    m_pQuest->EnsureQuestStarted(succeeded, false);
-    // Tracked from the start, so its markers show; the player can stop tracking it in the journal.
-    m_pQuest->SetActive(true);
-    m_questStarted = true;
-    spdlog::info("Player markers: quest Fellow travellers started ({})", succeeded ? "ok" : "the game said no");
 }
 
 void PlayerMarkerService::StopQuest() noexcept
@@ -325,7 +272,7 @@ void PlayerMarkerService::StopQuest() noexcept
     spdlog::info("Player markers: quest Fellow travellers stopped");
 }
 
-void PlayerMarkerService::Follow(Slot& aSlot, size_t aIndex, const GameId& acWorldSpaceId, const GameId& acCellId, const glm::vec3& acPosition) noexcept
+void PlayerMarkerService::FollowServerPosition(Slot& aSlot, size_t aIndex, const GameId& acWorldSpaceId, const GameId& acCellId, const glm::vec3& acPosition) noexcept
 {
     if (!aSlot.Parked && aSlot.BodyCellId == 0 && aSlot.CellId == acCellId && glm::distance(aSlot.Position, acPosition) < kFollowDistance)
         return;
@@ -374,10 +321,8 @@ void PlayerMarkerService::Park(Slot& aSlot, size_t aIndex) noexcept
     spdlog::info("Player markers: {:X} put away (player {})", aSlot.pMarker->formID, aSlot.PlayerId);
 }
 
-void PlayerMarkerService::Free(Slot& aSlot, size_t aIndex, bool aParty) noexcept
+void PlayerMarkerService::Free(Slot& aSlot, size_t aIndex) noexcept
 {
-    if (aParty && aSlot.Shown)
-        SetObjectiveShown(aSlot, aIndex, false);
     Park(aSlot, aIndex);
     aSlot.PlayerId = 0;
     aSlot.Text.clear();
@@ -387,37 +332,9 @@ void PlayerMarkerService::Free(Slot& aSlot, size_t aIndex, bool aParty) noexcept
 
 void PlayerMarkerService::FreeAll() noexcept
 {
-    for (size_t i = 0; i < kPartyMarkers; ++i)
-        if (m_partySlots[i].PlayerId)
-            Free(m_partySlots[i], i, true);
     for (size_t i = 0; i < kMapMarkers; ++i)
         if (m_mapSlots[i].PlayerId)
-            Free(m_mapSlots[i], i, false);
-}
-
-void PlayerMarkerService::SetObjectiveShown(Slot& aSlot, size_t aIndex, bool aShown) noexcept
-{
-    ScopedQuestOverride _;
-    using Quest = TESQuest;
-    PAPYRUS_FUNCTION(void, Quest, SetObjectiveDisplayed, int, bool, bool);
-    // Objective N is the quest's objective index N, aimed at party marker N (1 to 7).
-    s_pSetObjectiveDisplayed(m_pQuest, static_cast<int>(aIndex) + 1, aShown, false);
-    aSlot.Shown = aShown;
-}
-
-bool PlayerMarkerService::IsObjectiveDisplayed(size_t aIndex) const noexcept
-{
-    using Quest = TESQuest;
-    PAPYRUS_FUNCTION(bool, Quest, IsObjectiveDisplayed, int);
-    return s_pIsObjectiveDisplayed(m_pQuest, static_cast<int>(aIndex) + 1);
-}
-
-void PlayerMarkerService::SetPartyMarkerName(size_t aIndex, const String& acText) noexcept
-{
-    // The objective's text is its marker's name (<Alias=MemberN>), which is the name of the marker's own activator.
-    TESFullName* pName = Cast<TESFullName>(TESForm::GetById(m_modBase | (kPartyMarkerBaseFirst + static_cast<uint32_t>(aIndex))));
-    if (pName)
-        pName->value.Set(acText.c_str());
+            Free(m_mapSlots[i], i);
 }
 
 void PlayerMarkerService::SetMapMarkerName(TESObjectREFR* apMarker, const String& acText) noexcept

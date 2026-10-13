@@ -102,8 +102,7 @@ void SetUIActive(OverlayService& aOverlay, auto apRenderer, bool aActive)
     TiltedPhoques::DInputHook::Get().SetEnabled(aActive);
     aOverlay.SetActive(aActive);
 
-    // enterGame used to be resent here, because the one sent on start-up could land before the page had loaded.
-    // OverlayService::PushUiState now holds that state and sends it once the page is ready, so this is covered.
+    // enterGame is not resent here: OverlayService::PushUiState sends it once the page has loaded.
 
     apRenderer->SetCursorVisible(aActive);
 
@@ -307,8 +306,7 @@ UINT GetRealACP()
 
 LRESULT CALLBACK InputService::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-    // The game's window procedure is hooked for the whole life of the window (BSGraphicsRenderer.cpp); this service
-    // is not. A message that arrives before it is built or after it is torn down finds no overlay to hand it to.
+    // The window procedure (BSGraphicsRenderer.cpp) stays hooked longer than this service lives.
     if (!s_pOverlay)
         return 0;
 

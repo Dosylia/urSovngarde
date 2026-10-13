@@ -103,14 +103,13 @@ private:
     World& m_world;
     TransportService& m_transport;
 
-    // Each other player's last health in the party, for "X is down" (Emma, 2026-10-10: a message, no revive); the
-    // name comes from the party's own list (PartyService::GetPlayers).
+    // Each other party member's last health, for the "X is down" message.
+    // The name comes from the party's own list (PartyService::GetPlayers).
     TiltedPhoques::Map<uint32_t, float> m_playerHealth;
 
     bool m_active = false;
     bool m_inGame = false;
-    // What the page has actually been told. The overlay loads asynchronously, so the first enterGame used to be sent
-    // before there was anything to receive it; see PushUiState.
+    // What the page has actually been told. The page loads asynchronously and drops calls made before then; see PushUiState.
     bool m_sentActive = false;
     bool m_sentInGame = false;
 

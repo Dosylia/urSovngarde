@@ -28,14 +28,14 @@ Console::StringSetting sPublicStatusUrl{"LiveServices:sPublicStatusUrl", "Where 
 
 constexpr char kKeyVariable[] = "URSOVNGARDE_SERVER_KEY";
 
-// The hub and the website count a status older than 180 seconds as an offline server. Ten seconds while someone plays
-// keeps the map moving; a minute when nobody is on keeps the hub's free plan for everything else (Emma, 2026-10-10).
+// The hub counts a status older than 180 seconds as offline.
+// Pushes every 10 s while someone plays, and once a minute when nobody is on to spare the hub's free plan.
 constexpr auto kBusyInterval = std::chrono::seconds(10);
 constexpr auto kIdleInterval = std::chrono::seconds(60);
 // Someone joining or leaving is pushed at once, but never sooner than this after the previous push.
 constexpr auto kMinimumGap = std::chrono::seconds(2);
 constexpr auto kTimeout = std::chrono::seconds(5);
-// The "online": false push at shutdown: short, the server is closing.
+// For the "online": false push at shutdown.
 constexpr auto kLastTimeout = std::chrono::seconds(2);
 constexpr auto kFailureLogInterval = std::chrono::minutes(5);
 
@@ -46,10 +46,8 @@ constexpr size_t kMaxPlaceLength = 60;
 // What the server keeps of a place a client sends, before it is cut to kMaxPlaceLength characters.
 constexpr size_t kMaxPlaceBytes = 240;
 
-// The exterior worldspaces of Skyrim VR and its DLCs, by plugin and object id, with the editor id the website draws
-// each one's map by. Read from the game's own master files on 2026-10-10 (Skyrim.esm, Update.esm, Dawnguard.esm,
-// HearthFires.esm, Dragonborn.esm, SkyrimVR.esm: every WRLD record they hold), not typed from memory. A worldspace
-// added by another mod is sent as "<plugin>:<object id in hex>".
+// Every worldspace in Skyrim VR's master files, with the editor id the website picks its map by.
+// A worldspace from another mod is sent as "<plugin>:<object id in hex>".
 struct KnownWorldSpace
 {
     std::string_view Plugin;
@@ -110,9 +108,8 @@ constexpr KnownWorldSpace kKnownWorldSpaces[] = {
     {"SkyrimVR.esm", 0x0008B8, "VRPlayroom"},
 };
 
-// Worldspaces of their own, with their own coordinates, that stand at one place of a bigger map: a player there is
-// sent at that place, in the bigger map's coordinates, under their own editor id. Each place is where their doors
-// come out, read from Dawnguard.esm on 2026-10-10:
+// Small worldspaces sent at one spot of a bigger map, under their own editor id.
+// Each spot is where their doors come out in Dawnguard.esm:
 // - Fort Dawnguard's courtyard, on Tamriel's map: its road door (0x110B5);
 // - Castle Volkihar's courtyard, on Tamriel's map: the middle of the island's three doors (0xD15B, 0x2888, 0x2889);
 // - the Boneyard, on the Soul Cairn's map (DLC01SoulCairn): the Soul Cairn's door to it (0x2FE1).
@@ -133,8 +130,8 @@ constexpr PlacedElsewhere kPlacedElsewhere[] = {
 constexpr char16_t kWindows1252[32] = {0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
                                        0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178};
 
-// Text from a game is not always UTF-8 (string files and typed names can be Windows-1252), and the hub wants JSON,
-// which is. A valid UTF-8 sequence passes as it is; any other byte is read as Windows-1252. Cut to aMaxCharacters.
+// Converts game text to UTF-8 for JSON, since string files and typed names can be Windows-1252.
+// A valid UTF-8 sequence passes as it is; any other byte is read as Windows-1252. Cut to aMaxCharacters.
 std::string ToUtf8(std::string_view aText, size_t aMaxCharacters)
 {
     std::string out;
@@ -235,9 +232,8 @@ std::string EnvironmentVariable(const char* acpName)
 #endif
 }
 
-// Where this system keeps its trusted certificates. The Linux server links its own OpenSSL, built on CI, which looks
-// for them where they were on that machine; on Seen's Debian VPS (2026-10-10) every push failed with "SSL server
-// verification failed". SSL_CERT_FILE, when set, still wins. Windows reads its own store (httplib).
+// The system's CA bundle, since the CI-built OpenSSL looks where the build machine kept it.
+// Empty on Windows (httplib reads the system store) or when SSL_CERT_FILE is set.
 std::string SystemCaBundle()
 {
 #ifdef _WIN32
@@ -260,9 +256,8 @@ bool SameFilename(std::string_view aLeft, std::string_view aRight)
     return std::ranges::equal(aLeft, aRight, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); });
 }
 
-// The website's name for an exterior worldspace: its editor id, or "<plugin>:<object id>" for one no master file has.
-// A worldspace id is in this server's mod ids, which are handed out as clients join, so its plugin is looked up by
-// that id. Empty when the plugin is not known (then no position is sent).
+// The website's name for a worldspace: its editor id, or "<plugin>:<object id>" for a modded one.
+// Empty when the plugin is unknown, and then no position is sent.
 std::string WorldSpaceName(World& aWorld, const GameId& acWorldSpaceId)
 {
     for (const auto& entry : aWorld.ctx().at<ModsComponent>().GetStandardMods())
@@ -322,7 +317,7 @@ PublicStatusService::PublicStatusService(World& aWorld, entt::dispatcher& aDispa
 
     m_startedAt = IsoTime(std::chrono::system_clock::now());
     m_enabled = true;
-    m_thread = std::thread(&PublicStatusService::Run, this);
+    m_thread = std::thread(&PublicStatusService::SendLoop, this);
 
     spdlog::info("Publishing this server's status (name, player count, character names and where they are) to {}, every {} s while players are on, every {} s when nobody is",
                  m_origin, kBusyInterval.count(), kIdleInterval.count());
@@ -364,7 +359,7 @@ void PublicStatusService::OnUpdate(const UpdateEvent& acEvent) noexcept
 
     m_lastPush = now;
     m_nextPush = now + (playerCount > 0 ? kBusyInterval : kIdleInterval);
-    Queue(BuildStatus());
+    QueueStatus(BuildStatus());
 }
 
 void PublicStatusService::OnPlayerPlace(const PacketEvent<PlayerPlaceRequest>& acMessage) const noexcept
@@ -372,8 +367,6 @@ void PublicStatusService::OnPlayerPlace(const PacketEvent<PlayerPlaceRequest>& a
     // Kept even while nothing is published: it costs a short string per player.
     const auto& place = acMessage.Packet.Place;
     acMessage.pPlayer->SetPlace(String(place.c_str(), std::min(place.size(), kMaxPlaceBytes)));
-    // The client sends only when it changes, so one line per move between places.
-    spdlog::info("Player {} is now in '{}'", acMessage.pPlayer->GetId(), ToUtf8({place.c_str(), std::min(place.size(), kMaxPlaceBytes)}, 120));
 }
 
 std::string PublicStatusService::BuildStatus() noexcept
@@ -405,8 +398,7 @@ std::string PublicStatusService::BuildStatus() noexcept
         if (!players.empty())
             players += ',';
 
-        // The character's name, as the client sent it at connect (TransportService::OnConnected). Never the endpoint,
-        // the Discord id or anything else that tells who the person is.
+        // The character's name only: never the endpoint, the Discord id or anything that identifies the person.
         const auto& username = pPlayer->GetUsername();
         players += "{\"id\":\"" + TokenOf(pPlayer->GetId()) + "\",\"name\":";
         AppendJsonString(players, ToUtf8({username.c_str(), username.size()}, kMaxNameLength));
@@ -417,9 +409,7 @@ std::string PublicStatusService::BuildStatus() noexcept
             AppendJsonString(players, ToUtf8({place.c_str(), place.size()}, kMaxPlaceLength));
         }
 
-        // A position only outdoors, in any worldspace (Tamriel, Solstheim, the Soul Cairn, Blackreach...), named by
-        // its editor id so the page can pick that world's map. Indoors (no worldspace) the player is listed without a
-        // dot on any map. A hidden player never gets this far.
+        // A position only outdoors, with the worldspace's name so the page picks the right map.
         const auto& cell = pPlayer->GetCellComponent();
         const auto character = pPlayer->GetCharacter();
         if (character && m_world.valid(*character) && cell.WorldSpaceId)
@@ -476,7 +466,7 @@ const std::string& PublicStatusService::TokenOf(uint32_t aPlayerId) noexcept
     return itor->second;
 }
 
-void PublicStatusService::Queue(std::string aBody) noexcept
+void PublicStatusService::QueueStatus(std::string aBody) noexcept
 {
     {
         std::scoped_lock lock(m_mutex);
@@ -486,7 +476,7 @@ void PublicStatusService::Queue(std::string aBody) noexcept
     m_wake.notify_one();
 }
 
-void PublicStatusService::Run() noexcept
+void PublicStatusService::SendLoop() noexcept
 {
     std::unique_lock lock(m_mutex);
     while (true)
@@ -501,7 +491,7 @@ void PublicStatusService::Run() noexcept
         const bool last = m_stop;
 
         lock.unlock();
-        Post(body, last ? kLastTimeout : kTimeout);
+        PostStatus(body, last ? kLastTimeout : kTimeout);
         lock.lock();
 
         if (last)
@@ -509,7 +499,7 @@ void PublicStatusService::Run() noexcept
     }
 }
 
-bool PublicStatusService::Post(const std::string& acBody, std::chrono::seconds aTimeout) noexcept
+bool PublicStatusService::PostStatus(const std::string& acBody, std::chrono::seconds aTimeout) noexcept
 {
     httplib::Client client(m_origin);
     client.set_connection_timeout(aTimeout);

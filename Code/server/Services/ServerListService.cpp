@@ -16,6 +16,7 @@ static constexpr char kMasterServerEndpoint[] =
     //"http://127.0.0.1:8000";
     "https://skyrim-reborn-list.skyrim-together.com";
 
+// Reads the same ini setting as the bAnnounceServer defined in GameServer.cpp.
 static Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 
 ServerListService::ServerListService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
@@ -54,8 +55,7 @@ void ServerListService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept
 
 void ServerListService::Announce() noexcept
 {
-    // Upstream's list (skyrim-together.com), not ours. Without bAnnounceServer it was still told about the server every
-    // minute, as not public, and a 403 from it stops this server (PostAnnouncement): no reason to ask it at all.
+    // Upstream's server list is contacted only with bAnnounceServer, since a 403 from it stops this server.
     if (!bAnnounceServer)
         return;
 

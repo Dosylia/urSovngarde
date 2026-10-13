@@ -25,10 +25,8 @@
 
 World::World()
 {
-    // Server id 0 is never handed out: an empty entity keeps it for the server's whole life, so every real one starts
-    // at 1. A player whose character was id 0 got none of the other player's hits through the defender's rule (0 of
-    // 30, 2026-10-08, Emma hosting), while the same fight with her character at id 1 got 11 of 11 (2026-10-09). Which
-    // entity gets 0 is chance: the first one created after the start, a player or the first NPC their game reports.
+    // Reserves server id 0 for an empty entity, so real entities start at 1.
+    // A player character at id 0 breaks the defender's rule for other players' hits.
     [[maybe_unused]] const entt::entity cReservedZero = create();
     assert(ToInteger(cReservedZero) == 0);
 

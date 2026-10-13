@@ -62,8 +62,8 @@ uint32_t BSAnimationGraphManager::ResolveGraphIndex(const int aForceIndex) const
     if (animationGraphIndex < animationGraphs.size)
         return animationGraphIndex;
 
-    // Out of range. With one graph in the list there is nothing else it could mean; with more than one there is
-    // no way to guess, so the value is handed back unchanged and the caller's own bounds check rejects it.
+    // Out of range. With one graph in the list, that graph is the only possible answer.
+    // With more than one, the value is handed back unchanged and the caller's own bounds check rejects it.
     if (animationGraphs.size == 1)
         return 0;
 

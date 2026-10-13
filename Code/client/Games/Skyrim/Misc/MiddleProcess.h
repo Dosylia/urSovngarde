@@ -21,9 +21,8 @@ struct MiddleProcess
     uint8_t pad21C[0x220 - 0x21C];
     InventoryEntry* leftEquippedObject;
     uint8_t pad228[0x250 - 0x228];
-    // The actor's havok character controller. CommonLibVR's MiddleHighProcessData puts it here for VR, and every
-    // neighbouring offset this struct already asserts agrees with that header (rotation 0B0, activeEffects 1A0,
-    // commandingActor 218, leftHand 220, rightHand 260), so this is read rather than called.
+    // The actor's havok character controller, at the offset CommonLibVR's MiddleHighProcessData gives for VR.
+    // The neighbouring offsets asserted here agree with that header (rotation 0B0, activeEffects 1A0, leftHand 220, rightHand 260).
     bhkCharacterController* charController;
     uint8_t pad258[0x260 - 0x258];
     InventoryEntry* rightEquippedObject;

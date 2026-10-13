@@ -26,7 +26,6 @@ struct NotifyDroppedItemMove final : ServerMessage
     uint32_t Id{};
     Vector3_NetQuantize Position{};
     glm::vec3 Rotation{};
-    //! The last of a movement: the item has stopped. The server keeps this place for anyone who arrives later, and the
-    //! receiver hands the item back to its own physics.
+    //! The item has stopped: the server keeps this place, and the receiver hands it back to physics.
     bool AtRest{};
 };

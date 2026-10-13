@@ -205,8 +205,8 @@ void PlayerService::OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept
     }
 }
 
-// The respawn steps are timed with a steady clock rather than frame deltas: a stutter during the respawn (common
-// while the world reloads around the player) could leave the camera stuck (upstream fix for issue #878).
+// The respawn steps are timed with a steady clock, not frame deltas, so a stutter cannot leave the camera stuck.
+// Upstream fix for issue #878.
 void PlayerService::RunRespawnUpdates() noexcept
 {
     if (!m_isDeathSystemEnabled)
@@ -215,8 +215,7 @@ void PlayerService::RunRespawnUpdates() noexcept
     static bool s_startTimer = false;
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
-    // Once the respawn has started the screen is fading to black, so finish it even if bleedout ends
-    // early (on VR it does, which left the player on a black screen).
+    // Once the screen is fading to black, finish the respawn even if bleedout ends early, as it does on VR.
     if (!pPlayer->actorState.IsBleedingOut() && !s_startTimer)
     {
         m_cachedMainSpellId = pPlayer->magicItems[0] ? pPlayer->magicItems[0]->formID : 0;
@@ -293,8 +292,7 @@ void PlayerService::RunPostDeathUpdates() noexcept
         m_godmodeDeadline = now + 10s;
 
         PlayerCharacter* pPlayer = PlayerCharacter::Get();
-        // Emma, 2026-10-11 21:11: respawned, then down again 1.5 s after the god mode below ended, with nothing
-        // hitting her ("I was far from the witch"). Whether the respawn gave the health back is not logged anywhere.
+        // TEMPORARY: logs whether a respawn gives the health back, here and when its god mode ends.
         spdlog::info("PlayerService: health {:.0f} after the respawn, bleeding out {}", pPlayer->GetActorValue(ActorValueInfo::kHealth),
                      pPlayer->actorState.IsBleedingOut());
         if (pPlayer->currentProcess)
@@ -348,8 +346,8 @@ void PlayerService::RunLevelUpdates() const noexcept
     }
 }
 
-// The public server page's "where": the room's name indoors, the location's outdoors (a town, a dungeon, the hold in
-// the wilds), the worldspace's when there is neither. Checked once a second and sent when it changes.
+// Sends where the player is for the public server page, when it changes (checked once a second).
+// Indoors the room's name, outdoors the location's, else the worldspace's.
 void PlayerService::RunPlaceUpdates() noexcept
 {
     const auto now = std::chrono::steady_clock::now();
@@ -383,14 +381,12 @@ void PlayerService::RunPlaceUpdates() noexcept
     m_transport.Send(request);
 }
 
-// The crash map (urSovngarde-hub worker/LAUNCHER.md section 13; the launcher parses these words): where the player is,
-// noted once a second, connected or not, as the line a crash report logs (CrashPlace). Exterior:
+// Notes where the player is once a second, as the line a crash will log (CrashPlace).
+// The launcher parses this line, so keep its words. Its two forms:
 //   worldspace Tamriel, cell 961B, place 'Whiterun', at (17310, -14345)
-// Interior, with where the player last stood outside -- the door they came in by -- when this session has seen one:
 //   interior cell 1A27F, place 'Dragonsreach', outside Tamriel (19447, -7409)
-// A worldspace by its editor id (the website's maps are keyed by it, and a mod's form id changes with the load order),
-// its form id in hex when it has none; cells in hex. The place is the location's name as the game shows it, else the
-// cell's, else the worldspace's; "place none" when there is none.
+// "outside" is where the player last stood in an exterior this session.
+// A worldspace is named by its editor id, which does not change with the load order; a hex form id if it has none.
 void PlayerService::RunCrashPlaceNote() noexcept
 {
     const auto now = std::chrono::steady_clock::now();
@@ -429,13 +425,6 @@ void PlayerService::RunCrashPlaceNote() noexcept
     else
         line = fmt::format("interior cell {:X}, place {}", cellId, place);
     CrashPlace::Note(line.c_str());
-    // Once a session, so a log shows the note works without a crash to show it.
-    static bool s_said = false;
-    if (!s_said)
-    {
-        s_said = true;
-        spdlog::info("CrashPlace noted (logged as is if the game crashes): {}", line);
-    }
 }
 
 void PlayerService::RunBeastFormDetection() const noexcept
