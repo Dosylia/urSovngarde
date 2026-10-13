@@ -46,7 +46,7 @@ The bot's script does not stop while the driver is busy with that, so its own `w
 `log DO menu <seconds> <menu name>` keeps a menu open that long (the driver waits; the bot's script does not).
 `log DO pickup own` has the player pick up the newest item this game dropped itself.
 `log DO papyrus <Script> <Function> <self> [form ...]` calls a native function on a reference (ids in hex; a number as n:<value>,
-a float as f:<value>, a bool as b:true or b:false).
+a float as f:<value>, a bool as b:true or b:false, a string as s:<text>).
 
 `log CHECK copy|npc mounted|unmounted` asks whether the copy rides (IsOnMount). `log CHECK copy|npc equipped|unequipped <hex>` asks the game whether its copy has that item equipped (not for the left hand: the
 game's IsEquipped does not count it); `lefthand|righthand <hex>` asks which weapon is in that hand; `has <hex>` whether it owns one.
@@ -225,6 +225,42 @@ def ensure(command, wanted):
         if wanted.lower() in answer.lower():
             return True
     return False
+
+
+def hand_path(side, waypoints):
+    """Queues one controller's path (DevBench `input vrTrackedSet`, 20 ms frames built on the current frame): waypoints
+    of (ms, x, y, z, grip) in room space (metres: x right, y up, -z forward), straight lines between them, the grip
+    button (OpenVR button 2) held where the waypoint ending a stretch says so. The headset stands at 1.6 m looking
+    forward, the other hand rests low at its side, as in "DO swing". Returns DevBench's answer."""
+    other = 'left' if side == 'right' else 'right'
+    base = tool('input', {'action': 'observe', 'device': 'vrTrackedSet'})['frame']
+    frames = []
+    end = waypoints[-1][0]
+    for i in range(end // 20 + 1):
+        t = i * 20
+        k = next((k for k in range(1, len(waypoints)) if waypoints[k][0] >= t), len(waypoints) - 1)
+        (t0, x0, y0, z0, _), (t1, x1, y1, z1, grip) = waypoints[k - 1], waypoints[k]
+        a = min(1.0, max(0.0, (t - t0) / float(t1 - t0))) if t1 > t0 else 1.0
+        f = json.loads(json.dumps(base))
+        f.pop('seq', None)
+        f['tMs'] = t
+        f['hmd']['matrix'] = [1, 0, 0, 0, 0, 1, 0, 1.6, 0, 0, 1, 0]
+        f[side]['matrix'] = [1, 0, 0, x0 + (x1 - x0) * a, 0, 1, 0, y0 + (y1 - y0) * a, 0, 0, 1, z0 + (z1 - z0) * a]
+        f[other]['matrix'] = [1, 0, 0, -0.25 if other == 'left' else 0.25, 0, 1, 0, 1.0, 0, 0, 1, -0.1]
+        for d in ('hmd', 'left', 'right'):
+            f[d].update({'available': True, 'connected': True, 'valid': True, 'trackingResult': 200})
+            if f[d].get('index') is None:
+                f[d]['index'] = {'hmd': 0, 'left': 2, 'right': 3}[d]
+            for key in ('velocity', 'angularVelocity'):
+                f[d].setdefault(key, [0.0, 0.0, 0.0])
+            if d != 'hmd' and not f[d].get('controller'):
+                f[d]['controller'] = {'axes': [[0.0, 0.0]] * 5, 'packetNumber': 1, 'pressed': 0, 'touched': 0}
+        for d in ('left', 'right'):
+            f[d]['controller']['packetNumber'] = (base[d].get('controller') or {}).get('packetNumber', 1) + i + 1
+        f[side]['controller']['pressed'] = 4 if grip else 0
+        f[side]['controller']['touched'] = 4 if grip else 0
+        frames.append(f)
+    return tool('input', {'action': 'sequence', 'device': 'vrTrackedSet', 'frames': frames, 'owner': 'live-check'}, timeout=15)
 
 
 def screenshot(name, target=None):
@@ -602,7 +638,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO drop .*|DO grab .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO drop .*|DO grab .*|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -719,6 +755,8 @@ class Run:
                             return float(w[2:])
                         if w in ('b:true', 'b:false'):
                             return w == 'b:true'
+                        if w.startswith('s:'):
+                            return w[2:]
                         if w in ('copy', 'npc'):
                             f, _ = self.subject(w)
                             return {'form': '0x' + (f or '0')}
@@ -836,6 +874,46 @@ class Run:
                         papyrus('ObjectReference', 'SetPosition', '14', [player_at[0] + delta[0], player_at[1] + delta[1], player_at[2] + delta[2]])
                         self.bring = (centre, ref)
                         print('   (player moved by (%.0f, %.0f, %.0f) so the held item meets the blade at (%.0f, %.0f, %.0f))' % (delta[0], delta[1], delta[2], centre[0], centre[1], centre[2]), flush=True)
+                elif text.startswith('DO reach npc '):
+                    # "DO reach npc right|left <up>": the player is stood 50 units from the bot's NPC, facing it; that
+                    # controller goes to the NPC, <up> units above its feet (600 ms), presses grip (300 ms), pulls back
+                    # 40 cm still gripping (1000 ms), holds 1500 ms and lets go. Meanwhile HIGGS is asked what that hand
+                    # holds, and where this game shows the NPC. A living NPC is held by PLANCK's grab, which needs real
+                    # controllers, not HiggsVR.GrabObject (live-npc-grab, 2026-10-06: "now holds None").
+                    words = text.split()
+                    side, up = words[3], float(words[4])
+                    is_left = side == 'left'
+                    form, why = self.subject('npc')
+                    try:
+                        if not form:
+                            raise RuntimeError('no npc: %s' % why)
+                        theirs, mine = position(form), position('14')
+                        if not theirs or not mine:
+                            raise RuntimeError('no position for the player or the npc')
+                        dx, dy = theirs[0] - mine[0], theirs[1] - mine[1]
+                        far = math.hypot(dx, dy) or 1.0
+                        papyrus('ObjectReference', 'SetPosition', '14', [theirs[0] - 50 * dx / far, theirs[1] - 50 * dy / far, theirs[2]])
+                        tool('console', {'action': 'exec', 'command': 'player.setangle z %.1f' % (math.degrees(math.atan2(dx, dy)) % 360.0)})
+                        time.sleep(1.0)
+                        y = up / 70.0
+                        rest = (0.25 if not is_left else -0.25, 1.0, -0.1)
+                        r = hand_path(side, [(0, rest[0], rest[1], rest[2], False), (600, 0.0, y, -50 / 70.0, False), (900, 0.0, y, -50 / 70.0, True),
+                                             (1900, 0.0, y, -50 / 70.0 + 0.4, True), (3400, 0.0, y, -50 / 70.0 + 0.4, True), (3600, 0.0, y, -50 / 70.0 + 0.4, False)])
+                        print('   (%s hand to the npc %.0f up, grip, pull 40 cm: %s)' % (side, up, 'queued' if r.get('queued') else r), flush=True)
+                        t0 = time.time()
+                        held_any = None
+                        while time.time() - t0 < 4.5:
+                            held = papyrus_global('HiggsVR', 'GetGrabbedObject', [is_left])
+                            at, me = position(form), position('14')
+                            if isinstance(held, dict):
+                                held_any = held
+                            print('   (%.1f s: hand holds %s; npc at %s, %s from the player)' % (time.time() - t0, held.get('formId') if isinstance(held, dict) else held,
+                                  '(%.0f, %.0f, %.0f)' % tuple(at) if at else '?', '%.0f' % math.dist(at, me) if at and me else '?'), flush=True)
+                            time.sleep(0.4)
+                        print('   (the %s hand held %s)' % (side, held_any), flush=True)
+                    except Exception as e:
+                        print('   FAIL  reach npc: %s' % e, flush=True)
+                        self.results.append((False, text.strip(), str(e)))
                 elif text.startswith('DO sample npc '):
                     # "DO sample npc <seconds>": where this game shows the bot's NPC, and how far from the player, every
                     # half second (the bot, which owns it, keeps it where it stands).

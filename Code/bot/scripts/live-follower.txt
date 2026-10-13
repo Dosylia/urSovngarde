@@ -7,9 +7,11 @@
 # -- and Seen's game dressed her in the outfit she has in his own save, which Emma's game applied. Now the player's
 # game keeps its follower's gear and asks for her back at once.
 #
-# Here: Lydia (A2C94, Emma's follower in her save) is put next to the player; the player travels away while this bot
-# stays and accepts what is left, so the server hands Lydia to the bot; then she is brought back next to the player,
-# the way a follower catches up.
+# Here: Lydia (A2C94, Emma's follower in her save) is put next to the player and told to wait; the player travels away
+# while this bot stays and accepts what is left, so the server hands Lydia to the bot; then she is told to follow again
+# and brought back next to the player, the way a follower catches up. Without the wait the game takes her along on the
+# trip, as a follower travels with the player, and nothing is left behind to hand over (2026-10-12 18:00: every other
+# actor went to the bot, Lydia's 3D was rebuilt next to the player at the new place).
 log live follower
 waitfor connected 45
 expect known me
@@ -23,13 +25,18 @@ log -- Lydia next to the player
 log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
 wait 10
 
+log -- Lydia waits here (the follower's "wait" order)
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+wait 5
+
 log -- the player leaves; Lydia stays with this bot and is given to it
 log DO console cow Tamriel 34 8
 wait 30
 log CHECK logged Actor \w+ is now owned by player
 log CHECK logged Follower A2C94 \(server id \w+\) was given to player \w+; not near this player
 
-log -- Lydia catches up with the player
+log -- Lydia follows again and catches up with the player
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:0
 log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
 wait 20
 log CHECK fewer 6 Spawn Actor: A2C94

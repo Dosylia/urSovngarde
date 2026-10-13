@@ -1,6 +1,8 @@
 #include <Services/DroppedItemService.h>
 
 #include <World.h>
+#include <Components.h>
+#include <Actor.h>
 #include <Services/TransportService.h>
 
 #include <Events/ConnectedEvent.h>
@@ -228,7 +230,23 @@ void DroppedItemService::OnItemPickedUp(const ItemPickedUpEvent& acEvent) noexce
 {
     const auto it = m_idByRef.find(acEvent.RefFormId);
     if (it == m_idByRef.end())
+    {
+        // A placed book taken: told as a world object taken, so every other game disables its own copy of it. Activation
+        // sync, which carries every other placed item away, leaves books out (TESObjectREFR.cpp, HookActivate).
+        if (acEvent.PlacedBook && m_transport.IsConnected())
+        {
+            RequestWorldObjectMove request{};
+            request.ObjectId = acEvent.ObjectId;
+            request.CellId = acEvent.CellId;
+            request.WorldSpaceId = acEvent.WorldSpaceId;
+            request.Position = acEvent.Position;
+            request.Taken = true;
+            m_transport.Send(request);
+            m_objectMotion.erase(acEvent.RefFormId);
+            spdlog::info("WorldObject: book {:X} taken here; asking everyone to take it off the floor", acEvent.RefFormId);
+        }
         return; // not an item the server was keeping
+    }
 
     RequestDroppedItemRemove request{};
     request.Id = it->second;
@@ -640,6 +658,40 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
     }
 
     auto& modSystem = m_world.GetModSystem();
+    const auto send = [&](TESObjectREFR* apRef, const uint32_t aFormId, const glm::vec3& acPosition, const glm::vec3& acRotation, const bool aAtRest)
+    {
+        RequestWorldObjectMove request{};
+        if (!modSystem.GetServerModId(aFormId, request.ObjectId))
+            return;
+        if (TESObjectCELL* pObjectCell = apRef->GetParentCellEx())
+            modSystem.GetServerModId(pObjectCell->formID, request.CellId);
+        if (TESWorldSpace* pWorldSpace = apRef->GetWorldSpace())
+            modSystem.GetServerModId(pWorldSpace->formID, request.WorldSpaceId);
+        request.Position = acPosition;
+        request.Rotation = acRotation;
+        request.AtRest = aAtRest;
+        m_transport.Send(request);
+    };
+
+    // The other players' copies, where they stand: something they bump here is theirs to send, not ours.
+    std::vector<glm::vec3> others;
+    {
+        auto view = m_world.view<FormIdComponent, PlayerComponent>();
+        for (const auto cEntity : view)
+            if (const Actor* pOther = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id)); pOther && pOther->formID != 0x14)
+                others.emplace_back(pOther->position.x, pOther->position.y, pOther->position.z);
+    }
+
+    // Objects that start moving in this pass, judged together once the pass is done.
+    struct Start
+    {
+        TESObjectREFR* pRef;
+        uint32_t FormId;
+        glm::vec3 Position;
+        glm::vec3 Rotation;
+    };
+    std::vector<Start> starts;
+
     for (const uint32_t cFormId : m_objectCandidates)
     {
         TESObjectREFR* pRef = Cast<TESObjectREFR>(TESForm::GetById(cFormId));
@@ -680,37 +732,69 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
         const glm::vec3 turned = glm::abs(rotation - motion.LastRotation);
         const bool cMoved = glm::distance(position, motion.LastPosition) > kMovedDistance || std::max({turned.x, turned.y, turned.z}) > kMovedAngle;
 
-        const auto send = [&](const bool aAtRest)
+        if (cMoved && !motion.Moving)
         {
-            RequestWorldObjectMove request{};
-            if (!modSystem.GetServerModId(cFormId, request.ObjectId))
-                return;
-            if (TESObjectCELL* pObjectCell = pRef->GetParentCellEx())
-                modSystem.GetServerModId(pObjectCell->formID, request.CellId);
-            if (TESWorldSpace* pWorldSpace = pRef->GetWorldSpace())
-                modSystem.GetServerModId(pWorldSpace->formID, request.WorldSpaceId);
-            request.Position = position;
-            request.Rotation = rotation;
-            request.AtRest = aAtRest;
-            m_transport.Send(request);
-        };
+            starts.push_back({pRef, cFormId, position, rotation});
+            continue;
+        }
 
         if (cMoved)
         {
-            if (!motion.Moving)
-                spdlog::info("WorldObject: {:X} is being moved here; sending where it is", cFormId);
             motion.LastPosition = position;
             motion.LastRotation = rotation;
             motion.LastLocalMove = aNow;
-            motion.Moving = true;
-            send(false);
+            send(pRef, cFormId, position, rotation, false);
         }
         else if (motion.Moving && aNow - motion.LastLocalMove >= std::chrono::milliseconds(600))
         {
             motion.Moving = false;
-            send(true);
+            send(pRef, cFormId, position, rotation, true);
             spdlog::info("WorldObject: {:X} came to rest at ({:.0f}, {:.0f}, {:.0f})", cFormId, position.x, position.y, position.z);
         }
+    }
+
+    // Many at once is a cell settling or a blast, not a hand: 15 objects "being moved here" in one pass on Seen's
+    // side (2026-10-11 18:34:34), each then held and followed in Emma's game. Their new places are where they are.
+    if (starts.size() >= 5)
+    {
+        for (const Start& start : starts)
+        {
+            Motion& motion = m_objectMotion[start.FormId];
+            motion.LastPosition = start.Position;
+            motion.LastRotation = start.Rotation;
+            motion.QuietUntil = aNow + std::chrono::seconds(2);
+        }
+        spdlog::info("WorldObject: {} objects began moving at once (a cell settling or a blast, not a hand); not sent", starts.size());
+        return;
+    }
+
+    for (const Start& start : starts)
+    {
+        Motion& motion = m_objectMotion[start.FormId];
+
+        // Nearer another player's copy than this player: their body bumped it here. Their own game does not push it
+        // (a VR player's body moves no clutter there), so sending it made a table walked over move for everyone but
+        // the one walking (Emma and Seen, 2026-10-11 21:32).
+        const float cMine = glm::distance(start.Position, playerAt);
+        bool cTheirs = false;
+        for (const glm::vec3& other : others)
+            if (const float cTheirsAt = glm::distance(start.Position, other); cTheirsAt < 150.f && cTheirsAt < cMine)
+                cTheirs = true;
+        if (cTheirs)
+        {
+            motion.LastPosition = start.Position;
+            motion.LastRotation = start.Rotation;
+            motion.QuietUntil = aNow + std::chrono::seconds(1);
+            spdlog::info("WorldObject: {:X} moved next to another player's copy; not sent", start.FormId);
+            continue;
+        }
+
+        spdlog::info("WorldObject: {:X} is being moved here; sending where it is", start.FormId);
+        motion.LastPosition = start.Position;
+        motion.LastRotation = start.Rotation;
+        motion.LastLocalMove = aNow;
+        motion.Moving = true;
+        send(start.pRef, start.FormId, start.Position, start.Rotation, false);
     }
 }
 
@@ -718,6 +802,22 @@ void DroppedItemService::OnNotifyWorldObjectMove(const NotifyWorldObjectMove& ac
 {
     const uint32_t cFormId = m_world.GetModSystem().GetGameId(acMessage.ObjectId);
     TESObjectREFR* pRef = cFormId ? Cast<TESObjectREFR>(TESForm::GetById(cFormId)) : nullptr;
+
+    // Taken into another player's inventory (a book, see OnItemPickedUp): gone from this world too. Disabled, not
+    // deleted: it is a placed reference of a plugin, and disabled is how this save then keeps it.
+    if (acMessage.Taken)
+    {
+        if (pRef && !pRef->IsDeleted() && !pRef->IsDisabled())
+        {
+            if (const auto held = m_objectMotion.find(cFormId); held != m_objectMotion.end() && held->second.Held)
+                pRef->SetMotionType(TESObjectREFR::kMotionDynamic);
+            m_objectMotion.erase(cFormId);
+            pRef->Disable();
+            spdlog::info("WorldObject: {:X} was taken by another player; removed here", cFormId);
+        }
+        return;
+    }
+
     // Not loaded here: the server sends where it was left again when this player comes near.
     if (!pRef || pRef->IsDeleted() || pRef->IsDisabled() || !pRef->GetNiNode() || !IsMovableObject(pRef))
         return;

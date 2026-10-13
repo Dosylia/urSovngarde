@@ -49,6 +49,9 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept;
 //! The names of the nodes in an actor's 3D whose name contains `acpPart` (any case), comma separated, at most
 //! `aMax`; how many there were in all goes to `aCount`. For checks that cannot look at the screen (the rig).
 std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, size_t& aCount) noexcept;
+//! This copy has an arrow on its bow string (NotifyArrowNocked): it is laid from the string hand to the bow hand each
+//! frame, instead of where the game's flat attachment puts it.
+void SetArrowNocked(uint32_t aFormId, bool aNocked) noexcept;
 //! Whether this player's HIGGS bodies, or what they hold, touched another player's weapon body at that point (game
 //! units) in the last half second: a hit landed there landed on the weapon, not on its owner.
 bool IsWeaponTouchAt(const glm::vec3& acPoint) noexcept;

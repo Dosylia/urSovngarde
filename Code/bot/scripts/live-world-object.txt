@@ -59,6 +59,8 @@ log -- the player takes the plate the bot let go of
 log DO papyrus ObjectReference Activate 92D04 14 b:false
 wait 4
 log CHECK player has 31941
+# A placed object taken that is not a book is carried off by activation sync, not as a world object "taken".
+log CHECK absent WorldObject: .* taken here
 log CHECK game alive
 log DO god off
 wait 3

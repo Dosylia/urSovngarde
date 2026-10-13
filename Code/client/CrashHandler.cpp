@@ -169,6 +169,31 @@ static USHORT CaptureFramesGuarded(void** apFrames, ULONG aCount) noexcept
 // 8a): it names the crash "<module>+<offset>", as Crash Logger does, so a report without Crash Logger's log still says
 // what crashed. Logged right after the exception code and the faulting access, which launchers parse as they are, and
 // flushed at once: a report of 2026-10-10 (20261010-064510-d37b8fe6) held those lines and nothing after them.
+namespace CrashPlace
+{
+namespace
+{
+// Two buffers: the note writes the one not being shown, then shows it, so a crash never reads a half-written line.
+char s_lines[2][384]{};
+std::atomic<int> s_current{-1};
+} // namespace
+
+void Note(const char* acpLine) noexcept
+{
+    if (!acpLine)
+        return;
+    const int next = s_current.load(std::memory_order_relaxed) == 0 ? 1 : 0;
+    strncpy_s(s_lines[next], acpLine, _TRUNCATE);
+    s_current.store(next, std::memory_order_release);
+}
+
+const char* Last() noexcept
+{
+    const int current = s_current.load(std::memory_order_acquire);
+    return current < 0 ? nullptr : s_lines[current];
+}
+} // namespace CrashPlace
+
 static void LogCrashModule(PEXCEPTION_POINTERS apInfo) noexcept
 {
     void* const pFault = apInfo->ExceptionRecord->ExceptionAddress;
@@ -230,6 +255,8 @@ static void LogCrashContext(PEXCEPTION_POINTERS pExceptionInfo)
     }
 
     LogCrashModule(pExceptionInfo);
+    if (const char* pPlace = CrashPlace::Last())
+        spdlog::error("CrashPlace: {}", pPlace);
 
     DescribeCodeAddress(pRecord->ExceptionAddress, desc, sizeof(desc));
     spdlog::error("  rip 0x{:x}  ({})", static_cast<uint64_t>(pContext->Rip), desc);
@@ -756,6 +783,7 @@ void LogThreadStarts(const uint32_t aCount) noexcept
     if (hSnapshot == INVALID_HANDLE_VALUE)
         return;
     std::unordered_map<uintptr_t, uint32_t> starts;
+    std::unordered_map<uintptr_t, std::vector<DWORD>> samples; // a few thread ids per start address
     uint32_t unopened = 0;
     LONG lastStatus = 0;
     THREADENTRY32 entry{};
@@ -775,7 +803,14 @@ void LogThreadStarts(const uint32_t aCount) noexcept
         uintptr_t start = 0;
         constexpr ULONG cThreadQuerySetWin32StartAddress = 9;
         if (const LONG cStatus = s_query(hThread, cThreadQuerySetWin32StartAddress, &start, sizeof(start), nullptr); cStatus == 0)
+        {
             ++starts[start];
+            auto& ids = samples[start];
+            if (ids.size() < 3)
+                ids.push_back(entry.th32ThreadID);
+            else
+                ids[2] = entry.th32ThreadID; // the last one listed, likely among the newest
+        }
         else
         {
             ++unopened;
@@ -796,6 +831,16 @@ void LogThreadStarts(const uint32_t aCount) noexcept
     }
     spdlog::warn("ThreadStarts: {} threads from {} start addresses ({} not readable, last status 0x{:X}); most: {}", aCount, sorted.size(), unopened,
                  static_cast<uint32_t>(lastStatus), line);
+
+    // The biggest group's start address can be a runtime's own thread starter: 2,297 of 2,411 threads of Emma's game
+    // (2026-10-11 21:26) began at ucrtbase.dll+0x2cd00, which every std::thread and _beginthreadex goes through, so it
+    // names no owner. What such a thread is doing does: its stack holds the frames of the module that started it.
+    if (!sorted.empty() && sorted[0].second >= 100)
+    {
+        const auto& ids = samples[sorted[0].first];
+        for (size_t i = ids.size() > 2 ? ids.size() - 2 : 0; i < ids.size(); ++i)
+            LogThread("sample thread of the biggest group", ids[i]);
+    }
 }
 
 void LogHealth(const int64_t aSinceBeatMs) noexcept

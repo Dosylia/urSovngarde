@@ -22,7 +22,8 @@ struct RequestWorldObjectMove final : ClientMessage
     bool operator==(const RequestWorldObjectMove& acRhs) const noexcept
     {
         return GetOpcode() == acRhs.GetOpcode() && ObjectId == acRhs.ObjectId && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId &&
-               Position == acRhs.Position && Rotation == acRhs.Rotation && AtRest == acRhs.AtRest;
+               Position == acRhs.Position && Rotation == acRhs.Rotation && AtRest == acRhs.AtRest &&
+               Taken == acRhs.Taken;
     }
 
     //! The object's own reference id, the same in every game that has the plugin it comes from.
@@ -33,4 +34,7 @@ struct RequestWorldObjectMove final : ClientMessage
     glm::vec3 Rotation{};
     //! The last of a movement: the object has stopped, and the receiver hands it back to its own physics.
     bool AtRest{};
+    //! Taken into a player's inventory: the receiver disables its own copy of the reference. Only books are sent this
+    //! way, the one item activation sync leaves out (TESObjectREFR.cpp, HookActivate).
+    bool Taken{};
 };

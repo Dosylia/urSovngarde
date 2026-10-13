@@ -20,6 +20,17 @@ void Beat() noexcept;
 void Start() noexcept;
 } // namespace FreezeWatchdog
 
+//! Where the player is, for the crash map (urSovngarde-hub worker/LAUNCHER.md section 13): PlayerService notes it once
+//! a second as a finished line, and a crash report logs the last one as it is ("CrashPlace: ..."), reading no game
+//! memory while the game is crashing.
+namespace CrashPlace
+{
+//! One thread notes (the game's); the text is copied, at most 383 characters.
+void Note(const char* acpLine) noexcept;
+//! The last line noted, or null before the first.
+[[nodiscard]] const char* Last() noexcept;
+} // namespace CrashPlace
+
 class CrashHandler
 {
     PVOID m_handler;

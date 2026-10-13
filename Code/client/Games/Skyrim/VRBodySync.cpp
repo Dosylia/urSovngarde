@@ -905,6 +905,10 @@ bool ResolveRig(void* apRoot, Rig& aRig, bool aLog = true) noexcept
 // front of the headset are posed. A sphere around the chest is tested against a 50 degree cone, widened by the angle
 // the sphere covers, so an actor close by counts as visible whatever the angle.
 // The headset's world transform, or null when this build's PlayerCharacter does not carry it where we look.
+// The head yaw last sent (degrees), for the head line of the local capture.
+float s_sentHeadYaw = 0.f;
+float s_sentHeadPitch = 0.f;
+
 const NiTransform* HeadsetTransform() noexcept
 {
     static int s_hmdState = 0; // 0 unchecked, 1 valid, -1 not the headset node on this build
@@ -2085,6 +2089,46 @@ const uint8_t* HiggsBodyHolding(const uint8_t* apBody) noexcept
             if (const uint8_t* pInstance = ppSlaves[i])
                 if (const uint8_t* pHand = partner(*reinterpret_cast<const uint8_t* const*>(pInstance + 0x28), *reinterpret_cast<const uint8_t* const*>(pInstance + 0x30)))
                     return pHand;
+    return nullptr;
+}
+
+// The same, counting only a constraint that is not a contact: Havok keeps a contact between two bodies as a constraint
+// in the same lists, so HiggsBodyHolding also says "held" for a body merely touching a HIGGS body (2026-10-12, the rig:
+// the sword swung through the copy's hand read as a hold, no button pressed). The constraint's data is told by its
+// RTTI name, which goes to aKind. hkConstraintInternal::constraint at +0x00, hkpConstraintInstance::data at +0x18.
+// Slow (RttiNameOf reads memory with VirtualQuery): only where a hand is already known to be near.
+const char* RttiNameOf(void* apObject) noexcept;
+const uint8_t* HiggsGrabHolding(const uint8_t* apBody, const char*& aKind) noexcept
+{
+    aKind = nullptr;
+    const auto grab = [apBody, &aKind](const uint8_t* apInstance) -> const uint8_t*
+    {
+        if (!apInstance)
+            return nullptr;
+        const uint8_t* pA = *reinterpret_cast<const uint8_t* const*>(apInstance + 0x28);
+        const uint8_t* pB = *reinterpret_cast<const uint8_t* const*>(apInstance + 0x30);
+        const uint8_t* pOther = pA == apBody ? pB : pA;
+        if (pOther == apBody || !IsHiggsBody(pOther))
+            return nullptr;
+        void* pData = *reinterpret_cast<void* const*>(apInstance + 0x18);
+        const char* pName = RttiNameOf(pData);
+        if (!pName || std::strstr(pName, "Contact"))
+            return nullptr;
+        aKind = pName;
+        return pOther;
+    };
+    const uint8_t* pMaster = *reinterpret_cast<const uint8_t* const*>(apBody + 0x100);
+    const uint16_t masterCount = *reinterpret_cast<const uint16_t*>(apBody + 0x108);
+    if (pMaster && masterCount <= 32)
+        for (uint16_t i = 0; i < masterCount; ++i)
+            if (const uint8_t* pHand = grab(*reinterpret_cast<const uint8_t* const*>(pMaster + i * 0x40)))
+                return pHand;
+    const auto* const* ppSlaves = *reinterpret_cast<const uint8_t* const* const*>(apBody + 0x110);
+    const int32_t slaveCount = *reinterpret_cast<const int32_t*>(apBody + 0x118);
+    if (ppSlaves && slaveCount > 0 && slaveCount <= 32)
+        for (int32_t i = 0; i < slaveCount; ++i)
+            if (const uint8_t* pHand = grab(ppSlaves[i]))
+                return pHand;
     return nullptr;
 }
 std::mutex s_contactsLock;
@@ -3551,6 +3595,105 @@ void ConsiderForWeaponTouch(Actor* apActor) noexcept
         s_touchCandidates.push_back(apActor->formID);
 }
 
+// The first step of two VR_TODO items, "Handling a living NPC the other game runs: (2), send the pull" and "Grabbing
+// the other player: a buzz on the grabbed hand": whether a HIGGS hand holds one of the ragdoll bodies of a living actor
+// the other game runs (its NPC, or his copy) -- held through HIGGS's grab constraint, as HiggsGrabHolding reads it. The
+// rig cannot make that grab (DevBench answers the controller state itself, so its buttons never reach HIGGS,
+// 2026-10-12), so this measures it in a real session. Measurement only: a line when a hold starts and when it ends.
+// Ten times a second, and only for an actor within 40 units of one of the player's hands. Under the world's lock, as
+// PlaceCorpse, so no constraint comes or goes while the lists are read.
+void WatchHandHolds(const TiltedPhoques::Vector<uint32_t>& acCandidates) noexcept
+{
+    struct Hold
+    {
+        std::chrono::steady_clock::time_point Since{};
+        std::string Bone;
+        bool Player = false;
+    };
+    static std::unordered_map<uint32_t, Hold> s_holds;
+    static std::chrono::steady_clock::time_point s_nextCheck{};
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < s_nextCheck)
+        return;
+    s_nextCheck = cNow + std::chrono::milliseconds(100);
+
+    TiltedPhoques::Vector<uint32_t> heldNow;
+    for (const uint32_t formId : acCandidates)
+    {
+        Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
+        const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+        // Dead bodies have their own watch (ObserveRemoteBodyMotion) and are taken over when handled.
+        if (!pActor || !pExtension || !pExtension->IsRemote() || pActor->actorState.IsDeadOrDying())
+            continue;
+        void* pRoot = pActor->GetNiNode();
+        if (!pRoot || NearestHandToBody(pRoot) > 40.f)
+            continue;
+
+        // Its dynamic bodies in a world, from a live tree (null checks only, as PlaceCorpse).
+        TiltedPhoques::Vector<std::pair<void*, const uint8_t*>> bodies;
+        void* pHkpWorld = nullptr;
+        TiltedPhoques::Vector<void*> queue;
+        queue.push_back(pRoot);
+        for (size_t head = 0; head < queue.size() && head < 1024; ++head)
+        {
+            void* pObject = queue[head];
+            if (const uint8_t* pBody = HavokBodyOfLive(pObject))
+            {
+                const uint8_t motionType = pBody[kMotionTypeOffset];
+                void* pWorld = At<void*>(const_cast<uint8_t*>(pBody), kHkWorldOffset);
+                if (pWorld && ((motionType >= 1 && motionType <= 3) || motionType == 6) && (!pHkpWorld || pWorld == pHkpWorld) && bodies.size() < 64)
+                {
+                    pHkpWorld = pWorld;
+                    bodies.emplace_back(pObject, pBody);
+                }
+            }
+            void* pNode = AsNode(pObject);
+            void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
+            const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
+            for (uint16_t i = 0; pChildren && i < capacity; ++i)
+                if (pChildren[i])
+                    queue.push_back(pChildren[i]);
+        }
+        if (bodies.empty())
+            continue;
+
+        WorldWriteLock lock(BhkWorldOf(pHkpWorld));
+        if (!lock.Held())
+            continue;
+        const char* pHeldBone = nullptr;
+        const char* pKind = nullptr;
+        for (const auto& [pNode, pBody] : bodies)
+            if (At<void*>(const_cast<uint8_t*>(pBody), kHkWorldOffset) == pHkpWorld && HiggsGrabHolding(pBody, pKind))
+            {
+                const char* pName = GetName(pNode);
+                pHeldBone = pName ? pName : "?";
+                break;
+            }
+        if (!pHeldBone)
+            continue;
+
+        heldNow.push_back(formId);
+        if (s_holds.find(formId) == s_holds.end())
+        {
+            s_holds[formId] = Hold{cNow, pHeldBone, pExtension->IsRemotePlayer()};
+            spdlog::info("HandHold: a HIGGS hand holds '{}' of {:X} ({} the other game runs, alive; {} ragdoll bodies in reach; constraint {})", pHeldBone, formId,
+                         pExtension->IsRemotePlayer() ? "a player copy" : "an NPC", bodies.size(), pKind ? pKind : "?");
+        }
+    }
+
+    for (auto it = s_holds.begin(); it != s_holds.end();)
+    {
+        if (std::find(heldNow.begin(), heldNow.end(), it->first) != heldNow.end())
+        {
+            ++it;
+            continue;
+        }
+        spdlog::info("HandHold: {:X} ({}) let go after {} ms (it held '{}')", it->first, it->second.Player ? "player copy" : "NPC",
+                     std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count(), it->second.Bone);
+        it = s_holds.erase(it);
+    }
+}
+
 void EndWeaponTouch() noexcept
 {
     TiltedPhoques::Vector<uint32_t> candidates;
@@ -3577,6 +3720,8 @@ void EndWeaponTouch() noexcept
     // after two actors were deleted. Nothing about feeling a blade is worth a frame taken during a teardown.
     if (pPlayer->actorState.IsDeadOrDying() || pPlayer->actorState.IsBleedingOut())
         return;
+
+    WatchHandHolds(candidates);
 
     Holding mine;
     if (!ResolveHolding(pPlayer, mine))
@@ -3696,8 +3841,189 @@ void EndWeaponTouch() noexcept
     }
 }
 
+// Copies with an arrow on their bow string (NotifyArrowNocked), and the arrow put along the line it is shot along.
+// The game attaches it the flat way, to the hand bone as a third-person draw holds it; on a hand posed from a VR
+// player's real hand it pointed at the sky, or hung down, never along the bow (Seen's screenshots, 2026-10-11 and
+// 2026-10-12). Here, after the hands are posed, it is laid from the string hand to the bow hand.
+std::mutex s_nockedLock;
+// Per copy, the "Arrow:0" nodes it had before the arrow was attached: the quiver model's root is named "Arrow:0" too
+// (with ArrowQuiver and Arrow1 to Arrow5 under it), and the nocked arrow is made a moment after AttachArrow returns.
+// Only a node not in this list is the nocked arrow (the rig, 2026-10-12 19:30: the quiver was turned instead).
+std::unordered_map<uint32_t, std::vector<void*>> s_nocked;
+
+std::vector<void*> ArrowNodesOf(void* apRoot) noexcept
+{
+    std::vector<void*> out;
+    std::vector<void*> queue{apRoot};
+    for (size_t head = 0; head < queue.size() && head < 4096; ++head)
+    {
+        void* pObject = queue[head];
+        if (const char* pName = GetName(pObject); pName && std::strcmp(pName, "Arrow:0") == 0)
+            out.push_back(pObject);
+        void* pNode = AsNode(pObject);
+        void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
+        const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
+        for (uint16_t i = 0; pChildren && i < capacity; ++i)
+            if (pChildren[i])
+                queue.push_back(pChildren[i]);
+    }
+    return out;
+}
+
+// The arrow model's length axis in its own frame, pointing from the nock to the head.
+constexpr glm::vec3 kArrowForward{0.f, 1.f, 0.f};
+
+void PlaceNockedArrows() noexcept
+{
+    std::vector<std::pair<uint32_t, std::vector<void*>>> ids;
+    {
+        std::scoped_lock lock(s_nockedLock);
+        ids.assign(s_nocked.begin(), s_nocked.end());
+    }
+    for (const auto& [cFormId, cBefore] : ids)
+    {
+        Actor* pActor = Cast<Actor>(TESForm::GetById(cFormId));
+        void* pRoot = pActor ? pActor->GetNiNode() : nullptr;
+        if (!pRoot)
+            continue;
+
+        // One walk: the two hands, and the nocked arrow -- an "Arrow:0" with no quiver above it (the quiver's own
+        // arrows are "Arrow:0" too, under "ArrowQuiver").
+        struct Item
+        {
+            void* pObject;
+            int Parent;
+        };
+        std::vector<Item> items{{pRoot, -1}};
+        void* pHands[2]{};
+        int arrow = -1;
+        for (size_t head = 0; head < items.size() && head < 4096; ++head)
+        {
+            void* pObject = items[head].pObject;
+            if (const char* pName = GetName(pObject))
+            {
+                if (std::strcmp(pName, kHandNames[0]) == 0)
+                    pHands[0] = pObject;
+                else if (std::strcmp(pName, kHandNames[1]) == 0)
+                    pHands[1] = pObject;
+                else if (std::strcmp(pName, "Arrow:0") == 0 && std::find(cBefore.begin(), cBefore.end(), pObject) == cBefore.end())
+                    arrow = static_cast<int>(head);
+            }
+            void* pNode = AsNode(pObject);
+            void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
+            const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
+            for (uint16_t i = 0; pChildren && i < capacity; ++i)
+                if (pChildren[i])
+                    items.push_back({pChildren[i], static_cast<int>(head)});
+        }
+        if (arrow < 0 || !pHands[0] || !pHands[1])
+            continue;
+
+        // The bow is in the hand the owner holds a weapon in; the left when that is not known (the usual way).
+        size_t bowSide = 0;
+        {
+            std::shared_lock lock(s_posesLock);
+            if (const auto it = s_poses.find(cFormId); it != s_poses.end() && it->second.HasWeapons && it->second.WeaponHeld[1] && !it->second.WeaponHeld[0])
+                bowSide = 1;
+        }
+        const glm::vec3 cStringAt = ToGlm(At<NiTransform>(pHands[1 - bowSide], kWorldOffset).translate);
+        const glm::vec3 cBowAt = ToGlm(At<NiTransform>(pHands[bowSide], kWorldOffset).translate);
+        const glm::vec3 cAlong = cBowAt - cStringAt;
+        if (!(glm::length(cAlong) > 1.f))
+            continue;
+        const glm::vec3 cForward = glm::normalize(cAlong);
+        glm::vec3 up{0.f, 0.f, 1.f};
+        if (std::abs(glm::dot(up, cForward)) > 0.95f)
+            up = glm::vec3{1.f, 0.f, 0.f};
+        const glm::vec3 cRight = glm::normalize(glm::cross(cForward, up));
+        const glm::vec3 cUp = glm::cross(cRight, cForward);
+        // Columns are where the arrow's own x, y and z axes go: y along the shot (kArrowForward).
+        const glm::mat3 cWanted(cRight, cForward, cUp);
+
+        void* pArrow = items[arrow].pObject;
+        NiTransform current = At<NiTransform>(pArrow, kWorldOffset);
+        const glm::vec3 pivot = ToGlm(current.translate);
+        const glm::mat3 delta = cWanted * glm::transpose(ToGlm(current.rotate));
+        NiTransform placed = current;
+        placed.rotate = FromGlm(cWanted);
+        placed.translate = FromGlm(cStringAt);
+        At<NiTransform>(pArrow, kWorldOffset) = placed;
+        // Everything below the arrow node moves with it.
+        for (size_t i = static_cast<size_t>(arrow) + 1; i < items.size(); ++i)
+        {
+            bool below = false;
+            for (int up2 = items[i].Parent; up2 >= 0 && !below; up2 = items[up2].Parent)
+                below = up2 == arrow;
+            if (!below)
+                continue;
+            NiTransform& world = At<NiTransform>(items[i].pObject, kWorldOffset);
+            world.rotate = FromGlm(delta * ToGlm(world.rotate));
+            world.translate = FromGlm(cStringAt + delta * (ToGlm(world.translate) - pivot));
+        }
+
+        // The string drawn back to the string hand. The bow model's string is skinned to its own bones (the rig,
+        // 2026-10-12: Bow_StringBone1, Bow_StringBone2, with Bow_UpBone1/2, Bow_LoBone1/2 and Bow_MidBone for the
+        // limbs); the third-person draw animation pulls the string's middle, Bow_StringBone2, back to the hand. A VR
+        // owner draws with the hand, which the copy has no animation for, so the string stayed straight on the bow
+        // while the arrow lay drawn. Its world position is put at the string hand, the bones below it with it, only
+        // within a draw's reach of the bow hand (a pose that is not a draw leaves the string alone).
+        float stringMoved = -1.f;
+        for (size_t i = 0; i < items.size(); ++i)
+        {
+            const char* pName = GetName(items[i].pObject);
+            if (!pName || std::strcmp(pName, "Bow_StringBone2") != 0)
+                continue;
+            NiTransform& bone = At<NiTransform>(items[i].pObject, kWorldOffset);
+            const glm::vec3 from = ToGlm(bone.translate);
+            if (glm::distance(cStringAt, cBowAt) > 90.f || glm::distance(from, cBowAt) > 90.f)
+                break;
+            const glm::vec3 shift = cStringAt - from;
+            bone.translate = FromGlm(cStringAt);
+            for (size_t j = i + 1; j < items.size(); ++j)
+            {
+                bool below = false;
+                for (int up2 = items[j].Parent; up2 >= 0 && !below; up2 = items[up2].Parent)
+                    below = up2 == static_cast<int>(i);
+                if (below)
+                    At<NiTransform>(items[j].pObject, kWorldOffset).translate = FromGlm(ToGlm(At<NiTransform>(items[j].pObject, kWorldOffset).translate) + shift);
+            }
+            stringMoved = glm::length(shift);
+            break;
+        }
+
+        static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextSaid;
+        auto& next = s_nextSaid[cFormId];
+        if (const auto cNow = std::chrono::steady_clock::now(); cNow >= next)
+        {
+            next = cNow + std::chrono::seconds(10);
+            spdlog::info("ArrowNocked: {:X} arrow laid from the {} hand to the bow, {:.0f} units, turned {:.0f} degrees from where the game had it; string {}", cFormId,
+                         bowSide ? "left" : "right", glm::length(cAlong), DegreesOf(delta),
+                         stringMoved >= 0.f ? fmt::format("drawn back {:.0f} units to the hand", stringMoved) : std::string("left alone (no string bone, or not a draw's reach)"));
+        }
+    }
+}
+
+void SetArrowNocked(uint32_t aFormId, bool aNocked) noexcept
+{
+    std::vector<void*> before;
+    if (aNocked)
+        if (Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId)); pActor && pActor->GetNiNode())
+            before = ArrowNodesOf(pActor->GetNiNode());
+    std::scoped_lock lock(s_nockedLock);
+    if (aNocked)
+        s_nocked[aFormId] = std::move(before);
+    else
+        s_nocked.erase(aFormId);
+}
+
 void OnFrameEnd() noexcept
 {
+    // The nocked arrows go last, once every hand is where it ends up this frame, whichever way this returns.
+    struct ArrowsLast
+    {
+        ~ArrowsLast() { PlaceNockedArrows(); }
+    } arrowsLast;
+
     TiltedPhoques::Vector<std::pair<uint32_t, RemotePose>> poses;
     {
         std::shared_lock lock(s_posesLock);
@@ -4694,6 +5020,9 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
         std::chrono::steady_clock::time_point NextAt{};
         std::chrono::steady_clock::time_point MovedAt{};
         bool SayAfter = false;
+        glm::vec3 WantedAt{};
+        float ApartBeforeMove = -1.f; // how far it lay when last moved for this place; -1: not moved yet
+        uint32_t Fruitless = 0;
     };
     static std::unordered_map<uint32_t, Placed> s_placed;
     if (!apActor)
@@ -4765,6 +5094,25 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     if (cApart <= 64.f)
         return false;
 
+    // The owner's corpse is somewhere else now: a new place, new tries.
+    if (glm::distance(placed.WantedAt, acWanted) > 64.f)
+    {
+        placed.WantedAt = acWanted;
+        placed.ApartBeforeMove = -1.f;
+        placed.Fruitless = 0;
+    }
+    // A move that did not bring it nearer: the body settles back as far off. A dead horse was moved twice a second for
+    // 26 s, 66 to 70 units off every time (2026-10-11 21:11, 7AC5F, 51 moves), and the other game moved one body 56
+    // times that evening: a corpse jumping on screen. After two such moves it is left where it lies until the owner's
+    // corpse moves.
+    if (placed.ApartBeforeMove >= 0.f && cApart >= placed.ApartBeforeMove - 16.f && ++placed.Fruitless >= 2)
+    {
+        if (placed.Fruitless == 2)
+            spdlog::info("CorpseDiag: {:X}'s ragdoll still lies {:.0f} units from where its owner's corpse is after its moves; left there until that moves",
+                         apActor->formID, cApart);
+        return false;
+    }
+
     // Its root put just above where the owner has the body (a reference stands on the ground), to settle from there.
     constexpr float cLift = 20.f;
     const glm::vec3 cOffset{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y, acWanted.z + cLift - cRagdollRoot.z};
@@ -4790,6 +5138,7 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
             s_activate.Get()(pBody);
         ++moved;
     }
+    placed.ApartBeforeMove = cApart;
     placed.MovedAt = cNow;
     placed.SayAfter = true;
     spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies)", apActor->formID, cApart, moved);
@@ -5179,7 +5528,51 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose) noexcept
     const uint32_t boneCount = cLegs ? VRPose::kBoneCount : VRPose::kUpperBoneCount;
     for (uint32_t i = 0; i < boneCount; ++i)
     {
-        const glm::mat3 boneWorld = ToGlm(At<NiTransform>(nodes[i], kWorldOffset).rotate);
+        glm::mat3 boneWorld = ToGlm(At<NiTransform>(nodes[i], kWorldOffset).rotate);
+
+        // The head turned as the headset is. VRIK barely turns the body's head bone: in the rig (2026-10-12 19:51)
+        // the headset turned 40 degrees each way and the head bone 6, so the other player saw a head that never
+        // looked around ("head movements need to be synced", 2026-10-11). Yaw at most 80 degrees either way. Then the
+        // pitch: VRIK does not nod the head bone either (rig, 2026-10-12 22:37: headset level, 30 down, 30 up, level gave
+        // a head bone at -13 to -29, -11, -20, -13 degrees), so a nod never showed. The bone's own forward sits about 13
+        // degrees under the face's at rest (8 to 17 measured), so it is put at the headset's pitch less that, between
+        // 70 degrees down and 60 up.
+        if (i == VRPose::kHead)
+        {
+            if (const NiTransform* pHeadset = HeadsetTransform())
+            {
+                const auto yawOf = [](const glm::mat3& acRotate)
+                {
+                    const glm::vec3 forward = acRotate * glm::vec3{0.f, 1.f, 0.f};
+                    return std::atan2(forward.x, forward.y);
+                };
+                float delta = yawOf(ToGlm(pHeadset->rotate)) - yawOf(boneWorld);
+                while (delta > glm::pi<float>())
+                    delta -= glm::two_pi<float>();
+                while (delta < -glm::pi<float>())
+                    delta += glm::two_pi<float>();
+                delta = std::clamp(delta, glm::radians(-80.f), glm::radians(80.f));
+                // atan2(x, y) grows clockwise seen from above; a turn about +z goes the other way.
+                if (std::isfinite(delta))
+                    boneWorld = glm::mat3(glm::rotate(glm::mat4(1.f), -delta, glm::vec3{0.f, 0.f, 1.f})) * boneWorld;
+                s_sentHeadYaw = glm::degrees(yawOf(boneWorld));
+
+                const auto pitchOf = [](const glm::mat3& acRotate)
+                {
+                    const glm::vec3 forward = acRotate * glm::vec3{0.f, 1.f, 0.f};
+                    return std::asin(std::clamp(forward.z, -1.f, 1.f));
+                };
+                const float wanted = std::clamp(pitchOf(ToGlm(pHeadset->rotate)) - glm::radians(13.f), glm::radians(-70.f), glm::radians(60.f));
+                const float lift = wanted - pitchOf(boneWorld);
+                // Up is a turn about the bone's level right axis (forward x up): it takes forward towards up.
+                const glm::vec3 forward = boneWorld * glm::vec3{0.f, 1.f, 0.f};
+                const glm::vec3 right = glm::cross(forward, glm::vec3{0.f, 0.f, 1.f});
+                if (std::isfinite(lift) && glm::length(right) > 0.1f)
+                    boneWorld = glm::mat3(glm::rotate(glm::mat4(1.f), lift, glm::normalize(right))) * boneWorld;
+                s_sentHeadPitch = glm::degrees(pitchOf(boneWorld));
+            }
+        }
+
         aOutPose.Bones[i] = glm::normalize(glm::quat_cast(inverseRoot * boneWorld));
     }
 
@@ -5236,6 +5629,31 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose) noexcept
             {
                 s_lastHipLog = now;
                 spdlog::info("VRBodySync: local hips at ({:.1f}, {:.1f}, {:.1f}) from the root", offset.x, offset.y, offset.z);
+            }
+        }
+    }
+
+    // Whether the head this sends follows the headset: Emma and Seen, 2026-10-11, "head movements need to be synced".
+    // The head is sent like every upper bone, so the question is whether VRIK turns the body's head bone with the
+    // headset. Yaw and pitch of both, in degrees, every 5 s: turn the head and the two should move together.
+    if (nodes[VRPose::kHead])
+    {
+        static std::chrono::steady_clock::time_point s_lastHeadLog{};
+        if (now - s_lastHeadLog >= std::chrono::seconds(5))
+        {
+            s_lastHeadLog = now;
+            const auto yawPitch = [](const NiMatrix3& acRotate)
+            {
+                // The forward axis (y) of the node in the world.
+                const glm::vec3 forward = ToGlm(acRotate) * glm::vec3{0.f, 1.f, 0.f};
+                return glm::vec2{glm::degrees(std::atan2(forward.x, forward.y)), glm::degrees(std::asin(std::clamp(forward.z, -1.f, 1.f)))};
+            };
+            const glm::vec2 head = yawPitch(At<NiTransform>(nodes[VRPose::kHead], kWorldOffset).rotate);
+            if (const NiTransform* pHeadset = HeadsetTransform())
+            {
+                const glm::vec2 headset = yawPitch(pHeadset->rotate);
+                spdlog::info("VRBodySync: local head yaw {:.0f} pitch {:.0f}, headset yaw {:.0f} pitch {:.0f}, head sent yaw {:.0f} pitch {:.0f}", head.x, head.y, headset.x,
+                             headset.y, s_sentHeadYaw, s_sentHeadPitch);
             }
         }
     }

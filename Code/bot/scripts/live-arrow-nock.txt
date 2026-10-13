@@ -25,9 +25,22 @@ wait 5
 log CHECK copy equipped 13985
 log CHECK copy equipped 1397D
 
-log -- the copy draws, in front of the headset
-log DO papyrus Actor DrawWeapon copy
-wait 4
+log -- the copy draws, in front of the headset, in an archer's pose (as live-blade poses its copy): the bow hand out in
+log -- front, the string hand back at the chest. Without a VR pose the copy stands with its arms down.
+draw on
+wait 1
+teleport away
+wait 6
+teleport back
+wait 8
+infront 120
+wait 3
+capture other 12
+wait 1
+handtargets -8 45 110 6 8 118
+holdpose on
+replay me 2
+wait 3
 log DO face copy
 wait 3
 log SHOT bow-drawn of copy
@@ -36,6 +49,10 @@ log -- an arrow on the string
 nock on
 wait 3
 log CHECK logged ArrowNocked: \w+ \(server \w+\): arrow put on the string
+# The game makes the nocked arrow a moment after AttachArrow; it is laid along the bow once it exists.
+wait 4
+log CHECK logged ArrowNocked: \w+ arrow laid from the
+log CHECK logged ArrowNocked: \w+ arrow laid .* string drawn back
 log SHOT arrow-nocked of copy
 wait 2
 
@@ -45,6 +62,8 @@ wait 3
 log CHECK logged ArrowNocked: \w+ \(server \w+\): arrow taken off the string
 log SHOT arrow-gone of copy
 wait 2
+holdpose off
+wait 1
 log CHECK game alive
 log CHECK game inworld
 log done

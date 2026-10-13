@@ -52,6 +52,7 @@ private:
     void RunLevelUpdates() const noexcept;
     void RunBeastFormDetection() const noexcept;
     void RunPlaceUpdates() noexcept;
+    void RunCrashPlaceNote() noexcept;
 
     void ToggleDeathSystem(bool aSet) noexcept;
 
@@ -78,6 +79,12 @@ private:
     // The last place sent for the public server page (PlayerPlaceRequest), and when to look again.
     String m_lastPlace;
     std::chrono::steady_clock::time_point m_nextPlaceCheck{};
+
+    // The crash map's note (RunCrashPlaceNote): when to note again, and where the player last stood outside.
+    std::chrono::steady_clock::time_point m_nextCrashPlaceNote{};
+    String m_outsideWorldSpace; // its editor id (hex form id when it has none); empty before the first exterior
+    float m_outsideX = 0.f;
+    float m_outsideY = 0.f;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;

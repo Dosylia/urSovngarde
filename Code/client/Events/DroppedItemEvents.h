@@ -17,4 +17,13 @@ struct ItemDroppedEvent
 struct ItemPickedUpEvent
 {
     uint32_t RefFormId{};
+
+    //! A placed book (not a dropped item), named here because the event runs a frame later, when the reference is gone.
+    //! Nothing else tells the other games it was taken: activation sync leaves books out (reading one does not take it),
+    //! and HIGGS stashes a book with a direct pick-up (SkipActivateBooks).
+    bool PlacedBook{};
+    GameId ObjectId{};
+    GameId CellId{};
+    GameId WorldSpaceId{};
+    glm::vec3 Position{};
 };

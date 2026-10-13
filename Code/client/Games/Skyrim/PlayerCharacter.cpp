@@ -241,9 +241,24 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
     }
 
     // Named before the pick-up runs: afterwards the reference is gone. DroppedItemService decides whether it was one of
-    // the items the server remembers, and if so tells everyone to take their copy off the floor.
-    if (apObject->IsTemporary())
-        World::Get().GetRunner().Trigger(ItemPickedUpEvent{apObject->formID});
+    // the items the server remembers, and if so tells everyone to take their copy off the floor. A placed reference
+    // counts too: one may have been taken for another player's drop of the same item ("already lying here"), and a
+    // placed book is otherwise never told at all -- Seen's game kept Emma's skill book on its table after she took
+    // it, then took her drop of it for that leftover (2026-10-03 15:15).
+    if (apObject->IsTemporary() || !ScopedActivateOverride::IsOverriden())
+    {
+        ItemPickedUpEvent event{apObject->formID};
+        if (!apObject->IsTemporary() && apObject->baseForm->formType == FormType::Book && modSystem.GetServerModId(apObject->formID, event.ObjectId))
+        {
+            event.PlacedBook = true;
+            if (TESObjectCELL* pCell = apObject->GetParentCellEx())
+                modSystem.GetServerModId(pCell->formID, event.CellId);
+            if (TESWorldSpace* pWorldSpace = apObject->GetWorldSpace())
+                modSystem.GetServerModId(pWorldSpace->formID, event.WorldSpaceId);
+            event.Position = glm::vec3(apObject->position.x, apObject->position.y, apObject->position.z);
+        }
+        World::Get().GetRunner().Trigger(std::move(event));
+    }
 
     ScopedInventoryOverride _;
 

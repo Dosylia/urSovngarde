@@ -67,8 +67,8 @@ private:
     void Load() noexcept;
     void Save() const noexcept;
 
-    //! Where a placed world object was last left by somebody's hand, by reference id: sent to anyone who comes near
-    //! later, since every game loads the object from its own save. Not written to disk.
+    //! Where a placed world object was last left by somebody's hand, by reference id, or that a player took it: sent to
+    //! anyone who comes near later, since every game loads the object from its own save. Not written to disk.
     struct ObjectPlace
     {
         GameId ObjectId{};
@@ -76,6 +76,7 @@ private:
         GameId WorldSpaceId{};
         Vector3_NetQuantize Position{};
         glm::vec3 Rotation{};
+        bool Taken{};
     };
 
     World& m_world;

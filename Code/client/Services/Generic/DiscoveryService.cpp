@@ -48,6 +48,9 @@ bool IsDefaultModlist(GameList<Mod>& aCurrentModlist) noexcept
 
 // A copy this client threw away on its own. See RequestCellReannounce.
 std::chrono::steady_clock::time_point s_reannounceAt{};
+
+// Actors this client just moved with MoveTo, and when. See NoteMovedHere.
+TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_movedHereAt;
 } // namespace
 
 // The invisible player, named at last (2026-09-26, 11:20).
@@ -72,6 +75,11 @@ void DiscoveryService::RequestCellReannounce() noexcept
     // A load door tears copies down over several frames; one announcement after the last of them is what is wanted,
     // so each request pushes the moment back rather than queuing another.
     s_reannounceAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+}
+
+void DiscoveryService::NoteMovedHere(const uint32_t aFormId) noexcept
+{
+    s_movedHereAt[aFormId] = std::chrono::steady_clock::now();
 }
 
 DiscoveryService::DiscoveryService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
@@ -321,9 +329,18 @@ void DiscoveryService::VisitForms() noexcept
         const bool isRemote = pActor && pActor->GetExtension()->IsRemote();
         const bool isUnloaded = !pActor || !pActor->GetNiNode();
 
-        if (!isSameObject || (isRemote && isUnloaded) || now - known.MissingSince >= cRemovalGracePeriod)
+        // Not one this client has just moved: MoveTo drops the 3D for a frame, and removing it then cancelled the
+        // assignment the move came from, so it was found, assigned and moved again -- ten times a second, a skeleton
+        // on Seen's side for 28 s (2026-10-11 21:08:57, "Received remote actor" then "Actor removed" 28 ms later).
+        const auto cMoved = s_movedHereAt.find(formId);
+        const bool cJustMoved = cMoved != s_movedHereAt.end() && now - cMoved->second < std::chrono::seconds(2);
+
+        if (!isSameObject || (isRemote && isUnloaded && !cJustMoved) || now - known.MissingSince >= cRemovalGracePeriod)
             s_removedForms.push_back(formId);
     }
+
+    for (auto it = s_movedHereAt.begin(); it != s_movedHereAt.end();)
+        it = now - it->second >= std::chrono::seconds(2) ? s_movedHereAt.erase(it) : std::next(it);
 
     for (uint32_t formId : s_removedForms)
     {

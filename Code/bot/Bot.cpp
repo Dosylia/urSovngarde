@@ -1193,7 +1193,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         ++m_objectMoves;
         const glm::vec3 cPlace(message.Position);
         spdlog::info("World object {:X}:{:X} moved to ({:.0f}, {:.0f}, {:.0f}){}", message.ObjectId.ModId, message.ObjectId.BaseId, cPlace.x, cPlace.y, cPlace.z,
-                     message.AtRest ? ", at rest" : "");
+                     message.Taken ? ", taken" : message.AtRest ? ", at rest" : "");
         return;
     }
 
@@ -2064,6 +2064,29 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.AtRest = args[4] == "rest";
         SendMsg(request);
         spdlog::info("[script] world object {:X} moved to ({:.0f}, {:.0f}, {:.0f}){}", refId, x, y, z, request.AtRest ? ", at rest" : "");
+        return true;
+    }
+
+    // "takeobject <hex reference> <x> <y> <z>": a world object of Skyrim.esm, lying there, taken into this bot's
+    // inventory, the way a client reports a placed book it picked up (activation sync leaves books out). The other games
+    // disable theirs; the server picks who to tell by that place.
+    if (name == "takeobject")
+    {
+        uint32_t refId = 0;
+        float x = 0.f, y = 0.f, z = 0.f;
+        if (args.size() < 4 || !ParseHex(args[0], refId) || !ParseFloat(args[1], x) || !ParseFloat(args[2], y) || !ParseFloat(args[3], z))
+        {
+            spdlog::error("[script] takeobject needs a hex reference and the x y z it lies at");
+            return true;
+        }
+        RequestWorldObjectMove request{};
+        request.ObjectId = Skyrim(refId);
+        request.CellId = m_cell;
+        request.WorldSpaceId = m_worldSpace;
+        request.Position = ToNet(glm::vec3(x, y, z));
+        request.Taken = true;
+        SendMsg(request);
+        spdlog::info("[script] world object {:X} taken at ({:.0f}, {:.0f}, {:.0f})", refId, x, y, z);
         return true;
     }
 

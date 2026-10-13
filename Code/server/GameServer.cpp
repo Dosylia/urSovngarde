@@ -1,5 +1,7 @@
 ﻿#include <Components.h>
 #include <GameServer.h>
+#include <AdminKeys.h>
+#include <openssl/evp.h>
 #include <Packet.hpp>
 
 #include <Events/AdminPacketEvent.h>
@@ -31,6 +33,35 @@ Console::Setting bPremiumTickrate{"GameServer:bPremiumMode", "Use premium tick r
 
 Console::StringSetting sServerName{"GameServer:sServerName", "Name that shows up in the server list", "Dedicated Together Server"};
 Console::StringSetting sAdminPassword{"GameServer:sAdminPassword", "Admin authentication password", ""};
+
+namespace
+{
+AdminKeys::Digest Sha256(const std::string_view acText)
+{
+    AdminKeys::Digest digest{};
+    unsigned int size = 0;
+    if (!EVP_Digest(acText.data(), acText.size(), digest.data(), &size, EVP_sha256(), nullptr) || size != digest.size())
+        digest.fill(0xFF); // matches no id a key could have (the chance of an all-0xFF SHA-256 is nil)
+    return digest;
+}
+
+// The public server's admins (AdminKeys.h), read once from the environment the first time anyone connects.
+const std::vector<AdminKeys::Entry>& KnownAdminKeys()
+{
+    static const std::vector<AdminKeys::Entry> s_entries = []
+    {
+        const char* pList = std::getenv("URSOVNGARDE_ADMIN_KEYS");
+        std::vector<size_t> skipped;
+        auto entries = AdminKeys::Parse(pList ? pList : "", skipped);
+        for (const size_t position : skipped)
+            spdlog::warn("URSOVNGARDE_ADMIN_KEYS: entry {} is malformed and was skipped (name:64 lowercase hex characters)", position);
+        if (!entries.empty() || !skipped.empty())
+            spdlog::info("Admin keys: {} admin(s) known", entries.size());
+        return entries;
+    }();
+    return s_entries;
+}
+} // namespace
 Console::StringSetting sPassword{"GameServer:sPassword", "Server password", ""};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 
@@ -226,6 +257,9 @@ void GameServer::Initialize()
 
     BindServerCommands();
     m_pWorld->GetScriptService().Initialize(*m_pResources);
+
+    // Read now, not at the first connect: a malformed admin key entry shows in the start-up log.
+    KnownAdminKeys();
 }
 
 void GameServer::Kill()
@@ -897,12 +931,28 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         return;
     }
 
-    bool adminPasswordUsed = acRequest->Token == sAdminPassword.value() && !sAdminPassword.empty();
+    // An admin's key (AdminKeys.h): an admin session, and in even when the server has a password, as sAdminPassword.
+    // A key that matches no admin is a wrong password. Neither the token nor the address is logged for a key.
+    const std::string_view cToken(acRequest->Token.data(), acRequest->Token.size());
+    const AdminKeys::Entry* pAdminKey = AdminKeys::IsKeyToken(cToken) ? AdminKeys::Match(cToken, KnownAdminKeys(), &Sha256) : nullptr;
+    if (AdminKeys::IsKeyToken(cToken) && !pAdminKey)
+    {
+        spdlog::warn("Connection {:x}: an admin key that matches no admin - Kicked.", aConnectionId);
+        sendKick(RT::kWrongPassword);
+        return;
+    }
+
+    bool adminPasswordUsed = pAdminKey || (acRequest->Token == sAdminPassword.value() && !sAdminPassword.empty());
 
     // check if the proper server password was supplied.
     if (acRequest->Token == sPassword.value() || adminPasswordUsed)
     {
-        if (adminPasswordUsed)
+        if (pAdminKey)
+        {
+            m_adminSessions.insert(aConnectionId);
+            spdlog::warn("admin session: {} (connection {:x})", pAdminKey->Name, aConnectionId);
+        }
+        else if (adminPasswordUsed)
         {
             m_adminSessions.insert(aConnectionId);
             spdlog::warn("New admin session for {:x} '{}'", aConnectionId, remoteAddress);

@@ -10,6 +10,7 @@ void RequestWorldObjectMove::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter
     Serialization::WriteFloat(aWriter, Rotation.y);
     Serialization::WriteFloat(aWriter, Rotation.z);
     Serialization::WriteBool(aWriter, AtRest);
+    Serialization::WriteBool(aWriter, Taken);
 }
 
 void RequestWorldObjectMove::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -24,4 +25,5 @@ void RequestWorldObjectMove::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
     Rotation.y = Serialization::ReadFloat(aReader);
     Rotation.z = Serialization::ReadFloat(aReader);
     AtRest = Serialization::ReadBool(aReader);
+    Taken = Serialization::ReadBool(aReader);
 }

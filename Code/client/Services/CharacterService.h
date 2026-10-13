@@ -107,6 +107,8 @@ private:
     Actor* CreateCharacterForEntity(entt::entity aEntity) const noexcept;
     ActorData BuildActorData(Actor* apActor) const noexcept;
     void ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId) const noexcept;
+    // This player's followers owned by another player, asked for back once they are near this player.
+    void RunFollowerReclaims() const noexcept;
     void ProcessLeveledConforms() noexcept;
 
     void RunLocalUpdates() const noexcept;
@@ -150,6 +152,9 @@ private:
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};
+    // The owner's leveled pick last received for each remote leveled actor, by form id: checked again after the game
+    // re-rolls the actor on its own (ProcessLeveledConforms).
+    mutable Map<uint32_t, uint32_t> m_ownerLeveledPicks{};
 
     entt::scoped_connection m_referenceAddedConnection;
     entt::scoped_connection m_referenceRemovedConnection;

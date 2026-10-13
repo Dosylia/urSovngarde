@@ -1,0 +1,5 @@
+[22:56:31.789] [info] STBot v1.9.3-3-g49e018df-dirty.890d064 : 'C:\Users\a\AppData\Local\Temp\claude\c--dev-TiltedEvolution\7fee3cd2-afce-46fe-a57f-390300a9ad7b\scratchpad\admin-probe.txt' with 4 commands, server 127.0.0.1:10578, name 'Bot'
+[22:56:31.795] [info] Connecting to 127.0.0.1:10578
+[22:56:31.816] [info] Connected to 127.0.0.1:10578; authenticating as 'Bot', version v1.9.3-3-g49e018df-dirty.890d064
+[22:56:31.847] [error] Refused: wrong password. Server version 'v1.9.3-3-g49e018df-dirty.890d064', ours 'v1.9.3-3-g49e018df-dirty.890d064' (protocol a5abdbfa)
+[22:56:31.847] [warning] Disconnected (closed by us)

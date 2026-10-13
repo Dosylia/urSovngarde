@@ -1,0 +1,30 @@
+# A death in a dungeon with a respawn override names its cell by editor id, so the override can apply on VR.
+#
+#   python Tools\VR\live-check.py live-respawn-cell
+#
+# CellRespawnOverrides (upstream #875) finds a dungeon's respawn spot by the cell's editor id; whether VR keeps cell
+# editor ids was unknown, since every death logged since was outdoors ("in cell 8F7B 'Wilderness'"). Here the player
+# dies in Stillborn Cave (StillbornCave01, one of the default overrides) and the respawn must name it.
+log live respawn cell
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- into Stillborn Cave
+log DO console coc StillbornCave01
+wait 25
+log CHECK game inworld
+
+log -- the player dies there
+log DO console player.kill
+wait 14
+log CHECK game alive
+log CHECK player alive
+log CHECK logged RespawnPlayer: in cell \w+ 'StillbornCave01', at its override position
+wait 3
+
+# No travel back outside: console travel out of Stillborn Cave crashes the game in Community Shaders, with or without
+# a death (CommunityShaders.dll+0x1208c8, 3 of 3 on 2026-10-12; live-cave-travel). headless.ps1 down ends the game.
+log done
+stop

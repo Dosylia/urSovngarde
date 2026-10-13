@@ -1,0 +1,32 @@
+# A placed object another player took into their inventory is gone from this game too.
+#
+#   python Tools\VR\live-check.py live-book-taken
+#
+# Emma took a skill book from a table (2026-10-03 15:15) and Seen's game kept it there: activation sync leaves books
+# out, and HIGGS stashes a book with a direct pick-up, so nothing said it was taken. A client now sends a placed book it
+# picks up as a world object "taken", and every other game disables its own. The receiving side does not look at what
+# kind of object it is, so the wooden plate by Mistwatch (reference 92D04, the one live-world-object moves) stands in
+# for the book: the bot says it took it, and the game must take it off the floor.
+log live book taken
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- to Mistwatch, where the plate is
+log DO god on
+log DO console cow Tamriel 34 -9
+wait 30
+log -- the player goes to the plate
+log DO console player.moveto 92D04
+wait 10
+
+log -- the bot takes the plate: the game removes it
+takeobject 92D04 139200 -33349 -9679
+wait 3
+log CHECK logged WorldObject: 92D04 was taken by another player; removed here
+log CHECK game alive
+log DO god off
+wait 3
+log done
+stop

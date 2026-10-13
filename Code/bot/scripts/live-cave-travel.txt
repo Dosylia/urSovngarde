@@ -1,0 +1,26 @@
+# Control for live-respawn-cell: the same trip into Stillborn Cave and out again, without dying there.
+#
+#   python Tools\VR\live-check.py live-cave-travel
+#
+# live-respawn-cell crashed the game twice on the way out (2026-10-12 22:30:33 and 22:50:06, both 12 s after the
+# respawn, CommunityShaders.dll+0x1208c8, a read at 0x144 while drawing). Here nobody dies: if the trip out still
+# crashes, the death is not part of it.
+log live cave travel
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- into Stillborn Cave
+log DO console coc StillbornCave01
+wait 25
+log CHECK game inworld
+wait 15
+
+log -- back outside, with nobody dead
+log DO console cow Tamriel 34 -9
+wait 20
+log CHECK game alive
+log CHECK game inworld
+log done
+stop

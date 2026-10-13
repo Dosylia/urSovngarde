@@ -1,0 +1,40 @@
+# A living NPC of this bot's, taken by the player's real hand (the controller on it, grip pressed) and pulled: the
+# first step of "Handling a living NPC the other game runs: (2), send the pull" (Emma, 2026-10-10).
+#
+#   python Tools\VR\live-check.py live-npc-hand
+#
+# Measurement, not a fix. HiggsVR.GrabObject does not take a living actor (live-npc-grab, 2026-10-06); a hand on one
+# is PLANCK's grab, which needs controllers -- DevBench drives them now. What this run is to show: whether HIGGS holds
+# the copy (GetGrabbedObject), where this game shows it while pulled (its owner, this bot, keeps it where it stands),
+# and what the client logs about it.
+log live npc hand
+waitfor connected 45
+collect spawn health movement
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a bear of this bot's, alive, standing still
+npc temp 23A8A
+waitfor owned == 1 20
+wait 8
+log CHECK npc alive
+log DO papyrus Actor SheatheWeapon 14
+wait 3
+log DO sample npc 1
+wait 2
+
+log -- the right hand on its back, grip, pulled 40 cm
+log DO reach npc right 60
+wait 6
+log DO sample npc 2
+wait 3
+
+log -- lower, on its shoulder
+log DO reach npc right 40
+wait 6
+log CHECK npc alive
+log CHECK game alive
+wait 3
+log done
+stop

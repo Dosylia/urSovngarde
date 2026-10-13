@@ -172,8 +172,8 @@ void DroppedItemService::OnObjectMove(const PacketEvent<RequestWorldObjectMove>&
     const auto& message = acMessage.Packet;
     const uint64_t cKey = (static_cast<uint64_t>(message.ObjectId.ModId) << 32) | message.ObjectId.BaseId;
 
-    if (message.AtRest)
-        m_objects[cKey] = ObjectPlace{message.ObjectId, message.CellId, message.WorldSpaceId, message.Position, message.Rotation};
+    if (message.AtRest || message.Taken)
+        m_objects[cKey] = ObjectPlace{message.ObjectId, message.CellId, message.WorldSpaceId, message.Position, message.Rotation, message.Taken};
 
     NotifyWorldObjectMove notify{};
     notify.ObjectId = message.ObjectId;
@@ -182,6 +182,7 @@ void DroppedItemService::OnObjectMove(const PacketEvent<RequestWorldObjectMove>&
     notify.Position = message.Position;
     notify.Rotation = message.Rotation;
     notify.AtRest = message.AtRest;
+    notify.Taken = message.Taken;
 
     const CellIdComponent cell{message.CellId, message.WorldSpaceId, GridCellCoords::CalculateGridCellCoords(message.Position)};
     for (Player* pPlayer : m_world.GetPlayerManager())
@@ -231,6 +232,7 @@ void DroppedItemService::SendInRange(Player* apPlayer, const CellIdComponent& ac
         notify.Position = place.Position;
         notify.Rotation = place.Rotation;
         notify.AtRest = true;
+        notify.Taken = place.Taken;
         apPlayer->Send(notify);
     }
 }

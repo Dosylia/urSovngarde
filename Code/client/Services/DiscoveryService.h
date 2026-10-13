@@ -36,6 +36,15 @@ struct DiscoveryService final : BSTEventSink<TESLoadGameEvent>
      */
     static void RequestCellReannounce() noexcept;
 
+    /**
+     * @brief This client is about to move an actor with MoveTo, which drops its 3D for a frame.
+     *
+     * For two seconds the actor is then not taken for a remote copy leaving (removed at once without its 3D): it
+     * keeps the normal grace period, so its server assignment is not cancelled by a move of our own.
+     * @see VisitForms
+     */
+    static void NoteMovedHere(uint32_t aFormId) noexcept;
+
 protected:
     /**
      * Checks whether the cell has changed, and if so,

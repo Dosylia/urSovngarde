@@ -120,6 +120,17 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
 
         const auto result = ActorMediator::Get()->ForceAction(&actionData);
 
+        // Getting up from bleedout, refused as an action: the copy stayed down while its owner had it up again, and
+        // lay on the floor following and attacking (Seen, 2026-10-12: "refused 'bleedOutStop'" on Legate Rikke 19:11
+        // and General Tullius 19:13; a shout's ragdoll and get-up was the only thing that stood them up). The action's
+        // conditions are the game's; the graph event itself takes the copy out of the pose, as on the owner's side.
+        if (!result && !cPlayerCopy && !first.EventName.empty() && _stricmp(first.EventName.c_str(), "bleedOutStop") == 0)
+        {
+            BSFixedString event("bleedOutStop");
+            const bool cSent = apActor->SendAnimationEvent(&event);
+            spdlog::info("ReplayDiag: 'bleedOutStop' refused as an action on {:X}; sent to its graph instead ({})", apActor->formID, cSent ? "taken" : "not taken");
+        }
+
         // TEMPORARY: remote NPCs slide instead of walking on the receiving side, and AnimDiag shows the game refusing
         // most of their moveStart and turnStop replays (2026-09-19, 7 of 9 moveStart refused). This names, for one
         // refused replay per 10 s, everything the refusal could depend on. Remove once understood.

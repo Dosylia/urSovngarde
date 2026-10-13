@@ -848,6 +848,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     }
     RunWaitingCopies();
     SpawnReveal::Tick();
+    RunFollowerReclaims();
 
     {
         PerfScope perfScope("CharacterService::RunFactionsUpdates");
@@ -1181,15 +1182,25 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
 
         if (cMyFollower)
         {
+            // Only when she is near this player, as when she is given away (OnNotifyOwnershipTransfer). Asked for from
+            // anywhere, she came back to a game that could not run her and was handed straight on: Lydia went from
+            // Emma's game to Seen's and back every 15 s (2026-10-11 19:37, "given to player 2; not near this player"
+            // then "came back as another player's ... asked for"), flooding equip actions and vanishing for Seen.
+            // One farther away is asked for by RunFollowerReclaims once she is near.
+            const auto* pPlayer = PlayerCharacter::Get();
+            const bool cHere = pActor->GetNiNode() && pPlayer && glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) < 2048.f;
             static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_nextFollowerClaim;
             const auto now = std::chrono::steady_clock::now();
             auto& next = s_nextFollowerClaim[pActor->formID];
-            if (now >= next)
+            if (cHere && now >= next)
             {
                 next = now + std::chrono::seconds(1);
                 spdlog::info("Follower {:X} (server id {:X}) came back as another player's; kept as she is here and asked for", pActor->formID, acMessage.ServerId);
                 RequestOwnership(pActor->formID, acMessage.ServerId, cEntity);
             }
+            else if (!cHere)
+                spdlog::info("Follower {:X} (server id {:X}) came back as another player's, not near this player; asked for once she is", pActor->formID,
+                             acMessage.ServerId);
         }
         else
             MoveActor(pActor, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position);
@@ -1197,6 +1208,22 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         // The owner's leveled pick rides the assignment response for actors we discovered ourselves
         ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId);
     }
+}
+
+// What the owner's appearance turned into here. TESNPC::Create starts from this player's own race, class and outfits
+// and loads the owner's over them, so a load that did not take leaves a copy of this player's race with no name and no
+// face: a friend's orc was "a naked white nordic skin with black face" (Discord, 2026-10-11; empty names on every player
+// copy in that log, their two mod lists differing). Both places that make a player copy from its appearance say it.
+static void LogPlayerCopyAppearance(const CharacterSpawnRequest& acMessage, const TESNPC* apNpc) noexcept
+{
+    if (!acMessage.IsPlayer || !apNpc)
+        return;
+    const auto* pRace = reinterpret_cast<const TESForm*>(apNpc->raceForm.race); // TESRace derives from TESForm first
+    const TESNPC* pOwnBase = Cast<TESNPC>(PlayerCharacter::Get()->baseForm);
+    const bool cOwnRace = pOwnBase && reinterpret_cast<const TESForm*>(pOwnBase->raceForm.race) == pRace;
+    spdlog::info("Player copy appearance: {} bytes, change flags {:X}, {} face tints; race {:X}{}, name '{}'", acMessage.AppearanceBuffer.size(), acMessage.ChangeFlags,
+                 acMessage.FaceTints.Entries.size(), pRace ? pRace->formID : 0, cOwnRace ? " (this player's own race: the owner's may not have loaded)" : "",
+                 apNpc->fullName.value.AsAscii());
 }
 
 void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept
@@ -1396,20 +1423,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
             // Players and npcs with temporary ref ids and base ids (usually random events)
             pNpc = TESNPC::Create(acMessage.AppearanceBuffer, acMessage.ChangeFlags);
             FaceGenSystem::Setup(m_world, *entity, acMessage.FaceTints);
-
-            // What the owner's appearance turned into here. TESNPC::Create starts from this player's own race,
-            // class and outfits and loads the owner's over them, so a load that did not take leaves a copy of this
-            // player's race with no name and no face: a friend's orc was "a naked white nordic skin with black face"
-            // (Discord, 2026-10-11; empty names on every player copy in that log, their two mod lists differing).
-            if (acMessage.IsPlayer && pNpc)
-            {
-                const auto* pRace = reinterpret_cast<const TESForm*>(pNpc->raceForm.race); // TESRace derives from TESForm first
-                const TESNPC* pOwnBase = Cast<TESNPC>(PlayerCharacter::Get()->baseForm);
-                const bool cOwnRace = pOwnBase && reinterpret_cast<const TESForm*>(pOwnBase->raceForm.race) == pRace;
-                spdlog::info("Player copy appearance: {} bytes, change flags {:X}, {} face tints; race {:X}{}, name '{}'", acMessage.AppearanceBuffer.size(), acMessage.ChangeFlags,
-                             acMessage.FaceTints.Entries.size(), pRace ? pRace->formID : 0, cOwnRace ? " (this player's own race: the owner's may not have loaded)" : "",
-                             pNpc->fullName.value.AsAscii());
-            }
+            LogPlayerCopyAppearance(acMessage, pNpc);
         }
 
         pActor = RememberOwnCopy(Actor::Create(pNpc));
@@ -1806,6 +1820,40 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     }
 }
 
+void CharacterService::RunFollowerReclaims() const noexcept
+{
+    // A follower of this player run by another player's game while she was away (left behind, or given away during a
+    // loading screen) is asked for back here once she is loaded and near this player, and not before: from anywhere
+    // she would be handed straight back (see OnAssignCharacter, Lydia on 2026-10-11).
+    static std::chrono::steady_clock::time_point s_next;
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < s_next || !m_transport.IsConnected())
+        return;
+    s_next = cNow + std::chrono::seconds(1);
+
+    const auto* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return;
+
+    static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_asked;
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    for (const auto cEntity : view)
+    {
+        Actor* pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id));
+        if (!pActor || pActor->IsTemporary() || !pActor->IsPlayerTeammate() || pActor->IsDead() || !pActor->GetNiNode())
+            continue;
+        if (glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) >= 2048.f)
+            continue;
+        auto& asked = s_asked[pActor->formID];
+        if (cNow < asked)
+            continue;
+        asked = cNow + std::chrono::seconds(5);
+        const auto& remote = view.get<RemoteComponent>(cEntity);
+        spdlog::info("Follower {:X} (server id {:X}) is near this player again; asked for", pActor->formID, remote.Id);
+        RequestOwnership(pActor->formID, remote.Id, cEntity);
+    }
+}
+
 void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage) const noexcept
 {
     // Removals go to every player, in range or not, so a record kept for a character nobody has any more ends here.
@@ -2116,6 +2164,9 @@ void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
     request.ServerId = serverIdRes.value();
     request.SoundFilename = acEvent.VoiceFile;
 
+    // Said, so that a line the other player did not hear can be traced (Seen heard nothing of the peace meeting,
+    // 2026-10-12 19:03, with Emma's game owning every speaker; no dialogue line in either log then).
+    spdlog::info("Dialogue: {:X} (server id {:X}) says {}; sent", acEvent.ActorID, request.ServerId, acEvent.VoiceFile.c_str());
     m_transport.Send(request);
 }
 
@@ -2124,10 +2175,14 @@ void CharacterService::OnNotifyDialogue(const NotifyDialogue& acMessage) noexcep
     // A member can initiate dialogue with an NPC owned by this client.
     Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ServerId);
     if (!pActor)
+    {
+        spdlog::info("Dialogue: server id {:X} says {}, but it has no actor here; not heard", acMessage.ServerId, acMessage.SoundFilename.c_str());
         return;
+    }
 
     pActor->StopCurrentDialogue(true);
     pActor->SpeakSound(acMessage.SoundFilename.c_str());
+    spdlog::info("Dialogue: {:X} (server id {:X}) says {}; played here", pActor->formID, acMessage.ServerId, acMessage.SoundFilename.c_str());
 }
 
 void CharacterService::OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept
@@ -2225,6 +2280,8 @@ void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
         return;
     }
 
+    // MoveTo rebuilds the actor's 3D; discovery would take the frame without it for a remote actor leaving (see there).
+    DiscoveryService::NoteMovedHere(apActor->formID);
     apActor->MoveTo(pCell, acPosition);
 }
 
@@ -2721,6 +2778,7 @@ Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const no
         {
             pNpc = TESNPC::Create(acMessage.AppearanceBuffer, acMessage.ChangeFlags);
             FaceGenSystem::Setup(m_world, aEntity, acMessage.FaceTints);
+            LogPlayerCopyAppearance(acMessage, pNpc);
         }
 
         pActor = RememberOwnCopy(Actor::Create(pNpc));
@@ -2846,6 +2904,9 @@ void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickI
 
     const TESNPC* pLocalPick = apActor->GetLeveledPick();
     const uint32_t localPickId = pLocalPick ? pLocalPick->formID : 0;
+    if (m_ownerLeveledPicks.size() > 4096)
+        m_ownerLeveledPicks.clear();
+    m_ownerLeveledPicks[apActor->formID] = cPickId;
 
     // Even a pick matching the current base must supersede pending work.
     if (pBase->IsTemporary() && localPickId == cPickId && m_pendingLeveledConforms.find(apActor->formID) == m_pendingLeveledConforms.end())
@@ -2867,13 +2928,49 @@ void CharacterService::ProcessLeveledConforms() noexcept
 {
     using ReconciliationStage = ActorExtension::ReconciliationStage;
 
-    if (m_pendingLeveledConforms.empty())
-        return;
-
     // Never touch references while the loading screen is up - the cell attach
     // owns them and mutating mid-stream crashes the loader
     UI* pUI = UI::Get();
     if (pUI && pUI->GetMenuOpen(BSFixedString("Loading Menu")))
+        return;
+
+    // A pick that matched when it arrived can stop matching: the game re-rolls a leveled actor when it builds it.
+    // Seen's game found 820B9 "already matches owner's pick 23A8C" (Snow Bear) at 19:42:23.02 and spawned it as an
+    // Ice Wraith 30 ms later (2026-10-11), while Emma's had a Snow Bear. Looked at again once a second.
+    static std::chrono::steady_clock::time_point s_nextPickCheck;
+    if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextPickCheck)
+    {
+        s_nextPickCheck = cNow + std::chrono::seconds(1);
+        for (auto it = m_ownerLeveledPicks.begin(); it != m_ownerLeveledPicks.end();)
+        {
+            Actor* pActor = Cast<Actor>(TESForm::GetById(it->first));
+            const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+            if (!pActor || pActor->IsDeleted() || !pExtension || !pExtension->IsRemote())
+            {
+                it = m_ownerLeveledPicks.erase(it);
+                continue;
+            }
+            const TESNPC* pLocalPick = pActor->GetLeveledPick();
+            if (pLocalPick && pLocalPick->formID != it->second && m_pendingLeveledConforms.find(it->first) == m_pendingLeveledConforms.end())
+            {
+                // Twice at most per actor: a reconciliation that does not make it match would otherwise disable and
+                // rebuild the creature every second.
+                static std::unordered_map<uint32_t, int> s_rerolls;
+                if (s_rerolls.size() > 4096)
+                    s_rerolls.clear();
+                if (int& tries = s_rerolls[it->first]; tries < 2)
+                {
+                    ++tries;
+                    spdlog::info("Leveled actor {:X} was rolled again by the game as {:X}; the owner's pick is {:X}, reconciling again ({} of 2)", it->first,
+                                 pLocalPick->formID, it->second, tries);
+                    m_pendingLeveledConforms[it->first] = it->second;
+                }
+            }
+            ++it;
+        }
+    }
+
+    if (m_pendingLeveledConforms.empty())
         return;
 
     for (auto it = m_pendingLeveledConforms.begin(); it != m_pendingLeveledConforms.end();)
@@ -3033,7 +3130,10 @@ void CharacterService::RunLocalUpdates() const noexcept
         // The arrow is on the string from state 10 (measured 2026-10-10: a VR draw goes 8, 9, 10, the arrow flies at
         // 10, then 0). Said to the others when it starts and when it ends, so their copy of this player shows it.
         static bool s_nockedSent = false;
-        const bool cNocked = attackState >= 10 && attackState <= 11;
+        // From 10 until the bow is put away or shot (0). A VR draw goes back down once the arrow is on the string --
+        // 8, 9, 10 (the arrow in the hand), then 9 and 8 (on the string) and 0 (Emma, 2026-10-11 21:06, eight draws)
+        // -- and taking it off at 9 made it vanish for Seen "when it gets close to the bow/gets loaded in".
+        const bool cNocked = attackState >= 10 || (s_nockedSent && attackState >= 8);
         if (cNocked != s_nockedSent && m_transport.IsConnected())
         {
             ArrowNockedRequest request{};
@@ -3538,7 +3638,11 @@ void CharacterService::RunSpawnUpdates() const noexcept
 
             // A dragon the other player fights sits well outside the 5x5 grid; the server keeps it at the wide range and
             // says so in the spawn request, so it is created here at that range too instead of never.
-            const bool isDragon = m_world.get<WaitingFor3D>(entity).SpawnRequest.IsDragon;
+            // Not for a stand-in, though (a placed reference that is not loaded here, FormId set): its copy is moved
+            // to the owner's position, and outside the loaded cells the game deletes it at once. A Frost Dragon's was
+            // remade every 25 ms, 958 times in a minute (Emma, 2026-10-11 18:28:27, "stands in again" for 34DDB).
+            const auto& cSpawnRequest = m_world.get<WaitingFor3D>(entity).SpawnRequest;
+            const bool isDragon = cSpawnRequest.IsDragon && cSpawnRequest.FormId == GameId{};
             if (GridCellCoords::IsCellInGridCell(characterCoords, playerCoords, isDragon))
             {
                 // The cached copy may be long gone, and the lookup may still answer with where it used to be. Emma's crash
@@ -3588,12 +3692,27 @@ void CharacterService::RunSpawnUpdates() const noexcept
                     if (s_nextAttempt.size() > 1024)
                         s_nextAttempt.clear();
 
+                    // A copy made under two seconds ago that is gone again: whatever removes it will remove the next
+                    // one too, so wait as for a copy that cannot be made, instead of making one every frame.
+                    static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_madeAt;
+                    if (s_madeAt.size() > 1024)
+                        s_madeAt.clear();
+                    if (const auto cMade = s_madeAt.find(remoteComponent.Id); cMade != s_madeAt.end() && cNow - cMade->second < std::chrono::seconds(2))
+                    {
+                        spdlog::info("Copy of server character {:X} made {} ms ago is gone again; next try in 5 s", remoteComponent.Id,
+                                     std::chrono::duration_cast<std::chrono::milliseconds>(cNow - cMade->second).count());
+                        s_madeAt.erase(cMade);
+                        s_nextAttempt[remoteComponent.Id] = cNow + std::chrono::seconds(5); // not nextAttempt: the map may have been cleared above
+                        continue;
+                    }
+
                     pActor = CreateCharacterForEntity(entity);
                     if (!pActor)
                     {
                         s_nextAttempt[remoteComponent.Id] = cNow + std::chrono::seconds(5);
                         continue;
                     }
+                    s_madeAt[remoteComponent.Id] = cNow;
 
                     remoteComponent.CachedRefId = pActor->formID;
                     remoteComponent.CachedBaseId = s_ownCopies.find(pActor->formID) != s_ownCopies.end() && pActor->baseForm ? pActor->baseForm->formID : 0;
@@ -3794,13 +3913,29 @@ void CharacterService::OnNotifyArrowNocked(const NotifyArrowNocked& acMessage) c
 #ifdef SKYRIMVR
     size_t before = 0;
     VRBodySync::NodesNamedLike(pActor, "arrow", 0, before);
+    VRBodySync::SetArrowNocked(pActor->formID, acMessage.Nocked);
 #endif
     reinterpret_cast<TArrow>(pVtable[acMessage.Nocked ? cAttachSlot : cDetachSlot])(pActor, pBipedHolder);
     spdlog::info("ArrowNocked: {:X} (server {:X}): arrow {} the string", pActor->formID, acMessage.ServerId, acMessage.Nocked ? "put on" : "taken off");
 #ifdef SKYRIMVR
     // Whether the game made or removed an arrow in the copy's 3D, said by node names: a check the rig can read.
     size_t after = 0;
-    const std::string names = VRBodySync::NodesNamedLike(pActor, "arrow", 6, after);
+    const std::string names = VRBodySync::NodesNamedLike(pActor, "arrow", 16, after);
     spdlog::info("ArrowNocked: {:X} has {} node(s) named like an arrow, {} before{}{}", pActor->formID, after, before, names.empty() ? "" : ": ", names);
+    // TEMPORARY, for drawing the string back (VR_TODO, the arrow): the bow model's own nodes, the string's among them.
+    // A VR owner draws with the hand, not the third-person draw animation that moves the string, so the copy's string
+    // stays straight. Said once a session per name list.
+    if (acMessage.Nocked)
+    {
+        size_t stringCount = 0, bowCount = 0;
+        const std::string strings = VRBodySync::NodesNamedLike(pActor, "string", 16, stringCount);
+        const std::string bows = VRBodySync::NodesNamedLike(pActor, "bow", 16, bowCount);
+        static std::string s_said;
+        if (const std::string cLine = strings + " | " + bows; cLine != s_said)
+        {
+            s_said = cLine;
+            spdlog::info("ArrowNocked: {:X} bow nodes: {} named like a string ({}), {} like a bow ({})", pActor->formID, stringCount, strings, bowCount, bows);
+        }
+    }
 #endif
 }

@@ -28,6 +28,7 @@
 #include <PlayerCharacter.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
+#include <CrashHandler.h>
 #include <Forms/TESGlobal.h>
 #include <Games/Overrides.h>
 #include <Games/References.h>
@@ -63,6 +64,7 @@ void PlayerService::OnUpdate(const UpdateEvent&) noexcept
     RunLevelUpdates();
     RunBeastFormDetection();
     RunPlaceUpdates();
+    RunCrashPlaceNote();
 }
 
 void PlayerService::OnConnected(const ConnectedEvent& acEvent) noexcept
@@ -291,6 +293,10 @@ void PlayerService::RunPostDeathUpdates() noexcept
         m_godmodeDeadline = now + 10s;
 
         PlayerCharacter* pPlayer = PlayerCharacter::Get();
+        // Emma, 2026-10-11 21:11: respawned, then down again 1.5 s after the god mode below ended, with nothing
+        // hitting her ("I was far from the witch"). Whether the respawn gave the health back is not logged anywhere.
+        spdlog::info("PlayerService: health {:.0f} after the respawn, bleeding out {}", pPlayer->GetActorValue(ActorValueInfo::kHealth),
+                     pPlayer->actorState.IsBleedingOut());
         if (pPlayer->currentProcess)
             pPlayer->currentProcess->KnockExplosion(pPlayer, &pPlayer->position, 0.f);
 
@@ -301,6 +307,9 @@ void PlayerService::RunPostDeathUpdates() noexcept
     {
         PlayerCharacter::SetGodMode(false);
         m_godmodeStart = false;
+        const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+        spdlog::info("PlayerService: god mode of the respawn over; health {:.0f}, bleeding out {}", pPlayer->GetActorValue(ActorValueInfo::kHealth),
+                     pPlayer->actorState.IsBleedingOut());
     }
 }
 
@@ -372,6 +381,61 @@ void PlayerService::RunPlaceUpdates() noexcept
     PlayerPlaceRequest request{};
     request.Place = place;
     m_transport.Send(request);
+}
+
+// The crash map (urSovngarde-hub worker/LAUNCHER.md section 13; the launcher parses these words): where the player is,
+// noted once a second, connected or not, as the line a crash report logs (CrashPlace). Exterior:
+//   worldspace Tamriel, cell 961B, place 'Whiterun', at (17310, -14345)
+// Interior, with where the player last stood outside -- the door they came in by -- when this session has seen one:
+//   interior cell 1A27F, place 'Dragonsreach', outside Tamriel (19447, -7409)
+// A worldspace by its editor id (the website's maps are keyed by it, and a mod's form id changes with the load order),
+// its form id in hex when it has none; cells in hex. The place is the location's name as the game shows it, else the
+// cell's, else the worldspace's; "place none" when there is none.
+void PlayerService::RunCrashPlaceNote() noexcept
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now < m_nextCrashPlaceNote)
+        return;
+    m_nextCrashPlaceNote = now + std::chrono::seconds(1);
+
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return;
+    const auto nameOf = [](const TESForm* apForm) -> const char* {
+        const char* pName = apForm ? apForm->GetName() : nullptr;
+        return pName && *pName ? pName : nullptr;
+    };
+    const TESWorldSpace* pWorldSpace = pPlayer->GetWorldSpace();
+    const TESObjectCELL* pCell = pPlayer->GetParentCellEx();
+    const char* pPlace = nameOf(pPlayer->locationForm);
+    if (!pPlace)
+        pPlace = nameOf(pCell);
+    if (!pPlace)
+        pPlace = nameOf(pWorldSpace);
+    const std::string place = pPlace ? fmt::format("'{}'", pPlace) : std::string("none");
+    const uint32_t cellId = pCell ? pCell->formID : 0;
+
+    std::string line;
+    if (pWorldSpace)
+    {
+        const char* pEditorId = const_cast<TESWorldSpace*>(pWorldSpace)->GetFormEditorID();
+        m_outsideWorldSpace = pEditorId && *pEditorId ? String(pEditorId) : String(fmt::format("{:X}", pWorldSpace->formID).c_str());
+        m_outsideX = pPlayer->position.x;
+        m_outsideY = pPlayer->position.y;
+        line = fmt::format("worldspace {}, cell {:X}, place {}, at ({:.0f}, {:.0f})", m_outsideWorldSpace, cellId, place, pPlayer->position.x, pPlayer->position.y);
+    }
+    else if (!m_outsideWorldSpace.empty())
+        line = fmt::format("interior cell {:X}, place {}, outside {} ({:.0f}, {:.0f})", cellId, place, m_outsideWorldSpace, m_outsideX, m_outsideY);
+    else
+        line = fmt::format("interior cell {:X}, place {}", cellId, place);
+    CrashPlace::Note(line.c_str());
+    // Once a session, so a log shows the note works without a crash to show it.
+    static bool s_said = false;
+    if (!s_said)
+    {
+        s_said = true;
+        spdlog::info("CrashPlace noted (logged as is if the game crashes): {}", line);
+    }
 }
 
 void PlayerService::RunBeastFormDetection() const noexcept

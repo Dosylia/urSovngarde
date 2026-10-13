@@ -32,6 +32,12 @@ holdpose on
 replay me 2
 wait 3
 log CHECK logged VRWeaponBody: actor \w+ right weapon .* is a body in the world now
+# The player's own iron sword in the right hand: the save may hold anything there (a glass bow on 2026-10-12, which
+# swung and met nothing). The rig puts her saves back afterwards.
+log DO console player.additem 12EB7 1
+wait 1
+log DO console player.equipitem 12EB7
+wait 2
 log DO face copy
 wait 2
 log DO papyrus Actor DrawWeapon 14

@@ -3,9 +3,11 @@ target("TPTests")
     set_kind("binary")
     set_group("Tests")
     add_includedirs(
-        ".", "../encoding", "../client")
+        ".", "../encoding", "../client", "../server")
     add_headerfiles("**.h")
     add_files("*.cpp")
+    -- The public server's admin keys: pure code, the hash handed in (no OpenSSL here).
+    add_files("../server/AdminKeys.cpp")
     add_deps("SkyrimEncoding")
     if is_plat("windows") then
         -- SmallDump.h (client) writes minidumps.
