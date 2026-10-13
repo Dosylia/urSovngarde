@@ -1742,45 +1742,6 @@ const uint8_t* HiggsBodyHolding(const uint8_t* apBody) noexcept
     return nullptr;
 }
 
-// Like HiggsBodyHolding, but ignores contacts: Havok keeps a contact between two bodies in the same constraint lists.
-// Without this, a body merely touching a HIGGS body reads as held.
-// The kind of constraint is told by the RTTI name of its data, which goes to aKind.
-// hkConstraintInternal::constraint is at +0x00, hkpConstraintInstance::data at +0x18.
-// Slow, since RttiNameOf checks memory with VirtualQuery: call it only where a hand is already known to be near.
-const char* RttiNameOf(void* apObject) noexcept;
-const uint8_t* HiggsGrabHolding(const uint8_t* apBody, const char*& aKind) noexcept
-{
-    aKind = nullptr;
-    const auto grab = [apBody, &aKind](const uint8_t* apInstance) -> const uint8_t*
-    {
-        if (!apInstance)
-            return nullptr;
-        const uint8_t* pA = *reinterpret_cast<const uint8_t* const*>(apInstance + 0x28);
-        const uint8_t* pB = *reinterpret_cast<const uint8_t* const*>(apInstance + 0x30);
-        const uint8_t* pOther = pA == apBody ? pB : pA;
-        if (pOther == apBody || !IsHiggsBody(pOther))
-            return nullptr;
-        void* pData = *reinterpret_cast<void* const*>(apInstance + 0x18);
-        const char* pName = RttiNameOf(pData);
-        if (!pName || std::strstr(pName, "Contact"))
-            return nullptr;
-        aKind = pName;
-        return pOther;
-    };
-    const uint8_t* pMaster = *reinterpret_cast<const uint8_t* const*>(apBody + 0x100);
-    const uint16_t masterCount = *reinterpret_cast<const uint16_t*>(apBody + 0x108);
-    if (pMaster && masterCount <= 32)
-        for (uint16_t i = 0; i < masterCount; ++i)
-            if (const uint8_t* pHand = grab(*reinterpret_cast<const uint8_t* const*>(pMaster + i * 0x40)))
-                return pHand;
-    const auto* const* ppSlaves = *reinterpret_cast<const uint8_t* const* const*>(apBody + 0x110);
-    const int32_t slaveCount = *reinterpret_cast<const int32_t*>(apBody + 0x118);
-    if (ppSlaves && slaveCount > 0 && slaveCount <= 32)
-        for (int32_t i = 0; i < slaveCount; ++i)
-            if (const uint8_t* pHand = grab(ppSlaves[i]))
-                return pHand;
-    return nullptr;
-}
 std::mutex s_contactsLock;
 std::array<WeaponContact, 64> s_contacts{};
 size_t s_contactCount = 0;
@@ -2979,102 +2940,6 @@ void ConsiderForWeaponTouch(Actor* apActor) noexcept
         s_touchCandidates.push_back(apActor->formID);
 }
 
-// Logs when a HIGGS hand starts and stops holding a ragdoll body of a living actor the other game runs (an NPC or a copy).
-// A hold is HIGGS's grab constraint, as HiggsGrabHolding reads it. Measurement only, a first step toward sending the pull.
-// Checked ten times a second, only for actors within 40 units of a player hand.
-// Read under the world's lock, as in PlaceCorpse, so no constraint comes or goes meanwhile.
-void WatchHandHolds(const TiltedPhoques::Vector<uint32_t>& acCandidates) noexcept
-{
-    struct Hold
-    {
-        std::chrono::steady_clock::time_point Since{};
-        std::string Bone;
-        bool Player = false;
-    };
-    static std::unordered_map<uint32_t, Hold> s_holds;
-    static std::chrono::steady_clock::time_point s_nextCheck{};
-    const auto cNow = std::chrono::steady_clock::now();
-    if (cNow < s_nextCheck)
-        return;
-    s_nextCheck = cNow + std::chrono::milliseconds(100);
-
-    TiltedPhoques::Vector<uint32_t> heldNow;
-    for (const uint32_t formId : acCandidates)
-    {
-        Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
-        const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
-        // Dead bodies have their own watch (IsRemoteBodyGrabbedHere) and are taken over when handled.
-        if (!pActor || !pExtension || !pExtension->IsRemote() || pActor->actorState.IsDeadOrDying())
-            continue;
-        void* pRoot = pActor->GetNiNode();
-        if (!pRoot || NearestHandToBody(pRoot) > 40.f)
-            continue;
-
-        // Its dynamic bodies in a world, from a live tree (null checks only, as PlaceCorpse).
-        TiltedPhoques::Vector<std::pair<void*, const uint8_t*>> bodies;
-        void* pHkpWorld = nullptr;
-        TiltedPhoques::Vector<void*> queue;
-        queue.push_back(pRoot);
-        for (size_t head = 0; head < queue.size() && head < 1024; ++head)
-        {
-            void* pObject = queue[head];
-            if (const uint8_t* pBody = HavokBodyOfLive(pObject))
-            {
-                const uint8_t motionType = pBody[kMotionTypeOffset];
-                void* pWorld = At<void*>(const_cast<uint8_t*>(pBody), kHkWorldOffset);
-                if (pWorld && ((motionType >= 1 && motionType <= 3) || motionType == 6) && (!pHkpWorld || pWorld == pHkpWorld) && bodies.size() < 64)
-                {
-                    pHkpWorld = pWorld;
-                    bodies.emplace_back(pObject, pBody);
-                }
-            }
-            void* pNode = AsNode(pObject);
-            void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
-            const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
-            for (uint16_t i = 0; pChildren && i < capacity; ++i)
-                if (pChildren[i])
-                    queue.push_back(pChildren[i]);
-        }
-        if (bodies.empty())
-            continue;
-
-        WorldWriteLock lock(BhkWorldOf(pHkpWorld));
-        if (!lock.Held())
-            continue;
-        const char* pHeldBone = nullptr;
-        const char* pKind = nullptr;
-        for (const auto& [pNode, pBody] : bodies)
-            if (At<void*>(const_cast<uint8_t*>(pBody), kHkWorldOffset) == pHkpWorld && HiggsGrabHolding(pBody, pKind))
-            {
-                const char* pName = GetName(pNode);
-                pHeldBone = pName ? pName : "?";
-                break;
-            }
-        if (!pHeldBone)
-            continue;
-
-        heldNow.push_back(formId);
-        if (s_holds.find(formId) == s_holds.end())
-        {
-            s_holds[formId] = Hold{cNow, pHeldBone, pExtension->IsRemotePlayer()};
-            spdlog::info("HandHold: a HIGGS hand holds '{}' of {:X} ({} the other game runs, alive; {} ragdoll bodies in reach; constraint {})", pHeldBone, formId,
-                         pExtension->IsRemotePlayer() ? "a player copy" : "an NPC", bodies.size(), pKind ? pKind : "?");
-        }
-    }
-
-    for (auto it = s_holds.begin(); it != s_holds.end();)
-    {
-        if (std::find(heldNow.begin(), heldNow.end(), it->first) != heldNow.end())
-        {
-            ++it;
-            continue;
-        }
-        spdlog::info("HandHold: {:X} ({}) let go after {} ms (it held '{}')", it->first, it->second.Player ? "player copy" : "NPC",
-                     std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count(), it->second.Bone);
-        it = s_holds.erase(it);
-    }
-}
-
 void EndWeaponTouch() noexcept
 {
     TiltedPhoques::Vector<uint32_t> candidates;
@@ -3098,8 +2963,6 @@ void EndWeaponTouch() noexcept
     // Not while dying or bleeding out: through death and respawn the 3D is torn down and rebuilt, and reading it then can crash.
     if (pPlayer->actorState.IsDeadOrDying() || pPlayer->actorState.IsBleedingOut())
         return;
-
-    WatchHandHolds(candidates);
 
     Holding mine;
     if (!ResolveHolding(pPlayer, mine))

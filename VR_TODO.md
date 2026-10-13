@@ -23,9 +23,8 @@ for the lines named.
 
 - [ ] **Blades:** does your blade rest on his, and does it feel right (`BladeStop: ... met`, `... let go`)? Open design
       point: sliding off his hilt end lets go, so the blade carries on into his hand and that hit counts.
-- [ ] **Grabbing:** grab an NPC Seen's game runs, then Seen's arm. The grabber's log says `HandHold: a HIGGS hand holds
-      ...` if HIGGS can hold a copy at all; no such line means the NPC pull and the grab buzz (Open work) start
-      elsewhere.
+- [ ] **Grabbing:** grab an NPC Seen's game runs, then Seen's arm, and say what the hand does (nothing, holds, pulls).
+      No log line tells it any more (see the NPC pull in Open work).
 - [ ] **Arrow on the bow:** on the string as the other player sees it, along the bow (across it: the arrow model's axis
       `kArrowForward` is wrong), and gone after the shot.
 - [ ] **Bow string:** pulled back to the string hand while the arrow is on, the limbs not bent, straight again after.
@@ -35,7 +34,7 @@ for the lines named.
 - [ ] **Book:** one player stashes a placed book and drops it, the other takes it (`WorldObject: book X taken here` on
       one side, `... removed here` on the other).
 - [ ] **Skeletons and corpses:** no runs of `Received remote actor` / `Actor removed` for one actor, no corpse moved
-      twice a second (`CorpseDiag`), a corpse left after two useless moves (`left there until that moves`).
+      twice a second, a corpse left after two useless moves (`left there until that moves`).
 - [ ] **Leveled creatures:** the same creature on both screens (the Snow Bear / Ice Wraith of 820B9; `rolled again by
       the game`).
 - [ ] **Followers:** a follower stays with her player's game, no back-and-forth (`given to player`, `Gained
@@ -87,11 +86,13 @@ for the lines named.
 ## Open work
 
 - [ ] **Handling a living NPC the other game runs: send the pull** (decided 2026-10-10: the grabber's game sends the
-      pull to the game that runs the NPC, which applies it). Waits on the `HandHold` result of the next session (the
-      rig cannot make a HIGGS grab: DevBench answers the controller state itself, so its buttons never reach HIGGS).
+      pull to the game that runs the NPC, which applies it). Needs a safe way to tell when a HIGGS hand holds a copy:
+      the `HandHold` diagnostic read Havok constraints under the world lock from a game thread, corrupted contacts
+      (rig crash at `SkyrimVR+0xa10860`) and was removed. A redo should read them inside the physics step. The rig
+      cannot make a HIGGS grab: DevBench answers the controller state itself, so its buttons never reach HIGGS.
 - [ ] **Grabbing the other player: a buzz on the grabbed hand** (decided 2026-10-10, no stagger). A `GrabRequest` from
       the grabber's game, passed on by the server as `NotifyGrab`, pulses that hand (`VRHaptics::Pulse`, like
-      `FeelClash`); a protocol change. Waits on the same `HandHold` result.
+      `PulseClashHaptics`); a protocol change. Waits on the same grab detection.
 - [ ] **Your body pushing loose items** (decided 2026-10-12: the walker's game owns a pushed item). Since 2026-10-12 the
       other game no longer sends a move that starts next to a player's copy, so a walked-into item stays put on both
       sides. To do: collision bodies on the local player's legs and torso (as the weapon bodies are made) so the
