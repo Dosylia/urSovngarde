@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <exception>
 #include <unordered_map>
 #include <vector>
 #include <filesystem>
@@ -622,9 +624,152 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
             singleThreaded.lock();
         }
 
-        spdlog::shutdown();
+        // A flush, not spdlog::shutdown(): shutdown drops the logger, and every later log line would then fault.
+        spdlog::default_logger()->flush();
     }
     return retval;
+}
+
+namespace
+{
+// Cleared by an exit handler registered after spdlog's registry exists, so it runs before the logger is destroyed.
+std::atomic<bool> s_loggerAlive{false};
+
+struct SevereCode
+{
+    DWORD Code;
+    const char* Name;
+};
+
+// Exceptions that usually end the process but get no crash report.
+// The crash report covers access violations and /GS failures.
+// Code 0 marks the CRT's last stops, which end the process without an exception.
+constexpr SevereCode cSevereCodes[] = {
+    {0xC0000374, "heap corruption"},
+    {0xC00000FD, "stack overflow"},
+    {0xC0000006, "in-page error"},
+    {0xC000001D, "illegal instruction"},
+    {0xC0000094, "integer divide by zero"},
+    {0xC0000096, "privileged instruction"},
+    {0, "std::terminate was called (an uncaught C++ exception or a noexcept violation)"},
+    {0, "a CRT function was given an invalid parameter"},
+    {0, "a pure virtual function was called"},
+};
+constexpr size_t cTerminateIndex = 6;
+constexpr size_t cInvalidParameterIndex = 7;
+constexpr size_t cPurecallIndex = 8;
+std::atomic<bool> s_severeReported[std::size(cSevereCodes)]{};
+
+// The watchdog thread writes the line, so the faulting thread needs little stack and takes no lock.
+// A stack overflow leaves too little stack to format it, and a heap corruption may come from inside the logger.
+// A slot is pending while its thread id is set.
+std::atomic<uintptr_t> s_severeAddress[std::size(cSevereCodes)]{};
+std::atomic<DWORD> s_severeThread[std::size(cSevereCodes)]{};
+std::atomic<HANDLE> s_watchdogWake{nullptr};
+std::atomic<DWORD> s_watchdogThreadId{0};
+
+void LogSevereException(const SevereCode& acCode, const uintptr_t aAddress, const DWORD aThreadId) noexcept
+{
+    char line[MAX_PATH * 3 + 160];
+    if (acCode.Code == 0)
+    {
+        _snprintf_s(line, sizeof(line), _TRUNCATE, "SevereException: %s, thread %lu", acCode.Name, aThreadId);
+        CrashLog::Line(line);
+        return;
+    }
+    char where[MAX_PATH * 3 + 32];
+    if (!NameModuleOffset(aAddress, where, sizeof(where), nullptr))
+        _snprintf_s(where, sizeof(where), _TRUNCATE, "0x%llx (no module)", static_cast<unsigned long long>(aAddress));
+    _snprintf_s(line, sizeof(line), _TRUNCATE, "SevereException: 0x%08lX %s at %s, thread %lu (once per kind; it may still be handled)", acCode.Code, acCode.Name, where,
+                aThreadId);
+    CrashLog::Line(line);
+}
+
+// Called by the watchdog thread to write the lines the handler left.
+void LogPendingSevereExceptions() noexcept
+{
+    for (size_t i = 0; i < std::size(cSevereCodes); ++i)
+    {
+        if (const DWORD cThread = s_severeThread[i].load())
+        {
+            LogSevereException(cSevereCodes[i], s_severeAddress[i].load(), cThread);
+            s_severeThread[i].store(0);
+        }
+    }
+}
+
+// Leaves the line for the watchdog, once per kind and session.
+// Waits up to a second for it to reach the disk, since the process may end right after.
+void ReportSevere(const size_t aIndex, const uintptr_t aAddress) noexcept
+{
+    HANDLE hWake = s_watchdogWake.load();
+    if (!hWake || !s_loggerAlive.load() || s_severeReported[aIndex].exchange(true))
+        return;
+
+    s_severeAddress[aIndex].store(aAddress);
+    s_severeThread[aIndex].store(GetCurrentThreadId());
+    SetEvent(hWake);
+    if (GetCurrentThreadId() != s_watchdogThreadId.load())
+        for (int i = 0; i < 100 && s_severeThread[aIndex].load(); ++i)
+            Sleep(10);
+}
+
+// One line per kind and session for the exceptions above, then the search goes on as if this handler did not exist.
+// A first-chance exception the program handles itself is also logged, once.
+// C++ exceptions and breakpoints are not in the list.
+LONG WINAPI SevereExceptionHandler(PEXCEPTION_POINTERS apInfo) noexcept
+{
+    const DWORD cCode = apInfo->ExceptionRecord->ExceptionCode;
+    for (size_t i = 0; i < std::size(cSevereCodes); ++i)
+    {
+        if (cCode != 0 && cSevereCodes[i].Code == cCode)
+        {
+            ReportSevere(i, reinterpret_cast<uintptr_t>(apInfo->ExceptionRecord->ExceptionAddress));
+            break;
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// The CRT's last stops each leave one line, then do what would have happened without them.
+std::terminate_handler s_previousTerminate = nullptr;
+_invalid_parameter_handler s_previousInvalidParameter = nullptr;
+_purecall_handler s_previousPurecall = nullptr;
+
+void OnTerminate()
+{
+    ReportSevere(cTerminateIndex, 0);
+    if (s_previousTerminate)
+        s_previousTerminate();
+    std::abort();
+}
+
+void OnInvalidParameter(const wchar_t* apExpression, const wchar_t* apFunction, const wchar_t* apFile, const unsigned int aLine, const uintptr_t aReserved)
+{
+    ReportSevere(cInvalidParameterIndex, 0);
+    if (s_previousInvalidParameter)
+        s_previousInvalidParameter(apExpression, apFunction, apFile, aLine, aReserved);
+    else
+        _invoke_watson(apExpression, apFunction, apFile, aLine, aReserved);
+}
+
+void OnPurecall()
+{
+    ReportSevere(cPurecallIndex, 0);
+    if (s_previousPurecall)
+        s_previousPurecall();
+}
+} // namespace
+
+void CrashLog::Line(const char* acpLine, const spdlog::level::level_enum aLevel) noexcept
+{
+    if (!acpLine || !s_loggerAlive.load(std::memory_order_acquire))
+        return;
+    if (spdlog::logger* pLogger = spdlog::default_logger_raw())
+    {
+        pLogger->log(aLevel, "{}", acpLine);
+        pLogger->flush();
+    }
 }
 
 namespace FreezeWatchdog
@@ -829,9 +974,12 @@ DWORD WINAPI WatchdogMain(LPVOID) noexcept
     int reportsForBeat = 0;
     for (;;)
     {
-        Sleep(1000);
+        if (WaitForSingleObject(s_watchdogWake.load(), 1000) == WAIT_FAILED)
+            Sleep(1000);
+        LogPendingSevereExceptions();
+        // While the game exits only the lines above are written.
         if (IsProcessExiting())
-            return 0;
+            continue;
         const int64_t cBeat = s_lastBeatMs.load(std::memory_order_relaxed);
         if (!cBeat)
             continue; // the game has not run a frame of ours yet
@@ -885,8 +1033,15 @@ void Beat() noexcept
 
 void Start() noexcept
 {
-    if (HANDLE hWatchdog = CreateThread(nullptr, 0, &WatchdogMain, nullptr, 0, nullptr))
+    s_watchdogWake.store(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+    DWORD threadId = 0;
+    if (HANDLE hWatchdog = CreateThread(nullptr, 0, &WatchdogMain, nullptr, 0, &threadId))
+    {
+        s_watchdogThreadId.store(threadId);
         CloseHandle(hWatchdog);
+    }
+    else
+        s_watchdogWake.store(nullptr);
 }
 } // namespace FreezeWatchdog
 
@@ -901,6 +1056,17 @@ CrashHandler::CrashHandler()
     SetUnhandledExceptionFilter(m_pUnhandled);
 
     m_handler = AddVectoredExceptionHandler(1, &VectoredExceptionHandler);
+
+    // Added last so it runs first, before the crash report's larger frame meets a stack overflow.
+    AddVectoredExceptionHandler(1, &SevereExceptionHandler);
+    s_previousTerminate = std::set_terminate(&OnTerminate);
+    s_previousInvalidParameter = _set_invalid_parameter_handler(&OnInvalidParameter);
+    s_previousPurecall = _set_purecall_handler(&OnPurecall);
+
+    // Creating the registry first makes this exit handler run before the registry is destroyed.
+    static_cast<void>(spdlog::default_logger_raw());
+    s_loggerAlive.store(true);
+    std::atexit([] { s_loggerAlive.store(false); });
 
     FreezeWatchdog::Start();
 }

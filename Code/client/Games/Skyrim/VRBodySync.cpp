@@ -3058,7 +3058,9 @@ std::vector<void*> ArrowNodesOf(void* apRoot) noexcept
 }
 
 // The arrow model's length axis in its own frame, pointing from the nock to the head.
+// The model's origin is the arrowhead; the nock lies about 64 units back along -y (the vanilla iron arrow mesh).
 constexpr glm::vec3 kArrowForward{0.f, 1.f, 0.f};
+constexpr float kArrowNockDistance = 64.f;
 
 void PlaceNockedArrows() noexcept
 {
@@ -3132,7 +3134,8 @@ void PlaceNockedArrows() noexcept
         const glm::mat3 delta = cWanted * glm::transpose(ToGlm(current.rotate));
         NiTransform placed = current;
         placed.rotate = FromGlm(cWanted);
-        placed.translate = FromGlm(cStringAt);
+        // The origin is the head, so it goes one arrow length ahead of the string hand and the nock lands on the string.
+        placed.translate = FromGlm(cStringAt + cForward * (kArrowNockDistance * current.scale));
         At<NiTransform>(pArrow, kWorldOffset) = placed;
         // Everything below the arrow node moves with it.
         for (size_t i = static_cast<size_t>(arrow) + 1; i < items.size(); ++i)
@@ -3144,7 +3147,7 @@ void PlaceNockedArrows() noexcept
                 continue;
             NiTransform& world = At<NiTransform>(items[i].pObject, kWorldOffset);
             world.rotate = FromGlm(delta * ToGlm(world.rotate));
-            world.translate = FromGlm(cStringAt + delta * (ToGlm(world.translate) - pivot));
+            world.translate = FromGlm(ToGlm(placed.translate) + delta * (ToGlm(world.translate) - pivot));
         }
 
         // Draws the string back: the string's middle bone (Bow_StringBone2) and the bones below it move to the string hand.

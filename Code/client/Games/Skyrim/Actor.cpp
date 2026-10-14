@@ -186,6 +186,52 @@ uint16_t Actor::GetLevel() const noexcept
     return TiltedPhoques::ThisCall(s_getLevel, this);
 }
 
+namespace
+{
+// Character's vtable and the game's own SetPosition in it, read before any SKSE plugin can patch the slot.
+// PLANCK 0.7 and later patch that slot and leave an actor out of its active ragdolls for seconds after each call.
+// Copies are moved every frame, so through the patched slot they would never get a ragdoll in the physics world.
+void* const* s_characterVtable = nullptr;
+void* s_gameSetPosition = nullptr;
+
+#ifdef SKYRIMVR
+constexpr size_t kSetPositionSlot = 0xAB;
+
+TiltedPhoques::Initializer s_gameSetPositionCapture(
+    []()
+    {
+        VersionDbPtr<void*> vtable(261397);
+        if (auto* pVtable = reinterpret_cast<void* const*>(vtable.Get()))
+        {
+            s_characterVtable = pVtable;
+            s_gameSetPosition = pVtable[kSetPositionSlot];
+        }
+    });
+
+// Once: whether a plugin replaced Character::SetPosition, and which one.
+void LogSetPositionOwner() noexcept
+{
+    static bool s_logged = false;
+    if (s_logged || !s_characterVtable)
+        return;
+    s_logged = true;
+
+    void* pCurrent = s_characterVtable[kSetPositionSlot];
+    if (pCurrent == s_gameSetPosition)
+    {
+        spdlog::info("ForcePosition: Character::SetPosition is the game's own; copies are moved with it");
+        return;
+    }
+    char path[MAX_PATH] = "?";
+    HMODULE hModule = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(pCurrent), &hModule) && hModule)
+        GetModuleFileNameA(hModule, path, MAX_PATH);
+    const char* pFile = std::strrchr(path, '\\');
+    spdlog::info("ForcePosition: Character::SetPosition is replaced by {}; copies are moved with the game's own instead", pFile ? pFile + 1 : path);
+}
+#endif
+} // namespace
+
 void Actor::ForcePosition(const NiPoint3& acPosition) noexcept
 {
     ScopedReferencesOverride recursionGuard;
@@ -205,6 +251,16 @@ void Actor::ForcePosition(const NiPoint3& acPosition) noexcept
 
     // With no usable step yet, update the reference and 3D now.
     // Interpolation catches the controller up once physics timing becomes available.
+#ifdef SKYRIMVR
+    // A copy is moved with the game's own SetPosition, which a plugin watching for teleports does not see.
+    if (pExtension && pExtension->IsRemote() && s_gameSetPosition && *reinterpret_cast<void* const* const*>(this) == s_characterVtable)
+    {
+        LogSetPositionOwner();
+        TP_THIS_FUNCTION(TGameSetPosition, void, Actor, const NiPoint3&, bool);
+        reinterpret_cast<TGameSetPosition*>(s_gameSetPosition)(this, acPosition, updateController);
+        return;
+    }
+#endif
     SetPosition(acPosition, updateController);
 }
 

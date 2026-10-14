@@ -142,6 +142,12 @@ void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, Charact
 
 namespace
 {
+// The key of a remembered place: the actor's form id.
+uint64_t LastPlaceKey(const GameId& acId) noexcept
+{
+    return (static_cast<uint64_t>(acId.ModId) << 32) | acId.BaseId;
+}
+
 // Every two seconds, an actor whose owner is out of range or silent goes to a player who is in range.
 // Silent means no movement snapshot for cSilence, as in a paused game; a silent player is never a candidate.
 // Two sweeps in a row are needed, so a player crossing a cell edge does not bounce actors back and forth.
@@ -754,6 +760,38 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     movementComponent.Rotation = {message.Rotation.x, 0.f, message.Rotation.y};
     movementComponent.Sent = false;
 
+    // Another player left this actor elsewhere less than half an hour ago, and this game's copy comes from its own save.
+    // The actor starts where it was left, and this game is told to move its copy there before it owns it.
+    if (!isCustom)
+    {
+        if (const auto place = m_lastPlaces.find(LastPlaceKey(gameId)); place != m_lastPlaces.end())
+        {
+            const LastPlace cPlace = place->second;
+            m_lastPlaces.erase(place);
+            const bool cRecent = std::chrono::steady_clock::now() - cPlace.At < std::chrono::minutes(30);
+            const bool cElsewhere = cPlace.Cell != message.CellId || cPlace.WorldSpaceId != message.WorldSpaceId ||
+                                    glm::distance(cPlace.Position, glm::vec3(message.Position)) > 256.f;
+            if (cRecent && cElsewhere && cPlace.ReleasedBy != acMessage.pPlayer->GetId())
+            {
+                cellIdComponent.Cell = cPlace.Cell;
+                cellIdComponent.WorldSpaceId = cPlace.WorldSpaceId;
+                cellIdComponent.CenterCoords = GridCellCoords::CalculateGridCellCoords(cPlace.Position.x, cPlace.Position.y);
+                movementComponent.Position = cPlace.Position;
+
+                NotifyActorTeleport notify{};
+                notify.FormId = gameId;
+                notify.WorldSpaceId = cPlace.WorldSpaceId;
+                notify.CellId = cPlace.Cell;
+                notify.Position.x = cPlace.Position.x;
+                notify.Position.y = cPlace.Position.y;
+                notify.Position.z = cPlace.Position.z;
+                acMessage.pPlayer->Send(notify);
+                spdlog::info("Actor {:x}:{:x} was left elsewhere by player {:X}; player {:X}'s copy from its save is moved there", gameId.ModId, gameId.BaseId,
+                             cPlace.ReleasedBy, acMessage.pPlayer->GetId());
+            }
+        }
+    }
+
     m_world.emplace<AnimationComponent>(cEntity);
 
     // If this is a player character store a ref and trigger an event
@@ -1007,6 +1045,16 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
                 return;
         }
     }
+
+    // Remembered so that another player's game, which loads it from its own save, is told where it really is.
+    if (const auto* pFormId = m_world.try_get<FormIdComponent>(aEntity); pFormId && !characterComponent.IsPlayer())
+        if (const auto* pMovement = m_world.try_get<MovementComponent>(aEntity))
+        {
+            if (m_lastPlaces.size() > 1024)
+                m_lastPlaces.clear();
+            const Player* pOwner = ownerComponent.GetOwner();
+            m_lastPlaces[LastPlaceKey(pFormId->Id)] = {cellIdComponent.WorldSpaceId, cellIdComponent.Cell, pMovement->Position, pOwner ? pOwner->GetId() : 0u, now};
+        }
 
     spdlog::info("Removing actor {:X} after {} because no eligible owner remains", World::ToInteger(aEntity), pReasonName);
     m_world.GetDispatcher().trigger(CharacterRemoveEvent(World::ToInteger(aEntity)));

@@ -71,6 +71,9 @@ private:
     {
         glm::vec3 LastPosition{};
         glm::vec3 LastRotation{};
+        //! A world object's 3D rotation where LastPosition was taken.
+        //! Its Euler angles can wrap around or lag the 3D, so a restart is judged on this.
+        glm::mat3 LastTurn{1.f};
         std::chrono::steady_clock::time_point LastLocalMove{};
         std::chrono::steady_clock::time_point LastRemote{};
         std::chrono::steady_clock::time_point QuietUntil{};

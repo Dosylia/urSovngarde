@@ -2,6 +2,9 @@
 
 #include <Events/PacketEvent.h>
 #include <Structs/ActorData.h>
+#include <Structs/GameId.h>
+
+#include <chrono>
 
 struct UpdateEvent;
 struct CharacterInteriorCellChangeEvent;
@@ -85,6 +88,18 @@ protected:
 
 private:
     World& m_world;
+
+    // Where an actor removed for want of an owner was last, and which player let it go.
+    // Another player's game asking for it later holds an older copy from its own save, which is moved here instead.
+    struct LastPlace
+    {
+        GameId WorldSpaceId{};
+        GameId Cell{};
+        glm::vec3 Position{};
+        uint32_t ReleasedBy{};
+        std::chrono::steady_clock::time_point At{};
+    };
+    mutable TiltedPhoques::Map<uint64_t, LastPlace> m_lastPlaces;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_exteriorCellChangeEventConnection;

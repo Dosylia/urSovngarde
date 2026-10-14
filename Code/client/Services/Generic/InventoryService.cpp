@@ -627,8 +627,10 @@ void InventoryService::ApplyHandEquipment(Actor* apActor, const Inventory& acEqu
             ScopedInventoryOverride _;
             apActor->AddObjectToContainer(pObject, nullptr, 1, nullptr);
         }
+        // The right hand takes the item's own slot, as Papyrus EquipItem does: a bow or a two-handed weapon needs both hands.
+        TESForm* pSlot = item.Left ? defaultObjects.leftEquipSlot : nullptr;
         spdlog::info("Equipment sync: remote actor {:X} equips {:X} ({} hand)", apActor->formID, item.pForm->formID, item.Left ? "left" : "right");
-        pEquipManager->Equip(apActor, item.pForm, nullptr, 1, item.Left ? defaultObjects.leftEquipSlot : defaultObjects.rightEquipSlot, false, true, false, false);
+        pEquipManager->Equip(apActor, item.pForm, nullptr, 1, pSlot, false, true, false, false);
         NoteHandItem(apActor, item.pForm, item.Left, true);
     }
 

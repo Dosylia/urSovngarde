@@ -28,6 +28,13 @@ void Note(const char* acpLine) noexcept;
 [[nodiscard]] const char* Last() noexcept;
 } // namespace CrashPlace
 
+//! Writes one line and flushes it at once, for code that runs while the process may be going down.
+//! Does nothing once the logger has been destroyed at exit.
+namespace CrashLog
+{
+void Line(const char* acpLine, spdlog::level::level_enum aLevel = spdlog::level::err) noexcept;
+} // namespace CrashLog
+
 class CrashHandler
 {
     PVOID m_handler;

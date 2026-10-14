@@ -25,8 +25,25 @@ for the lines named.
       point: sliding off his hilt end lets go, so the blade carries on into his hand and that hit counts.
 - [ ] **Grabbing:** grab an NPC Seen's game runs, then Seen's arm, and say what the hand does (nothing, holds, pulls).
       No log line tells it any more (see the NPC pull in Open work).
-- [ ] **Arrow on the bow:** on the string as the other player sees it, along the bow (across it: the arrow model's axis
-      `kArrowForward` is wrong), and gone after the shot.
+- [ ] **PLANCK 0.8.x:** since 0.7, PLANCK patches Character::SetPosition and leaves an actor out of its active ragdolls
+      for 2.5-5 s after each call; copies were moved through it every frame, so on 2026-10-14 no copy had a ragdoll in
+      the world (no sword body, no clash, no NPC grab). Copies are now moved with the game's own SetPosition (logged
+      once: `ForcePosition: Character::SetPosition is replaced by activeragdoll.dll`). Rig with 0.8.1: the copy's
+      ragdoll in the world, clashes and sparks again. To see in play: clashes, sparks, blocks, NPC grabs, both games on
+      0.8.1. Not yet run in the rig with 0.6.6 (the rig could not swap the mod folder).
+- [ ] **Arrow on the bow:** the nock on the string and the tip past the bow as the other player sees it, gone after the
+      shot. Since 2026-10-14 the arrow is placed one arrow length ahead of the string hand (the model's origin is its
+      tip); before, the tip sat in the string hand and the fletching stuck out behind.
+- [ ] **A drawn bow when the other player joins:** the joiner sees it without a re-equip (`Equipment sync: ... equips
+      ... (right hand)` on arrival now uses the item's own slot, so a bow goes to both hands).
+- [ ] **NPCs when a player joins:** NPCs that walked away in the host's game stay where they are when the other player
+      joins (server: `Actor ... was left elsewhere by player ...; ... copy from its save is moved there`).
+- [ ] **Items:** after one player puts an item down, the other can grab it within about a second
+      (`WorldObject: ... was put down over there; handed back to physics here`, then no new `is being moved over there`
+      while it rests; restarts now name their trigger, `(moved N units, turned N rad)`).
+- [ ] **A crash in play leaves a line:** `SevereException: ...` for heap corruption, stack overflow and the like, and
+      `Exit: the game is closing normally` on a menu quit. Friends' `collect-logs` zips now hold Windows' crash
+      records (`windows-events.txt`, `WER-Report-*.txt`).
 - [ ] **Bow string:** pulled back to the string hand while the arrow is on, the limbs not bent, straight again after.
       A torn-looking string means the other bone (`Bow_StringBone1`) is the middle.
 - [ ] **Head:** a nod and a look up show on the other player's copy; at rest the copy looks straight ahead (the sent
@@ -77,8 +94,6 @@ for the lines named.
       section 1). The host PC has both since 2026-10-12 (threads flat near 150 all session).
 - [!] **VirusTotal key** in `%USERPROFILE%\.str-vt-key`, for `Tools\VR\scan-release.ps1` (scans a release before it is
       published). If a helper `.bat` is ever flagged: move the helpers to a separate manual-tools zip.
-- [!] **PLANCK 0.8.1:** the rig shows it safe (`E:\FUS\PLANCK 0.8.1 (tested 2026-10-10, ready to install)`); updating
-      from 0.6.6 changes how grabbing and hits feel, so it is a choice, not a fix.
 - [!] **Parties on a public server:** with `bAnnounceServer` off, every stranger lands in one party (shared XP, quest
       sync, teleport to party members). Decide what a public server does with parties.
 - [!] **Stillborn Cave crash in the rig:** console travel out of that cave crashes Community Shaders 0.8.7
@@ -123,6 +138,12 @@ for the lines named.
       actor re-rolled into another creature gets out-of-range values. Upstream recomputes the list when the behavior
       project changes and writes only word variables; porting needs the project name and variable types of the VR
       behavior graph structs checked first.
+- [ ] **The copy's body turns with the head** (2026-10-14): the game turns the actor with the headset and that heading
+      is sent, so the copy's hips and legs follow every head turn. First a measurement for one session (heading,
+      headset yaw, the VRIK body's yaw from the thighs), then send the VRIK body's facing as the heading and the head
+      relative to it (VRBodySync::CaptureLocalPose, AnimationSystem::Serialize; the walk animation needs care).
+- [ ] **Map greyed out indoors** (player 2, 2026-10-11 and 2026-10-14): no code of ours touches the map indoors and it
+      worked outside. To settle it: open the map inside any building with the mod not connected.
 - [ ] **An in-headset menu:** the urSovngarde menu as a SteamVR dashboard tab with large text, a small overlay for chat.
 - [ ] **A flat (non-VR) player with VR players** (asked on Reddit, 2026-10-09). Possible in principle: the repo still
       builds the flat client, and `Code/encoding` has no VR-only message, so both builds share the protocol and the

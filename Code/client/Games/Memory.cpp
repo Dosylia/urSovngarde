@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Games/Memory.h>
+#include <CrashHandler.h>
 #include <Games/References.h>
 
 #include <TiltedCore/MimallocAllocator.hpp>
@@ -257,21 +258,29 @@ Texit Realexit = nullptr;
 T_exit Real_exit = nullptr;
 T_cexit Real_cexit = nullptr;
 
+// The first call logs one line before anything is torn down.
+// A session that ends without an "Exit:" line ended some other way.
+static void MarkProcessExiting(const char* acpLine) noexcept
+{
+    if (!s_processExiting.exchange(true))
+        CrashLog::Line(acpLine, spdlog::level::info);
+}
+
 void __cdecl Hookexit(int aCode)
 {
-    s_processExiting = true;
+    MarkProcessExiting("Exit: the game is closing normally (exit)");
     Realexit(aCode);
 }
 
 void __cdecl Hook_exit(int aCode)
 {
-    s_processExiting = true;
+    MarkProcessExiting("Exit: the game is closing normally (_exit)");
     Real_exit(aCode);
 }
 
 void __cdecl Hook_cexit()
 {
-    s_processExiting = true;
+    MarkProcessExiting("Exit: the game is closing normally (_cexit)");
     Real_cexit();
 }
 

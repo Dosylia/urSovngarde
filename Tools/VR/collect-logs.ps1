@@ -73,6 +73,47 @@ if (-not (Get-ChildItem $staging)) {
     exit 1
 }
 
+# What Windows itself recorded in the last day: crash events, Windows Error Reporting files, display driver resets.
+# A heap corruption (0xc0000374) ends the game without our crash report; only Windows records it.
+# Nothing here is required, so a missing log or a denied folder is skipped.
+$since = (Get-Date).AddDays(-1)
+# Hides the Windows user name in paths such as C:\Users\<name>\...
+function Hide-UserName([string]$Text) { $Text -replace '(?i)([\/]Users[\/])[^\/\r\n]+', '$1<user>' }
+
+$events = @()
+try {
+    $events += @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000, 1001, 1002; StartTime = $since } -ErrorAction Stop |
+        Where-Object { $_.Message -match 'urSovngarde\.exe|SkyrimVR\.exe' })
+} catch { }
+try {
+    $events += @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 4101; StartTime = $since } -ErrorAction Stop)
+} catch { }
+if ($events.Count) {
+    $text = $events | Sort-Object TimeCreated | ForEach-Object {
+        "[$($_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'))] $($_.LogName) event $($_.Id), $($_.ProviderName)`r`n$($_.Message)`r`n"
+    }
+    Set-Content (Join-Path $staging 'windows-events.txt') (Hide-UserName ($text -join "`r`n")) -Encoding UTF8
+    Write-Host "  + windows-events.txt ($($events.Count) events)"
+}
+
+# The three newest Windows Error Reporting files for the game; the rest of each report folder is large and not needed.
+$wer = Join-Path $env:ProgramData 'Microsoft\Windows\WER'
+$reports = @()
+foreach ($folder in 'ReportArchive', 'ReportQueue') {
+    try {
+        $reports += @(Get-ChildItem (Join-Path $wer $folder) -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'AppCrash_urSovngarde*' -or $_.Name -like 'AppCrash_SkyrimVR*' } |
+            ForEach-Object { Get-Item (Join-Path $_.FullName 'Report.wer') -ErrorAction SilentlyContinue })
+    } catch { }
+}
+$reports | Where-Object { $_ -and $_.LastWriteTime -gt $since } | Sort-Object LastWriteTime -Descending | Select-Object -First 3 | ForEach-Object {
+    $name = "WER-Report-$($_.LastWriteTime.ToString('yyyy-MM-dd_HH-mm-ss')).txt"
+    try {
+        Set-Content (Join-Path $staging $name) (Hide-UserName (Get-Content $_.FullName -Raw -ErrorAction Stop)) -Encoding UTF8
+        Write-Host "  + $name"
+    } catch { }
+}
+
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip -Force
 Remove-Item $staging -Recurse -Force
 Write-Host ""

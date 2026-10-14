@@ -67,6 +67,11 @@ template <class T> bool IsStillOurs(const TESObjectREFR* apRef, const T& acMotio
 constexpr float kMovedDistance = 2.f;
 constexpr float kMovedAngle = 0.05f;
 
+//! A resting world object starts moving again only on a clear move.
+//! Physics settling and a still hand stay under this, and each restart holds the object in the other games again.
+constexpr float kRestartDistance = 8.f;
+constexpr float kRestartAngle = 0.3f;
+
 //! Where an item really is: its node's world transform follows physics, while the reference's position may lag.
 //! NiAVObject::world is at 0x7C, as VRBodySync reads it.
 glm::vec3 WorldPositionOf(TESObjectREFR* apRef) noexcept
@@ -82,6 +87,28 @@ glm::vec3 WorldPositionOf(TESObjectREFR* apRef) noexcept
 glm::vec3 RotationOf(const TESObjectREFR* apRef) noexcept
 {
     return {apRef->rotation.x, apRef->rotation.y, apRef->rotation.z};
+}
+
+//! The rotation of a 3D's world transform, which follows physics like WorldPositionOf.
+glm::mat3 WorldTurnOf(const NiNode* apNode) noexcept
+{
+    const auto& world = *reinterpret_cast<const NiTransform*>(reinterpret_cast<const uint8_t*>(apNode) + 0x7C);
+    glm::mat3 turn(1.f);
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column)
+            turn[row][column] = world.rotate.data[row][column];
+    return turn;
+}
+
+//! The angle in radians of the turn from one rotation to another.
+float AngleBetween(const glm::mat3& acFrom, const glm::mat3& acTo) noexcept
+{
+    // The trace of the relative rotation is 1 + 2 cos(angle).
+    float trace = 0.f;
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column)
+            trace += acFrom[row][column] * acTo[row][column];
+    return std::acos(std::clamp((trace - 1.f) * 0.5f, -1.f, 1.f));
 }
 
 bool IsMemoryReadable(const void* apAddress, const size_t aBytes) noexcept
@@ -676,17 +703,22 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
         uint32_t FormId;
         glm::vec3 Position;
         glm::vec3 Rotation;
+        glm::mat3 Turn;
+        float Distance;
+        float Angle;
     };
     std::vector<Start> starts;
 
     for (const uint32_t cFormId : m_objectCandidates)
     {
         TESObjectREFR* pRef = Cast<TESObjectREFR>(TESForm::GetById(cFormId));
-        if (!pRef || pRef->IsDeleted() || pRef->IsDisabled() || !pRef->GetNiNode() || !IsMovableObject(pRef))
+        const NiNode* pNode = pRef ? pRef->GetNiNode() : nullptr;
+        if (!pRef || pRef->IsDeleted() || pRef->IsDisabled() || !pNode || !IsMovableObject(pRef))
             continue;
 
         const glm::vec3 position = WorldPositionOf(pRef);
         const glm::vec3 rotation = RotationOf(pRef);
+        const glm::mat3 turn = WorldTurnOf(pNode);
 
         const auto found = m_objectMotion.find(cFormId);
         if (found == m_objectMotion.end())
@@ -695,17 +727,21 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
             Motion motion{};
             motion.LastPosition = position;
             motion.LastRotation = rotation;
+            motion.LastTurn = turn;
             motion.QuietUntil = aNow + std::chrono::seconds(1);
             m_objectMotion.emplace(cFormId, motion);
             continue;
         }
         Motion& motion = found->second;
 
-        if (motion.Held && aNow - motion.LastRemote > std::chrono::seconds(2))
+        // A put-down is let go half a second after it arrives, so the player here can take the object at once.
+        // A move that just stops arriving is let go after two seconds.
+        const auto cHoldFor = motion.RemoteAtRest ? std::chrono::milliseconds(500) : std::chrono::milliseconds(2000);
+        if (motion.Held && aNow - motion.LastRemote > cHoldFor)
         {
             pRef->SetMotionType(TESObjectREFR::kMotionDynamic);
             motion.Held = false;
-            motion.QuietUntil = aNow + std::chrono::seconds(2);
+            motion.QuietUntil = aNow + cHoldFor;
             spdlog::info("WorldObject: {:X} {}; handed back to physics here", cFormId, motion.RemoteAtRest ? "was put down over there" : "stopped being moved over there");
         }
 
@@ -713,28 +749,37 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
         {
             motion.LastPosition = position;
             motion.LastRotation = rotation;
+            motion.LastTurn = turn;
+            continue;
+        }
+
+        if (!motion.Moving)
+        {
+            const float cDistance = glm::distance(position, motion.LastPosition);
+            const float cAngle = AngleBetween(motion.LastTurn, turn);
+            if (cDistance > kRestartDistance || cAngle > kRestartAngle)
+                starts.push_back({pRef, cFormId, position, rotation, turn, cDistance, cAngle});
             continue;
         }
 
         const glm::vec3 turned = glm::abs(rotation - motion.LastRotation);
         const bool cMoved = glm::distance(position, motion.LastPosition) > kMovedDistance || std::max({turned.x, turned.y, turned.z}) > kMovedAngle;
 
-        if (cMoved && !motion.Moving)
-        {
-            starts.push_back({pRef, cFormId, position, rotation});
-            continue;
-        }
-
         if (cMoved)
         {
             motion.LastPosition = position;
             motion.LastRotation = rotation;
+            motion.LastTurn = turn;
             motion.LastLocalMove = aNow;
             send(pRef, cFormId, position, rotation, false);
         }
-        else if (motion.Moving && aNow - motion.LastLocalMove >= std::chrono::milliseconds(600))
+        else if (aNow - motion.LastLocalMove >= std::chrono::milliseconds(600))
         {
+            // A restart is measured from where it rests.
             motion.Moving = false;
+            motion.LastPosition = position;
+            motion.LastRotation = rotation;
+            motion.LastTurn = turn;
             send(pRef, cFormId, position, rotation, true);
             spdlog::info("WorldObject: {:X} came to rest at ({:.0f}, {:.0f}, {:.0f})", cFormId, position.x, position.y, position.z);
         }
@@ -748,6 +793,7 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
             Motion& motion = m_objectMotion[start.FormId];
             motion.LastPosition = start.Position;
             motion.LastRotation = start.Rotation;
+            motion.LastTurn = start.Turn;
             motion.QuietUntil = aNow + std::chrono::seconds(2);
         }
         spdlog::info("WorldObject: {} objects began moving at once (a cell settling or a blast, not a hand); not sent", starts.size());
@@ -769,14 +815,16 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
         {
             motion.LastPosition = start.Position;
             motion.LastRotation = start.Rotation;
+            motion.LastTurn = start.Turn;
             motion.QuietUntil = aNow + std::chrono::seconds(1);
             spdlog::info("WorldObject: {:X} moved next to another player's copy; not sent", start.FormId);
             continue;
         }
 
-        spdlog::info("WorldObject: {:X} is being moved here; sending where it is", start.FormId);
+        spdlog::info("WorldObject: {:X} is being moved here; sending where it is (moved {:.0f} units, turned {:.2f} rad)", start.FormId, start.Distance, start.Angle);
         motion.LastPosition = start.Position;
         motion.LastRotation = start.Rotation;
+        motion.LastTurn = start.Turn;
         motion.LastLocalMove = aNow;
         motion.Moving = true;
         send(start.pRef, start.FormId, start.Position, start.Rotation, false);
