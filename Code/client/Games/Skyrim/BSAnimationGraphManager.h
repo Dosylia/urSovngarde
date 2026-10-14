@@ -41,6 +41,8 @@ struct BSAnimationGraphManager
     //! The dump and the hash must describe the same graph, or a signature is looked for in one graph and keyed to another.
     SortedMap<uint32_t, String> DumpAnimationVariables(bool aPrintVariables, int aForceIndex = -1);
     uint64_t GetDescriptorKey(int aForceIndex = -1);
+    //! A hash of the behavior project's name ("DefaultMale"), 0 when unknown; the same graph choice as GetDescriptorKey.
+    uint64_t GetProjectKey(int aForceIndex = -1);
     uint32_t ReSendEvent(BSFixedString* apEventName);
 };
 

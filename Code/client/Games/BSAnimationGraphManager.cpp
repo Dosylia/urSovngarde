@@ -120,3 +120,17 @@ uint64_t BSAnimationGraphManager::GetDescriptorKey(int aForceIndex)
 
     return Crc64(reinterpret_cast<const unsigned char*>(variableNames.c_str()), variableNames.size());
 }
+
+uint64_t BSAnimationGraphManager::GetProjectKey(int aForceIndex)
+{
+    using TiltedPhoques::FHash::Crc64;
+
+    if (const uint32_t index = ResolveGraphIndex(aForceIndex); index < animationGraphs.size)
+    {
+        const auto pGraph = animationGraphs.Get(index);
+        if (const char* pName = pGraph ? pGraph->projectName.AsAscii() : nullptr)
+            return Crc64(reinterpret_cast<const unsigned char*>(pName), std::strlen(pName));
+    }
+
+    return 0;
+}

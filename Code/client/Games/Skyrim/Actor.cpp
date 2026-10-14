@@ -242,19 +242,6 @@ bool MoveWithGameSetPosition(Actor* apActor, const NiPoint3& acPosition, const b
     return true;
 }
 
-// TEMPORARY: how often the game moves its own actors through TESObjectREFR::SetPosition, logged every 10 s.
-void CountLocalSetPosition() noexcept
-{
-    static uint32_t s_count = 0;
-    static auto s_since = std::chrono::steady_clock::now();
-    ++s_count;
-    if (const auto cNow = std::chrono::steady_clock::now(); cNow - s_since >= std::chrono::seconds(10))
-    {
-        spdlog::info("SetPositionDiag: the game moved its own actors {} times in the last 10 s through TESObjectREFR::SetPosition", s_count);
-        s_count = 0;
-        s_since = cNow;
-    }
-}
 #endif
 } // namespace
 
@@ -1144,7 +1131,7 @@ char TP_MAKE_THISCALL(HookSetPosition, Actor, NiPoint3& aPosition)
     // It just works TM
 #ifdef SKYRIMVR
     // The game's own move, as for copies: through the patched slot, PLANCK 0.7 and later would stop simulating the actor.
-    CountLocalSetPosition();
+    // The game moves every loaded actor this way about once a frame.
     if (MoveWithGameSetPosition(apThis, aPosition, false))
         return 1;
 #endif

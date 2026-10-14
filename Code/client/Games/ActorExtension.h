@@ -27,6 +27,8 @@ struct ActorExtension
 
     ActionEvent LatestAnimation{};
     size_t GraphDescriptorHash = 0;
+    // The behavior project GraphDescriptorHash was taken from; the hash is taken again when it changes.
+    uint64_t GraphDescriptorProjectKey = 0;
 
     // TODO: atomic? bool instead? maybe simplify to `IsReenabling()` ?
     // Protects discovery while rebuilding a leveled NPC.

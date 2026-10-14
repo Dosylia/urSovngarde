@@ -29,15 +29,19 @@ for the lines named.
       for 2.5-5 s after each call; copies were moved through it every frame, so on 2026-10-14 no copy had a ragdoll in
       the world (no sword body, no clash, no NPC grab). Copies are now moved with the game's own SetPosition (logged
       once: `ForcePosition: Character::SetPosition is replaced by activeragdoll.dll`). Rig with 0.8.1: the copy's
-      ragdoll in the world, clashes and sparks again. To see in play: clashes, sparks, blocks, NPC grabs, both games on
-      0.8.1. Not yet run in the rig with 0.6.6 (the rig could not swap the mod folder).
+      ragdoll in the world, clashes and sparks again; seen in play 2026-10-14 evening (sword fights back to normal).
+      The game's own NPCs went the same way (an inherited hook routed every NPC move, about 1,000 a second, through the
+      patched slot); since the build of 2026-10-14 22:00 they too move with the game's own SetPosition. To see in play:
+      grabbing an NPC with HIGGS, both games on the current build.
 - [ ] **Arrow on the bow:** the nock on the string and the tip past the bow as the other player sees it, gone after the
       shot. Since 2026-10-14 the arrow is placed one arrow length ahead of the string hand (the model's origin is its
       tip); before, the tip sat in the string hand and the fletching stuck out behind.
 - [ ] **A drawn bow when the other player joins:** the joiner sees it without a re-equip (`Equipment sync: ... equips
       ... (right hand)` on arrival now uses the item's own slot, so a bow goes to both hands).
-- [ ] **NPCs when a player joins:** NPCs that walked away in the host's game stay where they are when the other player
-      joins (server: `Actor ... was left elsewhere by player ...; ... copy from its save is moved there`).
+- [ ] **No animation-graph crash** like player 2's of 2026-10-14 21:47 (`SkyrimVR.exe+0xB3C2F1`, Irileth in
+      Dragonsreach, a float where Havok expected an index): synced animation values are now written only into variables
+      whose word is the value, and the variable list is taken again when an actor's behavior project changes
+      (upstream 115b5019; `Animation graph project of actor ... changed`).
 - [ ] **Items:** after one player puts an item down, the other can grab it within about a second
       (`WorldObject: ... was put down over there; handed back to physics here`, then no new `is being moved over there`
       while it rests; restarts now name their trigger, `(moved N units, turned N rad)`).
@@ -133,11 +137,10 @@ for the lines named.
       reverted: `Actor::PutActorOnMountQuick` (vtable 0xAE on VR) returns false; letting the copy's AI run with its
       position free for 10 s left it beside the horse. Next if taken up: build the rider/mount `ExtraInteraction` on
       the copy, then `PutActorOnMountQuick` (real reverse work on VR); or ask cmpayc's fork whether it has mounts.
-- [ ] **A re-rolled creature keeps the old animation variable list** (upstream 115b5019, Havok crash): the synced
-      variables are picked once per actor (`GraphDescriptorHash` in TESObjectREFR.cpp) and never again, so a leveled
-      actor re-rolled into another creature gets out-of-range values. Upstream recomputes the list when the behavior
-      project changes and writes only word variables; porting needs the project name and variable types of the VR
-      behavior graph structs checked first.
+- [ ] **NPCs pulled back when a player joins** (2026-10-14): NPCs that walked away in the host's game, then were removed
+      by the server for want of an owner, come back where the joiner's save has them. A fix that remembered the last
+      released place was tried and removed the same evening: some release positions are bad ((0, 0, 0) for an unloaded
+      actor, far under the floor), and Imperial guards ended up stacked. A redo must accept only sane positions.
 - [ ] **The copy's body turns with the head** (2026-10-14): the game turns the actor with the headset and that heading
       is sent, so the copy's hips and legs follow every head turn. First a measurement for one session (heading,
       headset yaw, the VRIK body's yaw from the thighs), then send the VRIK body's facing as the heading and the head
