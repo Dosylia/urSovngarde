@@ -96,7 +96,7 @@ NiPoint3 ToNiPoint(const glm::vec3& acPosition) noexcept
     return point;
 }
 
-// "Seen, near Whiterun", or the name alone when no place is known.
+// "<playerName>, near Whiterun", or the name alone when no place is known.
 String MarkerText(const String& acName, const String& acPlace) noexcept
 {
     return acPlace.empty() ? acName : acName + ", near " + acPlace;

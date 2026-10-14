@@ -1,4 +1,4 @@
-# A player's follower belongs to that player's game, whoever leads the party (Emma, 2026-10-07). The leading half.
+# A player's follower belongs to that player's game, whoever leads the party. The leading half.
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair follower
 #

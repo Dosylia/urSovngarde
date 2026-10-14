@@ -28,22 +28,22 @@ std::string IdOf(const std::string& acKey)
     return out;
 }
 
-const std::string kEmmaKey(64, 'a');
-const std::string kSeenKey = std::string(32, 'b') + std::string(32, 'c');
+const std::string kPlayer1Key(64, 'a');
+const std::string kPlayer2Key = std::string(32, 'b') + std::string(32, 'c');
 } // namespace
 
 TEST_CASE("Admin keys", "[server][admin]")
 {
     std::vector<size_t> skipped;
-    const auto entries = AdminKeys::Parse("emma:" + IdOf(kEmmaKey) + ", seen:" + IdOf(kSeenKey), skipped);
+    const auto entries = AdminKeys::Parse("player1:" + IdOf(kPlayer1Key) + ", player2:" + IdOf(kPlayer2Key), skipped);
     REQUIRE(entries.size() == 2);
     REQUIRE(skipped.empty());
 
     SECTION("a listed key is that admin")
     {
-        const AdminKeys::Entry* pFound = AdminKeys::Match(std::string(AdminKeys::kPrefix) + kSeenKey, entries, &FakeHash);
+        const AdminKeys::Entry* pFound = AdminKeys::Match(std::string(AdminKeys::kPrefix) + kPlayer2Key, entries, &FakeHash);
         REQUIRE(pFound);
-        REQUIRE(pFound->Name == "seen");
+        REQUIRE(pFound->Name == "player2");
     }
 
     SECTION("another well-formed key is nobody")
@@ -60,9 +60,9 @@ TEST_CASE("Admin keys", "[server][admin]")
 
     SECTION("a token without the prefix is not a key")
     {
-        REQUIRE_FALSE(AdminKeys::IsKeyToken(kEmmaKey));
+        REQUIRE_FALSE(AdminKeys::IsKeyToken(kPlayer1Key));
         REQUIRE_FALSE(AdminKeys::IsKeyToken("friends-password"));
-        REQUIRE_FALSE(AdminKeys::Match(kEmmaKey, entries, &FakeHash));
+        REQUIRE_FALSE(AdminKeys::Match(kPlayer1Key, entries, &FakeHash));
     }
 }
 
@@ -71,9 +71,9 @@ TEST_CASE("Admin key list", "[server][admin]")
     SECTION("malformed entries are skipped by position, the others kept")
     {
         std::vector<size_t> skipped;
-        const auto entries = AdminKeys::Parse("Emma:" + IdOf(kEmmaKey) + ",seen:" + IdOf(kSeenKey) + ",bad:123,:" + IdOf(kEmmaKey), skipped);
+        const auto entries = AdminKeys::Parse("Player1:" + IdOf(kPlayer1Key) + ",player2:" + IdOf(kPlayer2Key) + ",bad:123,:" + IdOf(kPlayer1Key), skipped);
         REQUIRE(entries.size() == 1);
-        REQUIRE(entries[0].Name == "seen");
+        REQUIRE(entries[0].Name == "player2");
         REQUIRE(skipped == std::vector<size_t>{1, 3, 4});
     }
 
@@ -83,6 +83,6 @@ TEST_CASE("Admin key list", "[server][admin]")
         REQUIRE(AdminKeys::Parse("", skipped).empty());
         REQUIRE(AdminKeys::Parse("  ", skipped).empty());
         REQUIRE(skipped.empty());
-        REQUIRE_FALSE(AdminKeys::Match(std::string(AdminKeys::kPrefix) + kEmmaKey, {}, &FakeHash));
+        REQUIRE_FALSE(AdminKeys::Match(std::string(AdminKeys::kPrefix) + kPlayer1Key, {}, &FakeHash));
     }
 }

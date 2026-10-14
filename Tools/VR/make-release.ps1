@@ -10,9 +10,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# What of the client folder goes into a release: the tools folder as it runs, minus anything local to one PC. The
-# 2026-10-05 zip carried a behaviours zip from Emma's folder and the linker's .map (the launcher's install test,
-# 2026-10-07): a .map and a stray .zip are never part of the client.
+# What of the client folder goes into a release: the tools folder as it runs, minus anything local to one PC.
+# A linker .map and a stray .zip (such as a behaviours zip left in the folder) are never part of the client.
 # The programs' old names (before 2026-10-09) and the build's own files are left out too: those come from the build.
 # Nor anything set aside before a change: `.old-*`, or `.before-*` (`UI.before-logo`, a whole old menu, 2026-10-09).
 $skip = @('logs', 'cache', 'SkyrimTogetherVR.exe', 'SkyrimTogetherVR.pdb', 'urSovngarde.exe', 'urSovngarde.pdb', 'EarlyLoad.dll')
@@ -36,10 +35,10 @@ if (-not $version -or $version -like 'unknown*') { throw "No build version found
 # A release built from a clean, tagged tree is the standalone package anyone can install; "dirty" in the
 # version means uncommitted changes, and such a build must not be handed out.
 if ($version -like '*dirty*') { throw "The build is from an uncommitted tree ($version); commit and build again before releasing." }
-# The files players download carry the mod's name (urSovngarde-v1.9.0.zip, -update.zip, -server.zip, Emma
-# 2026-10-07), and since 2026-10-09 so does everything inside (Emma: "rename everything"): the programs
-# urSovngarde.exe and urSovngardeServer.exe, the folders "urSovngarde" and "urSovngarde mod". SkyrimTogether.esp keeps
-# its name: saves record their plugins by name. The launcher reads both layouts.
+# The files players download carry the mod's name (urSovngarde-v1.9.0.zip, -update.zip, -server.zip), and so does everything inside.
+# The programs are urSovngarde.exe and urSovngardeServer.exe, the folders "urSovngarde" and "urSovngarde mod".
+# SkyrimTogether.esp keeps its name: saves record their plugins by name.
+# The launcher reads both layouts.
 $name = "urSovngarde-$version"
 $standaloneName = $name
 $staging = Join-Path $OutputFolder $name
@@ -66,10 +65,10 @@ New-Item -ItemType Directory -Force (Join-Path $server 'config') | Out-Null
 foreach ($file in 'urSovngardeServer.exe', 'STServer.dll') {
     Copy-Item (Join-Path $buildFolder $file) $server
 }
-# The settings are a tracked file, not the build folder's STServer.ini: that one is whatever the last test left, and on
-# 2026-10-09 it had PvP on from the fights. Emma, 2026-10-10: PvP off, difficulty 2 (Adept), the name "urSovngarde
-# Server", the code's defaults otherwise. The server rewrites the file at its first start (comments would go, which is
-# why it has none) and adds any setting a newer build has with its default.
+# The settings are a tracked file, not the build folder's STServer.ini, which is whatever the last test left (PvP on after a fight test, say).
+# A release ships PvP off, difficulty 2 (Adept), the name "urSovngarde Server", and the code's defaults otherwise.
+# The server rewrites the file at its first start (comments would go, which is why it has none).
+# It also adds any setting a newer build has, with its default.
 Copy-Item (Join-Path $PSScriptRoot 'STServer.default.ini') (Join-Path $server 'config\STServer.ini')
 Copy-Item (Join-Path $PSScriptRoot 'host-server.*') $server
 

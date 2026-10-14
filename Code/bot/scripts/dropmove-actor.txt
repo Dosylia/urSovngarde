@@ -3,10 +3,10 @@
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-all-pairs.ps1 -Pairs dropmove
 #
-# Emma and Seen, 2026-09-30: the butterfly wing Seen dropped reached Emma and she picked it up, but where an item lay
-# after anybody moved it was never sent -- "if Dosylia picks up the item with her hands I should see it in her
-# hands". Moves of a dropped item are now relayed to everyone in range while it travels, and the place it is put down
-# is kept by the server for whoever arrives later. Its own interior (not the drops pair's), so the two can share a run.
+# When one player picks up a dropped item with their hands, the other player must see it in those hands.
+# Moves of a dropped item are relayed to everyone in range while it travels.
+# The place it is put down is kept by the server for whoever arrives later.
+# Its own interior (not the drops pair's), so the two can share a run.
 
 log dropmove actor
 waitfor connected 45

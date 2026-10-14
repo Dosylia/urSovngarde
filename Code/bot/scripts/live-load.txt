@@ -2,10 +2,10 @@
 #
 #   python Tools\VR\live-check.py live-load
 #
-# VR_TODO, "Seen, on the load after death" (2026-09-24): a save/load request built while connected, the Loading
-# Menu up, and an access violation 68 ms later. `log DO load last` loads the most recent save through DevBench at a
-# chosen moment. This bot stands by throughout, so there is a copy to tear down each time. The load in the middle of
-# dying is its own script (live-load-dead), because that one takes the game down in the no-headset rig.
+# A load after death crashed: a save/load request built while connected, the Loading Menu up, and an access violation 68 ms later.
+# `log DO load last` loads the most recent save through DevBench at a chosen moment.
+# This bot stands by throughout, so there is a copy to tear down each time.
+# The load in the middle of dying is its own script (live-load-dead), because that one takes the game down in the no-headset rig.
 log live load
 waitfor connected 45
 collect spawn

@@ -5,7 +5,7 @@
 # A levelled spawn point picks its creature when its cell loads, separately in each game, so two players can see a
 # bear and a goat at the same spot. The owner's pick travels with the character (LeveledNpcPickId) and the other games
 # conform (CharacterService::ApplyLeveledNpcPick). Here this bot claims the bear's point near Mistwatch (860F8, a bear
-# in Emma's game) as a goat (2EBE2, what point 85F98 rolls) while the player is away, so it is the owner when the
+# in the test save) as a goat (2EBE2, what point 85F98 rolls) while the player is away, so it is the owner when the
 # player comes back.
 log live levelled
 waitfor connected 45

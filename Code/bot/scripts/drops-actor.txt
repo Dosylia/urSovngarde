@@ -3,10 +3,9 @@
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair drops
 #
-# Emma, 2026-09-30: items she dropped sessions ago were still on her floor and Seen could not see them. A drop used to
-# be replayed on the other side at the moment it happened, or never -- the server kept nothing, so anybody who was
-# not there when it hit the floor never got it. The server now remembers each dropped item and sends it to whoever
-# enters its cell. This side makes the drop; the other side proves it arrives late, and that a pick-up clears it here.
+# Items one player dropped sessions ago must be seen by the other player too.
+# The server remembers each dropped item and sends it to whoever enters its cell, not only to whoever was there when it hit the floor.
+# This side makes the drop; the other side proves it arrives late, and that a pick-up clears it here.
 
 log drops actor
 waitfor connected 45

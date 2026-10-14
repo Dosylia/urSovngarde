@@ -1,10 +1,9 @@
-# A bot that joins Emma's live session as a second player, so the things that need two players can be
-# looked at without waiting for Seen. Written 2026-09-26 while she was in game.
+# A bot that joins the host's live session as a second player, so the things that need two players can be looked at with one.
 #
-#   STBot.exe scripts\live-with-emma.txt --server 127.0.0.1:10578 --name Bot
+#   STBot.exe scripts\live-with-host.txt --server 127.0.0.1:10578 --name Bot
 #
-# Each phase is announced in the log and paced so there is time to look. Nothing here asserts: Emma's eyes are
-# the test, and her tp_client.log carries the measurements.
+# Each phase is announced in the log and paced so there is time to look.
+# Nothing here asserts: the host's eyes are the test, and the host's tp_client.log carries the measurements.
 
 log PHASE 1 -- standing still next to you for 20 s. Do you see a body at all?
 wait 20

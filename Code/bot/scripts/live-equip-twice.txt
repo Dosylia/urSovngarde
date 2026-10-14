@@ -3,9 +3,9 @@
 #
 #   python Tools\VR\live-check.py live-equip-twice
 #
-# On 2026-10-03 the bot's copy arrived already holding the iron sword and the bot equipped it again: the game then
-# said the sword was equipped and the right hand held nothing. On 2026-10-09 Emma's copy in Seen's game held no weapon
-# for two minutes amid repeated equips. Here: the same sword equipped once, again, then twice at once.
+# A copy that arrives already holding the iron sword and is told to equip it again can end with the sword equipped and the right hand empty.
+# Repeated equips can likewise leave a player's copy holding no weapon in the other game.
+# Here: the same sword equipped once, again, then twice at once.
 log live equip twice
 waitfor connected 45
 collect equipment spawn

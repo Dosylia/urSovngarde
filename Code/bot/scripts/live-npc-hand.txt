@@ -1,5 +1,5 @@
 # A living NPC of this bot's, taken by the player's real hand (the controller on it, grip pressed) and pulled: the
-# first step of "Handling a living NPC the other game runs: (2), send the pull" (Emma, 2026-10-10).
+# first step of "Handling a living NPC the other game runs: (2), send the pull".
 #
 #   python Tools\VR\live-check.py live-npc-hand
 #

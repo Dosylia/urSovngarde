@@ -1,4 +1,4 @@
-# A dragon flying in its owner's game is not taken over by another player's (Emma, 2026-10-07). The owner's half.
+# A dragon flying in its owner's game is not taken over by another player's. The owner's half.
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair dragonfly
 #

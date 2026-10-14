@@ -41,10 +41,9 @@ Add-File (Join-Path $ClientFolder 'logs\dashboard_frame.bmp')
 
 # Every SKSE crash log (Crash Logger) from the last day, not just the newest.
 #
-# This took only the most recent one, and on 2026-09-26 that cost a whole evening: Seen crashed four times and
-# the bundle carried a single dump, from a session that was not among them. A Crash Logger stack names modules
-# and functions; the stack our own handler scans out of the raw stack memory does not. Four small text files
-# beat one, and without them the only thing left to do is guess -- which is exactly what happened.
+# Only the most recent one is not enough: a player can crash several times, and a single dump may come from another session.
+# A Crash Logger stack names modules and functions; the stack our own handler scans out of the raw stack memory does not.
+# Several small text files beat one, and without them the only thing left to do is guess.
 $skse = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'My Games\Skyrim VR\SKSE'
 Get-ChildItem $skse -Filter 'crash-*.log' -ErrorAction SilentlyContinue |
     Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-1) } |

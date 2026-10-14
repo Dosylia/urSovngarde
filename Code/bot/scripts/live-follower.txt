@@ -2,12 +2,12 @@
 #
 #   python Tools\VR\live-check.py live-follower
 #
-# 2026-10-03 15:09 and 2026-10-04 09:33: Emma went through a door, the server gave Lydia (still inside, near Seen)
-# to Seen, and Lydia followed Emma out anyway. The two games then pulled her back and forth -- 85 appearances in 12 s
-# -- and Seen's game dressed her in the outfit she has in his own save, which Emma's game applied. Now the player's
-# game keeps its follower's gear and asks for her back at once.
+# When player 1 goes through a door, the server can give player 1's follower (still inside, near player 2) to player 2.
+# The follower follows player 1 out anyway, and the two games would pull her back and forth.
+# Player 2's game would also dress her in the outfit she has in player 2's own save.
+# So the player's game keeps its follower's gear and asks for her back at once.
 #
-# Here: Lydia (A2C94, Emma's follower in her save) is put next to the player and told to wait; the player travels away
+# Here: Lydia (A2C94, the follower in the test save) is put next to the player and told to wait; the player travels away
 # while this bot stays and accepts what is left, so the server hands Lydia to the bot; then she is told to follow again
 # and brought back next to the player, the way a follower catches up. Without the wait the game takes her along on the
 # trip, as a follower travels with the player, and nothing is left behind to hand over (2026-10-12 18:00: every other

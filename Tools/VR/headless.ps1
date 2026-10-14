@@ -6,23 +6,23 @@
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\headless.ps1 down      # quit the game, stop what 'up' started, headset setting off
 #
 # First done by hand on 2026-10-01; this is those steps, in the order that worked. What it relies on:
-#   - SteamVR's 'null' driver with two virtual controllers (the SkyrimVR Devkit's source, built and copied in by
-#     Emma). Valve's stock null driver has no controllers, and skyrimvrtools.dll crashes six seconds after a load
-#     without them. The driver is only active while a 'driver_null' block is in steamvr.vrsettings, which 'up' adds
-#     and 'down' removes -- SteamVR must be closed for either, because it rewrites that file when it exits.
+#   - SteamVR's 'null' driver with two virtual controllers (the SkyrimVR Devkit's source, built and copied in by hand).
+#     Valve's stock null driver has no controllers, and skyrimvrtools.dll crashes six seconds after a load without them.
+#     The driver is only active while a 'driver_null' block is in steamvr.vrsettings, which 'up' adds and 'down' removes.
+#     SteamVR must be closed for either, because it rewrites that file when it exits.
 #   - DevBench (an SKSE plugin, http://127.0.0.1:8921) to load the save and to quit.
 #   - The client connecting by itself five seconds after a load (%LOCALAPPDATA%\SkyrimTogetherVR\connect.txt).
 #
-# 'down' closes SteamVR by force: it ignores a polite close, and Emma allowed it for these runs (2026-10-01). It
-# never touches MO2.
+# 'down' closes SteamVR by force, because it ignores a polite close.
+# It never touches MO2.
 
 param(
     [Parameter(Position = 0)][ValidateSet('up', 'down', 'status')][string]$Action = 'status',
     [string]$Save = '',                 # a save name; empty loads the most recent one
     [switch]$NoConnect,                 # no server and no waiting for a connection: the game alone, mod loaded
     [int]$LoadTimeout = 180,
-    # Where the player is put once the save has loaded: the tests start outside Mistwatch (Tamriel, cell 34 -9), and
-    # Emma's most recent save is wherever she last played. Empty leaves the player where the save has them.
+    # Where the player is put once the save has loaded: the tests start outside Mistwatch (Tamriel, cell 34 -9).
+    # The most recent save is wherever the player last played. Empty leaves the player where the save has them.
     [string]$StartCell = 'Tamriel 34 -9',
     # Another MO2 executable to start instead of Skyrim Together, e.g. 'SKSE' to see whether something happens
     # without the mod at all. Implies -NoConnect.
@@ -59,12 +59,12 @@ $mo2Shortcut = if ($Shortcut) { $Shortcut } elseif ((Test-Path -LiteralPath $mo2
 $release = (Resolve-Path (Join-Path $PSScriptRoot '..\..\build\windows\x64\release')).Path
 $clientLog = Join-Path $fusRoot 'tools\Skyrim Together VR\logs\tp_client.log'
 $stateFile = Join-Path $env:TEMP 'st-headless-state.json'
-# The game plays in Emma's own MO2 profile, so whatever it saves lands among her saves. On 2026-10-03 it did: a test
-# autosaved at 16:01 (going through a door), that was then the newest save, and her "Continue" that evening loaded it --
-# a rollback to a test copy of her morning, under another character id that hid her real saves from the Load menu.
-# So the saves folder is copied aside before the game starts and put back exactly as it was once the game has gone:
-# whatever the test game wrote or changed is moved to saves-made-by-rig\<time>, whatever it overwrote comes back from
-# the copy. A run that died before putting it back is put right by the next "up" or "down".
+# The game plays in the player's own MO2 profile, so whatever it saves lands among the player's saves.
+# A test autosave (going through a door) becomes the newest save, and the player's next "Continue" would load it.
+# It also carries another character id, which hides the real saves from the Load menu.
+# So the saves folder is copied aside before the game starts and put back exactly as it was once the game has gone.
+# Whatever the test game wrote or changed is moved to saves-made-by-rig\<time>; whatever it overwrote comes back from the copy.
+# A run that died before putting it back is put right by the next "up" or "down".
 $profileDir = Join-Path $fusRoot 'profiles\FUS RO DAH (Basic + Appearance + Gameplay)'
 $savesDir = Join-Path $profileDir 'saves'
 $savesCopy = Join-Path $profileDir 'saves-before-rig'
@@ -180,10 +180,10 @@ function Restore-Saves {
     else { Write-Host 'Saves put back: the test game wrote nothing.' }
 }
 
-# The game connects by itself to whatever %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt names, and that is Emma's file:
-# on 2026-10-11 it named the public server, and the rig's test game at 14:38 joined the public server with her
-# character. For the run it names the local test server (with -NoConnect too: then there is nothing to join), and her
-# file is put back by "down".
+# The game connects by itself to whatever %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt names, and that is the player's own file.
+# If it names the public server, the test game would join the public server with the player's character.
+# For the run it names the local test server (with -NoConnect too: then there is nothing to join).
+# The player's file is put back by "down".
 $connectFile = Join-Path $env:LOCALAPPDATA 'SkyrimTogetherVR\connect.txt'
 $connectBackup = "$connectFile.before-rig"
 

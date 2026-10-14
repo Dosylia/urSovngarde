@@ -26,6 +26,6 @@ struct Movement
     AnimationVariables Variables{};
     float Direction{};
     //! A dragon in the air in its owner's game (ActorState fly state taking off, cruising, hovering, landing or in an
-    //! action). Another player's game does not take it over while this is set (Emma, 2026-10-07).
+    //! action). Another player's game does not take it over while this is set.
     bool Flying{};
 };

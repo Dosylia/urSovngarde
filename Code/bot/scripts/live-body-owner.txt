@@ -2,10 +2,9 @@
 #
 #   python Tools\VR\live-check.py live-body-owner
 #
-# 2026-10-03 20:54-20:56: the corpse of the Mistwatch dragon, moved by its owner's updates, made Seen's game ask for
-# it ("Body 35541 is being moved here; asking for it") and Emma's take it back, four times in a minute, and Emma saw
-# a dead dragon appear out of nowhere. Since 2026-10-03 21:30 a body that moves here because its owner's updates
-# move it is not asked for; only one moved here by something of this game's (a hand) is.
+# Asking for a body that only the owner's updates move makes the two games trade it back and forth, and a dead body pops into view.
+# A body that moves here because its owner's updates move it is not asked for.
+# Only one moved here by something of this game's (a hand) is.
 log live body owner
 waitfor connected 45
 collect spawn health death ownership

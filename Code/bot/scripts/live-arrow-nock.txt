@@ -2,11 +2,11 @@
 #
 #   python Tools\VR\live-check.py live-arrow-nock
 #
-# "Fix bug where other player cant see when arrow is locked into the bow (always like that)" (Seen and Emma,
-# 2026-10-11). In VR the arrow on the string is the game's own attachment, made when the archer's attack state reaches
-# 10; nothing carried it. Now the archer's game says when it starts and ends (ArrowNockedRequest), the server passes
-# it on, and the other game calls Actor::AttachArrow / DetachArrow on its copy -- by vtable slot, 0xCF and 0xD0 on VR,
-# not the 0xCD of Actor.h. A wrong slot is a crash in the receiving game, which is what this run is for first.
+# The other player must see the arrow nocked on the bow.
+# In VR the arrow on the string is the game's own attachment, made when the archer's attack state reaches 10.
+# The archer's game says when it starts and ends (ArrowNockedRequest), and the server passes it on.
+# The other game calls Actor::AttachArrow / DetachArrow on its copy by vtable slot: 0xCF and 0xD0 on VR, not the 0xCD of Actor.h.
+# A wrong slot is a crash in the receiving game, which is what this run is for first.
 #
 # This bot is the archer: a hunting bow and iron arrows, its copy made to draw here, then "nock on" and "nock off".
 log live arrow nock

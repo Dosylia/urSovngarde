@@ -5,7 +5,7 @@
 # Every other live test has the bot do things and the game watch. Here it is the other way round: the player loses
 # health, takes up a sword, kills a bear of this cell, dies and is brought back, and goes elsewhere -- and this bot
 # checks each one arrived. "ref:860F8" is a bear placed near Mistwatch, a reference of the game's own; not the
-# Mistwatch bandit 45A63, who is already dead in Emma's save (the first run "saw" him die 18 ms after the order).
+# Mistwatch bandit 45A63, who is already dead in the test save (the first run "saw" him die 18 ms after the order).
 # Killed through the game's own Actor.Kill: the VR console does not take "860F8.kill" ("Script command not found"),
 # and "prid 860F8" then "kill" did nothing either (2026-10-03).
 log live sender

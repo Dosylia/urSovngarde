@@ -3,8 +3,8 @@
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\check-linux-build.ps1
 #
-# Seen's build of 2026-10-01 stopped on "'cSilence' is not captured": a local constexpr used inside a lambda with an
-# explicit capture list, which MSVC accepts. Nothing on this machine could have said so.
+# GCC stops on errors such as "'cSilence' is not captured": a local constexpr used inside a lambda with an explicit capture list.
+# MSVC accepts that, so nothing on a Windows machine says so otherwise.
 #
 # After a clean build it also runs the unit tests inside the Linux image and compares the protocol id the Linux
 # server announces with the Windows build's.

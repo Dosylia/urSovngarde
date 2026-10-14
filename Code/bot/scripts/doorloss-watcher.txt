@@ -1,7 +1,7 @@
 # The one that follows three seconds later. See doorloss-actor.txt for what this pair is about.
 #
-# The three seconds matter: the spawn this bot is sent for its partner arrives while its own old cell is still
-# being torn down, which is the ordering that lost Seen for seventy seconds.
+# The three seconds matter: the spawn this bot is sent for its partner arrives while its own old cell is still being torn down.
+# That is the ordering that made a player's copy vanish for over a minute.
 
 log doorloss watcher: waiting for the other bot
 waitfor connected 45

@@ -2,10 +2,9 @@
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair range
 #
-# Seen crossed seven grid squares in three minutes on 2026-09-25, and the bandit through the sky, the body in the
-# wrong place and the spriggan that could not land a hit all happened during it. A grid square is 4096 units, so
-# the trip below is about five of them each way -- far enough for the server to take this bot out of range of the
-# other one and put it back.
+# A player crossing several grid squares quickly is when NPCs fly through the sky, bodies land in the wrong place and hits stop landing.
+# A grid square is 4096 units, so the trip below is about five of them each way.
+# That is far enough for the server to take this bot out of range of the other one and put it back.
 
 log range actor
 waitfor connected 45

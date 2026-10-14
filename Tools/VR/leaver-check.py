@@ -9,7 +9,7 @@ No game needed: a fresh server and three bots.
   Checker  joins next to Host afterwards and looks for Host's character.
 
 Found on 2026-10-02 with the real game as Host: after a bot that never found the player had given up, the server
-logged "Entity is invalid: 0" four times a second and no newcomer was ever sent Emma's character again. The clean-up
+logged "Entity is invalid: 0" four times a second and no newcomer was ever sent the host's character again. The clean-up
 for a leaving player (GameServer.cpp, "Cleanup all entities that we own") removed "the leaver's own character",
 which for a leaver without one was written as entity 0 -- a real entity, and the first one a server makes.
 
@@ -56,6 +56,13 @@ def read(log):
         return f.read()
 
 
+def stop_release_servers():
+    """Stops the servers started from the release folder, never one started elsewhere (such as the owner's own)."""
+    command = ("Get-Process urSovngardeServer, SkyrimTogetherServer -ErrorAction SilentlyContinue | "
+               "Where-Object { $_.Path -and $_.Path.StartsWith('%s', 'OrdinalIgnoreCase') } | Stop-Process -Force" % RELEASE)
+    subprocess.run(['powershell', '-NoProfile', '-Command', command], capture_output=True)
+
+
 def main():
     if running('urSovngarde.exe') or running('SkyrimTogetherVR.exe') or running('SkyrimVR.exe'):
         print('The game is running; this test restarts the server. Not started.')
@@ -67,11 +74,11 @@ def main():
         with io.open(os.path.join(RELEASE, 'scripts', name + '.txt'), 'wb') as f:
             f.write(data)
 
-    subprocess.run(['taskkill', '/F', '/IM', 'SkyrimTogetherServer.exe'], capture_output=True)
+    stop_release_servers()
     subprocess.run(['taskkill', '/F', '/IM', 'STBot.exe'], capture_output=True)
     time.sleep(2)
     skip = len(server_lines(0)) if os.path.exists(SERVER_LOG) else 0
-    server = subprocess.Popen([os.path.join(RELEASE, 'SkyrimTogetherServer.exe')], cwd=RELEASE, creationflags=0x00000010,
+    server = subprocess.Popen([os.path.join(RELEASE, 'urSovngardeServer.exe')], cwd=RELEASE, creationflags=0x00000010,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(4)
     if os.path.exists(SERVER_LOG) and len(server_lines(0)) < skip:
@@ -112,7 +119,7 @@ def main():
         for p in procs:
             if p.poll() is None:
                 p.kill()
-        subprocess.run(['taskkill', '/F', '/IM', 'SkyrimTogetherServer.exe'], capture_output=True)
+        stop_release_servers()
     return 0 if ok else 1
 
 

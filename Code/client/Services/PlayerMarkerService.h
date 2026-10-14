@@ -14,7 +14,7 @@ struct TESQuest;
 struct Actor;
 
 /**
- * @brief Other players as world map icons ("Seen, near Whiterun") from NotifyPlayerWhereabouts, hidden when in sight.
+ * @brief Other players as world map icons ("<name>, near Whiterun") from NotifyPlayerWhereabouts, hidden when in sight.
  * Uses SkyrimTogether.esp's records (Tools/VR/player-markers.py).
  */
 struct PlayerMarkerService

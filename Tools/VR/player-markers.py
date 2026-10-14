@@ -10,7 +10,7 @@
 # What it adds, at fixed object ids the client uses (Services/Generic/PlayerMarkerService.cpp):
 #   0x005000  QUST  STR_FellowTravellers        misc quest "Fellow travellers", not started with the game. Objective
 #                                               N (1 to 7) points at alias N-1, which is forced to party marker N; its
-#                                               text is that marker's name, which the client sets ("Seen, near
+#                                               text is that marker's name, which the client sets ("<name>, near
 #                                               Whiterun").
 #   0x005001  CELL  STR_FellowTravellersHolding a small interior nobody can reach, where the markers wait.
 #   0x005010+ ACTI  STR_PartyMarkerBase1..7     one activator per party marker, no model: its name is the

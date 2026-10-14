@@ -3,9 +3,9 @@
 #
 #   python Tools\VR\live-check.py live-door-echo
 #
-# 2026-10-03 15:21: Seen walked out of Mistwatch's upper door and was back inside 0.9 s later, six times in a minute.
-# Emma's game replayed his arrival on his copy (an activation of the outside door) and its activation hook sent that
-# on again in his name; the server relayed it to Seen, whose game made its own player use the door.
+# Player 1 walks out of a door; player 2's game replays the arrival on player 1's copy (an activation of the outside door).
+# If player 2's activation hook sends that replay on in player 1's name, the server relays it to player 1.
+# Player 1's game then makes its own player use the door again, and they bounce back inside.
 #
 # Two halves. The bot uses the door 3F558 as itself: the game replays it on the bot's copy, and must not send it back
 # (activationsback). Then the bot sends an activation in the name of the game's own player: the game must not do it.

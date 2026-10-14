@@ -1,20 +1,18 @@
 name: Create GitHub Release
 
-# A vX.Y.Z tag on main builds the same three zips that Tools/VR/make-release.ps1 makes on Emma's PC (the
-# "urSovngarde", "Server" and "urSovngarde mod" folders, with the licence files) and publishes them as the release.
-# Emma, 2026-10-10: releases are made both ways, by this and by make-release.ps1 on her PC. Until that day this
-# workflow published upstream's flat-Skyrim layout.
+# A vX.Y.Z tag on main builds the same three zips that Tools/VR/make-release.ps1 makes on a developer's PC.
+# They hold the "urSovngarde", "Server" and "urSovngarde mod" folders with the licence files, and are published as the release.
+# Releases are made both ways: by this workflow, and by make-release.ps1 on a PC.
 #
-# The client's folder is gathered the way xmake installs it (the CEF and Discord files, the menu's cursor) plus the
-# built menu, then handed to make-release.ps1; tested on 2026-10-10 against a release made from Emma's own folder:
-# the same 29 entries.
+# The client's folder is gathered the way xmake installs it (the CEF and Discord files, the menu's cursor) plus the built menu.
+# It is then handed to make-release.ps1, so both ways give the same entries.
 #
-# Run by hand (Actions, "Create GitHub Release", Run workflow) it builds the zips as an artifact and publishes
-# nothing: a way to try a branch before tagging it.
+# Run by hand (Actions, "Create GitHub Release", Run workflow) it builds the zips as an artifact and publishes nothing.
+# That is a way to try a branch before tagging it.
 #
-# The Linux server (linux.yml, x64 and arm64) is published beside the zips as urSovngardeServer-<version>-linux-<arch>
-# .tar.gz: urSovngardeServer and libSTServer.so from one build, checked there by starting it. The public server on
-# Seen's VPS builds or takes release tags, so a Linux fix reaches it only through a release (2026-10-10).
+# The Linux server (linux.yml, x64 and arm64) is published beside the zips as urSovngardeServer-<version>-linux-<arch>.tar.gz.
+# It holds urSovngardeServer and libSTServer.so from one build, checked there by starting it.
+# The public server builds or takes release tags, so a Linux fix reaches it only through a release.
 
 on:
   push:

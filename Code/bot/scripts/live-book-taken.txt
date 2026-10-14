@@ -2,11 +2,11 @@
 #
 #   python Tools\VR\live-check.py live-book-taken
 #
-# Emma took a skill book from a table (2026-10-03 15:15) and Seen's game kept it there: activation sync leaves books
-# out, and HIGGS stashes a book with a direct pick-up, so nothing said it was taken. A client now sends a placed book it
-# picks up as a world object "taken", and every other game disables its own. The receiving side does not look at what
-# kind of object it is, so the wooden plate by Mistwatch (reference 92D04, the one live-world-object moves) stands in
-# for the book: the bot says it took it, and the game must take it off the floor.
+# Activation sync leaves books out, and HIGGS stashes a book with a direct pick-up, so nothing else says it was taken.
+# A client sends a placed book it picks up as a world object "taken", and every other game disables its own.
+# The receiving side does not look at what kind of object it is.
+# So the wooden plate by Mistwatch (reference 92D04, the one live-world-object moves) stands in for the book.
+# The bot says it took it, and the game must take it off the floor.
 log live book taken
 waitfor connected 45
 expect known me

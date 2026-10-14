@@ -1,8 +1,7 @@
 # The one that goes in first. Its partner, doorloss-watcher.txt, follows three seconds later.
 #
-# Emma's bug, 2026-09-26 11:20: she and Seen both went into the same interior, one behind the other, and the one
-# who went FIRST could not see the one who followed -- "the person going first seems to not see the person
-# following". Her own cell unloaded on the way in and took his copy with it; the server was never told.
+# Two players go into the same interior, one behind the other, and the one who goes FIRST must still see the one who follows.
+# Player 1's own cell unloads on the way in, and that must not delete player 2's copy behind the server's back.
 #
 # Both halves check while BOTH are inside. The first version of this pair had them leave at different moments
 # and failed on that instead, which says nothing about the bug.

@@ -36,7 +36,7 @@ forward even in VR), and `log DO load last` loads the most recent save (while co
 `log DO combat off` switch combat AI (off is the run's default, so a creature a test spawns just stands there; on makes
 it come for the player, which is how it is made to move). `log DO god on` and
 `log DO god off` set god mode for a script that sends the player somewhere dangerous: the away tests go to wherever
-Lydia stands, which in Emma's save is under water, and the player drowned there twice on 2026-10-02.
+Lydia stands, which in the test save is under water, where the player can drown.
 
 `log DO server restart` stops the server and starts it again, and waits until the game has gone back in by itself
 (the game reconnects on its own; so does the bot, and its script carries on once it is back in the world).
@@ -142,11 +142,18 @@ def session_lines():
     return lines[start:]
 
 
+def stop_release_servers():
+    """Stops the servers started from the release folder, never one started elsewhere (such as the owner's own)."""
+    command = ("Get-Process urSovngardeServer, SkyrimTogetherServer -ErrorAction SilentlyContinue | "
+               "Where-Object { $_.Path -and $_.Path.StartsWith('%s', 'OrdinalIgnoreCase') } | Stop-Process -Force" % RELEASE)
+    subprocess.run(['powershell', '-NoProfile', '-Command', command], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def restart_server(while_down=None):
     """Server down and up again; returns how long the game took to be back in, or raises. `while_down` is a console
     command run once the game has noticed the server is gone, before it comes back."""
     before = len(session_lines())
-    subprocess.run(['taskkill', '/F', '/IM', 'SkyrimTogetherServer.exe'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    stop_release_servers()
     started = time.time()
     # The game only notices once its connection times out; a server that is back before that is a server that never
     # left, as far as the game can tell.
@@ -162,7 +169,7 @@ def restart_server(while_down=None):
         tool('console', {'action': 'exec', 'command': while_down})
         print('   (console while the server is down: %s)' % while_down, flush=True)
         time.sleep(3)
-    subprocess.Popen([os.path.join(RELEASE, 'SkyrimTogetherServer.exe')], cwd=RELEASE, creationflags=0x00000010 | 0x00000200,
+    subprocess.Popen([os.path.join(RELEASE, 'urSovngardeServer.exe')], cwd=RELEASE, creationflags=0x00000010 | 0x00000200,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.time() + 150
     while time.time() < deadline:
@@ -995,7 +1002,7 @@ class Run:
                 elif text.strip() == 'DO load last':
                     try:
                         # The save the session started from (headless.ps1 keeps its name), not the most recent one:
-                        # that is wherever Emma last played.
+                        # that is wherever the player last played.
                         started_from = ''
                         try:
                             with io.open(os.path.join(os.environ.get('TEMP', ''), 'st-headless-state.json'), encoding='utf-8-sig') as f:

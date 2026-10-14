@@ -5,7 +5,7 @@
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-live.ps1 live-copy live-npc
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-live.ps1 -Batch 0         # one game for the whole run
 #
-# The game is started afresh every -Batch scripts (default 6). Emma's modlist grows the game with every loading
+# The game is started afresh every -Batch scripts (default 6). The FUS modlist grows the game with every loading
 # screen -- DynDOLOD DLL NG Alpha-32 leaves twelve threads behind per load, and the process gains about 0.4 GB per
 # round trip, connected or not (measured 2026-10-03) -- and the travelling scripts do two loads each: one game for
 # the whole suite froze in the game's own allocator after about thirteen scripts (12:07) and crashed in the AMD

@@ -594,14 +594,14 @@ void Bot::SendCellEntry() noexcept
 
 // Follow the host through a load door.
 //
-// A headless bot cannot walk through a door -- there is no door, only coordinates -- so when Emma went into
-// Windhelm on 2026-09-26 the bot stayed in the exterior cell and the server quite correctly stopped sending it
-// to her. That made the one bug worth testing, the copy that vanishes at a cell change, untestable without a
-// second real player.
+// A headless bot cannot walk through a door: there is no door, only coordinates.
+// When the host goes into an interior, a bot left in the exterior cell is rightly no longer sent to the host.
+// That would leave the copy that vanishes at a cell change untestable without a second real player.
 //
-// It does not need a door. The server already broadcasts NotifyPlayerCellChanged to everyone else, so the bot
-// can be told where the host went and simply say it is there too: announce the same cell and put itself at the
-// host's coordinates. That is a teleport, which is exactly what a load door is from the network's point of view.
+// It does not need a door.
+// The server already broadcasts NotifyPlayerCellChanged to everyone else, so the bot learns where the host went.
+// It then announces the same cell and puts itself at the host's coordinates.
+// That is a teleport, which is exactly what a load door is from the network's point of view.
 void Bot::FollowHostIntoCell(const GameId& acCell, const GameId& acWorldSpace) noexcept
 {
     if (!m_hasCharacter)
@@ -1822,13 +1822,12 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
     // Walk into an interior, without a door.
     //
-    // The bug this exists for: a player whose own cell unloads deletes every remote copy standing in it, the
-    // server is never told, and the copy is gone until something else happens to re-send it. Seen was invisible
-    // for seventy seconds that way on 2026-09-26. Until now it could only be reproduced by two people and a load
-    // door, which is not a test.
+    // The bug this exists for: a player whose own cell unloads deletes every remote copy standing in it.
+    // The server is never told, and the copy is gone until something else happens to re-send it.
+    // Without this it could only be reproduced by two people and a load door, which is not a test.
     //
-    // A cell change is only a message. The bot says it is in an interior and the server treats it exactly as it
-    // treats a player walking through a door, which is the whole of what the bug needs.
+    // A cell change is only a message.
+    // The bot says it is in an interior and the server treats it exactly as a player walking through a door, which is all the bug needs.
     if (name == "cell")
     {
         if (args.empty())
@@ -2005,10 +2004,9 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "activate <hex reference> by other|me [door state]": an activation of that reference of Skyrim.esm, in this bot's cell, in the
-    // name of the other player's character (what Emma's game sent Seen's when it replayed his door on his copy and
-    // sent the replay on again, 2026-10-03 15:21; he went back through the door six times) or of this bot's own (the
-    // game replays it on this bot's copy; a game that sends the replay on sends it back here, see activationsback).
+    // "activate <hex reference> by other|me [door state]": an activation of that reference of Skyrim.esm, in this bot's cell.
+    // "by other" sends it in the name of the other player's character, as a game does when it sends on a door replayed on that player's copy.
+    // "by me" sends it in this bot's own name; the game replays it on this bot's copy, and a game that sends the replay on sends it back here (see activationsback).
     // The server relays it to the players in that cell, the game among them.
     if (name == "activate")
     {

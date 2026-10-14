@@ -227,10 +227,9 @@ def analyse(lines):
 
     if archery:
         states = sorted(set(archery))
-        # Absence of the bow states only means something if a bow was actually drawn. The player's own launches
-        # are "shooter 14"; a bow shot carries ammo, a spell does not. Without one of those in the window, states
-        # of 0 and 2 say nothing at all -- and on 2026-09-26 this analyser cheerfully concluded the opposite from
-        # a session in which Seen cast spells and never touched a bow.
+        # Absence of the bow states only means something if a bow was actually drawn.
+        # The player's own launches are "shooter 14"; a bow shot carries ammo, a spell does not.
+        # Without one of those in the window, states of 0 and 2 say nothing at all, as in a session of spells and no bow.
         drew_bow = any(BOW_SHOT.search(l) for l in lines)
         # And presence needs the same care as absence. States 9 and 10 (bow draw, arrow attached) are reached just by
         # raising a bow: on 2026-09-27 they appeared 55 times, always 8 -> 9 -> 10 -> 0 inside one second, with not

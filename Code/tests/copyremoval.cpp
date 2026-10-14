@@ -10,9 +10,9 @@ using namespace CopyRemovalPolicy;
 
 // The property that matters: a remote copy held back for safety must never be able to accumulate.
 //
-// Twice on 2026-09-27 a change to this decision filled Emma's world with live copies and collapsed her frame
-// rate in VR, because "wait until the game releases it" has no bound when the game never releases it. These
-// tests exist so the bound is checked by a machine in under a second instead of by her losing an evening.
+// "Wait until the game releases it" has no bound when the game never releases it.
+// An unbounded wait fills the world with live copies and collapses the frame rate in VR.
+// These tests check the bound in under a second instead of in a play session.
 
 TEST_CASE("a copy nothing holds is freed at once", "[copyremoval]")
 {

@@ -4,9 +4,9 @@
 #
 #   python Tools\VR\live-check.py live-body-grab-human
 #
-# 2026-10-06 20:03: Seen dragged a body Emma's game owned and she did not see it move; his log has no line of the
-# hand-off at all (no "is being moved here; asking for it", no "BodyGrabDiag", no "no hand of this player's is on
-# it") -- his game never noticed the body moving. live-body-owner covers the other half (the owner dragging it past).
+# A body dragged by a player whose game does not own it must move in the game that owns it.
+# The dragging game's log shows the hand-off as "is being moved here; asking for it", "BodyGrabDiag" or "no hand of this player's is on it".
+# live-body-owner covers the other half (the owner dragging it past).
 log live body grab human
 waitfor connected 45
 collect spawn health death ownership

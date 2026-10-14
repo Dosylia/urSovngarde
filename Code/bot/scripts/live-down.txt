@@ -1,4 +1,4 @@
-# "X is down": a party member's health reaching zero shows a line in the game (Emma, 2026-10-10: a message, no revive).
+# "X is down": a party member's health reaching zero shows a line in the game (a message, no revive).
 #
 #   python Tools\VR\live-check.py live-down
 #

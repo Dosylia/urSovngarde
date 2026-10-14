@@ -2,9 +2,9 @@
 #
 #   python Tools\VR\live-check.py live-world-object
 #
-# On 2026-10-03 Emma and Seen each carried a bottle around and Emma pushed a cart; neither saw the other's. Dropped
-# items had their own sync, objects that were always there had none. Now a client watches the movable objects within
-# 400 units of its player and sends where one goes; the other client holds it (keyframed) and follows.
+# Dropped items have their own sync; objects that were always there, such as a bottle or a cart, need this one.
+# A client watches the movable objects within 400 units of its player and sends where one goes.
+# The other client holds it (keyframed) and follows.
 #
 # The object is a wooden plate of Skyrim.esm by Mistwatch (reference 92D04, about 1800 units from where the test save
 # starts). The player is moved to it; the game moves it the way a hand would (papyrus SetPosition, since the VR
@@ -53,7 +53,7 @@ log CHECK logged WorldObject: 92D04 is being moved over there; holding it here a
 wait 4
 log CHECK logged WorldObject: 92D04 was put down over there; handed back to physics here
 
-# Seen, 2026-10-03 15:16: "if one player moves or touches an item like a book it gets unusable for the other side".
+# An item one player moves or touches must stay usable for the other player.
 # The plate was just held and let go here; the player must still be able to take it.
 log -- the player takes the plate the bot let go of
 log DO papyrus ObjectReference Activate 92D04 14 b:false
