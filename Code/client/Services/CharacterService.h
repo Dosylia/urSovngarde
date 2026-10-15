@@ -106,7 +106,9 @@ private:
 
     Actor* CreateCharacterForEntity(entt::entity aEntity) const noexcept;
     ActorData BuildActorData(Actor* apActor) const noexcept;
-    void ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId) const noexcept;
+    //! @param apOwnerEquipment The owner's equipment, put back on a copy once its rebuild completes; null when this game owns it.
+    void ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId, const Inventory* apOwnerEquipment = nullptr) const noexcept;
+    void RestoreConformedWeapons(Actor* apActor) noexcept;
     // This player's followers owned by another player, asked for back once they are near this player.
     void RunFollowerReclaims() const noexcept;
     void ProcessLeveledConforms() noexcept;
@@ -149,6 +151,8 @@ private:
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};
+    // Actor form ID -> the owner's equipment, for the copies in m_pendingLeveledConforms.
+    mutable Map<uint32_t, Inventory> m_conformEquipment{};
     // Actor form ID -> the owner's last leveled pick for that remote actor.
     // ProcessLeveledConforms checks it again, since the game can re-roll the actor on its own.
     mutable Map<uint32_t, uint32_t> m_ownerLeveledPicks{};

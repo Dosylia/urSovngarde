@@ -20,6 +20,7 @@
 #include <PlayerCharacter.h>
 #include <Forms/TESObjectCELL.h>
 #include <Actor.h>
+#include <Components/BGSEquipType.h>
 #include <Structs/ObjectData.h>
 #include <Forms/TESWorldSpace.h>
 #include <Games/TES.h>
@@ -627,9 +628,17 @@ void InventoryService::ApplyHandEquipment(Actor* apActor, const Inventory& acEqu
             ScopedInventoryOverride _;
             apActor->AddObjectToContainer(pObject, nullptr, 1, nullptr);
         }
-        // The right hand takes the item's own slot, as Papyrus EquipItem does: a bow or a two-handed weapon needs both hands.
-        TESForm* pSlot = item.Left ? defaultObjects.leftEquipSlot : nullptr;
-        spdlog::info("Equipment sync: remote actor {:X} equips {:X} ({} hand)", apActor->formID, item.pForm->formID, item.Left ? "left" : "right");
+        // A bow or a two-handed weapon takes its own both-hands slot; anything else the hand it is held in.
+        // Leaving the slot to the game would put a second one-handed weapon in whichever hand is free.
+        TESForm* pSlot = item.Left ? defaultObjects.leftEquipSlot : defaultObjects.rightEquipSlot;
+        if (const auto* pEquipType = item.Left ? nullptr : Cast<BGSEquipType>(item.pForm))
+        {
+            auto* pOwnSlot = reinterpret_cast<TESForm*>(pEquipType->unk4); // BGSEquipType::equipSlot
+            if (pOwnSlot && pOwnSlot != defaultObjects.eitherEquipSlot && pOwnSlot != defaultObjects.leftEquipSlot && pOwnSlot != defaultObjects.rightEquipSlot)
+                pSlot = pOwnSlot;
+        }
+        spdlog::info("Equipment sync: remote actor {:X} equips {:X} ({} hand{})", apActor->formID, item.pForm->formID, item.Left ? "left" : "right",
+                     pSlot != defaultObjects.leftEquipSlot && pSlot != defaultObjects.rightEquipSlot ? ", both hands" : "");
         pEquipManager->Equip(apActor, item.pForm, nullptr, 1, pSlot, false, true, false, false);
         NoteHandItem(apActor, item.pForm, item.Left, true);
     }

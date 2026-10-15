@@ -1170,6 +1170,35 @@ bool TP_MAKE_THISCALL(HookSpawnActorInWorld, Actor)
 TP_THIS_FUNCTION(TDamageActor, bool, Actor, float aDamage, Actor* apHitter, bool aKillMove);
 static TDamageActor* RealDamageActor = nullptr;
 
+#ifdef SKYRIMVR
+TP_THIS_FUNCTION(THitTarget, void, Actor, Actor* apTarget, void* apProjectile, bool aIsOffhand);
+static THitTarget* RealHitTarget = nullptr;
+
+// A swing that lands on the other player's sword is a clash, not a hit on him.
+// PLANCK counts the copy's weapon body as part of the copy and runs the game's whole melee hit: body sound, blood, reaction.
+// So that hit is cancelled before any of it when it landed where his weapon was just touched or where a blade stop holds.
+// Our own clash keeps its block sound, sparks and buzz; a hit on his body goes through as before.
+void TP_MAKE_THISCALL(HookHitTarget, Actor, Actor* apTarget, void* apProjectile, bool aIsOffhand)
+{
+    if (apThis == PlayerCharacter::Get() && !apProjectile && apTarget)
+    {
+        const ActorExtension* pTarget = apTarget->GetExtension();
+        if (pTarget && pTarget->IsRemotePlayer())
+        {
+            // PLANCK stores where the hit landed in the player (+0x6BC) right before it calls this.
+            const auto* pLastHit = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(apThis) + 0x6BC);
+            const glm::vec3 cPoint{pLastHit[0], pLastHit[1], pLastHit[2]};
+            if (VRBodySync::IsWeaponTouchAt(cPoint) || VRBodySync::IsBladeStoppedAt(apTarget->formID, cPoint))
+            {
+                spdlog::info("PvP: a swing into remote player {:X}'s weapon is a clash; the game's hit on him is cancelled", apTarget->formID);
+                return;
+            }
+        }
+    }
+    TiltedPhoques::ThisCall(RealHitTarget, apThis, apTarget, apProjectile, aIsOffhand);
+}
+#endif
+
 // TODO: this is flawed, since it does not account for invulnerable actors
 bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bool aKillMove)
 {
@@ -1643,6 +1672,11 @@ static TiltedPhoques::Initializer s_actorHooks(
         RealCharacterConstructor2 = s_characterCtor2.Get();
         RealSpawnActorInWorld = s_SpawnActorInWorld.Get();
         RealDamageActor = s_damageActor.Get();
+#ifdef SKYRIMVR
+        // Character::HitTarget, the same function PLANCK calls for a melee hit (VR 0x631AF0).
+        POINTER_SKYRIMSE(THitTarget, s_hitTarget, 37673, 37673);
+        RealHitTarget = s_hitTarget.Get();
+#endif
         RealApplyActorEffect = s_applyActorEffect.Get();
         RealRegenAttributes = s_regenAttributes.Get();
         RealAddInventoryItem = s_addInventoryItem.Get();
@@ -1663,6 +1697,9 @@ static TiltedPhoques::Initializer s_actorHooks(
         TP_HOOK(&RealCharacterConstructor2, HookCharacterConstructor2);
         TP_HOOK(&RealSpawnActorInWorld, HookSpawnActorInWorld);
         TP_HOOK(&RealDamageActor, HookDamageActor);
+#ifdef SKYRIMVR
+        TP_HOOK(&RealHitTarget, HookHitTarget);
+#endif
         TP_HOOK(&RealApplyActorEffect, HookApplyActorEffect);
         TP_HOOK(&RealRegenAttributes, HookRegenAttributes);
         TP_HOOK(&RealAddInventoryItem, HookAddInventoryItem);

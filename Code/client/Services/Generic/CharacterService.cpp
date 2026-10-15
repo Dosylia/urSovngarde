@@ -722,6 +722,7 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
     }
 
     m_pendingLeveledConforms.erase(acEvent.FormId);
+    m_conformEquipment.erase(acEvent.FormId);
 
     auto view = m_world.view<FormIdComponent>();
     const auto entityIt = std::find_if(view.begin(), view.end(), [view, formId = acEvent.FormId](auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == formId; });
@@ -935,6 +936,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
 
     m_pendingLeveledConforms.clear();
+    m_conformEquipment.clear();
 }
 
 void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept
@@ -1123,7 +1125,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
             MoveActor(pActor, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position);
 
         // The owner's leveled pick rides the assignment response for actors we discovered ourselves
-        ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId);
+        ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId, &acMessage.CurrentInventory);
     }
 }
 
@@ -1425,7 +1427,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
     // Static references arrive with their own locally rolled leveled pick; conform to the owner's.
     if (acMessage.FormId != GameId{})
-        ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId);
+        ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId, &acMessage.InventoryContent);
 
     auto& newRemote = m_world.emplace_or_replace<RemoteComponent>(*entity, acMessage.ServerId, pActor->formID, acMessage.OwnershipEpoch);
     if (s_ownCopies.find(pActor->formID) != s_ownCopies.end() && pActor->baseForm)
@@ -1680,7 +1682,7 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     const bool cMyFollower = pActor && pActor->IsPlayerTeammate() && !pActor->IsTemporary();
     ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, acMessage.CurrentActorData, pActor && pActor->GetNiNode() && !cMyFollower, false);
     if (pActor)
-        ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId);
+        ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId, &acMessage.CurrentActorData.InitialInventory);
 
     spdlog::info("Actor {:X} is now owned by player {:X} at epoch {}", acMessage.ServerId, acMessage.OwnerPlayerId, acMessage.OwnershipEpoch);
     // She is asked for back only while loaded and near the player; this game cannot run one left behind and would hand her back.
@@ -2673,7 +2675,7 @@ ActorData CharacterService::BuildActorData(Actor* apActor) const noexcept
     return actorData;
 }
 
-void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId) const noexcept
+void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId, const Inventory* apOwnerEquipment) const noexcept
 {
     if (acPickId == GameId{})
         return;
@@ -2726,6 +2728,41 @@ void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickI
     // Queueing to the runner from a drained task would re-lock its drain mutex.
     // Preserve the stage when a newer pick arrives during a disable or rebuild.
     m_pendingLeveledConforms[apActor->formID] = cPickId;
+    // The rebuild re-equips the creature's outfit, which a copy refuses, so the owner's weapons are put back after it.
+    if (apOwnerEquipment)
+        m_conformEquipment[apActor->formID] = *apOwnerEquipment;
+}
+
+// A copy rebuilt for the owner's pick loses its weapons: the game re-equips its outfit, and a copy refuses the game's own equips.
+// The owner's hand items, kept when the rebuild was queued, are put back the way a player copy's are.
+// Only when the owner's list holds a weapon, so an NPC whose server copy is older than its drawn weapon keeps what it has.
+void CharacterService::RestoreConformedWeapons(Actor* apActor) noexcept
+{
+    const auto found = m_conformEquipment.find(apActor->formID);
+    if (found == m_conformEquipment.end())
+        return;
+    const Inventory cEquipment = std::move(found->second);
+    m_conformEquipment.erase(found);
+
+    const ActorExtension* pExtension = apActor->GetExtension();
+    if (!pExtension || !pExtension->IsRemote())
+        return;
+
+    auto& modSystem = m_world.GetModSystem();
+    const bool cHasWeapon = std::any_of(cEquipment.Entries.begin(), cEquipment.Entries.end(),
+                                        [&modSystem](const auto& acEntry)
+                                        {
+                                            const TESForm* pForm = acEntry.IsWorn() ? TESForm::GetById(modSystem.GetGameId(acEntry.BaseId)) : nullptr;
+                                            return pForm && pForm->formType == FormType::Weapon;
+                                        });
+    if (!cHasWeapon)
+        return;
+
+    InventoryService::ApplyHandEquipment(apActor, cEquipment, true);
+    const TESForm* pLeft = apActor->GetEquippedWeapon(0);
+    const TESForm* pRight = apActor->GetEquippedWeapon(1);
+    spdlog::info("Leveled copy {:X} rebuilt: the owner's weapons put back, now holding left {:X}, right {:X}", apActor->formID, pLeft ? pLeft->formID : 0,
+                 pRight ? pRight->formID : 0);
 }
 
 void CharacterService::ProcessLeveledConforms() noexcept
@@ -2811,6 +2848,7 @@ void CharacterService::ProcessLeveledConforms() noexcept
             if (pActor->baseForm && pActor->baseForm->IsTemporary() && pActor->GetLeveledPick() == pPick)
             {
                 spdlog::info("Completed leveled NPC reconciliation for actor {:X}, base: {:X}, pick: {:X}", it->first, pActor->baseForm->formID, cPickFormId);
+                RestoreConformedWeapons(pActor);
                 stage = ReconciliationStage::None;
                 it = m_pendingLeveledConforms.erase(it);
                 continue;
@@ -2915,15 +2953,15 @@ void CharacterService::RunLocalUpdates() const noexcept
         if (attackState != s_lastAttackState)
         {
             s_lastAttackState = attackState;
-            spdlog::info("VRArchery: local attack state {} (9 bow draw, 10 arrow attached, 11 drawn, 12 releasing, 13 released), weapon drawn {}", attackState,
+            spdlog::info("VRArchery: local attack state {} (8 bow draw, 9 arrow on the string, 10 drawn, 11 releasing, 12 released), weapon drawn {}", attackState,
                          pPlayer->actorState.IsWeaponDrawn());
         }
 
         // Sent to the others when the arrow goes on and comes off, so their copy of this player shows it.
         static bool s_nockedSent = false;
-        // Nocked from state 10 until the bow is put away or shot (0).
-        // A VR draw goes 8, 9, 10 (arrow in hand), then back to 9 and 8 while it sits on the string, so 8 and 9 keep it.
-        const bool cNocked = attackState >= 10 || (s_nockedSent && attackState >= 8);
+        // Nocked from state 9 (the arrow on the string, pulled or not) until the bow is shot or put away (0).
+        // A VR draw goes 8, 9, 10 (pulled), and back to 9 and 8 while it still sits on the string, so 8 keeps it.
+        const bool cNocked = attackState >= 9 || (s_nockedSent && attackState >= 8);
         if (cNocked != s_nockedSent && m_transport.IsConnected())
         {
             ArrowNockedRequest request{};

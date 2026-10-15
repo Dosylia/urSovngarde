@@ -21,6 +21,10 @@ Everything here is built and tested in the rig, waiting to be seen in play. Seen
 public server (v1.9.3) refuses this build (protocol change: the arrow and the book). After the session, read both logs
 for the lines named.
 
+Both players must run the current tools folder (v1.9.3-12-gf7decbde-dirty.9340761 or later). Most fixes act in the game
+of the player who watches: in the session of 2026-10-14 evening Seen still ran 4ccd5ff, so nothing that his game draws
+or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
+
 - [ ] **Blades:** does your blade rest on his, and does it feel right (`BladeStop: ... met`, `... let go`)? Open design
       point: sliding off his hilt end lets go, so the blade carries on into his hand and that hit counts.
 - [ ] **Grabbing:** grab an NPC Seen's game runs, then Seen's arm, and say what the hand does (nothing, holds, pulls).
@@ -33,11 +37,27 @@ for the lines named.
       The game's own NPCs went the same way (an inherited hook routed every NPC move, about 1,000 a second, through the
       patched slot); since the build of 2026-10-14 22:00 they too move with the game's own SetPosition. To see in play:
       grabbing an NPC with HIGGS, both games on the current build.
-- [ ] **Arrow on the bow:** the nock on the string and the tip past the bow as the other player sees it, gone after the
-      shot. Since 2026-10-14 the arrow is placed one arrow length ahead of the string hand (the model's origin is its
-      tip); before, the tip sat in the string hand and the fletching stuck out behind.
-- [ ] **A drawn bow when the other player joins:** the joiner sees it without a re-equip (`Equipment sync: ... equips
-      ... (right hand)` on arrival now uses the item's own slot, so a bow goes to both hands).
+- [ ] **Arrow on the bow:** seen 2026-10-15 (both on a720309): placed right while the string is pulled. It was missing
+      while the arrow only sat on the string: our attack-state numbers were off by one (CommonLibVR: 8 bow draw,
+      9 arrow on the string, 10 pulled), so "arrow on" was sent only at 10. Since 9340761 it is sent from 9. Rig:
+      `live-arrow-nock` 9 of 9, but the bot sends "arrow on" itself, so only the receiving side is tested. To see in
+      play: the arrow shows as soon as it sits on the string, unpulled. An arrow held in the hand before nocking is
+      not sent at all.
+- [ ] **A drawn bow when the other player joins:** the joiner sees it without a re-equip. Since 9340761 a weapon whose
+      own slot is both hands (bow, two-hander) is equipped there (`equips ... (right hand, both hands)`), anything else
+      in the hand it is held in. Rig: `live-arrow-nock` and `live-equip-twice` pass. Not seen in play yet.
+- [ ] **Hitting his sword sounds like hitting him** (2026-10-15): PLANCK counts the copy's sword as part of the copy and
+      runs the game's whole melee hit (body sound, blood, reaction); only the damage was dropped. Since 9340761 that hit
+      is cancelled when it lands where his weapon was just touched or a blade stop holds
+      (`PvP: a swing into remote player ...'s weapon is a clash; the game's hit on him is cancelled`); the block sound,
+      sparks and buzz stay. Rig: `live-blade` 6 of 6, but the rig's slow swings make no PLANCK hit, so the new line never
+      fired there. To see in play: only the block sound on a blade hit.
+- [ ] **Leveled NPC copies without their weapon** (2026-10-15, a Draugr Deathlord in Skuldafn unarmed in player 2's
+      game, doing small unarmed hits): a copy rebuilt for the owner's leveled pick re-equips its outfit, and a copy
+      refuses the game's own equips. Since 9340761 the owner's weapons are put back when the rebuild completes
+      (`Leveled copy ... rebuilt: the owner's weapons put back, now holding left ..., right ...`). Rig: `live-levelled`
+      passes, but its bear has no weapon, so the put-back is untested. To see in play: leveled draugr and bandits
+      armed on both sides.
 - [ ] **No animation-graph crash** like player 2's of 2026-10-14 21:47 (`SkyrimVR.exe+0xB3C2F1`, Irileth in
       Dragonsreach, a float where Havok expected an index): synced animation values are now written only into variables
       whose word is the value, and the variable list is taken again when an actor's behavior project changes

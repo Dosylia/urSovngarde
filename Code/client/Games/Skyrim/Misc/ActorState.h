@@ -28,7 +28,7 @@ struct ActorState : IMovementState
     bool IsDeadOrDying() const noexcept { return IsDying() || IsDead(); }
 
     //! ATTACK_STATE_ENUM, bits 28-31 of flags1.
-    //! Bow values: 9 kBowDraw, 10 kBowAttached (arrow on the string), 11 kBowDrawn, 12 kBowReleasing, 13 kBowReleased.
+    //! Bow values (CommonLibVR): 8 kBowDraw, 9 kBowAttached (arrow on the string), 10 kBowDrawn (pulled), 11 kBowReleasing, 12 kBowReleased.
     uint32_t AttackState() const noexcept { return (flags1 >> 28) & 0xF; }
 
     bool SetWeaponDrawn(bool aDraw) noexcept;

@@ -25,6 +25,10 @@ log CHECK logged Player copy \w+ came with its weapon drawn
 # 70 units in front of the player, at its height (the bot's copy otherwise keeps the height it started at).
 infront 70
 wait 3
+# The copy replays the player's own pose, which carries the weapon in the player's hand.
+# Sheathed first, so the copy's sword keeps its own grip instead of lying along the player's, whatever the save holds.
+log DO papyrus Actor SheatheWeapon 14
+wait 3
 capture other 12
 wait 1
 handtargets -15 15 70 15 20 80
