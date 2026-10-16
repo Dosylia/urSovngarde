@@ -25,6 +25,42 @@ Both players must run the current tools folder (v1.9.3-12-gf7decbde-dirty.934076
 of the player who watches: in the session of 2026-10-14 evening Seen still ran 4ccd5ff, so nothing that his game draws
 or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
 
+Session of 2026-10-16 evening (both on d3c1974; player 2 joined first). Build fb88297 (deployed, client and server):
+
+- [ ] **Player 1 cannot see her own arrows** (new on 2026-10-16; player 2 saw them on her bow and saw her shots).
+      Her log has every draw (states 8, 9, 10) and nothing of ours touches her own arrow; no echo of her ArrowNocked
+      came back. Since fb88297 `ArrowDiag:` logs her own arrow nodes (VR room nodes, first and third person) with
+      parent, hidden flag and distance from each hand, whenever they change while a weapon is out. Rig: builds and runs,
+      but the rig cannot nock. To see in play: draw once before F6 and once after; send the log either way.
+- [ ] **Arrow held in the hand before nocking** not seen by the other player: not sent at all. The same `ArrowDiag:`
+      lines show which node the game makes for it, which is what to send.
+- [ ] **Player 2's hits did not hurt player 1 much** (21:02-21:03): on player 2's game, player 1's sword and shield
+      bodies were taken out of the world while the world was busy; we dropped our record anyway, and the next frame
+      left the bodies alone as someone else's (`already in a world; left alone`) for the rest of the fight. Player 2's
+      game then saw no touch at all, so it never blocked, while player 1's game blocked half of player 2's hits. Since
+      fb88297 the record stays until the body is really out (`could not be taken out yet ... tried again next frame`).
+      Rig: `live-clash` 10 of 10. To see in play: blocks on both sides; no `left alone` line for a player copy.
+- [ ] **Held objects flicker for the other player; can't be lifted after** (21:16): three causes in the logs. A carried
+      object dropped off the watch list mid-carry never sent its rest (8 of 20 carries); a hand pausing 600 ms counted
+      as a put-down, which the other side lets go of after 500 ms; a carry near the other player's copy was never sent.
+      Since fb88297: carried objects stay watched until they rest, rest needs 1 s of stillness, and a restart within 3 s
+      of this player's own carry is sent next to the other player. Rig: `live-world-object` 8 of 8. Not settled: why
+      the other player can't lift it after (our state is always handed back to physics; HIGGS may refuse while the
+      other game still moves it). To see in play: carry a cup past the other player, then let them take it.
+- [ ] **Downed essential NPCs slide on the floor** (player 2, 2026-10-16): on player 2's screen no NPC was a copy, so it
+      is his own NPCs (our SetPosition hook, PLANCK or HIGGS). `Tools/VR/bleedout-slide.py` knocks an essential bandit
+      down in the rig, connected then offline: first run 180 against 142 units, but the bandit stood up inside the 12 s,
+      so the run needs to measure only while it lies down. On player 1's screen a copy stayed downed after its owner
+      got up (21:16:54 `'bleedOutStop' refused`).
+- [ ] **Two-handed sword grip sometimes wrong** (player 2): his greatsword was equipped on the copy by the event path
+      with the right-hand slot after a respawn (the snapshot path uses both hands since 9340761). Not shown to cause the
+      grip; ask which screen it was.
+- [ ] **Player 2's crash at 20:55** (not connected, 2 s after a load in Sovngarde): a freed scene-graph node visited by
+      culling, the same family as KNOWN_ISSUES's +0xCBFD24; nothing of ours in it. Needs his
+      `logs\crash_UTC_2026-10-16_18-55-15.small.dmp` (collect-logs leaves small dumps out).
+- [ ] `Character with remote id ... is already spawned` is routine (the server re-sends at each cell crossing): debug
+      level since fb88297.
+
 - [ ] **Blades:** does your blade rest on his, and does it feel right (`BladeStop: ... met`, `... let go`)? Open design
       point: sliding off his hilt end lets go, so the blade carries on into his hand and that hit counts.
 - [ ] **Grabbing:** grab an NPC Seen's game runs, then Seen's arm, and say what the hand does (nothing, holds, pulls).

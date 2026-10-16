@@ -1172,7 +1172,8 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                 remoteComponent.OwnershipEpoch = acMessage.OwnershipEpoch;
             }
             else
-                spdlog::warn("Character with remote id {:X} is already spawned.", acMessage.ServerId);
+                // The server re-sends every character in range at each cell crossing, so this is routine.
+                spdlog::debug("Character with remote id {:X} is already spawned.", acMessage.ServerId);
 
             // Position, cell and death state normally arrive through the movement and death paths, and are left alone.
             // The server withholds updates for characters outside the loaded grid, and re-sends the spawn on return.
@@ -2956,6 +2957,10 @@ void CharacterService::RunLocalUpdates() const noexcept
             spdlog::info("VRArchery: local attack state {} (8 bow draw, 9 arrow on the string, 10 drawn, 11 releasing, 12 released), weapon drawn {}", attackState,
                          pPlayer->actorState.IsWeaponDrawn());
         }
+
+        // Measurement: where the game keeps this player's own arrow, in the hand and on the string, and whether it is drawn.
+        if (pPlayer->actorState.IsWeaponDrawn())
+            VRBodySync::LogLocalArrowNodes(pPlayer, attackState);
 
         // Sent to the others when the arrow goes on and comes off, so their copy of this player shows it.
         static bool s_nockedSent = false;

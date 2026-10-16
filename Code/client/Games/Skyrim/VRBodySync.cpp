@@ -1962,10 +1962,12 @@ bool ShouldLogWeaponBody(const uint64_t aKey, const bool aIn) noexcept
     return true;
 }
 
-void ReleaseWeaponBody(const uint64_t aKey, WeaponBody& aBody, const char* acpWhy) noexcept
+// False when the body is still in a world afterwards (its world was busy): the record is kept, to be tried again next frame.
+// Dropping the record then would leave the body in the world with our listener, and the next frame takes it for someone else's.
+bool ReleaseWeaponBody(const uint64_t aKey, WeaponBody& aBody, const char* acpWhy) noexcept
 {
     if (!aBody.pHavok)
-        return;
+        return true;
     ForgetWeaponTarget(aBody.pHavok);
     POINTER_SKYRIMSE(THkpWorldRemoveEntity, s_removeEntity, 60493, 60493);
     POINTER_SKYRIMSE(THkpEntityContactListener, s_removeContactListener, 60095, 60095);
@@ -1984,18 +1986,25 @@ void ReleaseWeaponBody(const uint64_t aKey, WeaponBody& aBody, const char* acpWh
             s_removeEntity.Get()(pHkpWorld, &removed, aBody.pHavok);
         }
     }
-    // Out of every world already: nothing simulates it, so the listener comes off without a lock.
-    if (!At<void*>(aBody.pHavok, kHkWorldOffset))
+    if (At<void*>(aBody.pHavok, kHkWorldOffset))
     {
-        if (aBody.Listening && s_removeContactListener.Get())
-            s_removeContactListener.Get()(aBody.pHavok, &s_contactListener);
-        aBody.pHavok[kMaxAngularVelocityOffset] = aBody.GameMaxAngularVelocity;
+        static std::unordered_set<uint64_t> s_saidWaiting;
+        if (s_saidWaiting.insert(aKey).second)
+            spdlog::info("VRWeaponBody: actor {:X} {} weapon body could not be taken out yet ({}; its world was busy); tried again next frame",
+                         static_cast<uint32_t>(aKey >> 1), (aKey & 1) ? "right" : "left", acpWhy);
+        return false;
     }
+    // Out of every world already: nothing simulates it, so the listener comes off without a lock.
+    if (aBody.Listening && s_removeContactListener.Get())
+        s_removeContactListener.Get()(aBody.pHavok, &s_contactListener);
+    aBody.Listening = false;
+    aBody.pHavok[kMaxAngularVelocityOffset] = aBody.GameMaxAngularVelocity;
     if (ShouldLogWeaponBody(aKey, false))
         spdlog::info("VRWeaponBody: actor {:X} {} weapon body out of the world ({})", static_cast<uint32_t>(aKey >> 1), (aKey & 1) ? "right" : "left", acpWhy);
     static_cast<NiRefObject*>(aBody.pWrapper)->DecRef();
     static_cast<NiRefObject*>(aBody.pNode)->DecRef();
     aBody = {};
+    return true;
 }
 
 // Whether a node hangs below another, up to six levels up.
@@ -2078,7 +2087,8 @@ void UpdateWeaponBodies(const uint32_t aFormId, Actor* apActor, const Rig& acRig
                                                                    : nullptr;
             if (pWhy)
             {
-                ReleaseWeaponBody(key, body, pWhy);
+                if (!ReleaseWeaponBody(key, body, pWhy))
+                    continue;
                 s_weaponBodies.erase(it);
                 it = s_weaponBodies.end();
             }
@@ -2764,9 +2774,11 @@ void ReleaseUnseenWeaponBodies() noexcept
     {
         if (!it->second.Seen)
         {
-            ReleaseWeaponBody(it->first, it->second, "its copy was not posed");
-            it = s_weaponBodies.erase(it);
-            continue;
+            if (ReleaseWeaponBody(it->first, it->second, "its copy was not posed"))
+            {
+                it = s_weaponBodies.erase(it);
+                continue;
+            }
         }
         it->second.Seen = false;
         ++it;
@@ -4215,6 +4227,99 @@ std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, siz
                 queue.push_back(pChildren[i]);
     }
     return out;
+}
+
+void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexcept
+{
+#ifdef SKYRIMVR
+    constexpr uint32_t cFlagsOffset = 0x10C; // NiAVObject::flags on VR, bit 0 hidden (as SpawnReveal)
+    constexpr size_t cMaxNodes = 8192;
+    constexpr size_t cMaxListed = 24;
+
+    static std::chrono::steady_clock::time_point s_nextWalk{};
+    static std::string s_last;
+    const auto now = std::chrono::steady_clock::now();
+    if (!apPlayer || now < s_nextWalk)
+        return;
+    s_nextWalk = now + std::chrono::milliseconds(200);
+
+    // The VR nodes (bow aim, arrow snap and hold) hang below PlayerWorldNode, found up from the headset node.
+    void* pWorldNode = nullptr;
+    if (HeadsetTransform())
+    {
+        void* pNode = At<void*>(apPlayer, kHmdNodeOffset);
+        for (int depth = 0; pNode && depth < 16 && !pWorldNode; ++depth, pNode = At<void*>(pNode, kParentOffset))
+            if (const char* pName = GetName(pNode); pName && std::strcmp(pName, "PlayerWorldNode") == 0)
+                pWorldNode = pNode;
+    }
+
+    // The first-person skeleton, from its root bone's parent, in case it does not hang below PlayerWorldNode.
+    void* pFirstPerson = nullptr;
+    {
+        void* pNode = FirstPersonHand(apPlayer, 1);
+        for (int depth = 0; pNode && depth < 32 && !pFirstPerson; ++depth, pNode = At<void*>(pNode, kParentOffset))
+            if (const char* pName = GetName(pNode); pName && std::strcmp(pName, "NPC Root [Root]") == 0)
+                pFirstPerson = At<void*>(pNode, kParentOffset);
+    }
+
+    std::array<glm::vec3, 2> hands{};
+    std::array<bool, 2> hasHand{};
+    for (size_t side = 0; side < 2; ++side)
+        if (void* pHand = FirstPersonHand(apPlayer, side))
+        {
+            hands[side] = ToGlm(At<NiTransform>(pHand, kWorldOffset).translate);
+            hasHand[side] = true;
+        }
+
+    // What decides a new line: names, parents and hidden flags. Where the nodes are is only reported.
+    std::string signature;
+    std::string details;
+    size_t count = 0;
+    std::unordered_set<void*> seen;
+    std::vector<void*> queue;
+    for (void* pRoot : {pWorldNode, pFirstPerson, static_cast<void*>(apPlayer->GetNiNode())})
+        if (pRoot)
+            queue.push_back(pRoot);
+    for (size_t head = 0; head < queue.size() && head < cMaxNodes; ++head)
+    {
+        void* pObject = queue[head];
+        if (!seen.insert(pObject).second)
+            continue;
+        if (const char* pName = GetName(pObject))
+        {
+            std::string lower(pName);
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (lower.find("arrow") != std::string::npos && ++count <= cMaxListed)
+            {
+                void* pParent = At<void*>(pObject, kParentOffset);
+                const char* pParentName = pParent ? GetName(pParent) : nullptr;
+                const bool cHidden = (At<uint32_t>(pObject, cFlagsOffset) & 1u) != 0;
+                const NiTransform& world = At<NiTransform>(pObject, kWorldOffset);
+                const std::string cEntry = fmt::format("'{}' under '{}'{}{}", pName, pParentName ? pParentName : "none", cHidden ? " hidden" : "", world.scale < 0.01f ? " scale 0" : "");
+                signature += cEntry + ";";
+                const glm::vec3 cAt = ToGlm(world.translate);
+                details += fmt::format("{}[{}, right hand {:.0f}, left hand {:.0f}]", details.empty() ? "" : " ", cEntry, hasHand[1] ? glm::distance(cAt, hands[1]) : -1.f,
+                                       hasHand[0] ? glm::distance(cAt, hands[0]) : -1.f);
+            }
+        }
+        void* pNode = AsNode(pObject);
+        void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
+        const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
+        for (uint16_t i = 0; pChildren && i < capacity; ++i)
+            if (pChildren[i])
+                queue.push_back(pChildren[i]);
+    }
+
+    signature += fmt::format("world node {}, first person {}", pWorldNode != nullptr, pFirstPerson != nullptr);
+    if (signature == s_last)
+        return;
+    s_last = signature;
+    spdlog::info("ArrowDiag: local attack state {}, world node {}, first-person skeleton {}, {} node(s) named like an arrow: {}", aAttackState, pWorldNode ? "found" : "missing",
+                 pFirstPerson ? "found" : "missing", count, details.empty() ? "none" : details);
+#else
+    (void)apPlayer;
+    (void)aAttackState;
+#endif
 }
 
 bool IsWeaponTouchAt(const glm::vec3& acPoint) noexcept

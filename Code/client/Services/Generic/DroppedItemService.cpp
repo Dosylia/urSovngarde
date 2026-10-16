@@ -659,10 +659,18 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
                 break;
         }
 
-        // Held for the other player until it is let go, wherever it is now.
+        // Held for the other player until it is let go, and carried here until it comes to rest, wherever it is now.
+        // A carried object dropped from the list would never send its rest, and the other side would let it fall mid-carry.
         for (const auto& [formId, motion] : m_objectMotion)
-            if (motion.Held && std::find(m_objectCandidates.begin(), m_objectCandidates.end(), formId) == m_objectCandidates.end())
+        {
+            if (!motion.Held && !motion.Moving)
+                continue;
+            if (std::find(m_objectCandidates.begin(), m_objectCandidates.end(), formId) != m_objectCandidates.end())
+                continue;
+            auto* pRef = Cast<TESObjectREFR>(TESForm::GetById(formId));
+            if (motion.Held || (pRef && pRef->GetNiNode()))
                 m_objectCandidates.push_back(formId);
+        }
 
         for (auto it = m_objectMotion.begin(); it != m_objectMotion.end();)
         {
@@ -773,7 +781,8 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
             motion.LastLocalMove = aNow;
             send(pRef, cFormId, position, rotation, false);
         }
-        else if (aNow - motion.LastLocalMove >= std::chrono::milliseconds(600))
+        // A second of stillness: a hand pausing mid-carry is not a put-down, which the other side lets go of at once.
+        else if (aNow - motion.LastLocalMove >= std::chrono::milliseconds(1000))
         {
             // A restart is measured from where it rests.
             motion.Moving = false;
@@ -806,10 +815,12 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
 
         // Nearer another player's copy than this player: their body bumped it here.
         // Their own game does not push clutter with a VR body, so it is not sent.
+        // Unless this player moved it a moment ago: then it is a carry going on next to them, a hand-over say.
         const float cMine = glm::distance(start.Position, playerAt);
+        const bool cCarriedHere = aNow - motion.LastLocalMove < std::chrono::seconds(3);
         bool cTheirs = false;
         for (const glm::vec3& other : others)
-            if (const float cTheirsAt = glm::distance(start.Position, other); cTheirsAt < 150.f && cTheirsAt < cMine)
+            if (const float cTheirsAt = glm::distance(start.Position, other); !cCarriedHere && cTheirsAt < 150.f && cTheirsAt < cMine)
                 cTheirs = true;
         if (cTheirs)
         {
