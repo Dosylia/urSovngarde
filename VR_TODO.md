@@ -161,6 +161,18 @@ or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new
       by the server for want of an owner, come back where the joiner's save has them. A fix that remembered the last
       released place was tried and removed the same evening: some release positions are bad ((0, 0, 0) for an unloaded
       actor, far under the floor), and Imperial guards ended up stacked. A redo must accept only sane positions.
+- [ ] **Civil War battle mods** (installed on the host PC 2026-10-16: Open Civil War 2.8.0 and Populated Skyrim Civil War 3.0,
+      plugins before DynDOLOD.esp; profile backups `*.bak-20261016-civilwar`). Populated places its 324 soldiers in its plugin,
+      the best case for sync; Crowded Civil War (downloaded, not installed) spawns its soldiers by script and is kept for later.
+      The other player installs the same two.
+      Rig 2026-10-16, `live-cw-battle` (build v1.9.3-13-g8fa68305-dirty.d3c1974): Populated's Great Battle 2 near Whiterun
+      (32 soldiers, always on, no quest needed), player and bot both there. Passes: the bot held 59 copies, every soldier
+      once (no base id under two server ids), the host stayed at 60 fps (p99 under 33 ms, mod update under 3 ms), the
+      fight played out, no crash in the battle. Not tested: Open Civil War's sieges and reinforcements (need a quest
+      start), a real second game. Seen in play: not yet.
+      One run crashed in CommunityShaders.dll+0x1208c8 (read at 0x144) at the start of the loading screen out of Mistwatch;
+      the same crash came three times on 2026-10-12, all at Mistwatch loading screens in the rig, so it is not the battle
+      mods. Watch for it in play: a crash right as a loading screen starts.
 - [ ] **The copy's body turns with the head** (2026-10-14): the game turns the actor with the headset and that heading
       is sent, so the copy's hips and legs follow every head turn. First a measurement for one session (heading,
       headset yaw, the VRIK body's yaw from the thighs), then send the VRIK body's facing as the heading and the head

@@ -302,7 +302,7 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   load without them), switched on by a `driver_null` block in `steamvr.vrsettings` and removed again afterwards;
   DevBench (`http://127.0.0.1:8921`) to load a save, run console commands, read positions and quit (`qqq`); and a bot
   as the other player. Launch: start SteamVR, then `ModOrganizer.exe "moshortcut://:PLAY Skyrim Together VR"`; the
-  client connects by itself five seconds after the load. Valve's original driver is kept beside the built one as
+  client connects when F6 is pressed (headless.ps1 presses it; before 2026-10-16 it connected by itself). Valve's original driver is kept beside the built one as
   `driver_null.dll.valve`.
   All of that is `Tools/VR/headless.ps1 up` and `down` now (`down` closes SteamVR by force and removes the setting).
   `Tools/VR/live-check.py <script>` then runs a bot from `Code/bot/scripts/live-*.txt` and, at each `log CHECK ...`

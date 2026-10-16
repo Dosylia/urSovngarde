@@ -177,7 +177,8 @@ void DebugService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
         m_showDebugStuff = !m_showDebugStuff;
     }
 
-#if (!IS_MASTER)
+    // F6 connects and disconnects. On VR it is the only way to connect, so it is in every build there.
+#if defined(SKYRIMVR) || !IS_MASTER
     if (GetAsyncKeyState(VK_F6))
     {
         if (!s_f6Pressed)
@@ -198,7 +199,9 @@ void DebugService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     }
     else
         s_f6Pressed = false;
+#endif
 
+#if (!IS_MASTER)
     if (GetAsyncKeyState(VK_F7))
     {
         if (!s_f7Pressed)

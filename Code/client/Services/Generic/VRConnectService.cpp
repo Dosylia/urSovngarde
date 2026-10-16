@@ -21,7 +21,7 @@
 
 namespace
 {
-constexpr auto kAutoConnectDelay = 5s;    // after a save is loaded, so the cell has settled
+constexpr auto kAutoConnectDelay = 5s;    // after a save is loaded, so the cell has settled, before the install checks and the connection or the F6 hint
 constexpr auto kAttemptTimeout = 30s;     // an attempt that never reports back is abandoned
 constexpr std::array<std::chrono::seconds, 5> kRetryDelays{5s, 10s, 20s, 30s, 60s};
 
@@ -65,12 +65,26 @@ bool VRConnectService::LoadConfig(Config& aConfig) noexcept
     if (address.empty())
         return false;
 
+    // After the address: the password, then settings as "name=value" lines.
+    // A file without a password may have the setting on the second line, so a setting is never taken for a password.
     std::string password;
-    if (std::getline(file, password))
-        Trim(password);
+    bool autoConnect = false;
+    bool passwordRead = false;
+    for (std::string line; std::getline(file, line);)
+    {
+        Trim(line);
+        if (line.rfind("autoconnect=", 0) == 0)
+            autoConnect = line == "autoconnect=on";
+        else if (!passwordRead)
+        {
+            password = line;
+            passwordRead = true;
+        }
+    }
 
     aConfig.Address = address.c_str();
     aConfig.Password = password.c_str();
+    aConfig.AutoConnect = autoConnect;
     return true;
 }
 
@@ -101,7 +115,6 @@ void VRConnectService::Toggle() noexcept
 bool VRConnectService::CheckInstall() noexcept
 {
     // Reports install problems in the headset once a save is loaded, before they show up as a refused connection.
-    // Only a setting the server refuses stops the automatic connection.
     bool ok = true;
 
     if (!IsScriptExtenderLoaded())
@@ -174,6 +187,8 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
     switch (m_state)
     {
     case State::kIdle:
+        // Once per session, a few seconds after the first load, the install checks run.
+        // Then the game connects by itself only when the launcher's setting says so; otherwise it waits for F6.
         if (m_autoConnectDone || now - m_inGameSince < kAutoConnectDelay)
             return;
 
@@ -185,6 +200,12 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
             if (!LoadConfig(config))
             {
                 Utils::ShowHudMessage("urSovngarde: no server set, join from the urSovngarde launcher or run setup-connect.bat in the mod's folder");
+                return;
+            }
+            if (!config.AutoConnect)
+            {
+                spdlog::info("VRConnectService: ready to connect to {}; waiting for F6", config.Address.c_str());
+                Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: press F6 to connect to ") + config.Address);
                 return;
             }
         }

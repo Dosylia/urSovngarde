@@ -1,0 +1,30 @@
+# A Civil War battle with two players: Populated Skyrim Civil War's Great Battle 2 near Whiterun (Tamriel 20 -4).
+# About 32 soldiers fight there all the time; the host owns them, the bot must hold one copy of each and the game must stay up.
+log live cw battle
+collect spawn
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO god on
+log DO combat on
+log DO console cow Tamriel 20 -4
+wait 20
+# The bot goes to the battle marker too, or the server keeps the soldiers out of its view.
+# It moves once the player's loading screen is over, so the player's game drops the bot's copy outside a load.
+teleport 85406 -14147
+wait 30
+log CHECK game alive
+log SHOT arrival of player
+waitfor actors >= 20 120
+wait 90
+log SHOT fight of player
+log CHECK game alive
+wait 5
+log DO combat off
+log DO god off
+log DO console cow Tamriel 34 -9
+wait 30
+log CHECK game alive
+wait 5
+stop

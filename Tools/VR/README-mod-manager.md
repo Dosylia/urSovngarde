@@ -9,7 +9,7 @@ The urSovngarde launcher does all of this for you (install, update, play). By ha
    Start the game with it from now on, not with SKSE. Your mods load exactly as before.
 4. Run `setup-connect.bat` once in the `urSovngarde` folder and type the host's address.
    If you host yourself, type `127.0.0.1:10578`.
-5. Start the game through MO2, load a save. It connects by itself a few seconds later.
+5. Start the game through MO2, load a save, then press F6 to connect (the game shows "press F6 to connect to ..." once it is ready); with "Connect automatically" on in the launcher's settings it connects by itself a few seconds after the load. F6 again disconnects.
 
 `uGridsToLoad` must be 5, which is the default of every list. The server refuses other values.
 

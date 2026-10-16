@@ -23,6 +23,8 @@ struct VRConnectService
     {
         TiltedPhoques::String Address;
         TiltedPhoques::String Password;
+        // The launcher's "connect automatically" setting: an "autoconnect=on" line after the address.
+        bool AutoConnect = false;
     };
 
     // False when connect.txt is missing or its first line is empty.

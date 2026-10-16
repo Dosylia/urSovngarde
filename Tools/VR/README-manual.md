@@ -9,7 +9,7 @@ Vortex users: see `README-vortex.md` instead. The urSovngarde launcher does all 
    where Skyrim VR is installed.
 4. Run `setup-connect.bat` once in the `urSovngarde` folder and type the host's address.
    If you host yourself, type `127.0.0.1:10578`.
-5. Start the game, load a save. It connects by itself a few seconds later.
+5. Start the game, load a save, then press F6 to connect (the game shows "press F6 to connect to ..." once it is ready); with "Connect automatically" on in the launcher's settings it connects by itself a few seconds after the load. F6 again disconnects.
 
 You still need SKSE VR and the VR Address Library for SKSEVR installed in `Data`, like any SKSE mod.
 `uGridsToLoad` must be 5 in `SkyrimPrefs.ini`, which is the default.

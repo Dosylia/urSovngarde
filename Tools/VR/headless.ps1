@@ -18,8 +18,9 @@
 
 param(
     [Parameter(Position = 0)][ValidateSet('up', 'down', 'status')][string]$Action = 'status',
-    [string]$Save = '',                 # a save name; empty loads the most recent one
+    [string]$Save = '',                 # a save name; empty loads the fixed rig save below, or the most recent one if it is gone
     [switch]$NoConnect,                 # no server and no waiting for a connection: the game alone, mod loaded
+    [switch]$AutoConnect,               # the launcher's "connect automatically" setting on: the game connects by itself, F6 is not pressed
     [int]$LoadTimeout = 180,
     # Where the player is put once the save has loaded: the tests start outside Mistwatch (Tamriel, cell 34 -9).
     # The most recent save is wherever the player last played. Empty leaves the player where the save has them.
@@ -198,7 +199,9 @@ function Set-RigConnect {
         if ($line) { $port = [int]$line.Matches[0].Groups[1].Value }
     }
     New-Item -ItemType Directory -Force -Path (Split-Path $connectFile) | Out-Null
-    Set-Content -LiteralPath $connectFile -Value "127.0.0.1:$port" -Encoding ascii
+    $text = "127.0.0.1:$port"
+    if ($AutoConnect) { $text += "`r`nautoconnect=on" }
+    Set-Content -LiteralPath $connectFile -Value $text -Encoding ascii
     Write-Host "Connect file set to the local test server (127.0.0.1:$port) for this run."
 }
 
@@ -264,6 +267,14 @@ if (Test-Running '^(urSovngarde|SkyrimTogetherVR|SkyrimVR)$') { throw 'The game 
 if (Test-Running '^(vrserver|vrmonitor)$') { throw 'SteamVR is already running. If the headset is in use, leave it alone; otherwise close it first.' }
 
 $startedServer = $false
+# The tests run on one fixed save, since the newest one changes with every play session and changes the results with it.
+# The bot clones the player's equipment, and a save's effects (a cloak spell, a companion) can kill the bot's creatures.
+# The newest save is used only when the fixed one is gone.
+$rigSave = 'Save46_C232C981_0_517565656E20456D6D61_Tamriel_011038_20261011155852_30_1'
+if (-not $Save -and (Test-Path -LiteralPath (Join-Path $savesDir "$rigSave.ess"))) {
+    $Save = $rigSave
+    Write-Host "Loading the rig's fixed save $rigSave (pass -Save to load another)."
+}
 try {
     Copy-SavesAside
     Set-RigConnect
@@ -306,6 +317,20 @@ try {
         Write-Host 'Up, not connected (no server was started).' -ForegroundColor Green
         Show-Status
         return
+    }
+
+    # Without the auto-connect setting the game connects only when F6 is pressed.
+    # The client reads the key with GetAsyncKeyState, so it is pressed at the Windows level.
+    # DevBench's keyboard input goes to the game's own input, which GetAsyncKeyState does not see.
+    Start-Sleep -Seconds 6
+    if (-not $AutoConnect) {
+        if (-not ('RigKeys' -as [type])) {
+            Add-Type -Name RigKeys -Namespace '' -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);'
+        }
+        [RigKeys]::keybd_event(0x75, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 300
+        [RigKeys]::keybd_event(0x75, 0, 2, [UIntPtr]::Zero)
+        Write-Host 'Pressed F6 to connect.'
     }
 
     # Connected: in this game session's part of the log (from its "Skyrim Together client, build" line), the last of

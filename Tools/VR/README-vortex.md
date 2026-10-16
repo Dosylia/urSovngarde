@@ -25,7 +25,7 @@ tested on.
    the Vortex dashboard (Add Tool, point it at the exe) so you can launch from Vortex. Never start the
    SKSE loader directly: urSovngarde starts the game itself and loads SKSE for you. The first start asks
    where Skyrim VR is installed.
-6. Load a save. It connects by itself a few seconds later.
+6. Load a save, then press F6 to connect (the game shows "press F6 to connect to ..." once it is ready); with "Connect automatically" on in the launcher's settings it connects by itself a few seconds after the load. F6 again disconnects.
 
 `uGridsToLoad` must be 5 in `SkyrimPrefs.ini`, which is the default. The server refuses other values.
 
