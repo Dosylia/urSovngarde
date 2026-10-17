@@ -3223,9 +3223,10 @@ void PlaceNockedArrows() noexcept
             next = cNow + std::chrono::seconds(10);
             s_saidInHand[cFormId] = cArrow.Hold.InHand;
             if (cArrow.Hold.InHand)
-                spdlog::info("ArrowNocked: {:X} arrow held in the {} hand as its owner holds it, its head {:.0f} units from the hand, turned {:.0f} degrees from where the game had it",
+                spdlog::info("ArrowNocked: {:X} arrow held in the {} hand as its owner holds it, its head {:.0f} units from the hand (hand scale {:.2f}), turned {:.0f} degrees from "
+                             "where the game had it",
                              cFormId, cArrow.Hold.Side ? "right" : "left", glm::distance(wantedAt, ToGlm(At<NiTransform>(pHands[cArrow.Hold.Side & 1], kWorldOffset).translate)),
-                             DegreesOf(delta));
+                             At<NiTransform>(pHands[cArrow.Hold.Side & 1], kWorldOffset).scale, DegreesOf(delta));
             else
                 spdlog::info("ArrowNocked: {:X} arrow laid from the {} hand to the bow, {:.0f} units, turned {:.0f} degrees from where the game had it; string {}", cFormId,
                              bowSide ? "left" : "right", glm::length(cAlong), DegreesOf(delta),

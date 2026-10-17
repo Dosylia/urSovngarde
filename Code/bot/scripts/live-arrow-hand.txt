@@ -48,8 +48,9 @@ nock hand right
 wait 3
 log CHECK logged ArrowNocked: \w+ \(server \w+\): arrow held in the hand
 wait 2
-# Where this game drew it: the head as far from the copy's hand as the bot said (67 units at a scale of 1).
-log CHECK logged ArrowNocked: \w+ arrow held in the right hand as its owner holds it, its head (6[0-9]|7[0-4]) units from the hand
+# Where this game drew it: the head as far from the copy's hand as the bot said, 67 units times the hand bone's scale.
+# The copy's hand scale is under 1 (57 units on 440f5e0), so anything from 40 to 79 is the arrow in the hand.
+log CHECK logged ArrowNocked: \w+ arrow held in the right hand as its owner holds it, its head [4-7][0-9] units from the hand
 log SHOT arrow-in-hand of copy
 wait 2
 

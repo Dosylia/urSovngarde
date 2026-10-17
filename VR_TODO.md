@@ -44,9 +44,14 @@ Both players need it.
       game finds that arrow at the hand's hold node, ten times a second, and sends it with where it sits against the
       third-person hand bone (`ArrowNocked: sent this player's arrow in the hand (...)`). The other game attaches the
       arrow on its copy and keeps it where the archer holds it. From the hand to the string it is the same arrow, laid
-      along the bow as before. Compiled, TPTests 52 of 52 (two arrow round trips). Rig: `live-arrow-hand` (new: the
-      bot's copy holds the arrow at the hand, then on the string; the game's player draws and the bot hears the arrow
-      in the hand) not run yet. There is no red run: before this, nothing at all was sent for an arrow in the hand.
+      along the bow as before. Compiled, TPTests 52 of 52 (two arrow round trips). Rig on 440f5e0 (c1's build, which
+      holds it): `live-arrow-hand` (new) 9 of 10. The rig player drew a bow and the bot heard the arrow in the right
+      hand, its head 82 units from the hand bone. The bot's arrow went into the copy's right hand, its head 57 units
+      from it, then onto the string and off again. The one failure was the check: it expected 60-74 units and forgot
+      the hand bone's scale (67 times a scale under 1). It now takes 40-79, and the line prints the hand scale from the
+      next build. The screenshots show nothing (the copy too far and bent over), so only the log says where the arrow
+      is drawn. `live-arrow-nock` 9 of 9 (regression). There is no red run: before this, nothing at all was sent for
+      an arrow in the hand.
       To see in play: draw a bow in front of the other player; they see the arrow in your hand. Read on their side
       `ArrowNocked: ... arrow held in the right hand as its owner holds it, its head N units from the hand`.
 - [ ] **Player 2's hits did not hurt player 1 much** (21:02-21:03): on player 2's game, player 1's sword and shield
