@@ -624,7 +624,8 @@ void OverlayService::OnNotifyTeleport(const NotifyTeleport& acMessage) noexcept
 
 void OverlayService::OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& acMessage) noexcept
 {
-    // "X is down", once, when a party member's health reaches zero. It is only a message; there is no revive.
+    // "X is down" in the log, once, when a party member's health reaches zero.
+    // The message in the game comes from ReviveService, with how to revive them.
     // A first report of someone already down says nothing, since there is no "before" to compare with.
     const auto previous = m_playerHealth.find(acMessage.PlayerId);
     if (previous != m_playerHealth.end() && previous->second > 0.f && acMessage.Percentage <= 0.f)
@@ -633,9 +634,6 @@ void OverlayService::OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& 
         const auto name = players.find(acMessage.PlayerId);
         const String who = name != players.end() ? name->second : String("A party member");
         spdlog::info("Party: {} is down", who.c_str());
-#ifdef SKYRIMVR
-        Utils::ShowHudMessage(String("urSovngarde: ") + who + " is down");
-#endif
     }
     m_playerHealth[acMessage.PlayerId] = acMessage.Percentage;
 

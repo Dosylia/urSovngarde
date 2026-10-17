@@ -1,0 +1,35 @@
+# The connection drops while the player is down: the player must get up where it lies, not die and load the last save.
+#
+#   python Tools\VR\live-check.py live-down-disconnect
+#
+# On disconnect PlayerService turns its death system off (Actor::SetPlayerRespawnMode(false)): the player is no longer
+# essential. At zero health the game then kills it and loads the last save by itself (seen in the rig: "SaveLoad: request
+# built" 5 s after the drop, then "Finished loading" elsewhere). So PlayerService::OnDisconnected gives health back first.
+log live down disconnect
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log CHECK spot mark
+
+log -- the player goes down
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 3
+
+log -- the server goes away and comes back; the game goes back in by itself
+log DO server restart
+log DO sleep 10
+log DO papyrus Actor IsBleedingOut 14
+log DO papyrus Actor GetActorValuePercentage 14 s:Health
+log CHECK logged PlayerService: the connection dropped while the player was down
+log CHECK absent Finished loading
+log CHECK absent SaveLoad: request built
+log CHECK spot back 300
+log CHECK game alive
+log CHECK game inworld
+log CHECK player alive
+wait 3
+log done
+stop

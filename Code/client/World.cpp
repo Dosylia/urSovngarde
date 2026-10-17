@@ -30,6 +30,7 @@
 #include <Services/VRConnectService.h>
 #include <Services/VoiceService.h>
 #include <Services/PlayerMarkerService.h>
+#include <Services/ReviveService.h>
 
 #include <Events/PreUpdateEvent.h>
 #include <Events/UpdateEvent.h>
@@ -66,6 +67,7 @@ World::World()
     ctx().emplace<MapService>(*this, m_dispatcher, m_transport);
     ctx().emplace<VoiceService>(*this, m_dispatcher);
     ctx().emplace<PlayerMarkerService>(*this, m_dispatcher);
+    ctx().emplace<ReviveService>(*this, m_dispatcher, m_transport);
 #ifdef SKYRIMVR
     ctx().emplace<VRConnectService>(*this, m_dispatcher, m_transport);
 #endif

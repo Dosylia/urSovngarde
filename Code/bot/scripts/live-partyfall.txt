@@ -1,0 +1,42 @@
+# The whole party down: this bot goes down first, then the game's player, and the server ends it for both at once.
+#
+#   python Tools\VR\live-check.py live-partyfall
+#
+# The game's player leads the party (it connected first), so both respawn at its last safe point, made here with the
+# Sleep/Wait Menu as in live-revive-timeout. The player walks away first, so coming back at the safe point is not where it fell.
+log live partyfall
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a safe point here, then the player walks away from it
+log DO menu 2 Sleep/Wait Menu
+wait 6
+log CHECK logged PlayerService: safe point in cell
+log CHECK spot mark
+log DO walk 40 0 0 25
+wait 4
+log CHECK spot away 250
+
+log -- this bot goes down first
+down
+waitfor downstate me down 10
+expect downstate me down
+wait 2
+
+log -- then the game's player: nobody is left standing
+log DO console player.damageav health 100000
+waitfor downstate other fallen 15
+expect downstate other fallen
+expect downstate me fallen
+wait 2
+log CHECK logged PlayerService: the whole party is down; respawning at the safe point
+wait 12
+log CHECK logged RespawnPlayer: at the safe point in cell
+log CHECK spot back 150
+log CHECK player alive
+wait 3
+log CHECK game alive
+log done
+stop

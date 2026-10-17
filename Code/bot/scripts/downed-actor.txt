@@ -1,0 +1,48 @@
+# The downed half of the revive test: goes down, is revived, goes down again and respawns when nobody near can help.
+#
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair downed
+#
+# The server keeps who is down (ReviveService) and decides each revive (ReviveRules); the downed player's own game only acts on what it is told.
+# Here the other side revives this bot once from beside it, then tries again from far away, which must be refused.
+log downed actor
+waitfor connected 45
+collect spawn
+record downed actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+
+log -- going down
+down
+waitfor downstate me down 10
+expect downstate me down
+
+log -- the other side revives this bot from beside it
+waitfor downstate me revived 20
+expect downstate me revived
+wait 3
+
+log -- down again: the other side tries from far away, and the server refuses
+down
+waitfor downstate me down 10
+wait 15
+expect downstate me down
+
+log -- nobody near: respawning, as a game does when the time runs out
+respawn
+waitfor downstate me respawned 10
+expect downstate me respawned
+wait 3
+log -- down once more, then up again as a game is when a save is loaded while down
+down
+waitfor downstate me down 10
+wait 3
+up
+waitfor downstate me up 10
+expect downstate me up
+expect connected
+record off
+report bot-downed-actor.txt
+log done
+stop

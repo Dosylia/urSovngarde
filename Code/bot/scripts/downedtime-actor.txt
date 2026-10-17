@@ -1,0 +1,37 @@
+# One half of the not-revived-in-time test: this bot goes down, nobody revives it, and the server ends the wait.
+#
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair downedtime
+#
+# Run alone, not in run-all-pairs: the test server puts every bot in one party, and the respawn point is that party's leader's.
+# It waits out Gameplay:uDownedSeconds (60 on the test server), so it takes a little over a minute.
+log downedtime actor
+waitfor connected 45
+collect spawn
+record downedtime actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+
+log -- going down; nobody comes
+down
+waitfor downstate me down 10
+expect downstate me down
+wait 50
+expect downstate me down
+
+log -- the time runs out: the server says so, with the party leader's safe point to respawn at
+waitfor downstate me died 20
+expect downstate me died
+expect respawnpoint me 1000 2000
+
+log -- its game respawns it after the fade, as a game does; the server has nothing more to say
+wait 5
+respawn
+wait 3
+expect downstate me died
+expect connected
+record off
+report bot-downedtime-actor.txt
+log done
+stop

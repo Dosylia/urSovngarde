@@ -1,0 +1,21 @@
+# The other half of the nobody-left test: leaves the party while the other side is down.
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it.
+party lead
+log downedleave watcher
+waitfor connected 45
+collect spawn
+record downedleave watcher
+waitfor known other 40
+
+log -- the other side goes down; this bot leaves the party
+waitfor downstate other down 30
+expect downstate other down
+wait 2
+party leave
+wait 5
+expect connected
+record off
+report bot-downedleave-watcher.txt
+log done
+stop

@@ -3646,6 +3646,15 @@ void* FirstPersonHand(PlayerCharacter* apPlayer, const size_t aSide) noexcept
     return GetName(pHand) == s_name[aSide] ? pHand : nullptr;
 }
 
+bool LocalHandPosition(const uint8_t aSide, glm::vec3& aOut) noexcept
+{
+    void* pHand = aSide <= 1 ? FirstPersonHand(PlayerCharacter::Get(), aSide) : nullptr;
+    if (!pHand)
+        return false;
+    aOut = ToGlm(At<NiTransform>(pHand, kWorldOffset).translate);
+    return true;
+}
+
 // Whether this hand holds something that parries: a weapon, or for the left hand a worn shield.
 // The game keeps a shield as worn armour, not as the hand's object.
 bool HandParries(const uint8_t aSide) noexcept

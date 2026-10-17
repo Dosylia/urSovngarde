@@ -43,6 +43,10 @@
 #include <Messages/NotifyRemoveCharacter.h>
 #include <Messages/NotifyRespawn.h>
 #include <Messages/PlayerRespawnRequest.h>
+#include <Messages/PlayerDownedRequest.h>
+#include <Messages/ReviveRequest.h>
+#include <Messages/SafePointRequest.h>
+#include <Messages/NotifyDownedState.h>
 #include <Messages/RequestActorValueChanges.h>
 #include <Messages/RequestDeathStateChange.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
@@ -306,6 +310,9 @@ void Bot::OnDisconnected(EDisconnectReason aReason)
     // for: after reconnecting, anything the bot knows must have arrived again.
     m_actors.clear();
     m_players.clear();
+    m_downStates.clear();
+    m_respawnPoints.clear();
+    m_lastRefusal = "none";
     m_names.clear();
     m_drops.clear();
     m_dropPlaces.clear();
@@ -1331,6 +1338,28 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         return;
     }
 
+    // A player's downed state, as the server tells the party: what `downstate`, `respawnpoint` and `refused` assert.
+    if (opcode == NotifyDownedState::Opcode)
+    {
+        const auto& message = static_cast<const NotifyDownedState&>(acMessage);
+        if (message.Change == NotifyDownedState::kReviveRefused)
+        {
+            static constexpr std::array<const char*, 8> cRefusals{"none", "self", "notdown", "late", "reviverdown", "party", "place", "toofar"};
+            const auto cRefusal = static_cast<size_t>(message.Refusal);
+            m_lastRefusal = cRefusal < cRefusals.size() ? cRefusals[cRefusal] : "unknown";
+            spdlog::info("Our revive of player {} was refused: {}", message.PlayerId, m_lastRefusal);
+            return;
+        }
+        static constexpr std::array<const char*, 6> cNames{"down", "revived", "respawned", "fallen", "died", "up"};
+        const char* pName = message.Change < cNames.size() ? cNames[message.Change] : "unknown";
+        m_downStates[message.PlayerId] = pName;
+        if (message.Change == NotifyDownedState::kDied || message.Change == NotifyDownedState::kPartyFallen)
+            m_respawnPoints[message.PlayerId] = message.HasRespawnPoint ? std::optional<glm::vec3>(message.RespawnPosition) : std::nullopt;
+        spdlog::info("Player {} is {} (revived by {}, {} s left, respawn point {})", message.PlayerId, pName, message.ReviverId, message.SecondsLeft,
+                     message.HasRespawnPoint ? fmt::format("({:.0f}, {:.0f}, {:.0f})", message.RespawnPosition.x, message.RespawnPosition.y, message.RespawnPosition.z) : "none");
+        return;
+    }
+
     if (opcode == NotifyRespawn::Opcode)
     {
         const auto& message = static_cast<const NotifyRespawn&>(acMessage);
@@ -1851,6 +1880,59 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     {
         SendHealth(-4.f);
         SendDeath(true);
+        return true;
+    }
+
+    // "down": this bot's player goes down and waits for a revive, as a client says when its player's bleedout starts.
+    if (name == "down")
+    {
+        SendMsg(PlayerDownedRequest{});
+        spdlog::info("[script] down sent");
+        return true;
+    }
+
+    // "up": this bot's player is up again without a revive, as a client says when a save was loaded while down.
+    if (name == "up")
+    {
+        PlayerDownedRequest up{};
+        up.IsDown = false;
+        SendMsg(up);
+        spdlog::info("[script] up sent");
+        return true;
+    }
+
+    // "safepoint <x> <y> <z>": this bot's game would have saved here (in its cell), as a client says after a loading screen.
+    if (name == "safepoint")
+    {
+        if (args.size() < 3)
+        {
+            spdlog::error("[script] safepoint needs x y z");
+            return true;
+        }
+        SafePointRequest request{};
+        request.CellId = m_cell;
+        request.WorldSpaceId = m_worldSpace;
+        request.Position = glm::vec3(std::stof(args[0]), std::stof(args[1]), std::stof(args[2]));
+        SendMsg(request);
+        spdlog::info("[script] safe point at ({}, {}, {}) sent", args[0], args[1], args[2]);
+        return true;
+    }
+
+    // "revive other|<player id>": this bot held a hand on that downed player long enough, as a client asks then.
+    if (name == "revive")
+    {
+        uint32_t target = 0;
+        if (!args.empty() && args[0] == "other")
+            target = OtherPlayerId();
+        else if (args.empty() || !ParseHex(args[0], target))
+        {
+            spdlog::error("[script] revive needs 'other' or a hex player id");
+            return true;
+        }
+        ReviveRequest request{};
+        request.TargetPlayerId = target;
+        SendMsg(request);
+        spdlog::info("[script] revive of player {} sent", target);
         return true;
     }
 
@@ -3112,6 +3194,50 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         return std::nullopt;
     }
 
+    if (what == "downstate")
+    {
+        // downstate me|other down|revived|respawned|fallen|none: the last downed state the server sent for that player.
+        if (acArgs.size() < 3)
+            return std::nullopt;
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerId();
+        const auto cState = m_downStates.find(cPlayerId);
+        const std::string cNow = cState != m_downStates.end() ? cState->second : "none";
+        aOutWhy = fmt::format("player {} is {}", cPlayerId, cNow);
+        return cNow == acArgs[2];
+    }
+
+    if (what == "respawnpoint")
+    {
+        // respawnpoint me|other none|<x> <y>: where the server last said that player respawns (died or fallen), within 50 units.
+        if (acArgs.size() < 3)
+            return std::nullopt;
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerId();
+        const auto cPoint = m_respawnPoints.find(cPlayerId);
+        if (cPoint == m_respawnPoints.end())
+        {
+            aOutWhy = fmt::format("no respawn told for player {}", cPlayerId);
+            return false;
+        }
+        if (!cPoint->second)
+        {
+            aOutWhy = fmt::format("player {} respawns at the game's own spot", cPlayerId);
+            return acArgs[2] == "none";
+        }
+        aOutWhy = fmt::format("player {} respawns at ({:.0f}, {:.0f}, {:.0f})", cPlayerId, cPoint->second->x, cPoint->second->y, cPoint->second->z);
+        if (acArgs[2] == "none" || acArgs.size() < 4)
+            return false;
+        return std::abs(cPoint->second->x - std::stof(acArgs[2])) <= 50.f && std::abs(cPoint->second->y - std::stof(acArgs[3])) <= 50.f;
+    }
+
+    if (what == "refused")
+    {
+        // refused <reason>|none: why the server last refused a revive this bot asked for (toofar, late, party, place, notdown, reviverdown, self).
+        if (acArgs.size() < 2)
+            return std::nullopt;
+        aOutWhy = fmt::format("last refusal: {}", m_lastRefusal);
+        return m_lastRefusal == acArgs[1];
+    }
+
     if (what == "voices")
     {
         // voices <op> <n>: pieces of other players' voices the server relayed to this bot (NotifyVoiceData).
@@ -3389,6 +3515,14 @@ const KnownPlayer* Bot::Host() const noexcept
         if (!pBest || player.PlayerId < pBest->PlayerId)
             pBest = &player;
     return pBest;
+}
+
+uint32_t Bot::OtherPlayerId() const noexcept
+{
+    for (const auto& player : m_players)
+        if (player.PlayerId != m_playerId)
+            return player.PlayerId;
+    return 0;
 }
 
 KnownPlayer* Bot::FindPlayerCharacter(const uint32_t aServerId) noexcept
