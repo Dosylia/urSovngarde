@@ -2053,6 +2053,17 @@ void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
     if (!m_transport.IsConnected())
         return;
 
+    // The game often speaks a line twice in a row, and each copy sent made the other game stop the line and start it again.
+    static uint32_t s_lastActor = 0;
+    static String s_lastFile;
+    static std::chrono::steady_clock::time_point s_lastAt{};
+    const auto cNow = std::chrono::steady_clock::now();
+    if (acEvent.ActorID == s_lastActor && acEvent.VoiceFile == s_lastFile && cNow - s_lastAt < 1s)
+        return;
+    s_lastActor = acEvent.ActorID;
+    s_lastFile = acEvent.VoiceFile;
+    s_lastAt = cNow;
+
     auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
     auto entityIt = std::find_if(view.begin(), view.end(), [view, formId = acEvent.ActorID](auto entity) { return view.get<FormIdComponent>(entity).Id == formId; });
 
@@ -2069,9 +2080,12 @@ void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
     DialogueRequest request{};
     request.ServerId = serverIdRes.value();
     request.SoundFilename = acEvent.VoiceFile;
+    if (acEvent.SceneID)
+        m_world.GetModSystem().GetServerModId(acEvent.SceneID, request.SceneId);
 
     // Logged so that a line the other player did not hear can be traced.
-    spdlog::info("Dialogue: {:X} (server id {:X}) says {}; sent", acEvent.ActorID, request.ServerId, acEvent.VoiceFile.c_str());
+    spdlog::info("Dialogue: {:X} (server id {:X}) says {}{}; sent", acEvent.ActorID, request.ServerId, acEvent.VoiceFile.c_str(),
+                 acEvent.SceneID ? fmt::format(" in scene {:X}", acEvent.SceneID) : std::string());
     m_transport.Send(request);
 }
 
@@ -2082,6 +2096,16 @@ void CharacterService::OnNotifyDialogue(const NotifyDialogue& acMessage) noexcep
     if (!pActor)
     {
         spdlog::info("Dialogue: server id {:X} says {}, but it has no actor here; not heard", acMessage.ServerId, acMessage.SoundFilename.c_str());
+        return;
+    }
+
+    // Every client plays a quest's scenes itself, so when the line's scene plays here too, the local copy already voices it.
+    // Playing the sender's line would cut that off and end the scene phase early. Menu and other-scene lines still play.
+    BGSScene* pScene = pActor->GetCurrentScene();
+    if (acMessage.SceneId && pScene && pScene->isPlaying && pScene->formID == m_world.GetModSystem().GetGameId(acMessage.SceneId))
+    {
+        spdlog::info("Dialogue: {:X} (server id {:X}) says {} in scene {:X}, which plays here too; the local line is kept", pActor->formID, acMessage.ServerId,
+                     acMessage.SoundFilename.c_str(), pScene->formID);
         return;
     }
 
@@ -2112,6 +2136,8 @@ void CharacterService::OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept
     request.ServerId = serverIdRes.value();
     request.Text = acEvent.Text;
     request.TopicFormId = acEvent.TopicFormID;
+    if (acEvent.SceneID)
+        m_world.GetModSystem().GetServerModId(acEvent.SceneID, request.SceneId);
 
     m_transport.Send(request);
 }
@@ -2120,6 +2146,12 @@ void CharacterService::OnNotifySubtitle(const NotifySubtitle& acMessage) noexcep
 {
     Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ServerId);
     if (!pActor)
+        return;
+
+    // The local copy of the scene shows its own subtitle, see OnNotifyDialogue.
+    // Only the actor's own voice line ending hides a subtitle, so a remote one arriving after the local line ended would stay up.
+    BGSScene* pScene = pActor->GetCurrentScene();
+    if (acMessage.SceneId && pScene && pScene->isPlaying && pScene->formID == m_world.GetModSystem().GetGameId(acMessage.SceneId))
         return;
 
     // This is only for fallout 4

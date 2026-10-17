@@ -1,0 +1,25 @@
+# NPC lines spoken in a scene go out with that scene, so a game that plays the same scene keeps its own line.
+#
+#   python Tools\VR\live-check.py live-scene-dialogue
+#
+# Every game plays a quest's scenes itself; a relayed line used to cut off the local one and end the scene phase early.
+# The sender now names the line's scene (TESObjectREFR::GetCurrentScene, vtable 0x4A on VR as on SE) and the receiver
+# skips a line whose scene plays there too.
+# The bot plays no scenes, so this checks the sending side on VR: Whiterun's market scenes at midday must be sent with
+# their scene, and the speech hook's float result must leave the game's own lines working.
+log live scene dialogue
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log DO console set gamehour to 12
+log DO console cow WhiterunWorld 5 -3
+wait 90
+log CHECK logged Dialogue: \w+ \(server id \w+\) says .* in scene \w+; sent
+log CHECK game alive
+log DO god off
+wait 3
+log done
+stop

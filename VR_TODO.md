@@ -28,6 +28,14 @@ or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new
 Session of 2026-10-16 evening (both on d3c1974; player 2 joined first). Current build 97b6cd0 (deployed, client and
 server; it has everything fb88297 had). Both players need it.
 
+- [ ] **Cutscene voice lines and subtitles out of step in a party** (upstream ea0f6c39, ported 2026-10-17; a protocol
+      change, so both players need 5342bc0 or later). Every game plays a quest's scenes itself, and the relayed line
+      stopped the local one and ended the scene phase early. Lines now carry their scene, and a game that plays the same
+      scene keeps its own line and subtitle (`Dialogue: ... in scene ..., which plays here too; the local line is kept`).
+      Also: the game spoke most lines twice and each copy was sent (351 of 515 last session), which restarted the line
+      on the other side; a repeat within a second is no longer sent. Rig: `live-scene-dialogue` 3 of 3 (Whiterun's
+      market scene 5B1BA sent with its scene, each line once). The skip itself needs two real games. To see in play: a
+      quest scene with both players near, voices in step and no line cut short.
 - [ ] **Player 1 cannot see her own arrows** (new on 2026-10-16; player 2 saw them on her bow and saw her shots).
       Her log has every draw (states 8, 9, 10) and nothing of ours touches her own arrow; no echo of her ArrowNocked
       came back. Since fb88297 `ArrowDiag:` logs her own arrow nodes (VR room nodes, first and third person) with
