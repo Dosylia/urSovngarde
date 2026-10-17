@@ -98,16 +98,207 @@ bool ReadableBytes(const void* apAddress, const size_t aBytes) noexcept
 
 static constexpr const char* kAllowList[] = {
     "TweenMenu",     "MagicMenu",     "InventoryMenu",
-#ifndef SKYRIMVR
-    // On VR the skills and level-up screen is black whenever it runs unpaused, so there it pauses the game like vanilla.
+    // On VR Menus/SkillsMenu.cpp keeps the skill tree from going black while unpaused.
     "StatsMenu",
-#endif
     // UnfreezeMenu gives a message box the flag the VR panel needs, so it can run unpaused and stay visible.
     "MessageBoxMenu",
-    "ContainerMenu", "FavoritesMenu", "Tutorial Menu", "Console"
+    "ContainerMenu", "FavoritesMenu", "Tutorial Menu", "Console",
+#ifdef SKYRIMVR
+    // Unpaused in VR only. Menus/MapMenu.cpp fixes what that breaks: fog, fade and laser pointer.
+    "MapMenu",
+    // Unpaused in VR only, so the others keep playing while one player picks how long to sleep or wait.
+    "Sleep/Wait Menu",
+#endif
     //"MapMenu", // MapMenu is disabled till we find a proper fix for first person.
     //"Journal Menu", // Journal menu, aka pause menu, is disabled until we find a fix for manual save crashing while unpaused.
 };
+
+#ifdef SKYRIMVR
+bool UnpausedMenusOnline() noexcept
+{
+    World& world = World::Get();
+    return world.GetTransport().IsConnected() && world.GetServerSettings().UnpausedMenus;
+}
+
+// The menus Gameplay:bUnpausedMenus decides about; the rest of kAllowList is unpaused either way.
+static constexpr const char* kOptionalUnpausedMenus[] = {"StatsMenu", "MapMenu", "Sleep/Wait Menu"};
+
+static bool IsOptionalUnpausedMenu(const char* acpName)
+{
+    for (const char* pName : kOptionalUnpausedMenus)
+        if (std::strcmp(acpName, pName) == 0)
+            return true;
+    return false;
+}
+
+bool IsOptionalUnpausedMenuOpen() noexcept
+{
+    // Built on first use: the game's string table does not exist yet when static initializers run.
+    static const auto* s_names = []()
+    {
+        auto* pNames = new std::vector<BSFixedString>();
+        for (const char* pName : kOptionalUnpausedMenus)
+            pNames->emplace_back(pName);
+        return pNames;
+    }();
+
+    const UI* pUI = UI::Get();
+    if (!pUI)
+        return false;
+    for (const auto& name : *s_names)
+        if (pUI->GetMenuOpen(name))
+            return true;
+    return false;
+}
+
+// Built on first use: the game's string table does not exist yet when static initializers run.
+static bool IsAllowListMenuOpen(const UI* apUI)
+{
+    static const auto* s_names = []()
+    {
+        auto* pNames = new std::vector<BSFixedString>();
+        for (const char* pName : kAllowList)
+            pNames->emplace_back(pName);
+        return pNames;
+    }();
+
+    for (const auto& name : *s_names)
+    {
+        if (apUI->GetMenuOpen(name))
+            return true;
+    }
+    return false;
+}
+
+// VR melee is physics driven: a hit lands when a swing is detected (player update). Paused, nothing moved; the menus
+// unpaused above leave it running, so swinging a drawn weapon in them hits. The swing detector already cancels the
+// swing while either of two menus is open (UI::IsMenuOpen at 0x1406B93BB and 0x1406B93D9); the second also reports these.
+constexpr uintptr_t kMeleeSwingMenuCheck = 0x6B93D9;
+
+using TIsMenuOpen = bool(const UI*, const BSFixedString&);
+static TIsMenuOpen* RealMeleeSwingMenuCheck;
+
+static bool HookMeleeSwingMenuCheck(const UI* apUI, const BSFixedString& acName)
+{
+    return RealMeleeSwingMenuCheck(apUI, acName) || (UnpausedMenusOnline() && IsAllowListMenuOpen(apUI));
+}
+
+// PlayerControls' can-process check (0x14072DB00) fails while the game is paused, which is how a paused menu stops
+// gameplay input. The menus unpaused above still let some through (jump and sneak in all; walking and turning in
+// MapMenu). Fail it while one is open. Menu navigation is MenuControls, and the map's pan, zoom and rotate keep working.
+constexpr uintptr_t kPlayerControlsCanProcess = 0x72DB00;
+
+TP_THIS_FUNCTION(TPlayerControlsCanProcess, bool, void);
+static TPlayerControlsCanProcess* RealPlayerControlsCanProcess;
+
+// SleepWaitMenu::ProcessMessage (0x1408EA840) passes input (Scaleform key events, Accept, Cancel) on only from the main
+// thread: GetCurrentThreadId, compared with the main thread's id, then this jnz past the handling. Unpaused, the UI
+// handles messages on its job pool, so the menu ignored every input. Paused it always runs on the main thread.
+constexpr uintptr_t kSleepWaitMainThreadCheck = 0x8EA896;
+constexpr uint8_t kSleepWaitMainThreadJump[]{0x0F, 0x85, 0xD4, 0x02, 0x00, 0x00};
+
+// The menu's OK callback (0x1408EACA0: click sound, FadeOutGame, start sleep or wait for N hours) is the original sleep
+// start. Run from a UI worker it hung Main::Render; run on the main thread it works in the unpaused menu. So it is
+// taken off the worker and run at the next main loop. Pausing the game under the open menu by hand hung it.
+constexpr uintptr_t kSleepWaitOkCallback = 0x8EACA0; // registered as "OK" in SleepWaitMenu::Accept (0x1408EAB90)
+constexpr uintptr_t kMainSingleton = 0x2FEB7A0;      // what the menu's own check reads; main thread id at +0x20
+constexpr uint32_t kSleepWaitStartFrames = 300;      // give up after about four seconds
+
+// SleepWaitMenu::ProcessMessage paces the native sleep step (0x6C2C00) using its timer at +0x40.
+// The two regular player updates also call that step, normally stopped by the paused menu. Unpaused, they
+// consume the remaining sleep every frame. Suppress only those calls while the menu owns the countdown;
+// leave the menu's timed call at 0x8EA9E7 and the jail fast-forward at 0x6D6170 alone.
+// The menu's +0x61 flag means the countdown is active, not finished. Its timed update clears that flag
+// and closes the menu naturally; queuing the menu again is not a reason to send Cancel.
+constexpr uintptr_t kPlayerSleepWaitCalls[] = {0x6BF425, 0x6BFDF5};
+constexpr uintptr_t kSleepWaitStep = 0x6C2C00;
+using TSleepWaitStep = void(void* apPlayer);
+static TSleepWaitStep* RealPlayerSleepWaitStep;
+
+static void HookPlayerSleepWaitStep(void* apPlayer)
+{
+    if (UnpausedMenusOnline())
+    {
+        static const BSFixedString s_menuName("Sleep/Wait Menu");
+        const UI* pUI = UI::Get();
+        if (pUI && pUI->GetMenuOpen(s_menuName))
+            return;
+    }
+
+    RealPlayerSleepWaitStep(apPlayer);
+}
+
+using TSleepWaitOk = void(void* apArgs);
+static TSleepWaitOk* RealSleepWaitOk;
+
+static std::atomic<bool> s_sleepWaitOkPending{false};
+static double s_sleepWaitHours = 0.0;
+static uint32_t s_sleepWaitFrames = 0;
+
+static bool OnMainThread()
+{
+    const auto* pMain = *reinterpret_cast<const uint8_t* const*>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) + kMainSingleton);
+    return pMain && GetCurrentThreadId() == *reinterpret_cast<const DWORD*>(pMain + 0x20);
+}
+
+// FxDelegateArgs as the OK callback reads it: the menu at +0x18, the argument array at +0x28, the hours a double at +0x10 of the first.
+static void HookSleepWaitOk(void* apArgs)
+{
+    if (OnMainThread())
+    {
+        RealSleepWaitOk(apArgs);
+        return;
+    }
+
+    auto* pArgs = static_cast<uint8_t*>(apArgs);
+    if (s_sleepWaitOkPending || !*reinterpret_cast<void**>(pArgs + 0x18))
+        return;
+
+    s_sleepWaitHours = *reinterpret_cast<const double*>(*reinterpret_cast<uint8_t**>(pArgs + 0x28) + 0x10);
+    s_sleepWaitFrames = 0;
+    s_sleepWaitOkPending = true;
+}
+
+// Called from the start of Main::Update (SkyrimVM64.cpp).
+void RunDeferredSleepWaitAccept()
+{
+    if (!s_sleepWaitOkPending)
+        return;
+
+    static const BSFixedString s_menuName("Sleep/Wait Menu");
+    UI* pUI = UI::Get();
+    IMenu* pMenu = pUI && pUI->GetMenuOpen(s_menuName) ? pUI->FindMenuByName(s_menuName) : nullptr;
+    if (!pMenu)
+    {
+        if (++s_sleepWaitFrames > kSleepWaitStartFrames)
+        {
+            spdlog::warn("Sleep/Wait menu: closed before its sleep or wait could start");
+            s_sleepWaitOkPending = false;
+        }
+        return;
+    }
+
+    // A GFxValue holding the hours as a number, and the FxDelegateArgs fields the callback reads.
+    alignas(16) uint8_t value[0x18]{};
+    *reinterpret_cast<uint32_t*>(value + 0x08) = 3; // GFxValue::kNumber
+    *reinterpret_cast<double*>(value + 0x10) = s_sleepWaitHours;
+    alignas(16) uint8_t args[0x40]{};
+    *reinterpret_cast<IMenu**>(args + 0x18) = pMenu;
+    *reinterpret_cast<uint8_t**>(args + 0x28) = value;
+    *reinterpret_cast<uint32_t*>(args + 0x30) = 1;
+
+    s_sleepWaitOkPending = false;
+    RealSleepWaitOk(args);
+}
+
+static bool HookPlayerControlsCanProcess(void* apControls)
+{
+    if (UnpausedMenusOnline() && IsAllowListMenuOpen(UI::Get()))
+        return false;
+
+    return TiltedPhoques::ThisCall(RealPlayerControlsCanProcess, apControls);
+}
+#endif
 
 static void* (*UI_AddToActiveQueue)(UI*, IMenu*, void*);
 
@@ -150,6 +341,10 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
     // NOTE(Force): could also compare by RTTI later on...
     for (const char* item : kAllowList)
     {
+#ifdef SKYRIMVR
+        if (IsOptionalUnpausedMenu(item) && !UnpausedMenusOnline())
+            continue;
+#endif
         if (auto* pMenu = apSelf->FindMenuByName(item))
         {
             if (pMenu == apMenu)
@@ -299,6 +494,32 @@ static TiltedPhoques::Initializer s_s(
         // Allows the favorites menu to be numbered during connect.
         VersionDbPtr<uint8_t> FavoritesCanProcess(51538);
         TiltedPhoques::Put<uint16_t>(FavoritesCanProcess.Get() + 0x15, 0x9090);
+
+#ifdef SKYRIMVR
+        {
+            const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            TiltedPhoques::SwapCall(reinterpret_cast<uint8_t*>(exe + kMeleeSwingMenuCheck), RealMeleeSwingMenuCheck, &HookMeleeSwingMenuCheck);
+            RealPlayerControlsCanProcess = reinterpret_cast<TPlayerControlsCanProcess*>(exe + kPlayerControlsCanProcess);
+            TP_HOOK(&RealPlayerControlsCanProcess, HookPlayerControlsCanProcess);
+
+            auto* pSleepWaitCheck = reinterpret_cast<uint8_t*>(exe + kSleepWaitMainThreadCheck);
+            if (std::memcmp(pSleepWaitCheck, kSleepWaitMainThreadJump, sizeof(kSleepWaitMainThreadJump)) == 0)
+                TiltedPhoques::Nop(pSleepWaitCheck, sizeof(kSleepWaitMainThreadJump));
+            else
+                spdlog::error("Sleep/Wait menu: {} is not the main thread check, leaving it alone; the menu ignores input while unpaused", fmt::ptr(pSleepWaitCheck));
+            RealSleepWaitOk = reinterpret_cast<TSleepWaitOk*>(exe + kSleepWaitOkCallback);
+            TP_HOOK(&RealSleepWaitOk, HookSleepWaitOk);
+
+            for (const uintptr_t cCall : kPlayerSleepWaitCalls)
+            {
+                auto* pCall = reinterpret_cast<uint8_t*>(exe + cCall);
+                if (*pCall == 0xE8 && pCall + 5 + *reinterpret_cast<const int32_t*>(pCall + 1) == reinterpret_cast<uint8_t*>(exe + kSleepWaitStep))
+                    TiltedPhoques::SwapCall(pCall, RealPlayerSleepWaitStep, &HookPlayerSleepWaitStep);
+                else
+                    spdlog::error("Sleep/Wait menu: {} is not the player sleep step call, leaving it alone; unpaused sleep may run too fast", fmt::ptr(pCall));
+            }
+        }
+#endif
 
         // Some experiments:
 #ifdef SKYRIMVR

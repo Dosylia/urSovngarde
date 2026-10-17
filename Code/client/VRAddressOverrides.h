@@ -97,6 +97,7 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 36527u, 0x05efa10u }, // SE 36527 Actor::GetGoldAmount
     { 36544u, 0x05b4290u }, // SE 35545 WinMain
     { 36548u, 0x05b65e0u }, // SE 35549 Main::Init (intro movie branch at +0x96)
+    { 36564u, 0x05bab10u }, // Main::Update, callee of the Sleep(50) main-loop block; runs the deferred skill tree update
     { 36741u, 0x0604f30u }, // SE 36741 Actor::GetDetectionState
     { 37147u, 0x05d5120u }, // SE 36174 animation helper
     { 37175u, 0x05d63a0u }, // SE 36196 Character dtor

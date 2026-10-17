@@ -96,3 +96,12 @@ public:
 // intellisense is too dumb but the compiler knows.
 static_assert(sizeof(UI) == 0x1C8);
 static_assert(offsetof(UI, UI::numPausesGame) == 0x160);
+
+#ifdef SKYRIMVR
+// Connected to a server with Gameplay:bUnpausedMenus on: the skills, map and sleep/wait menus run unpaused
+// (UI.cpp kOptionalUnpausedMenus), with the input, melee and map fixes that needs. Off or offline, they pause. Any thread.
+bool UnpausedMenusOnline() noexcept;
+
+// Whether one of those menus is open, whatever the setting. Any thread.
+bool IsOptionalUnpausedMenuOpen() noexcept;
+#endif
