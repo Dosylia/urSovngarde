@@ -72,12 +72,14 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       Rig: `live-copy-bleedout` (the copy falls in its own ragdoll; on 7a9e33a without the last part it lay there:
       `still lies after 15 s`; on 502d883 up after 5.3 s, 8 units of travel while down) and `live-copy-knockdown`
       (the owner's NPC thrown over while down; the copy lies 6 s, gets up by itself). Not seen in play yet.
+      Both scripts now REQUIRE that the recording holds the owner's get-up and that the copy lay flat, and judge the
+      body against its feet (`npc slide below 100`, `npc standing`). Red run 2026-10-17 on a build with the fix off:
+      `live-copy-bleedout` RED (the lying copy carried 1287 units along the floor, still lying at the end), the slide
+      players saw. Still to run on a build with the fix: both scripts green with these checks, and the knockdown red
+      run again (its first one was INVALID: the rig's game stopped answering).
       To see in play: knock an essential NPC down, let it get up, watch it on the other player's screen. Read there:
       `KnockDown: NPC copy X lies in its own ragdoll`, `... sent it 'GetUpBegin' (taken)`, `... is up again after N ms`;
       `KnockDown: ... still lies after 15 s` means a copy still stuck.
-- [ ] **Two-handed sword grip sometimes wrong** (player 2): his greatsword was equipped on the copy by the event path
-      with the right-hand slot after a respawn (the snapshot path uses both hands since 9340761). Not shown to cause the
-      grip; ask which screen it was.
 - [!] **Player 2's crash at 20:55** (not connected, 2 s after a load in Sovngarde): a freed scene-graph node visited by
       culling, the same family as KNOWN_ISSUES's +0xCBFD24; nothing of ours in it. Needs his
       `logs\crash_UTC_2026-10-16_18-55-15.small.dmp`, sent by hand (it is a day old by the next session).
@@ -223,6 +225,42 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       which part of the appearance did not load.
 
 ## Open work
+
+- [ ] **Trustworthy rig tests** (asked 2026-10-17: fixes that pass in the rig keep failing in play, and builds and runs
+      cost time, so a test must be worth it). Seen on 2026-10-16/17: `live-copy-bleedout` passed while testing nothing
+      (its copy replayed no actions); `live-world-object` passed while the cup flickered (it read our own log lines,
+      not the object); `live-blade` passed though the rig's slow swings never make the PLANCK hit the fix was about; a
+      slide check passed only by accident (per-frame steps of stepwise playback); `live-defender` hard-coded the old
+      225 ms delay; scripted HIGGS grabs crash the game (higgs_vr.dll+0x605ae); the rig runs at 60 or 100 fps while
+      the players run at about 45. Plan:
+      1. Audit every live script: what it guards, whether its checks read the game (state, positions, screenshots) or
+         only our log lines, its preconditions, its false-pass risks, its timing assumptions (in progress).
+      2. Rig realism: frame rate pinned near the players', fake network on by default for timing tests.
+      3. A test counts only when shown red on the build without the fix and green with it; a precondition that fails
+         makes the run INVALID, never a pass; results kept in a history file, flaky tests marked.
+      4. Checks on what the player sees, not on what our code says it did.
+      5. After each play session, each rig-tested item gets "rig said / play said", to learn which tests predict play.
+      Done 2026-10-17 (tools only, no build): the audit of all 68 live scripts (top false passes: copy-bleedout and
+      copy-knockdown passed with a copy that never went down; hands passes at 65-74 units, above the original 27-32
+      unit bug; world-object read our log lines and ignored the flicker count; defender passed when no hit was sent;
+      blade can never make the PLANCK hit; look, temp-reuse, creatures and game-drops). `live-check.py` now gives
+      INVALID (failed `log REQUIRE`, or the bot could not do a line's part), INCONCLUSIVE (SKIPPED is no longer a
+      pass), RED / NOT RED (`--expect-fail` on a build without the fix), reads across a log rotation, and keeps every
+      run in the toolbox's `test-history/live.jsonl` with build, frame rate and network. Scripted swings now carry the
+      controller's velocity. `live-world-object` samples the plate's 3D through the whole carry (`ref 92D04 3d steady
+      3`) and requires `0 of N moves rebuilt its 3D`; `live-defender` needs one log line per hit. The rules
+      (toolbox `rules/working.md`): red before the fix, REQUIRE the preconditions, report rig results as rig results.
+      The rig's frame rate follows the desktop monitors (SteamVR's null headset draws into a desktop window): 60 Hz
+      normally, 100 since one monitor went up on 2026-10-17 morning. HIGGS takes two physics steps a frame below 70
+      fps (the players near 45, the rig at 60) and one above, so the weapon bodies read 85-100 units off at 100 fps and
+      0.3 on average at 60 (32 readings, none over 30). `headless.ps1 up` now prints the monitors' rates and warns
+      above 60. Rig at 60 fps on 3d63d8e: live-defender ok; live-world-object's new checks pass (the plate's 3D never
+      unloaded in 81 and 83 samples during the carry; `0 of its 6 moves rebuilt its 3D`, a pattern the old code's
+      `6 of its 6` fails); its opening game-to-bot move was missed in one of two runs, unexplained so far (a log line
+      for a full watch list goes into the next build).
+      Next: the copy-bleedout and copy-knockdown scripts (the session that owns them is reworking them, with a red
+      run), the hands threshold (80 units against a 27-32 unit bug), the stale default suite, a precise bot-side
+      `objectmoves` condition, and a choice for the owner: let the rig set the monitors to 60 Hz while it runs.
 
 - [ ] **Handling a living NPC the other game runs: send the pull** (decided 2026-10-10: the grabber's game sends the
       pull to the game that runs the NPC, which applies it). Needs a safe way to tell when a HIGGS hand holds a copy:

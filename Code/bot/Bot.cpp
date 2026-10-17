@@ -1653,6 +1653,12 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             for (size_t i = 0; i < sorted.size() && i < 6; ++i)
                 summary += fmt::format("{}{} x{}", i ? ", " : "", sorted[i].first, sorted[i].second);
             spdlog::info("Captured actions of {:X}: {} different, most frequent: {}", m_captureId, sorted.size(), summary);
+
+            // Every name once, in order, so a script can require that a recording holds a given action (live-check "bot logged").
+            std::string names;
+            for (const auto& entry : byName)
+                names += fmt::format("{}{}", names.empty() ? "" : ", ", entry.first);
+            spdlog::info("Captured action names of {:X}: {}", m_captureId, names);
         }
         return true;
     }

@@ -2,7 +2,15 @@
 
     python Tools/VR/live-check.py live-copy [live-npc ...]
     python Tools/VR/live-check.py --all            every script in ALL, in that order
+    python Tools/VR/live-check.py --expect-fail live-x   on a build without the fix live-x guards: it must fail
     powershell -File Tools/VR/run-live.ps1         the same, with the game brought up before and down after
+
+Each script ends with one verdict, also appended to the history file (toolbox test-history/live.jsonl, with the
+build, the rig's frame rate and the bot's fake network): ok; FAILED (a check failed); INVALID (a `log REQUIRE`
+precondition did not hold, or the bot warned that a line could not do its part, such as "nobody to hit": the run
+proves nothing either way); INCONCLUSIVE (nothing failed, but a check found nothing to judge and said SKIPPED);
+NOT RUN. With --expect-fail: RED (a check failed, so the test catches the bug) or NOT RED (it passed without the fix).
+A test counts once it has been RED on a build without its fix and ok with it.
 
 The game must be up and connected (Tools/VR/headless.ps1 up). A script marks a check with a line `log CHECK ...`;
 when the bot prints it, this asks the running game through DevBench (http://127.0.0.1:8921) and prints PASS or FAIL
@@ -57,6 +65,11 @@ at most that many different values of the group since the script began.
 `log CHECK logged <regular expression>` passes when the client has written a matching line since the script began.
 `log CHECK ids reused <name>` passes when the game gave an actor of that name a form id under which this client had
 deleted a copy earlier in the session (what live-temp-reuse needs to have happened to mean anything).
+`log CHECK ref <hex> 3d` asks whether a reference's 3D is loaded; `ref <hex> 3d steady <seconds>` samples it the whole
+time (the driver waits; the bot's script goes on) and fails if any sample found it unloaded: an object that blinks.
+`log REQUIRE <check>` is any check used as a precondition: when it does not hold, the run is INVALID, not failed.
+Put one before a script's decisive checks for what must have happened for them to mean anything (the copy went down,
+the hit was sent, the recording holds the action).
 
 Before the first script, combat AI is switched off and god mode off, by reading what the console answers rather than
 by toggling blind: a wild snow bear killed the player in the middle of the first full run (2026-10-02), and a
@@ -122,6 +135,20 @@ def papyrus_global(script, function, args=None):
         return 'ERR ' + type(e).__name__
 
 
+def body_pose(form):
+    """Where an actor's body is drawn: its pelvis node, and the pelvis's height above the lower foot, or None.
+    Measured against the feet, not the reference: a copy's reference can sit under the ground while its body stands
+    on it (a replay elsewhere keeps the recorded heights). On its feet the height is about 60 units, lying flat under 25."""
+    def node(name):
+        at = [papyrus_global('NetImmerse', 'GetNodeWorldPosition' + axis, [{'form': '0x' + form}, name, False]) for axis in 'XYZ']
+        return at if all(isinstance(v, (int, float)) for v in at) and any(at) else None
+    pelvis = node('NPC Pelvis [Pelv]')
+    feet = [foot for foot in (node('NPC L Foot [Lft ]'), node('NPC R Foot [Rft ]')) if foot]
+    if not pelvis or not feet:
+        return None
+    return pelvis, pelvis[2] - min(foot[2] for foot in feet)
+
+
 def latest_blade_centre(lines, copy_form):
     """Where the copy's sword body's centre of mass is held, from the client's VRWeaponBody line."""
     centre = None
@@ -133,14 +160,51 @@ def latest_blade_centre(lines, copy_form):
 
 
 def session_lines():
-    """This game session's part of the client log."""
-    with io.open(CLIENT_LOG, encoding='utf-8', errors='replace') as f:
-        lines = f.read().splitlines()
-    start = 0
-    for i, l in enumerate(lines):
-        if 'Skyrim Together client, build' in l:
-            start = i
-    return lines[start:]
+    """This game session's part of the client log, also once the log has rotated (5 MB) during the session."""
+    def read(path):
+        try:
+            with io.open(path, encoding='utf-8', errors='replace') as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+    def last_start(lines):
+        found = None
+        for i, l in enumerate(lines):
+            if 'Skyrim Together client, build' in l:
+                found = i
+        return found
+
+    lines = read(CLIENT_LOG)
+    start = last_start(lines)
+    if start is not None:
+        return lines[start:]
+    # The session's first line is in the rotated file: the session is its end and all of the current file.
+    older = read(CLIENT_LOG.replace('tp_client.log', 'tp_client.1.log'))
+    older_start = last_start(older)
+    return (older[older_start:] if older_start is not None else []) + lines
+
+
+def client_build(lines):
+    """The client build the session runs, from its first line."""
+    for l in lines[:50]:
+        m = re.search(r'Skyrim Together client, build (\S+)', l)
+        if m:
+            return m.group(1)
+    return '?'
+
+
+HISTORY = os.environ.get('LIVE_CHECK_HISTORY') or os.path.join(os.path.dirname(ROOT), 'TiltedEvolution-toolbox', 'test-history', 'live.jsonl')
+
+
+def record(entry):
+    """One line per script run, so a test's record can be read later: flaky, red without its fix, green with it."""
+    try:
+        os.makedirs(os.path.dirname(HISTORY), exist_ok=True)
+        with io.open(HISTORY, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry) + '\n')
+    except OSError as e:
+        print('(history not written: %s)' % e, flush=True)
 
 
 def stop_release_servers():
@@ -235,6 +299,22 @@ def ensure(command, wanted):
     return False
 
 
+def set_velocities(frames, side):
+    """Gives the moving controller the velocity its frames imply, the others none.
+
+    Every frame starts from the resting frame DevBench last saw, velocity included: a scripted swing then moves a
+    controller whose reported speed is zero, and PLANCK, which takes a hit's force from that speed, never hits."""
+    for i, f in enumerate(frames):
+        for d in ('hmd', 'left', 'right'):
+            f[d]['velocity'] = [0.0, 0.0, 0.0]
+            f[d]['angularVelocity'] = [0.0, 0.0, 0.0]
+        if i + 1 < len(frames):
+            here, there = f[side]['matrix'], frames[i + 1][side]['matrix']
+            seconds = max(0.001, (frames[i + 1]['tMs'] - f['tMs']) / 1000.0)
+            f[side]['velocity'] = [(there[3] - here[3]) / seconds, (there[7] - here[7]) / seconds, (there[11] - here[11]) / seconds]
+    return frames
+
+
 def hand_path(side, waypoints):
     """Queues one controller's path (DevBench `input vrTrackedSet`, 20 ms frames built on the current frame): waypoints
     of (ms, x, y, z, grip) in room space (metres: x right, y up, -z forward), straight lines between them, the grip
@@ -268,6 +348,7 @@ def hand_path(side, waypoints):
         f[side]['controller']['pressed'] = 4 if grip else 0
         f[side]['controller']['touched'] = 4 if grip else 0
         frames.append(f)
+    set_velocities(frames, side)
     return tool('input', {'action': 'sequence', 'device': 'vrTrackedSet', 'frames': frames, 'owner': 'live-check'}, timeout=15)
 
 
@@ -313,6 +394,12 @@ class Run:
         self.mark = None
         self.heal_rate = None
         self.results = []
+        # Preconditions that did not hold, and setup the bot could not do: the run then proves nothing either way.
+        self.invalid = []
+        # The bot's output so far, for "bot logged".
+        self.bot_lines = []
+        # The NPC copy's pose samples from "DO watch npc": (seconds since the start, pelvis x y z, body height).
+        self.watch = []
 
     def subject(self, who):
         sid = self.bot_id if who == 'copy' else self.npc_id
@@ -323,7 +410,7 @@ class Run:
             return None, 'the game logged no spawn for server id %s' % sid
         return form, None
 
-    def check(self, text):
+    def check(self, text, require=False):
         words = text.split()
         who, what = words[0], words[1]
         ok, detail = False, ''
@@ -375,6 +462,18 @@ class Run:
                 found = sorted({m.group(1) for m in (rx.search(l) for l in session_lines()[self.log_start:]) if m})
                 ok = 0 < len(found) <= most
                 detail = '%d: %s' % (len(found), ', '.join(found))
+            elif who == 'ref' and words[2] == '3d' and words[3:4] == ['steady']:
+                # "ref <hex> 3d steady <seconds>": the reference's 3D stays loaded the whole time, sampled as fast as
+                # DevBench answers. An object built again on every move blinks: some samples find it unloaded.
+                seconds = float(words[4]) if len(words) > 4 else 3.0
+                end = time.time() + seconds
+                samples = gaps = 0
+                while time.time() < end:
+                    samples += 1
+                    if papyrus('ObjectReference', 'Is3DLoaded', words[1]) is not True:
+                        gaps += 1
+                ok = samples > 0 and gaps == 0
+                detail = 'reference %s: %d of %d samples over %.0f s found its 3D unloaded' % (words[1], gaps, samples, seconds)
             elif who == 'ref' and words[2] == '3d':
                 # "ref <hex> 3d": the game has that reference's 3D loaded (an object it shows).
                 loaded = papyrus('ObjectReference', 'Is3DLoaded', words[1])
@@ -433,6 +532,12 @@ class Run:
                 hits = [l for l in session_lines()[self.log_start:] if rx.search(l)]
                 ok = bool(hits)
                 detail = ('%d lines, e.g. %s' % (len(hits), hits[0][35:140].strip())) if ok else 'no such line since the script began'
+            elif who == 'bot' and what == 'logged':
+                # "bot logged <regular expression>": the bot printed such a line so far, e.g. what its capture recorded.
+                rx = re.compile(' '.join(words[2:]))
+                hits = [l for l in self.bot_lines if rx.search(l)]
+                ok = bool(hits)
+                detail = ('%d lines, e.g. %s' % (len(hits), hits[-1].strip()[:200])) if ok else 'the bot printed no such line'
             elif who == 'ids' and what == 'reused':
                 # "ids reused Seeker": the game gave an actor of that name a form id this client had deleted a copy
                 # under earlier in the session. Not a fault: it is what makes live-temp-reuse a test of anything.
@@ -635,29 +740,47 @@ class Run:
                     ok = isinstance(held, bool) and held is (what == 'equipped')
                     detail = 'actor %s, IsEquipped(%s) %s' % (form, words[2], held)
                 elif what in ('standing', 'lying'):
-                    # "npc standing|lying [seconds]": how high the copy's pelvis is drawn above its reference, the feet.
-                    # A body on its feet carries it about 60 units up, kneeling in bleedout about 35, lying on the floor under 25.
-                    # With seconds it is watched that long, and the reference's travel while the pelvis is low is reported too.
-                    seconds = float(words[2]) if len(words) > 2 else 0.0
-                    end = time.time() + seconds
-                    heights, low_travel, last = [], 0.0, None
-                    while True:
-                        at = position(form)
-                        pelvis = [papyrus_global('NetImmerse', 'GetNodeWorldPosition' + axis, [{'form': '0x' + form}, 'NPC Pelvis [Pelv]', False]) for axis in 'XYZ']
-                        if at and all(isinstance(v, (int, float)) for v in pelvis):
-                            heights.append(pelvis[2] - at[2])
-                            if last and heights[-1] < 25.0:
-                                low_travel += math.dist(at, last)
-                            last = at
-                        if time.time() >= end:
-                            break
-                        time.sleep(0.3)
+                    # "npc standing|lying": the copy's body height now (body_pose), the middle of three readings a half second apart.
+                    heights = []
+                    for i in range(3):
+                        pose = body_pose(form)
+                        if pose:
+                            heights.append(pose[1])
+                        if i < 2:
+                            time.sleep(0.5)
                     if not heights:
-                        detail = 'actor %s: no pelvis or position read' % form
+                        detail = 'actor %s: no pelvis or feet read' % form
                     else:
-                        ok = heights[-1] >= 45.0 if what == 'standing' else heights[-1] < 25.0
-                        detail = 'actor %s, pelvis %.0f units above its feet (lowest %.0f, highest %.0f over %d samples); the reference travelled %.0f units while the pelvis was low' % (
-                            form, heights[-1], min(heights), max(heights), len(heights), low_travel)
+                        height = sorted(heights)[len(heights) // 2]
+                        ok = height >= 45.0 if what == 'standing' else height < 25.0
+                        detail = 'actor %s, pelvis %.0f units above its lower foot (readings %s)' % (form, height, ', '.join('%.0f' % h for h in heights))
+                elif what == 'went' and words[2:3] == ['down']:
+                    # "npc went down": two "DO watch npc" samples in a row with the body under 25 units high.
+                    # The precondition of a downed-copy test: a copy that never lay down proves nothing about getting up.
+                    heights = [h for _, _, h in self.watch]
+                    lying = [i for i, h in enumerate(heights) if h < 25.0]
+                    ok = any(i + 1 in lying for i in lying)
+                    detail = ('actor %s, %d samples, %d of them lying; body height lowest %.0f, highest %.0f' % (form, len(heights), len(lying), min(heights), max(heights))
+                              if heights else 'no "DO watch npc" samples to judge')
+                elif what == 'slide':
+                    # "npc slide below <units>": how far the lying body was carried along the floor, from the "DO watch npc" samples.
+                    # Horizontal pelvis travel while the body is under 25 units high, counted once it has lain there 1.5 s.
+                    # The fall itself moves the body; a slide behind the owner goes on for as long as the copy lies.
+                    limit = float(words[3])
+                    travel, lying_since, previous = 0.0, None, None
+                    for t, pelvis, height in self.watch:
+                        if height >= 25.0:
+                            lying_since = None
+                        elif lying_since is None:
+                            lying_since = t
+                        elif previous and t - lying_since >= 1.5:
+                            travel += math.dist(pelvis[:2], previous[:2])
+                        previous = pelvis
+                    if not any(h < 25.0 for _, _, h in self.watch):
+                        ok, detail = True, 'SKIPPED: actor %s never lay down in the samples, so there is no slide to judge' % form
+                    else:
+                        ok = travel <= limit
+                        detail = 'actor %s: the lying body travelled %.0f units along the floor (limit %.0f)' % (form, travel, limit)
                 elif what == 'health':
                     value = papyrus('Actor', 'GetActorValue', form, ['Health'])
                     base = papyrus('Actor', 'GetBaseActorValue', form, ['Health'])
@@ -676,8 +799,17 @@ class Run:
                     detail = 'unknown check'
         except Exception as e:
             ok, detail = False, 'could not ask the game: %s %s' % (type(e).__name__, e)
-        self.results.append((ok, text, detail))
-        print('   %s  %-24s %s' % ('PASS' if ok else 'FAIL', text, detail), flush=True)
+        skipped = bool(ok) and isinstance(detail, str) and detail.startswith('SKIPPED')
+        if require:
+            # A precondition: when it does not hold, what the script checks afterwards is not what it was written for.
+            held = bool(ok) and not skipped
+            if not held:
+                self.invalid.append('%s (%s)' % (text, detail))
+            print('   %s  %-24s %s' % ('NEEDED' if held else 'INVALID', text, detail), flush=True)
+            return
+        # A skipped check ran into nothing to judge: it is neither a pass nor a failure (None).
+        self.results.append((None if skipped else bool(ok), text, detail))
+        print('   %s  %-24s %s' % ('SKIP' if skipped else ('PASS' if ok else 'FAIL'), text, detail), flush=True)
 
     def run(self):
         exe = os.path.join(RELEASE, 'STBot.exe')
@@ -697,17 +829,20 @@ class Run:
         log = io.open(os.path.join(RELEASE, 'logs', self.script + '-bot.log'), 'w', encoding='utf-8')
         for line in proc.stdout:
             log.write(line)
+            self.bot_lines.append(line)
             m = re.search(r'ok: known me \(([0-9A-Fa-f]+) is known\)', line) or re.search(r'Character assigned.*?([0-9A-Fa-f]+)', line)
             if m and not self.bot_id:
                 self.bot_id = m.group(1)
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
                     self.check(text[6:].strip())
+                elif text.startswith('REQUIRE '):
+                    self.check(text[8:].strip(), require=True)
                 elif text.strip() in ('DO combat on', 'DO combat off'):
                     on = text.strip().endswith('on')
                     if ensure('tcai', 'is On' if on else 'is Off'):
@@ -795,6 +930,7 @@ class Run:
                             for d in ('left', 'right'):
                                 f[d]['controller']['packetNumber'] = (base[d].get('controller') or {}).get('packetNumber', 1) + i + 1
                             frames.append(f)
+                        set_velocities(frames, side)
                         r = tool('input', {'action': 'sequence', 'device': 'vrTrackedSet', 'frames': frames, 'owner': 'live-check'}, timeout=15)
                         print('   (%s hand swings from %.2f to %.2f over %d ms%s: %s)' % (side, x0, x1, ms, ', then holds %d ms' % hold if hold else '', 'queued' if r.get('queued') else r), flush=True)
                     except Exception as e:
@@ -1083,6 +1219,21 @@ class Run:
                         if at and me:
                             print('   (npc at (%.0f, %.0f, %.0f), %.0f from the player)' % (at[0], at[1], at[2], math.dist(at, me)), flush=True)
                         time.sleep(0.5)
+                elif text.startswith('DO watch npc '):
+                    # "DO watch npc <seconds>": the copy's pelvis and body height (body_pose), sampled for that long and kept for
+                    # "npc went down" and "npc slide below". Put it before the bot's "replay npc", which goes on meanwhile.
+                    seconds = float(text.split()[3])
+                    form, why = self.subject('npc')
+                    self.watch = []
+                    t0 = time.time()
+                    while form and time.time() - t0 < seconds:
+                        pose = body_pose(form)
+                        if pose:
+                            self.watch.append((time.time() - t0, pose[0], pose[1]))
+                        time.sleep(0.25)
+                    heights = [h for _, _, h in self.watch]
+                    print('   (watched npc %s for %.0f s: %d samples, body height %s)' % (
+                        form or '?', seconds, len(heights), ('lowest %.0f, highest %.0f' % (min(heights), max(heights))) if heights else 'never read: %s' % (why or 'no pose')), flush=True)
                 elif text.startswith('DO sample held '):
                     # "DO sample held <seconds>": where the held item is against the blade centre and the player, every half second.
                     seconds = float(text.split()[3])
@@ -1208,6 +1359,11 @@ class Run:
         # Without this a script that only uses them -- live-sender, the real game as the sender -- read as "not run".
         with io.open(os.path.join(RELEASE, 'logs', self.script + '-bot.log'), encoding='utf-8', errors='replace') as f:
             text = f.read()
+        # The bot warns and goes on when a line cannot do its part ("nobody to capture", "nothing to replay",
+        # "no clash relayed yet"): what follows then tests something else, often nothing.
+        for line in text.splitlines():
+            if re.search(r'\[(warning|error)\] (Line \d+:|\[script\] (?!FAILED line|\d+ of \d+ checks failed))', line) and 'checks failed' not in line:
+                self.invalid.append('bot: ' + line.split('] ', 2)[-1].strip())
         verdict = re.findall(r'\[script\] all (\d+) checks passed|\[script\] (\d+) of (\d+) checks failed', text)
         if verdict:
             passed_all, failed, of = verdict[-1]
@@ -1222,11 +1378,43 @@ class Run:
         return self.results
 
 
+def verdict(run, results, expect_fail):
+    """What a script's run proves.
+
+    INVALID when a precondition did not hold or the bot could not do its part: the run proves nothing either way.
+    INCONCLUSIVE when nothing failed but a check found nothing to judge (SKIP).
+    With --expect-fail (a build without the fix): RED when a check failed, which shows the test catches the bug;
+    NOT RED when it passed anyway, which shows it does not."""
+    bad = [text for ok, text, _ in results if ok is False]
+    skipped = [text for ok, text, _ in results if ok is None]
+    if not results and not run.invalid:
+        return 'not run', 'NOT RUN: no check was reached; see logs/%s-bot.log' % run.script
+    if run.invalid:
+        return 'invalid', 'INVALID: ' + '; '.join(run.invalid)
+    if expect_fail:
+        return ('red', 'RED as expected: ' + '; '.join(bad)) if bad else ('not red', 'NOT RED: it passed without the fix, so it does not catch the bug')
+    if bad:
+        return 'failed', 'FAILED: ' + '; '.join(bad)
+    if skipped:
+        return 'inconclusive', 'INCONCLUSIVE: nothing to judge in ' + '; '.join(skipped)
+    return 'ok', 'ok'
+
+
+def run_conditions(lines):
+    """The rig's frame rate and the bot's network during a run, kept with its result."""
+    fps = sorted(int(m.group(1)) for m in (re.search(r'Perf last 30 s: .*\((\d+) fps\)', l) for l in lines) if m)
+    network = {k: os.environ[k] for k in ('STBOT_FAKE_LAG_MS', 'STBOT_FAKE_LOSS_PCT', 'STBOT_FAKE_REORDER_PCT') if os.environ.get(k)}
+    return (fps[len(fps) // 2] if fps else None), network
+
+
 def main():
     args = sys.argv[1:]
     if args == ['--list']:
         print('\n'.join(ALL))
         return 0
+    # --expect-fail: the build in the game is one without the fix the scripts guard; each must fail to count as a test.
+    expect_fail = '--expect-fail' in args
+    args = [a for a in args if a != '--expect-fail']
     scripts = ALL if (not args or args == ['--all']) else args
     try:
         state = tool('inspect', {'kind': 'state'})
@@ -1255,32 +1443,38 @@ def main():
     table = []
     shots = []
     for name in scripts:
+        started = time.strftime('%Y-%m-%d %H:%M:%S')
         # A game that went down takes every later script with it; say so once instead of failing each in turn.
         try:
             urllib.request.urlopen('http://127.0.0.1:8921/api/health', timeout=6).read()
         except Exception:
             table.append((name, 0, 0, 'NOT RUN: the game is gone'))
             failed += 1
+            record({'time': started, 'script': name, 'verdict': 'not run', 'note': 'the game is gone', 'expect_fail': expect_fail})
             continue
         run = Run(name)
         results = run.run()
-        bad = [text for ok, text, _ in results if not ok]
+        kind, note = verdict(run, results, expect_fail)
+        bad = [text for ok, text, _ in results if ok is False]
         total += len(results)
-        failed += len(bad)
-        shots += run.shots
-        if not results:
-            # A script whose bot never got going has no failed check either.
+        # Anything but a plain pass (or, expecting failure, a red) is not a result to rely on.
+        if kind not in ('ok', 'red'):
             failed += 1
-            table.append((name, 0, 0, 'NOT RUN: no check was reached; see logs/%s-bot.log' % name))
-            time.sleep(6)
-            continue
-        table.append((name, len(results), len(bad), 'ok' if not bad else 'FAILED: ' + '; '.join(bad)))
+        shots += run.shots
+        lines = session_lines()
+        fps, network = run_conditions(lines[getattr(run, 'log_start', 0):])
+        record({'time': started, 'script': name, 'build': client_build(lines), 'verdict': kind, 'expect_fail': expect_fail,
+                'fps': fps, 'network': network, 'invalid': run.invalid,
+                'checks': [{'result': 'skip' if ok is None else ('pass' if ok else 'fail'), 'check': text, 'detail': str(detail)[:300]}
+                           for ok, text, detail in results]})
+        table.append((name, len(results), len(bad), note))
         time.sleep(6)  # let the server finish removing the bot before the next one joins
 
     print('\n%-20s %6s %6s  %s' % ('script', 'checks', 'failed', ''))
     for name, n, bad, note in table:
         print('%-20s %6d %6d  %s' % (name, n, bad, note))
-    print('%d checks, %d failed' % (total, failed))
+    print('%d checks; %d scripts not giving a plain result (failed, invalid, inconclusive or not run)' % (total, failed))
+    print('history: ' + HISTORY)
     for path in shots:
         print('screenshot: ' + path)
     return 1 if failed else 0

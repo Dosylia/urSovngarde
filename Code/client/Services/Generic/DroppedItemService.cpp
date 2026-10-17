@@ -670,7 +670,16 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
                 continue;
             m_objectCandidates.push_back(pRef->formID);
             if (m_objectCandidates.size() >= 128)
+            {
+                // Measurement: the watch list is full, so movable objects past the first 128 the cell lists go unwatched.
+                static std::chrono::steady_clock::time_point s_nextFullLog{};
+                if (aNow >= s_nextFullLog)
+                {
+                    s_nextFullLog = aNow + std::chrono::seconds(30);
+                    spdlog::info("WorldObject: 128 movable objects within {:.0f} units are watched, the most there is room for; others nearby are not", cWatchRadius);
+                }
                 break;
+            }
         }
 
         // Held for the other player until it is let go, and carried here until it comes to rest, wherever it is now.
