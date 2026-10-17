@@ -43,12 +43,16 @@ expect dead ref:860F8
 log CHECK ref 860F8 dead
 wait 3
 
-log -- the player dies and the mod brings them back
+log -- the player goes down, and this bot revives them, as a party member does
 log DO console player.kill
 waitfor dead other 20
 expect dead other
+waitfor downstate other down 20
+revive other
 waitfor alive other 40
 expect alive other
+# The revive's own 3 s of god mode would turn "DO god on" below back off as it ends.
+wait 4
 
 log -- the player goes elsewhere; this bot follows the player's cell when told
 log DO god on

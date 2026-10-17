@@ -1,0 +1,29 @@
+# One half of the nobody-left test: this bot is down when the only other member leaves the party.
+#
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair downedleave
+#
+# Run alone, not in run-all-pairs: the test server puts every bot in one party.
+# The server checks its downed players once a second (ReviveService::CheckDowned): alone and down, nobody is left to revive this bot.
+log downedleave actor
+waitfor connected 45
+collect spawn
+record downedleave actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+
+log -- going down
+down
+waitfor downstate me down 10
+expect downstate me down
+
+log -- the other side leaves the party: nobody is left, and this bot respawns at once, with no safe point of its own
+waitfor downstate me fallen 15
+expect downstate me fallen
+expect respawnpoint me none
+expect connected
+record off
+report bot-downedleave-actor.txt
+log done
+stop

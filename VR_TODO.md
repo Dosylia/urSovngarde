@@ -169,7 +169,8 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       not grab a bandit body after Emma dragged it -- no motion of it was seen in his game.
 - [ ] **A death:** the respawn's health lines (after the respawn, when god mode ends) for the second down of
       2026-10-11 21:12; in a dungeon, the respawn at its own spot (`RespawnPlayer: in cell ... at its override
-      position`).
+      position`). With the revive build, a respawn goes to the last safe point instead (`RespawnPlayer: at the safe
+      point in cell ...`), and the override only applies without one.
 - [ ] **A load within a minute of a death:** it crashes the rig every time (`skyrimvrtools.dll+0x71B5`); no real session
       has done it yet.
 - [ ] **A real dragon flying** in one game: the other game never takes it over until it lands.
@@ -206,6 +207,32 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       differ by only 7 deg); `HeadingDiag:` sent heading off the body near 0 and off the headset during head turns.
 
 ## Waiting on a test or action
+
+- [!] **Revive and respawn** (branch `feat/revive-system`, protocol b41d4a41; every player needs the build): a player at
+      zero health stays down; a party member who holds a hand on them for 4 s revives them (up with 30 % health, 3 s of
+      god mode). The server ends every wait (ReviveService, rules in ReviveRules): not revived within
+      `Gameplay:uDownedSeconds` (60), nobody in the party left standing (all down, or the others left the party), or down
+      alone (at once). The player then respawns at the party leader's last safe point, else its own, else the game's old
+      spot. A safe point is where the game would have autosaved: after a loading screen (a load door, fast travel, a
+      loaded save), a sleep or wait, or on connecting, never in combat. No world reset: the owner asked for "a better
+      respawn", not the last save. A refused revive tells the reviver why, and the hold starts over; a member who joins
+      while someone is down is told; a save loaded while down stands the player up, with no respawn and no gold lost.
+      Found and fixed in the rig: a connection dropped while down let the game kill the player and load the last save
+      (the health now comes back first); on VR the respawn's knock (upstream `KnockExplosion`) threw the player
+      thousands of units (5761 in one run), so VR skips it. The messages are HUD text until the "You died" screen is
+      decided. Tests 2026-10-17 on the final build: `TPTests [revive]` 5 cases; bot pairs `downed` (in run-all-pairs;
+      its watcher failed once in 5 runs, cause unknown, the server's side of that run was right), `partyfall`,
+      `downedtime`, `downedleave` (alone), `run-all-pairs` 14/14; rig `live-revive` 7/7, `live-revive-hand` 5/5 (only right after
+      live-revive), `live-revive-timeout` 12/12 (back within 1 unit of the safe point; a VR bleedout lasts the whole
+      60 s), `live-partyfall` 9/9, `live-down-alone` 5/5, `live-death` 9/9, `live-down-disconnect` 9/9,
+      `live-safepoint-travel` 4/4. Not run: `live-respawn-cell` (the coc out of Mistwatch hit the known Community
+      Shaders crash), `live-load` and `live-load-dead` (a load after a death crashes the rig). Not seen in play.
+      To read in a session: `PlayerService: safe point in cell ...` (where they are made), `RespawnPlayer: at the safe
+      point in cell ...`, the server's `Revive: ... respawning at the party leader's safe point`, `Revive: holding a
+      hand on player ..., N units from its body` (the 50-unit reach is a guess), `the revived player is up; health N`.
+      Open: whether a downed player's copy shows the bleedout pose on the other side; whether a VR player who died
+      ragdolled gets stuck now that the respawn does not knock it; a safe point in an interior (not tested in the rig).
+      Not done: the "You died" screen, giving up early, the revive gesture (options first, as the owner asked).
 
 - [!] **Seen's update:** DynDOLOD DLL NG Alpha-43 (Nexus 97720, replacing his `DynDOLOD DLL NG` files) and the host's
       combined VR Address Library file (`E:\FUS\mods\VR Address Library for SKSEVR\SKSE\Plugins\version-1-4-15-0.csv`;

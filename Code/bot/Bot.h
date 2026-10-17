@@ -190,6 +190,8 @@ private:
     bool MoveTowards(const glm::vec3& acTarget, float aSpeed, float aDt) noexcept;
 
     const KnownPlayer* Host() const noexcept;
+    //! The player id of the first other player whose character this bot was sent, or 0.
+    uint32_t OtherPlayerId() const noexcept;
     //! Move into the cell the host just entered, so a load door does not leave the bot outside.
     void FollowHostIntoCell(const GameId& acCell, const GameId& acWorldSpace) noexcept;
     KnownPlayer* FindPlayerCharacter(uint32_t aServerId) noexcept;
@@ -260,6 +262,12 @@ private:
     std::optional<glm::vec2> m_start;
 
     std::vector<KnownPlayer> m_players;
+    //! The last downed state the server sent for each player id (NotifyDownedState): down, revived, respawned or fallen.
+    std::map<uint32_t, std::string> m_downStates;
+    //! Where the server said each player respawns (died or fallen); empty for the game's own spot.
+    std::map<uint32_t, std::optional<glm::vec3>> m_respawnPoints;
+    //! Why the server last refused a revive this bot asked for, or "none".
+    std::string m_lastRefusal{"none"};
     //! Items lying in the world as the server has told this bot, by the server's id: what `drops` counts and
     //! `pickup any` takes. The server sends one when an item is dropped in range and again on entering its cell.
     std::map<uint32_t, GameId> m_drops;

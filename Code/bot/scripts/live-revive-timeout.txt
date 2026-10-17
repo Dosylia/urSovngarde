@@ -1,0 +1,49 @@
+# Not revived in time: the game's player goes down in a party, nobody revives it, and the server ends the wait.
+#
+#   python Tools\VR\live-check.py live-revive-timeout
+#
+# The Sleep/Wait Menu opened and closed gives a safe point where the player stands, as the game's autosave on a wait would
+# (PlayerService::RunSafePointUpdates). The player walks away, goes down, waits out Gameplay:uDownedSeconds (60 on the test
+# server), and must come back at that safe point, not where it fell. The game's player leads the party (it connected first).
+# Also whether a VR bleedout lasts the whole wait: "the bleedout ended by itself" must not appear.
+log live revive timeout
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a safe point here
+log DO menu 2 Sleep/Wait Menu
+wait 6
+log CHECK logged PlayerService: safe point in cell
+log CHECK spot mark
+
+log -- the player walks away from it
+log DO walk 40 0 0 25
+wait 4
+log CHECK spot away 250
+
+log -- the player goes down; this bot does not revive it
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 2
+log CHECK logged PlayerService: the server gives \d+ s to be revived
+wait 50
+log CHECK absent PlayerService: the bleedout ended by itself
+expect downstate other down
+
+log -- the time runs out: the server says so, and the player comes back at the safe point
+waitfor downstate other died 20
+expect downstate other died
+wait 2
+log CHECK logged PlayerService: not revived in time; respawning at the safe point
+wait 12
+log CHECK logged RespawnPlayer: at the safe point in cell
+log CHECK spot back 150
+log CHECK player alive
+log CHECK absent PlayerService: the bleedout ended by itself
+wait 3
+log CHECK game alive
+log done
+stop

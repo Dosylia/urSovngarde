@@ -87,7 +87,7 @@ void PlayerCharacter::AddSkillExperience(int32_t aSkill, float aExperience) noex
     spdlog::debug("Added {} experience to skill {}", deltaExperience, aSkill);
 }
 
-NiPoint3 PlayerCharacter::RespawnPlayer() noexcept
+NiPoint3 PlayerCharacter::RespawnPlayer(TESObjectCELL* apSafePointCell, const NiPoint3& acSafePoint) noexcept
 {
     // Make bleedout state recoverable
     SetNoBleedoutRecovery(false);
@@ -97,6 +97,17 @@ NiPoint3 PlayerCharacter::RespawnPlayer() noexcept
     // Reset health to max
     // TODO(cosideci): there's a cleaner way to do this
     ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, 1000000);
+
+    // Where the game would have saved last (PlayerService), so the player does not come back beside what killed it.
+    if (apSafePointCell)
+    {
+        const char* cpSafeEditorId = apSafePointCell->GetFormEditorID();
+        spdlog::info("RespawnPlayer: at the safe point in cell {:X} '{}', ({:.0f}, {:.0f}, {:.0f})", apSafePointCell->formID, cpSafeEditorId ? cpSafeEditorId : "", acSafePoint.x,
+                     acSafePoint.y, acSafePoint.z);
+        MoveTo(apSafePointCell, acSafePoint);
+        SetNoBleedoutRecovery(true);
+        return acSafePoint;
+    }
 
     TESObjectCELL* pCell = nullptr;
 

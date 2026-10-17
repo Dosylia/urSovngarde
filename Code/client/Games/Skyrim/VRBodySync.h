@@ -57,6 +57,8 @@ void NoteHeading(PlayerCharacter* apPlayer) noexcept;
 //! This copy has an arrow on its bow string (NotifyArrowNocked).
 //! The arrow is laid from the string hand to the bow hand each frame, instead of where the game's flat attachment puts it.
 void SetArrowNocked(uint32_t aFormId, bool aNocked) noexcept;
+//! Where the local player's hand is in the world, left (0) or right (1): the first-person hand, which follows the controller.
+bool LocalHandPosition(uint8_t aSide, glm::vec3& aOut) noexcept;
 //! Whether this player's HIGGS bodies, or what they hold, touched another player's weapon body at that point in the last half second.
 //! A hit there landed on the weapon, not on its owner.
 bool IsWeaponTouchAt(const glm::vec3& acPoint) noexcept;

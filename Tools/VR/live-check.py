@@ -62,6 +62,8 @@ game's IsEquipped does not count it); `lefthand|righthand <hex>` asks which weap
 `log CHECK distinct <most> <regular expression with one group>` passes when the client has logged at least one and
 at most that many different values of the group since the script began.
 `log CHECK absent <regular expression>` passes when the client has written no such line since the script began.
+`log CHECK spot mark` notes where the player stands; `spot back <units>` passes when the player is within that many
+units of it in the same worldspace or interior, `spot away <units>` when farther or elsewhere.
 `log CHECK logged <regular expression>` passes when the client has written a matching line since the script began.
 `log CHECK ids reused <name>` passes when the game gave an actor of that name a form id under which this client had
 deleted a copy earlier in the session (what live-temp-reuse needs to have happened to mean anything).
@@ -392,6 +394,7 @@ class Run:
         self.bot_id = None     # the bot character's server id
         self.npc_id = None     # the NPC it registered
         self.mark = None
+        self.spot = None       # "CHECK spot mark": the player's place (worldspace or cell) and position
         self.heal_rate = None
         self.results = []
         # Preconditions that did not hold, and setup the bot could not do: the run then proves nothing either way.
@@ -580,6 +583,24 @@ class Run:
                 cell = (scene.get('cell') or {}).get('editorId') or (scene.get('cell') or {}).get('formId')
                 ok = ws == words[2]
                 detail = 'worldspace %s, cell %s' % (ws, cell)
+            elif who == 'spot':
+                # "spot mark": where the player stands; "spot back <units>": within that distance of the mark, in the same
+                # worldspace or interior; "spot away <units>": farther than that, or elsewhere.
+                scene = tool('inspect', {'kind': 'scene'})
+                place = (scene.get('worldspace') or {}).get('editorId') or (scene.get('cell') or {}).get('editorId') or (scene.get('cell') or {}).get('formId')
+                at = position('14')
+                if what == 'mark':
+                    self.spot = (place, at)
+                    ok = at is not None
+                    detail = '%s at %s' % (place, ('(%.0f, %.0f, %.0f)' % tuple(at)) if at else 'no position')
+                elif not self.spot or not self.spot[1] or not at:
+                    ok, detail = False, 'no mark taken, or no position'
+                else:
+                    wanted = float(words[2])
+                    apart = math.dist(at, self.spot[1])
+                    same = place == self.spot[0]
+                    ok = (same and apart <= wanted) if what == 'back' else (not same or apart > wanted)
+                    detail = '%.0f units from the mark, in %s (the mark in %s), wanted %s %.0f' % (apart, place, self.spot[0], 'within' if what == 'back' else 'beyond', wanted)
             elif who == 'player' and what == 'alive':
                 dead = papyrus('Actor', 'IsDead', '14')
                 health = tool('inspect', {'kind': 'player'})['actorValues']['health']['current']
@@ -836,7 +857,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -1206,6 +1227,32 @@ class Run:
                         print('   (the %s hand held %s)' % (side, held_any), flush=True)
                     except Exception as e:
                         print('   FAIL  reach npc: %s' % e, flush=True)
+                        self.results.append((False, text.strip(), str(e)))
+                elif text.startswith('DO hold '):
+                    # "DO hold copy|npc right|left <up> <seconds>": the player is stood 50 units from the bot's character or NPC, facing it;
+                    # that controller goes to it, <up> units above its feet (600 ms), stays there <seconds> without gripping, and comes back.
+                    # A revive is a hand held on a downed player (ReviveService); "DO reach" grips and pulls instead.
+                    words = text.split()
+                    who, side, up, seconds = words[2], words[3], float(words[4]), float(words[5])
+                    form, why = self.subject(who)
+                    try:
+                        if not form:
+                            raise RuntimeError('no %s: %s' % (who, why))
+                        theirs, mine = position(form), position('14')
+                        if not theirs or not mine:
+                            raise RuntimeError('no position for the player or the %s' % who)
+                        dx, dy = theirs[0] - mine[0], theirs[1] - mine[1]
+                        far = math.hypot(dx, dy) or 1.0
+                        papyrus('ObjectReference', 'SetPosition', '14', [theirs[0] - 50 * dx / far, theirs[1] - 50 * dy / far, theirs[2]])
+                        tool('console', {'action': 'exec', 'command': 'player.setangle z %.1f' % (math.degrees(math.atan2(dx, dy)) % 360.0)})
+                        time.sleep(1.0)
+                        y = up / 70.0
+                        rest = (0.25 if side != 'left' else -0.25, 1.0, -0.1)
+                        held_until = 600 + int(seconds * 1000)
+                        r = hand_path(side, [(0, *rest, False), (600, 0.0, y, -50 / 70.0, False), (held_until, 0.0, y, -50 / 70.0, False), (held_until + 600, *rest, False)])
+                        print('   (%s hand on the %s %.0f up for %.1f s: %s)' % (side, who, up, seconds, 'queued' if r.get('queued') else r), flush=True)
+                    except Exception as e:
+                        print('   FAIL  hold %s: %s' % (who, e), flush=True)
                         self.results.append((False, text.strip(), str(e)))
                 elif text.startswith('DO sample npc '):
                     # "DO sample npc <seconds>": where this game shows the bot's NPC, and how far from the player, every
