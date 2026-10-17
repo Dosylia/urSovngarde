@@ -26,7 +26,8 @@ of the player who watches: in the session of 2026-10-14 evening Seen still ran 4
 or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
 
 Sessions of 2026-10-16 evening (both on d3c1974), 2026-10-17 morning (both on 5342bc0) and 2026-10-17 evening (both
-on ce86908). Current build 0ff0808 (deployed, client and server; protocol 33ef1cbe, as ce86908). Both players need it.
+on ce86908). Current build 440f5e0 (deployed, client and server; protocol ade54224, changed by the arrow in the hand).
+Both players need it.
 
 - [ ] **Cutscene voice lines and subtitles out of step in a party** (upstream ea0f6c39, ported 2026-10-17; a protocol
       change, so both players need 5342bc0 or later). Every game plays a quest's scenes itself, and the relayed line
@@ -264,7 +265,7 @@ on ce86908). Current build 0ff0808 (deployed, client and server; protocol 33ef1c
       hand on player ..., N units from its body` (the 50-unit reach is a guess), `the revived player is up; health N`.
       Open: whether a downed player's copy shows the bleedout pose on the other side; whether a VR player who died
       ragdolled gets stuck now that the respawn does not knock it; a safe point in an interior (not tested in the rig).
-      Not done: the "You died" screen, giving up early, the revive gesture (options first, as the owner asked).
+      Not done: the revive gesture (options first, as the owner asked).
       Review fixes (2026-10-17, ce86908): a downed player who leaves the party or the server is announced to the members
       told it was down (`NotifyDownedState::kLeft`; before, they kept trying to revive it); a respawn this game starts
       on its own ends the down on the server at once and goes to the server's respawn point (`PlayerDownedRequest`
@@ -278,6 +279,24 @@ on ce86908). Current build 0ff0808 (deployed, client and server; protocol 33ef1c
       `live-down-disconnect` 9/9. Open, for the author: the VR respawn knock skipped instead of fixed; any loading
       screen taken as a loaded save (a teleport during the fade calls the respawn off; `TESLoadGameEvent` is exact);
       `live-revive-hand` passes from the resting hand, never the held one.
+      After the play session of 2026-10-17 evening (the owner's choices, 440f5e0, no protocol change of its own):
+      while down, a slow double heartbeat in both controllers and the game's heartbeat sound (`UIHealthHeartbeatALPSD`);
+      on a revive one strong pulse in both hands and the restoration spell's sound (the game has no breath-in sound);
+      both grips held 3 s gives up the wait (a rising buzz; letting go cancels; the server answers with the party's
+      respawn point, as for any respawn this game starts); the server ends the wait at once when every standing member
+      is in another interior or worldspace or over 7000 units (100 m) away, checked on going down and every second;
+      "YOU DIED" in red on a head-locked overlay as the screen fades, then the place's name in gold for 3 s on waking.
+      The grips are read from OpenVR and from the game's own controller devices (Oculus Touch reports the grip as
+      Axis2, so both buttons count). Tests: `TPTests` 52/52 (new case for the distance rule); bot pair `downedfar` red on
+      28995d2 (the actor stayed down), green with all nine revive pairs on 8b9d192 (its server is 440f5e0's); rig
+      `live-revive-giveup` red on 28995d2, 12/12 on 440f5e0 (a 1.5 s hold let go cancels, the 3 s hold respawns 1 unit
+      from the safe point, both banners logged); on 8b9d192 (same cues, grips read from OpenVR only) `live-revive`
+      10/10 (heartbeat on and off, revive sound played) and `live-blade` 6/6 on 440f5e0 (the clash sound moved).
+      In the rig the grips came from the game's devices (`OpenVR 0, game 2`); the OpenVR read, the feel of the pulses,
+      the sounds' volume and the banner's size and place are only judged in a headset. Not seen in play.
+      To read: `both grips held while down (OpenVR N, game N)`, `the player gave up the wait`, `heartbeat ... playing`,
+      `the heartbeat sound stopped`, `VRBanner: '...' shown`, `the revive sound did not play` (should never show), the
+      server's `is down with every standing member elsewhere or too far to come`.
 
 - [!] **Seen's update:** DynDOLOD DLL NG Alpha-43 (Nexus 97720, replacing his `DynDOLOD DLL NG` files) and the host's
       combined VR Address Library file (`E:\FUS\mods\VR Address Library for SKSEVR\SKSE\Plugins\version-1-4-15-0.csv`;
@@ -298,6 +317,18 @@ on ce86908). Current build 0ff0808 (deployed, client and server; protocol 33ef1c
 
 ## Open work
 
+- [ ] **Crash applying the owner's inventory to an NPC with no AI process** (hub reports 20261017-211633-bb01369d and
+      20261017-211914-2214ee75, a public v1.9.3 player in the Helgen intro, twice). The triage calls it "back after its
+      fix" because it matches the address only (SkyrimVR.exe+683850); it is not that bug: our crash handler finds no
+      actor of ours in any register, and RSI is Ralof (2BF9E), alive. Both crashes come right after `Received remote
+      actor, form id: 2BF9E`, on that thread: ReconcileActorData > SetActorInventory > the game's
+      InventoryChanges::RemoveItem (15821) > AIProcess::ClearFurniture (38773) with no process (RCX 0). The same path
+      has no guard in the current code. What set it off: VRConnectService reconnects when the character's name
+      changes, and that player's name flipped between 'Prisoner' and 'Prisoner2' a few seconds after each save load
+      (not our code), so it reconnected five times in 15 minutes and re-applied every inventory each time. Ralof also
+      sent 182 Unequip actions in a second there. Two fixes to make, each with a red rig run first: no inventory applied
+      to an actor without an AI process (applied once it has one), and the reconnect tied to a loaded save, not to the
+      name.
 - [ ] **Trustworthy rig tests** (asked 2026-10-17: fixes that pass in the rig keep failing in play, and builds and runs
       cost time, so a test must be worth it). Seen on 2026-10-16/17: `live-copy-bleedout` passed while testing nothing
       (its copy replayed no actions); `live-world-object` passed while the cup flickered (it read our own log lines,

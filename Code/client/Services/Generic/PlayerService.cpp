@@ -659,7 +659,8 @@ void PlayerService::RunDownedCues() noexcept
 
 bool PlayerService::HeldToGiveUp(const std::chrono::steady_clock::time_point aNow) noexcept
 {
-    if (!VRHaptics::GripHeld(false) || !VRHaptics::GripHeld(true))
+    const VRHaptics::Grips cGrips = VRHaptics::GripsHeld();
+    if (!cGrips.Both())
     {
         if (m_giveUpSince != std::chrono::steady_clock::time_point{})
             spdlog::info("PlayerService: both grips let go before giving up");
@@ -669,7 +670,7 @@ bool PlayerService::HeldToGiveUp(const std::chrono::steady_clock::time_point aNo
     if (m_giveUpSince == std::chrono::steady_clock::time_point{})
     {
         m_giveUpSince = aNow;
-        spdlog::info("PlayerService: both grips held while down; giving up unless let go");
+        spdlog::info("PlayerService: both grips held while down (OpenVR {}, game {}); giving up unless let go", cGrips.OpenVR, cGrips.Game);
     }
     return aNow - m_giveUpSince >= cGiveUpHold;
 }

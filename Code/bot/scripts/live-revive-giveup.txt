@@ -27,11 +27,22 @@ waitfor downstate other down 20
 expect downstate other down
 wait 2
 log REQUIRE logged PlayerService: the server gives \d+ s to be revived
+log CHECK logged PlayerService: down: the heartbeat in both hands, and its sound playing
+log -- both grips held for 1.5 s and let go: the player stays down
+log DO grip both 1500
+wait 3
+log CHECK logged PlayerService: both grips let go before giving up
+expect downstate other down
 log -- both grips held for 3.5 s: the player gives up, long before the wait would end
 log DO grip both 3500
 waitfor downstate other respawned 8
 expect downstate other respawned
+wait 2
+log CHECK logged PlayerService: the player gave up the wait
+log CHECK logged PlayerService: the heartbeat sound stopped
+log CHECK logged VRBanner: 'YOU DIED' shown
 wait 10
+log CHECK logged VRBanner: '[^']+' shown for 3\.0 s
 log CHECK spot back 150
 log CHECK player alive
 log CHECK absent PlayerService: the bleedout ended by itself

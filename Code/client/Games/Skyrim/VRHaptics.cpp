@@ -69,21 +69,42 @@ bool Pulse(const bool aRightHand, uint16_t aDurationMicroSec) noexcept
     return true;
 }
 
-bool GripHeld(const bool aRightHand) noexcept
+Grips GripsHeld() noexcept
 {
-    vr::IVRSystem* pSystem = GetVRSystem();
-    if (!pSystem)
-        return false;
+    // The grip button, or Axis2, which Oculus Touch controllers report for the grip.
+    constexpr uint64_t cGripMask = (1ull << vr::k_EButton_Grip) | (1ull << vr::k_EButton_Axis2);
 
-    const vr::TrackedDeviceIndex_t device =
-        pSystem->GetTrackedDeviceIndexForControllerRole(aRightHand ? vr::TrackedControllerRole_RightHand : vr::TrackedControllerRole_LeftHand);
-    if (device == vr::k_unTrackedDeviceIndexInvalid)
-        return false;
+    Grips grips{};
 
-    vr::VRControllerState_t state{};
-    if (!pSystem->GetControllerState(device, &state, sizeof(state)))
-        return false;
-    return (state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_Grip)) != 0;
+    if (vr::IVRSystem* pSystem = GetVRSystem())
+    {
+        for (const auto cRole : {vr::TrackedControllerRole_LeftHand, vr::TrackedControllerRole_RightHand})
+        {
+            const vr::TrackedDeviceIndex_t cDevice = pSystem->GetTrackedDeviceIndexForControllerRole(cRole);
+            vr::VRControllerState_t state{};
+            if (cDevice != vr::k_unTrackedDeviceIndexInvalid && pSystem->GetControllerState(cDevice, &state, sizeof(state)) && (state.ulButtonPressed & cGripMask) != 0)
+                ++grips.OpenVR;
+        }
+    }
+
+    // BSInputDeviceManager keeps its devices in a list at 0x60; slots 3 to 8 are the VR controllers, two per headset type.
+    // Only a BSOpenVRControllerDevice (known by its vtable) is read: its last poll's state sits at 0xC0.
+    POINTER_SKYRIMSE(const uint8_t*, s_inputDeviceManager, 516574, 516574);
+    static const uintptr_t s_controllerVtable = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) + 0x17E87C0;
+    if (const uint8_t* pManager = *s_inputDeviceManager.Get())
+    {
+        for (int slot = 3; slot <= 8; ++slot)
+        {
+            const uint8_t* pDevice = *reinterpret_cast<const uint8_t* const*>(pManager + 0x60 + slot * sizeof(void*));
+            if (!pDevice || *reinterpret_cast<const uintptr_t*>(pDevice) != s_controllerVtable)
+                continue;
+            const auto& cState = *reinterpret_cast<const vr::VRControllerState_t*>(pDevice + 0xC0);
+            if ((cState.ulButtonPressed & cGripMask) != 0)
+                ++grips.Game;
+        }
+    }
+
+    return grips;
 }
 
 } // namespace VRHaptics
@@ -97,9 +118,9 @@ bool Pulse(bool, uint16_t) noexcept
     return false;
 }
 
-bool GripHeld(bool) noexcept
+Grips GripsHeld() noexcept
 {
-    return false;
+    return {};
 }
 } // namespace VRHaptics
 
