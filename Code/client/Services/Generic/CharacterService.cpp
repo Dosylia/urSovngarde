@@ -2999,6 +2999,9 @@ void CharacterService::RunLocalUpdates() const noexcept
                          pPlayer->actorState.IsWeaponDrawn());
         }
 
+        // Measurement: whether the heading sent for this player follows the headset or the body.
+        VRBodySync::NoteHeading(pPlayer);
+
         // Measurement: where the game keeps this player's own arrow, in the hand and on the string, and whether it is drawn.
         if (pPlayer->actorState.IsWeaponDrawn())
             VRBodySync::LogLocalArrowNodes(pPlayer, attackState);

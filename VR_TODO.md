@@ -235,6 +235,13 @@ server; it has everything fb88297 had). Both players need it.
       is sent, so the copy's hips and legs follow every head turn. First a measurement for one session (heading,
       headset yaw, the VRIK body's yaw from the thighs), then send the VRIK body's facing as the heading and the head
       relative to it (VRBodySync::CaptureLocalPose, AnimationSystem::Serialize; the walk animation needs care).
+      The measurement ships since b362737: every 30 s `HeadingDiag:` gives the sent heading's average and largest
+      distance from the headset yaw and from the body's facing (the line between the thighs), and how far the sent
+      heading turned while the body stayed still. Rig: standing still, sent = headset exactly, body 7 deg off; the
+      virtual headset turned 60 deg with the hands still, the actor's heading followed at once (237 -> 177 and back),
+      the body lagged up to 50 deg, and 22 of the 120 deg the heading turned came while the body did not move at all.
+      To see in play: nothing to do but play; send both logs. What to read: the body gap while standing and looking
+      around, against walking.
 - [ ] **Map greyed out indoors** (player 2, 2026-10-11 and 2026-10-14): no code of ours touches the map indoors and it
       worked outside. To settle it: open the map inside any building with the mod not connected.
 - [ ] **An in-headset menu:** the urSovngarde menu as a SteamVR dashboard tab with large text, a small overlay for chat.

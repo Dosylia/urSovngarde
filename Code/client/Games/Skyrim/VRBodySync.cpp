@@ -4322,6 +4322,106 @@ void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexce
 #endif
 }
 
+void NoteHeading(PlayerCharacter* apPlayer) noexcept
+{
+#ifdef SKYRIMVR
+    constexpr float cDegrees = 180.f / glm::pi<float>();
+    constexpr auto cSampleEvery = std::chrono::milliseconds(100);
+    constexpr auto cReportEvery = std::chrono::seconds(30);
+
+    struct Totals
+    {
+        uint32_t Samples = 0;
+        float HeadsetGap = 0.f, HeadsetGapMax = 0.f;
+        float BodyGap = 0.f, BodyGapMax = 0.f;
+        float HeadsetBodyGap = 0.f;
+        float Turned = 0.f, TurnedBodyStill = 0.f;
+    };
+    static Totals s_totals;
+    static std::chrono::steady_clock::time_point s_nextSample{}, s_nextReport{};
+    static void* s_root = nullptr;
+    static std::array<void*, 2> s_thighs{};
+    static std::chrono::steady_clock::time_point s_searchAt{};
+    static bool s_hasLast = false;
+    static float s_lastSent = 0.f, s_lastBody = 0.f;
+
+    const auto cNow = std::chrono::steady_clock::now();
+    if (!apPlayer || cNow < s_nextSample)
+        return;
+    s_nextSample = cNow + cSampleEvery;
+    if (s_nextReport == std::chrono::steady_clock::time_point{})
+        s_nextReport = cNow + cReportEvery;
+
+    // A difference of two headings, in degrees from -180 to 180.
+    const auto gap = [](float aFrom, float aTo)
+    {
+        float d = std::fmod((aTo - aFrom) * cDegrees, 360.f);
+        if (d > 180.f)
+            d -= 360.f;
+        else if (d < -180.f)
+            d += 360.f;
+        return d;
+    };
+    // Skyrim's heading: 0 faces north (+y) and grows clockwise, towards east (+x).
+    const auto headingOf = [](const glm::vec3& acForward) { return std::atan2(acForward.x, acForward.y); };
+
+    // The thighs of the body VRIK poses, found once per 3D (and looked for again every five seconds while missing).
+    void* pRoot = apPlayer->GetNiNode();
+    if (pRoot != s_root || (!s_thighs[0] && cNow >= s_searchAt))
+    {
+        s_root = pRoot;
+        s_thighs = {FindShallowest(pRoot, "NPC L Thigh [LThg]"), FindShallowest(pRoot, "NPC R Thigh [RThg]")};
+        s_searchAt = cNow + std::chrono::seconds(5);
+        s_hasLast = false;
+    }
+
+    glm::vec3 headAt, headForward, headRight;
+    if (!s_thighs[0] || !s_thighs[1] || !HeadsetPose(headAt, headForward, headRight))
+        return;
+
+    // The body faces at right angles to the line from the left thigh to the right one.
+    const glm::vec3 cRight = ToGlm(At<NiTransform>(s_thighs[1], kWorldOffset).translate) - ToGlm(At<NiTransform>(s_thighs[0], kWorldOffset).translate);
+    if (cRight.x * cRight.x + cRight.y * cRight.y < 1.f)
+        return;
+    const float cBody = headingOf(glm::vec3(-cRight.y, cRight.x, 0.f));
+    const float cHeadset = headingOf(headForward);
+    const float cSent = apPlayer->rotation.z;
+
+    Totals& t = s_totals;
+    ++t.Samples;
+    const float cHeadsetGap = std::abs(gap(cSent, cHeadset));
+    const float cBodyGap = std::abs(gap(cSent, cBody));
+    t.HeadsetGap += cHeadsetGap;
+    t.HeadsetGapMax = std::max(t.HeadsetGapMax, cHeadsetGap);
+    t.BodyGap += cBodyGap;
+    t.BodyGapMax = std::max(t.BodyGapMax, cBodyGap);
+    t.HeadsetBodyGap += std::abs(gap(cBody, cHeadset));
+    if (s_hasLast)
+    {
+        // The turns of the sent heading, and the part of them made while the body itself stayed put: those are head turns.
+        const float cTurn = std::abs(gap(s_lastSent, cSent));
+        t.Turned += cTurn;
+        if (std::abs(gap(s_lastBody, cBody)) < 1.f)
+            t.TurnedBodyStill += cTurn;
+    }
+    s_hasLast = true;
+    s_lastSent = cSent;
+    s_lastBody = cBody;
+
+    if (cNow < s_nextReport)
+        return;
+    s_nextReport = cNow + cReportEvery;
+    const float n = static_cast<float>(t.Samples);
+    spdlog::info("HeadingDiag: {} samples in 30 s; sent heading off the headset by {:.0f} deg on average (most {:.0f}), off the body (thighs) by {:.0f} (most {:.0f}); "
+                 "headset off the body by {:.0f}; the sent heading turned {:.0f} deg, {:.0f} of it while the body stayed still; now sent {:.0f}, headset {:.0f}, body {:.0f}",
+                 t.Samples, t.HeadsetGap / n, t.HeadsetGapMax, t.BodyGap / n, t.BodyGapMax, t.HeadsetBodyGap / n, t.Turned, t.TurnedBodyStill, cSent * cDegrees, cHeadset * cDegrees,
+                 cBody * cDegrees);
+    s_totals = {};
+#else
+    (void)apPlayer;
+#endif
+}
+
 bool IsWeaponTouchAt(const glm::vec3& acPoint) noexcept
 {
     POINTER_SKYRIMSE(float, s_havokScale, 231896, 231896);

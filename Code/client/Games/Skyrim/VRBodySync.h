@@ -51,6 +51,9 @@ std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, siz
 //! Logs the local player's nodes named like an arrow (VR, first and third person) when their names, parents or hidden flags change.
 //! Measurement only: where the game keeps the arrow taken from the quiver and the one on the string. Walks at most every 200 ms.
 void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexcept;
+//! Measurement: the heading sent for this player against the headset's yaw and the VRIK body's facing (from the thighs).
+//! Sampled ten times a second, one `HeadingDiag:` line every 30 s.
+void NoteHeading(PlayerCharacter* apPlayer) noexcept;
 //! This copy has an arrow on its bow string (NotifyArrowNocked).
 //! The arrow is laid from the string hand to the bow hand each frame, instead of where the game's flat attachment puts it.
 void SetArrowNocked(uint32_t aFormId, bool aNocked) noexcept;
