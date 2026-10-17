@@ -7,6 +7,9 @@
 struct World;
 struct UpdateEvent;
 struct PlayerJoinEvent;
+struct PlayerLeaveEvent;
+struct RequestSleep;
+struct Player;
 
 /**
  * @brief Manages time and date of the world.
@@ -38,14 +41,28 @@ public:
 private:
     void OnUpdate(const UpdateEvent&) noexcept;
     void OnPlayerJoin(const PlayerJoinEvent&) noexcept;
+    void OnPlayerLeave(const PlayerLeaveEvent&) noexcept;
     void SendTimeResync() noexcept;
+
+    // A party member sleeping moves everybody's hour; their party fades out and watches the sleeper's clock.
+    void OnSleepRequest(const PacketEvent<RequestSleep>&) noexcept;
+    void AskToSleep(Player* apPlayer) noexcept;
+    void SendToSleepAudience(float aHours, bool aFinished) const noexcept;
+    void EndSleep(float aHours) noexcept;
 
     DateTime m_dateTime;
     uint64_t m_lastTick = 0;
     bool m_timeSetFromFirstPlayer = false;
 
+    std::optional<uint32_t> m_sleeperId;
+    Vector<uint32_t> m_sleepAudience; // the sleeper's party at the grant, sleeper excluded
+    uint64_t m_lastSleepTick = 0;
+    TiltedPhoques::Set<uint32_t> m_playersInCombat;
+
     World& m_world;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_joinConnection;
+    entt::scoped_connection m_leaveConnection;
+    entt::scoped_connection m_sleepConnection;
 };

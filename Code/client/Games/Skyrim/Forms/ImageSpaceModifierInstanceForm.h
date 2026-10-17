@@ -6,6 +6,14 @@ struct TESImageSpaceModifier;
 
 struct ImageSpaceModifierInstanceForm : public ImageSpaceModifierInstance
 {
+    // CommonLibSSE ImageSpaceModifierInstanceForm::Trigger(mod, strength, target).
+    static ImageSpaceModifierInstanceForm* Trigger(TESImageSpaceModifier* apMod, float aStrength = 1.f, void* apTarget = nullptr)
+    {
+        using TTrigger = ImageSpaceModifierInstanceForm*(TESImageSpaceModifier*, float, void*);
+        POINTER_SKYRIMSE(TTrigger, s_trigger, 18587, 18185);
+        return s_trigger.Get()(apMod, aStrength, apTarget);
+    }
+
     static void Stop(TESImageSpaceModifier* apMod)
     {
         using TClearImageSpaceModifier = void(TESImageSpaceModifier*);

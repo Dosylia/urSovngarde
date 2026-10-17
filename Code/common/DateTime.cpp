@@ -15,7 +15,12 @@ uint32_t DateTime::GetNumberOfDaysByMonthIndex(int aIndex)
 
 void DateTime::Update(uint64_t aDeltaTick)
 {
-    m_timeModel.Time += GetDeltaTime(aDeltaTick);
+    AdvanceHours(GetDeltaTime(aDeltaTick));
+}
+
+void DateTime::AdvanceHours(float aHours)
+{
+    m_timeModel.Time += aHours;
 
     m_timeModel.Day += static_cast<uint32_t>(m_timeModel.Time / 24.f);
     m_timeModel.Time = std::fmod(m_timeModel.Time, 24.f);

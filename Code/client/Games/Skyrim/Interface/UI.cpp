@@ -5,6 +5,7 @@
 #include "immersive_launcher/stubs/DllBlocklist.h"
 
 #include <World.h>
+#include <Services/CalendarService.h>
 
 static bool g_RequestUnpauseAll{false};
 
@@ -122,6 +123,9 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
             return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
         const BSFixedString* pName = apSelf->LookupMenuNameByInstance(apMenu);
         spdlog::info("Menu queued: {}{} (connected {})", pName ? pName->AsAscii() : "?", apMenu->PausesGame() ? " [pauses]" : "", World::Get().GetTransport().IsConnected() ? "yes" : "no");
+        // A sleep fades out a couple of seconds before the clock moves; the party fades with it.
+        if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Fader Menu") == 0)
+            CalendarService::OnFaderQueued();
 #ifdef SKYRIMVR
         // The in-headset dashboard is made at the main menu, where a pause costs nothing.
         // Made later, on the first update in the world, it stops the game for up to 1.5 s right after the save loads.
