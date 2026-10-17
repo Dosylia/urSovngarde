@@ -31,6 +31,8 @@ constexpr float cBodyCentreHeight = 50.f;
 constexpr float cTouchUnits = 50.f;
 // Flat Skyrim has no hands to hold out: standing this close counts.
 constexpr float cStandByUnits = 100.f;
+// A hold already started ends only this much further out, so a hand trembling at the edge does not restart the hold over and over.
+constexpr float cLetGoMargin = 20.f;
 
 // Why the server refused, as the reviver reads it.
 const char* RefusalText(const ReviveRefusal aRefusal) noexcept
@@ -84,7 +86,7 @@ void ReviveService::OnUpdate(const UpdateEvent&) noexcept
     for (const uint32_t cPlayerId : m_downed)
     {
         float distance = -1.f;
-        const int cHand = TouchingHand(FindCopy(cPlayerId), distance);
+        const int cHand = TouchingHand(FindCopy(cPlayerId), cPlayerId == m_holdTarget, distance);
         if (cPlayerId == m_holdTarget)
             m_holdDistance = distance;
         if (cHand >= 0 && !touched)
@@ -190,6 +192,10 @@ void ReviveService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         Utils::ShowHudMessage(String("urSovngarde: ") + who + " was not revived in time");
         break;
     case NotifyDownedState::kStoodUp: spdlog::info("Revive: player {} '{}' is up again without a revive", acMessage.PlayerId, who.c_str()); break;
+    case NotifyDownedState::kLeft:
+        spdlog::info("Revive: player {} '{}' left the party or the server while down; nobody here can revive them", acMessage.PlayerId, who.c_str());
+        Utils::ShowHudMessage(String("urSovngarde: ") + who + " left while down");
+        break;
     case NotifyDownedState::kPartyFallen:
     case NotifyDownedState::kReviveRefused: break;
     }
@@ -204,11 +210,12 @@ Actor* ReviveService::FindCopy(const uint32_t aPlayerId) const noexcept
     return nullptr;
 }
 
-int ReviveService::TouchingHand(Actor* apCopy, float& aDistance) const noexcept
+int ReviveService::TouchingHand(Actor* apCopy, const bool aHeld, float& aDistance) const noexcept
 {
     aDistance = -1.f;
     if (!apCopy || !apCopy->GetNiNode())
         return -1;
+    const float cMargin = aHeld ? cLetGoMargin : 0.f;
 
     const NiPoint3 cAt = apCopy->position;
 #ifdef SKYRIMVR
@@ -226,11 +233,11 @@ int ReviveService::TouchingHand(Actor* apCopy, float& aDistance) const noexcept
             nearest = side;
         }
     }
-    return aDistance >= 0.f && aDistance <= cTouchUnits ? nearest : -1;
+    return aDistance >= 0.f && aDistance <= cTouchUnits + cMargin ? nearest : -1;
 #else
     const NiPoint3 cPlayerAt = PlayerCharacter::Get()->position;
     aDistance = glm::distance(glm::vec3(cAt.x, cAt.y, cAt.z), glm::vec3(cPlayerAt.x, cPlayerAt.y, cPlayerAt.z));
-    return aDistance <= cStandByUnits ? 1 : -1;
+    return aDistance <= cStandByUnits + cMargin ? 1 : -1;
 #endif
 }
 

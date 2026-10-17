@@ -76,7 +76,17 @@ void ReviveService::OnPlayerDowned(const PacketEvent<PlayerDownedRequest>& acMes
     Player* pPlayer = acMessage.pPlayer;
     if (!acMessage.Packet.IsDown)
     {
-        if (m_downed.erase(pPlayer->GetId()) == 0)
+        // The player's own game stopped waiting: the down ends now, as the server would have ended it, and the answer says where it respawns.
+        // Until then a revive would still be accepted, and then ignored by a game already respawning.
+        if (acMessage.Packet.Respawning)
+        {
+            if (IsDown(pPlayer->GetId()))
+                EndDown(pPlayer, NotifyDownedState::kRespawned, "stopped waiting on its own game's word");
+            return;
+        }
+
+        const auto cTold = TakeDowned(pPlayer->GetId());
+        if (!cTold)
             return;
         spdlog::info("Revive: player {} '{}' is up again without a revive (a save was loaded)", pPlayer->GetId(), pPlayer->GetUsername().c_str());
 
@@ -84,6 +94,7 @@ void ReviveService::OnPlayerDowned(const PacketEvent<PlayerDownedRequest>& acMes
         notify.PlayerId = pPlayer->GetId();
         notify.Change = NotifyDownedState::kStoodUp;
         SendToPartyOf(pPlayer, notify);
+        TellFormerMembers(pPlayer, *cTold);
         return;
     }
 
@@ -100,6 +111,11 @@ void ReviveService::OnPlayerDowned(const PacketEvent<PlayerDownedRequest>& acMes
     downed.Told.clear();
     for (const Player* pMember : cParty)
         downed.Told.push_back(pMember->GetId());
+
+    // The last one standing going down ends the party's wait at once: nobody is told to revive a player who respawns straight away.
+    if (EndFallenParty(pPlayer))
+        return;
+
     spdlog::info("Revive: player {} '{}' is down; {} s to be revived ({} in the party)", pPlayer->GetId(), pPlayer->GetUsername().c_str(), cSeconds, cParty.size());
 
     NotifyDownedState notify{};
@@ -107,8 +123,6 @@ void ReviveService::OnPlayerDowned(const PacketEvent<PlayerDownedRequest>& acMes
     notify.Change = NotifyDownedState::kDown;
     notify.SecondsLeft = cSeconds;
     SendToPartyOf(pPlayer, notify);
-
-    EndFallenParty(pPlayer);
 }
 
 void ReviveService::OnRevive(const PacketEvent<ReviveRequest>& acMessage) noexcept
@@ -161,7 +175,7 @@ void ReviveService::OnRevive(const PacketEvent<ReviveRequest>& acMessage) noexce
         return;
     }
 
-    m_downed.erase(cTargetId);
+    const auto cTold = TakeDowned(cTargetId);
     spdlog::info(
         "Revive: player {} '{}' revived player {} '{}' ({:.0f} units apart)", pReviver->GetId(), pReviver->GetUsername().c_str(), cTargetId, pTarget->GetUsername().c_str(),
         check.Distance);
@@ -171,6 +185,8 @@ void ReviveService::OnRevive(const PacketEvent<ReviveRequest>& acMessage) noexce
     notify.Change = NotifyDownedState::kRevived;
     notify.ReviverId = pReviver->GetId();
     SendToPartyOf(pTarget, notify);
+    if (cTold)
+        TellFormerMembers(pTarget, *cTold);
 }
 
 void ReviveService::OnSafePoint(const PacketEvent<SafePointRequest>& acMessage) noexcept
@@ -190,7 +206,8 @@ void ReviveService::OnSafePoint(const PacketEvent<SafePointRequest>& acMessage) 
 void ReviveService::OnPlayerRespawn(const PacketEvent<PlayerRespawnRequest>& acMessage) noexcept
 {
     Player* pPlayer = acMessage.pPlayer;
-    if (m_downed.erase(pPlayer->GetId()) == 0)
+    const auto cTold = TakeDowned(pPlayer->GetId());
+    if (!cTold)
         return;
 
     spdlog::info("Revive: player {} '{}' respawned on its own game's word, before the server ended the wait", pPlayer->GetId(), pPlayer->GetUsername().c_str());
@@ -199,20 +216,57 @@ void ReviveService::OnPlayerRespawn(const PacketEvent<PlayerRespawnRequest>& acM
     notify.PlayerId = pPlayer->GetId();
     notify.Change = NotifyDownedState::kRespawned;
     SendToPartyOf(pPlayer, notify);
+    TellFormerMembers(pPlayer, *cTold);
 }
 
 void ReviveService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept
 {
     // PartyService has already taken the player out of their party; the next CheckDowned sees whether anyone down is left with nobody standing.
-    const Player* pLeaving = acEvent.pPlayer;
+    Player* pLeaving = acEvent.pPlayer;
     m_safePoints.erase(pLeaving->GetId());
-    if (m_downed.erase(pLeaving->GetId()) > 0)
-        spdlog::info("Revive: player {} '{}' left while down", pLeaving->GetId(), pLeaving->GetUsername().c_str());
+    const auto cTold = TakeDowned(pLeaving->GetId());
+    if (!cTold)
+        return;
+    spdlog::info("Revive: player {} '{}' left while down", pLeaving->GetId(), pLeaving->GetUsername().c_str());
+    TellFormerMembers(pLeaving, *cTold);
 }
 
 bool ReviveService::IsDown(const uint32_t aPlayerId) const noexcept
 {
     return m_downed.find(aPlayerId) != m_downed.end();
+}
+
+std::optional<Vector<uint32_t>> ReviveService::TakeDowned(const uint32_t aPlayerId) noexcept
+{
+    const auto cDowned = m_downed.find(aPlayerId);
+    if (cDowned == m_downed.end())
+        return std::nullopt;
+    Vector<uint32_t> told = cDowned->second.Told;
+    m_downed.erase(cDowned);
+    return told;
+}
+
+void ReviveService::TellFormerMembers(Player* apPlayer, const Vector<uint32_t>& acTold) const noexcept
+{
+    const auto* pParty = m_world.GetPartyService().GetPlayerParty(apPlayer);
+    for (const uint32_t cId : acTold)
+    {
+        if (cId == apPlayer->GetId())
+            continue;
+        const bool cStillInParty = pParty && std::any_of(pParty->Members.begin(), pParty->Members.end(), [cId](const Player* apMember) { return apMember->GetId() == cId; });
+        if (cStillInParty)
+            continue;
+        Player* pFormer = m_world.GetPlayerManager().GetById(cId);
+        if (!pFormer)
+            continue;
+
+        NotifyDownedState notify{};
+        notify.PlayerId = apPlayer->GetId();
+        notify.Change = NotifyDownedState::kLeft;
+        pFormer->Send(notify);
+        spdlog::info("Revive: told player {} '{}' that player {} '{}', down, is no longer in its party", cId, pFormer->GetUsername().c_str(), apPlayer->GetId(),
+                     apPlayer->GetUsername().c_str());
+    }
 }
 
 Vector<Player*> ReviveService::PartyOf(Player* apPlayer) const noexcept
@@ -231,7 +285,7 @@ void ReviveService::SendToPartyOf(Player* apPlayer, const NotifyDownedState& acM
 
 void ReviveService::EndDown(Player* apPlayer, const NotifyDownedState::State aChange, const char* acWhy) noexcept
 {
-    m_downed.erase(apPlayer->GetId());
+    const auto cTold = TakeDowned(apPlayer->GetId());
 
     NotifyDownedState notify{};
     notify.PlayerId = apPlayer->GetId();
@@ -258,6 +312,8 @@ void ReviveService::EndDown(Player* apPlayer, const NotifyDownedState::State aCh
 
     spdlog::info("Revive: player {} '{}' {}; respawning at {}", apPlayer->GetId(), apPlayer->GetUsername().c_str(), acWhy, DescribePoint(cChoice));
     SendToPartyOf(apPlayer, notify);
+    if (cTold)
+        TellFormerMembers(apPlayer, *cTold);
 }
 
 bool ReviveService::EndFallenParty(Player* apPlayer) noexcept

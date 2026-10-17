@@ -208,7 +208,8 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
 
 ## Waiting on a test or action
 
-- [!] **Revive and respawn** (branch `feat/revive-system`, protocol b41d4a41; every player needs the build): a player at
+- [!] **Revive and respawn** (merged 2026-10-17; with the review fixes protocol 33ef1cbe, so every player and the public
+      server need the build): a player at
       zero health stays down; a party member who holds a hand on them for 4 s revives them (up with 30 % health, 3 s of
       god mode). The server ends every wait (ReviveService, rules in ReviveRules): not revived within
       `Gameplay:uDownedSeconds` (60), nobody in the party left standing (all down, or the others left the party), or down
@@ -233,6 +234,19 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       Open: whether a downed player's copy shows the bleedout pose on the other side; whether a VR player who died
       ragdolled gets stuck now that the respawn does not knock it; a safe point in an interior (not tested in the rig).
       Not done: the "You died" screen, giving up early, the revive gesture (options first, as the owner asked).
+      Review fixes (2026-10-17, ce86908): a downed player who leaves the party or the server is announced to the members
+      told it was down (`NotifyDownedState::kLeft`; before, they kept trying to revive it); a respawn this game starts
+      on its own ends the down on the server at once and goes to the server's respawn point (`PlayerDownedRequest`
+      `Respawning`, answered `kRespawned`); the last one standing going down is no longer announced as "down" before
+      "party fallen"; the "party fallen" message only when it applies; a disconnect ends a revive's or respawn's god
+      mode and fade-in and forgets this game's safe point; a hold ends 20 units past the reach that starts it; the bot's
+      `safepoint` and `respawnpoint` no longer throw. Bot pairs, each failing on the build before the fix: `partyfall`
+      (new `downcount` check), `downedgone`, `downeddrop`, `downedgiveup`; all eight revive pairs and TPTests pass on
+      ce86908. Rig on ce86908 (a regression check: none of these was written to fail without the client fixes):
+      `live-revive` 7/7, `live-revive-hand` 5/5, `live-revive-timeout` 12/12, `live-partyfall` 9/9,
+      `live-down-disconnect` 9/9. Open, for the author: the VR respawn knock skipped instead of fixed; any loading
+      screen taken as a loaded save (a teleport during the fade calls the respawn off; `TESLoadGameEvent` is exact);
+      `live-revive-hand` passes from the resting hand, never the held one.
 
 - [!] **Seen's update:** DynDOLOD DLL NG Alpha-43 (Nexus 97720, replacing his `DynDOLOD DLL NG` files) and the host's
       combined VR Address Library file (`E:\FUS\mods\VR Address Library for SKSEVR\SKSE\Plugins\version-1-4-15-0.csv`;

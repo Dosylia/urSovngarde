@@ -127,10 +127,23 @@ void PlayerService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
             FadeOutGame(false, true, 0.5f, true, 2.f);
         spdlog::info("PlayerService: the connection dropped while the player was down; up again where it lies");
     }
+    // What a revive or a respawn left running is finished now: with the death system off, RunPostDeathUpdates no longer runs.
+    if (m_godmodeStart)
+    {
+        PlayerCharacter::SetGodMode(false);
+        m_godmodeStart = false;
+    }
+    if (m_knockdownStart)
+    {
+        FadeOutGame(false, true, 0.5f, true, 2.f);
+        m_knockdownStart = false;
+    }
     ToggleDeathSystem(false);
     m_downState = DownState::kUp;
     m_standingUp = false;
     m_safePointAt = {};
+    // The server forgets safe points between connections, and so does this game: the next save may be elsewhere entirely.
+    m_ownSafePoint = {};
 
     TESGlobal* pKillMove = Cast<TESGlobal>(TESForm::GetById(0x100F19));
     pKillMove->f = 1.f;
@@ -213,17 +226,24 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         StartRespawn(where);
         break;
     case NotifyDownedState::kPartyFallen:
+        if (m_downState != DownState::kDown)
+            return;
         // A party that lost its standing members leaves this player alone: nobody is left, rather than a party fallen.
         Utils::ShowHudMessage(String(fmt::format("urSovngarde: {}; {}", cAlone ? "nobody is left to revive you" : "your party has fallen", cpComeBack)));
-        if (m_downState == DownState::kDown)
-        {
-            spdlog::info("PlayerService: {}; respawning {}", cAlone ? "nobody is left to revive the player" : "the whole party is down", cpLogWhere);
-            StartRespawn(where);
-        }
+        spdlog::info("PlayerService: {}; respawning {}", cAlone ? "nobody is left to revive the player" : "the whole party is down", cpLogWhere);
+        StartRespawn(where);
         break;
     case NotifyDownedState::kRespawned:
+        // The server's answer to this game stopping the wait (StartRespawn): where the respawn under way puts the player.
+        if (m_downState == DownState::kRespawning && acMessage.HasRespawnPoint)
+        {
+            m_respawnPoint = where;
+            spdlog::info("PlayerService: the server sends the respawn to the party's safe point");
+        }
+        break;
     case NotifyDownedState::kStoodUp:
-    case NotifyDownedState::kReviveRefused: break;
+    case NotifyDownedState::kReviveRefused:
+    case NotifyDownedState::kLeft: break;
     }
 }
 
@@ -437,6 +457,16 @@ void PlayerService::StartRespawn(const SafePoint& acWhere) noexcept
     m_respawnAt = std::chrono::steady_clock::now() + 5s;
     FadeOutGame(true, true, 3.0f, true, 2.0f);
     PlayerCharacter::Get()->PayCrimeGoldToAllFactions();
+
+    // When this game stopped waiting on its own, the server must end the down now: a revive accepted during the fade would be ignored here.
+    // It answers where the respawn goes (kRespawned); when the server ended the down itself, it ignores this.
+    if (m_transport.IsConnected())
+    {
+        PlayerDownedRequest respawning{};
+        respawning.IsDown = false;
+        respawning.Respawning = true;
+        m_transport.Send(respawning);
+    }
 }
 
 void PlayerService::RunSafePointUpdates() noexcept

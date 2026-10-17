@@ -21,6 +21,8 @@ log -- the other side goes down too: the whole party has fallen, and respawns at
 waitfor downstate me fallen 20
 expect downstate me fallen
 expect downstate other fallen
+# The other side's down ended the party at once: it is never announced as one to revive.
+expect downcount other down == 0
 expect respawnpoint me 500 600
 expect connected
 record off

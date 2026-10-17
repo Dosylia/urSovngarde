@@ -51,6 +51,11 @@ TEST_CASE("the revive messages keep who, what, how long and where", "[revive]")
     up.IsDown = false;
     REQUIRE(RoundTrip(up) == up);
     REQUIRE_FALSE(RoundTrip(up).IsDown);
+    PlayerDownedRequest respawning{};
+    respawning.IsDown = false;
+    respawning.Respawning = true;
+    REQUIRE(RoundTrip(respawning) == respawning);
+    REQUIRE(RoundTrip(respawning).Respawning);
 
     ReviveRequest revive{};
     revive.TargetPlayerId = 0xFFFFFFFFu;
@@ -68,7 +73,7 @@ TEST_CASE("the revive messages keep who, what, how long and where", "[revive]")
 
     for (const auto cChange :
          {NotifyDownedState::kDown, NotifyDownedState::kRevived, NotifyDownedState::kRespawned, NotifyDownedState::kPartyFallen, NotifyDownedState::kDied,
-          NotifyDownedState::kStoodUp, NotifyDownedState::kReviveRefused})
+          NotifyDownedState::kStoodUp, NotifyDownedState::kReviveRefused, NotifyDownedState::kLeft})
     {
         NotifyDownedState notify{};
         notify.PlayerId = 7;

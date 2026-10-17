@@ -192,6 +192,8 @@ private:
     const KnownPlayer* Host() const noexcept;
     //! The player id of the first other player whose character this bot was sent, or 0.
     uint32_t OtherPlayerId() const noexcept;
+    //! The same, or the last one found once it has gone: what the server said about a player that left is still about that player.
+    uint32_t OtherPlayerIdOrLast() const noexcept;
     //! Move into the cell the host just entered, so a load door does not leave the bot outside.
     void FollowHostIntoCell(const GameId& acCell, const GameId& acWorldSpace) noexcept;
     KnownPlayer* FindPlayerCharacter(uint32_t aServerId) noexcept;
@@ -264,7 +266,11 @@ private:
     std::vector<KnownPlayer> m_players;
     //! The last downed state the server sent for each player id (NotifyDownedState): down, revived, respawned or fallen.
     std::map<uint32_t, std::string> m_downStates;
-    //! Where the server said each player respawns (died or fallen); empty for the game's own spot.
+    //! The other player last found, for OtherPlayerIdOrLast.
+    mutable uint32_t m_lastOtherPlayerId{0};
+    //! How many times the server sent each downed state for each player id, for `downcount`.
+    std::map<uint32_t, std::map<std::string, int>> m_downCounts;
+    //! Where the server said each player respawns (died, fallen or respawned); empty for the game's own spot.
     std::map<uint32_t, std::optional<glm::vec3>> m_respawnPoints;
     //! Why the server last refused a revive this bot asked for, or "none".
     std::string m_lastRefusal{"none"};

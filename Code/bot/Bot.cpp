@@ -1350,10 +1350,11 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             spdlog::info("Our revive of player {} was refused: {}", message.PlayerId, m_lastRefusal);
             return;
         }
-        static constexpr std::array<const char*, 6> cNames{"down", "revived", "respawned", "fallen", "died", "up"};
+        static constexpr std::array<const char*, 8> cNames{"down", "revived", "respawned", "fallen", "died", "up", "refused", "left"};
         const char* pName = message.Change < cNames.size() ? cNames[message.Change] : "unknown";
         m_downStates[message.PlayerId] = pName;
-        if (message.Change == NotifyDownedState::kDied || message.Change == NotifyDownedState::kPartyFallen)
+        ++m_downCounts[message.PlayerId][pName];
+        if (message.Change == NotifyDownedState::kDied || message.Change == NotifyDownedState::kPartyFallen || message.Change == NotifyDownedState::kRespawned)
             m_respawnPoints[message.PlayerId] = message.HasRespawnPoint ? std::optional<glm::vec3>(message.RespawnPosition) : std::nullopt;
         spdlog::info("Player {} is {} (revived by {}, {} s left, respawn point {})", message.PlayerId, pName, message.ReviverId, message.SecondsLeft,
                      message.HasRespawnPoint ? fmt::format("({:.0f}, {:.0f}, {:.0f})", message.RespawnPosition.x, message.RespawnPosition.y, message.RespawnPosition.z) : "none");
@@ -1901,10 +1902,22 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
+    // "giveup": this bot's game stops waiting for a revive and respawns now, as a client does when the server's word never came or the bleedout ended by itself.
+    if (name == "giveup")
+    {
+        PlayerDownedRequest respawning{};
+        respawning.IsDown = false;
+        respawning.Respawning = true;
+        SendMsg(respawning);
+        spdlog::info("[script] giving up the wait sent");
+        return true;
+    }
+
     // "safepoint <x> <y> <z>": this bot's game would have saved here (in its cell), as a client says after a loading screen.
     if (name == "safepoint")
     {
-        if (args.size() < 3)
+        glm::vec3 at{};
+        if (args.size() < 3 || !ParseFloat(args[0], at.x) || !ParseFloat(args[1], at.y) || !ParseFloat(args[2], at.z))
         {
             spdlog::error("[script] safepoint needs x y z");
             return true;
@@ -1912,7 +1925,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         SafePointRequest request{};
         request.CellId = m_cell;
         request.WorldSpaceId = m_worldSpace;
-        request.Position = glm::vec3(std::stof(args[0]), std::stof(args[1]), std::stof(args[2]));
+        request.Position = at;
         SendMsg(request);
         spdlog::info("[script] safe point at ({}, {}, {}) sent", args[0], args[1], args[2]);
         return true;
@@ -3199,7 +3212,7 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         // downstate me|other down|revived|respawned|fallen|none: the last downed state the server sent for that player.
         if (acArgs.size() < 3)
             return std::nullopt;
-        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerId();
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerIdOrLast();
         const auto cState = m_downStates.find(cPlayerId);
         const std::string cNow = cState != m_downStates.end() ? cState->second : "none";
         aOutWhy = fmt::format("player {} is {}", cPlayerId, cNow);
@@ -3211,7 +3224,7 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         // respawnpoint me|other none|<x> <y>: where the server last said that player respawns (died or fallen), within 50 units.
         if (acArgs.size() < 3)
             return std::nullopt;
-        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerId();
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerIdOrLast();
         const auto cPoint = m_respawnPoints.find(cPlayerId);
         if (cPoint == m_respawnPoints.end())
         {
@@ -3224,9 +3237,31 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
             return acArgs[2] == "none";
         }
         aOutWhy = fmt::format("player {} respawns at ({:.0f}, {:.0f}, {:.0f})", cPlayerId, cPoint->second->x, cPoint->second->y, cPoint->second->z);
-        if (acArgs[2] == "none" || acArgs.size() < 4)
+        float wantedX = 0.f;
+        float wantedY = 0.f;
+        if (acArgs[2] == "none" || acArgs.size() < 4 || !ParseFloat(acArgs[2], wantedX) || !ParseFloat(acArgs[3], wantedY))
             return false;
-        return std::abs(cPoint->second->x - std::stof(acArgs[2])) <= 50.f && std::abs(cPoint->second->y - std::stof(acArgs[3])) <= 50.f;
+        return std::abs(cPoint->second->x - wantedX) <= 50.f && std::abs(cPoint->second->y - wantedY) <= 50.f;
+    }
+
+    if (what == "downcount")
+    {
+        // downcount me|other <state> <op> <n>: how many times the server sent that downed state for that player (down, revived, respawned, fallen, died, up, left).
+        float wanted = 0.f;
+        if (acArgs.size() < 5 || !ParseFloat(acArgs[4], wanted))
+            return std::nullopt;
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerIdOrLast();
+        const auto cCounts = m_downCounts.find(cPlayerId);
+        const auto cCount = cCounts != m_downCounts.end() && cCounts->second.count(acArgs[2]) ? cCounts->second.at(acArgs[2]) : 0;
+        const float value = static_cast<float>(cCount);
+        aOutWhy = fmt::format("player {} was told '{}' {} time(s)", cPlayerId, acArgs[2], cCount);
+        const std::string& op = acArgs[3];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
     }
 
     if (what == "refused")
@@ -3523,6 +3558,13 @@ uint32_t Bot::OtherPlayerId() const noexcept
         if (player.PlayerId != m_playerId)
             return player.PlayerId;
     return 0;
+}
+
+uint32_t Bot::OtherPlayerIdOrLast() const noexcept
+{
+    if (const uint32_t cOther = OtherPlayerId())
+        m_lastOtherPlayerId = cOther;
+    return m_lastOtherPlayerId;
 }
 
 KnownPlayer* Bot::FindPlayerCharacter(const uint32_t aServerId) noexcept

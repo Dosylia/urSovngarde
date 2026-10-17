@@ -48,11 +48,16 @@ private:
     };
 
     bool IsDown(uint32_t aPlayerId) const noexcept;
+    //! Ends the player's down here; returns who was told it was down, or nothing when it was not down.
+    std::optional<Vector<uint32_t>> TakeDowned(uint32_t aPlayerId) noexcept;
+    //! Tells the members who were told this player was down, and are no longer in its party, that it left (kLeft).
+    //! Without that they would go on trying to revive it.
+    void TellFormerMembers(Player* apPlayer, const Vector<uint32_t>& acTold) const noexcept;
     //! The player's party, or the player alone when not in one.
     Vector<Player*> PartyOf(Player* apPlayer) const noexcept;
     //! To the player and every member of their party.
     void SendToPartyOf(Player* apPlayer, const NotifyDownedState& acMessage) const noexcept;
-    //! The player respawns now (kDied or kPartyFallen), at the point ReviveRules::ChooseRespawnPoint picks; acWhy is for the log.
+    //! The player respawns now (kDied, kPartyFallen, or kRespawned when its own game stopped waiting), at the point ReviveRules::ChooseRespawnPoint picks; acWhy is for the log.
     void EndDown(Player* apPlayer, NotifyDownedState::State aChange, const char* acWhy) noexcept;
     //! Nobody in this player's party is left standing: every member respawns. False when someone still stands.
     bool EndFallenParty(Player* apPlayer) noexcept;

@@ -19,6 +19,7 @@ struct NotifyDownedState final : ServerMessage
         kDied,          //!< Not revived in time, or down alone; the player's game respawns it now, at the respawn point.
         kStoodUp,       //!< Up again without a revive or a respawn: a save was loaded while down.
         kReviveRefused, //!< ReviverId's revive of PlayerId was refused, for Refusal.
+        kLeft,          //!< Left the party or the server while down: sent to the members told it was down, who can no longer revive it.
     };
 
     NotifyDownedState()

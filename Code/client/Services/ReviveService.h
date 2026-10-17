@@ -29,8 +29,9 @@ private:
     //! That player's character in this game, or null when it is not here.
     Actor* FindCopy(uint32_t aPlayerId) const noexcept;
     //! Which of this player's hands touches that downed copy (0 left, 1 right), or -1; on flat Skyrim, standing next to it counts as the right hand.
+    //! aHeld: a hold on this copy has started, so the hand may stray a little further before it counts as taken off.
     //! aDistance is how far the nearest hand (or the player) is from the copy's body, for the log.
-    int TouchingHand(Actor* apCopy, float& aDistance) const noexcept;
+    int TouchingHand(Actor* apCopy, bool aHeld, float& aDistance) const noexcept;
     String NameOf(uint32_t aPlayerId) const noexcept;
     void StopHolding() noexcept;
 

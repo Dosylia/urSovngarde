@@ -584,8 +584,9 @@ class Run:
                 ok = ws == words[2]
                 detail = 'worldspace %s, cell %s' % (ws, cell)
             elif who == 'spot':
-                # "spot mark": where the player stands; "spot back <units>": within that distance of the mark, in the same
-                # worldspace or interior; "spot away <units>": farther than that, or elsewhere.
+                # "spot mark": where the player stands.
+                # "spot back <units>": within that distance of the mark, in the same worldspace or interior.
+                # "spot away <units>": farther than that, or elsewhere.
                 scene = tool('inspect', {'kind': 'scene'})
                 place = (scene.get('worldspace') or {}).get('editorId') or (scene.get('cell') or {}).get('editorId') or (scene.get('cell') or {}).get('formId')
                 at = position('14')
