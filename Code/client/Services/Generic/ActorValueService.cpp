@@ -6,6 +6,7 @@
 #include <Forms/ActorValueInfo.h>
 #include <Games/References.h>
 #include <Components.h>
+#include <Systems/InterpolationSystem.h>
 #include <EpochMiss.h>
 
 #include <Events/UpdateEvent.h>
@@ -321,13 +322,15 @@ void ActorValueService::RunActorValuesUpdates() noexcept
 namespace
 {
 // The defender's rule: the defender's game decides whether a hit was blocked.
-// The other player's VR pose shows here 225 ms late (CharacterService::RunRemoteUpdates), so a hit at tick t is seen at t + 225.
+// The other player's copy shows here as late as its playback clock plays it, so a hit at tick t is seen at t plus that delay.
 // The hit is held until then, and dropped if this player's hand or held item met that player's weapon around then.
-constexpr uint64_t kHitSeenAfter = 225;
+// The delay before the copy's first update arrived:
+constexpr uint64_t kDefaultHitSeenAfter = 225;
 // Blades meet before the hit lands, and a contact is only taken in the next frames.
-// Measured between two headsets, a blocking clash comes 120-290 ms before the hit's own tick.
-// So a clash counts from 300 ms before the hit happened up to 100 ms after it was seen here.
-constexpr uint64_t kBlockBefore = kHitSeenAfter + 300;
+// Measured between two headsets at a 225 ms delay, a blocking clash came 120-290 ms before the hit's own tick.
+// So the blades crossed up to about 515 ms before the hit on the attacker's side, whatever the delay.
+// A clash counts from 525 ms before the hit was seen here up to 100 ms after.
+constexpr uint64_t kBlockBefore = 525;
 constexpr uint64_t kBlockAfter = 100;
 } // namespace
 
@@ -347,7 +350,21 @@ void ActorValueService::RunHeldHits() noexcept
 
     for (auto it = m_heldHits.begin(); it != m_heldHits.end();)
     {
-        const uint64_t cSeen = it->Tick + kHitSeenAfter;
+        // The attacker's copy, and how far behind the attacker it is shown here right now.
+        uint32_t copy = 0;
+        uint64_t seenAfter = kDefaultHitSeenAfter;
+        auto view = m_world.view<FormIdComponent, PlayerComponent>();
+        for (const auto entity : view)
+            if (view.get<PlayerComponent>(entity).Id == it->AttackerPlayerId)
+            {
+                copy = view.get<FormIdComponent>(entity).Id;
+                if (const auto* pInterpolation = m_world.try_get<InterpolationComponent>(entity))
+                    if (const uint64_t cShown = InterpolationSystem::GetPlaybackTick(*pInterpolation); cShown && cShown < cNow)
+                        seenAfter = std::clamp<uint64_t>(cNow - cShown, 16, 400);
+                break;
+            }
+
+        const uint64_t cSeen = it->Tick + seenAfter;
         // A tick from the future (a clock not yet in step) is not waited for.
         if (cNow < cSeen + kBlockAfter && it->Tick < cNow + 5000)
         {
@@ -355,14 +372,6 @@ void ActorValueService::RunHeldHits() noexcept
             continue;
         }
 
-        uint32_t copy = 0;
-        auto view = m_world.view<FormIdComponent, PlayerComponent>();
-        for (const auto entity : view)
-            if (view.get<PlayerComponent>(entity).Id == it->AttackerPlayerId)
-            {
-                copy = view.get<FormIdComponent>(entity).Id;
-                break;
-            }
         const auto clash = std::find_if(m_clashes.begin(), m_clashes.end(), [copy, cSeen](const auto& acClash)
                                         { return copy && acClash.first == copy && acClash.second + kBlockBefore >= cSeen && acClash.second <= cSeen + kBlockAfter; });
         if (clash != m_clashes.end())

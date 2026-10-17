@@ -54,7 +54,7 @@ struct GameServer final : Server
     void UpdateSettings();
 
     // Packet dispatching
-    void Send(ConnectionId_t aConnectionId, const ServerMessage& acServerMessage) const;
+    void Send(ConnectionId_t aConnectionId, const ServerMessage& acServerMessage, TiltedPhoques::EPacketFlags aFlags = TiltedPhoques::kReliable) const;
     void Send(ConnectionId_t aConnectionId, const ServerAdminMessage& acServerMessage) const;
     // Small messages only (voice): a 16 KB buffer, not Send's 1 MB.
     void SendUnreliable(ConnectionId_t aConnectionId, const ServerMessage& acServerMessage) const;

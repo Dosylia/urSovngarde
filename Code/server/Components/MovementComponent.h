@@ -17,5 +17,4 @@ struct MovementComponent
     bool Flying{}; // a dragon in the air in its owner's game (Movement::Flying)
     VRPose VRPoseData; // VR players' upper-body pose, relayed as-is to other players
 
-    bool Sent;
 };

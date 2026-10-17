@@ -4322,6 +4322,23 @@ void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexce
 #endif
 }
 
+// The heading the last pose capture sent: the body's facing, or the game's heading when the body was not found.
+static float s_sentHeading = 0.f;
+static bool s_hasSentHeading = false;
+
+// Where a VRIK body faces, from its thighs: at right angles to the line from the left one to the right one.
+// Skyrim's heading: 0 faces north (+y) and grows clockwise, towards east (+x).
+static bool BodyFacing(void* apLeftThigh, void* apRightThigh, float& aOutHeading) noexcept
+{
+    if (!apLeftThigh || !apRightThigh)
+        return false;
+    const glm::vec3 cRight = ToGlm(At<NiTransform>(apRightThigh, kWorldOffset).translate) - ToGlm(At<NiTransform>(apLeftThigh, kWorldOffset).translate);
+    if (!std::isfinite(cRight.x) || !std::isfinite(cRight.y) || cRight.x * cRight.x + cRight.y * cRight.y < 1.f)
+        return false;
+    aOutHeading = std::atan2(-cRight.y, cRight.x);
+    return true;
+}
+
 void NoteHeading(PlayerCharacter* apPlayer) noexcept
 {
 #ifdef SKYRIMVR
@@ -4379,34 +4396,32 @@ void NoteHeading(PlayerCharacter* apPlayer) noexcept
     if (!s_thighs[0] || !s_thighs[1] || !HeadsetPose(headAt, headForward, headRight))
         return;
 
-    // The body faces at right angles to the line from the left thigh to the right one.
-    const glm::vec3 cRight = ToGlm(At<NiTransform>(s_thighs[1], kWorldOffset).translate) - ToGlm(At<NiTransform>(s_thighs[0], kWorldOffset).translate);
-    if (cRight.x * cRight.x + cRight.y * cRight.y < 1.f)
+    float bodyFacing = 0.f;
+    if (!BodyFacing(s_thighs[0], s_thighs[1], bodyFacing))
         return;
-    const float cBody = headingOf(glm::vec3(-cRight.y, cRight.x, 0.f));
     const float cHeadset = headingOf(headForward);
-    const float cSent = apPlayer->rotation.z;
+    const float cSent = s_hasSentHeading ? s_sentHeading : apPlayer->rotation.z;
 
     Totals& t = s_totals;
     ++t.Samples;
     const float cHeadsetGap = std::abs(gap(cSent, cHeadset));
-    const float cBodyGap = std::abs(gap(cSent, cBody));
+    const float cBodyGap = std::abs(gap(cSent, bodyFacing));
     t.HeadsetGap += cHeadsetGap;
     t.HeadsetGapMax = std::max(t.HeadsetGapMax, cHeadsetGap);
     t.BodyGap += cBodyGap;
     t.BodyGapMax = std::max(t.BodyGapMax, cBodyGap);
-    t.HeadsetBodyGap += std::abs(gap(cBody, cHeadset));
+    t.HeadsetBodyGap += std::abs(gap(bodyFacing, cHeadset));
     if (s_hasLast)
     {
         // The turns of the sent heading, and the part of them made while the body itself stayed put: those are head turns.
         const float cTurn = std::abs(gap(s_lastSent, cSent));
         t.Turned += cTurn;
-        if (std::abs(gap(s_lastBody, cBody)) < 1.f)
+        if (std::abs(gap(s_lastBody, bodyFacing)) < 1.f)
             t.TurnedBodyStill += cTurn;
     }
     s_hasLast = true;
     s_lastSent = cSent;
-    s_lastBody = cBody;
+    s_lastBody = bodyFacing;
 
     if (cNow < s_nextReport)
         return;
@@ -4415,7 +4430,7 @@ void NoteHeading(PlayerCharacter* apPlayer) noexcept
     spdlog::info("HeadingDiag: {} samples in 30 s; sent heading off the headset by {:.0f} deg on average (most {:.0f}), off the body (thighs) by {:.0f} (most {:.0f}); "
                  "headset off the body by {:.0f}; the sent heading turned {:.0f} deg, {:.0f} of it while the body stayed still; now sent {:.0f}, headset {:.0f}, body {:.0f}",
                  t.Samples, t.HeadsetGap / n, t.HeadsetGapMax, t.BodyGap / n, t.BodyGapMax, t.HeadsetBodyGap / n, t.Turned, t.TurnedBodyStill, cSent * cDegrees, cHeadset * cDegrees,
-                 cBody * cDegrees);
+                 bodyFacing * cDegrees);
     s_totals = {};
 #else
     (void)apPlayer;
@@ -4599,9 +4614,11 @@ void CaptureWeapons(PlayerCharacter* apPlayer, void* apRoot, const BoneNodes& ac
             aOutPose.WeaponOffset[side][axis] = offset[side][axis];
 }
 
-bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose) noexcept
+bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHeading) noexcept
 {
     aOutPose.HasData = false;
+    if (apPlayer)
+        aOutHeading = apPlayer->rotation.z;
 
     if (!apPlayer)
         return false;
@@ -4688,7 +4705,29 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose) noexcept
     const bool legsFound = s_local.LegsFound;
     const bool cLegs = legsFound && FullBodyTrackingActive();
 
-    const glm::mat3 inverseRoot = glm::transpose(ToGlm(At<NiTransform>(pRoot, kWorldOffset).rotate));
+    // The pose is captured in the body's frame: the 3D root turned to where the VRIK body faces, and that facing is the heading sent.
+    // The game turns the actor with the headset, so sending its heading made a head turn alone swing the copy's hips and legs.
+    const glm::mat3 cRootRotation = ToGlm(At<NiTransform>(pRoot, kWorldOffset).rotate);
+    glm::mat3 frame = cRootRotation;
+    float bodyHeading = 0.f;
+    if (legsFound && BodyFacing(nodes[VRPose::kLeftThigh], nodes[VRPose::kRightThigh], bodyHeading))
+    {
+        const glm::vec3 cRootForward = cRootRotation * glm::vec3{0.f, 1.f, 0.f};
+        float turn = std::fmod(bodyHeading - std::atan2(cRootForward.x, cRootForward.y), glm::two_pi<float>());
+        if (turn > glm::pi<float>())
+            turn -= glm::two_pi<float>();
+        else if (turn < -glm::pi<float>())
+            turn += glm::two_pi<float>();
+        if (std::isfinite(turn))
+        {
+            // A turn about +z lowers the heading, so the root is turned by minus the gap.
+            frame = glm::mat3(glm::rotate(glm::mat4(1.f), -turn, glm::vec3{0.f, 0.f, 1.f})) * cRootRotation;
+            aOutHeading = apPlayer->rotation.z + turn;
+        }
+    }
+    s_sentHeading = aOutHeading;
+    s_hasSentHeading = true;
+    const glm::mat3 inverseRoot = glm::transpose(frame);
 
     const uint32_t boneCount = cLegs ? VRPose::kBoneCount : VRPose::kUpperBoneCount;
     for (uint32_t i = 0; i < boneCount; ++i)

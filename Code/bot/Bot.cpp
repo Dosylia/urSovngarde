@@ -1,5 +1,7 @@
 #include "Bot.h"
 
+#include <steam/isteamnetworkingutils.h>
+
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/DrawWeaponRequest.h>
 #include <Messages/AuthenticationRequest.h>
@@ -318,6 +320,34 @@ void Bot::OnDisconnected(EDisconnectReason aReason)
     spdlog::info("Reconnecting in 5 s");
 }
 
+// A bad connection for what this bot sends, from environment variables, so a test can see how the other side copes.
+// STBOT_FAKE_LAG_MS delays every packet, STBOT_FAKE_LOSS_PCT drops that share, STBOT_FAKE_REORDER_PCT delays that share 40 ms more.
+void Bot::ApplyFakeNetwork() noexcept
+{
+    static bool s_applied = false;
+    if (s_applied)
+        return;
+    s_applied = true;
+
+    const auto number = [](const char* acpName) -> float
+    {
+        const char* pValue = std::getenv(acpName);
+        return pValue ? static_cast<float>(std::atof(pValue)) : 0.f;
+    };
+    const float cLag = number("STBOT_FAKE_LAG_MS");
+    const float cLoss = number("STBOT_FAKE_LOSS_PCT");
+    const float cReorder = number("STBOT_FAKE_REORDER_PCT");
+    if (cLag <= 0.f && cLoss <= 0.f && cReorder <= 0.f)
+        return;
+
+    ISteamNetworkingUtils* pUtils = SteamNetworkingUtils();
+    pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_FakePacketLag_Send, static_cast<int32>(cLag));
+    pUtils->SetGlobalConfigValueFloat(k_ESteamNetworkingConfig_FakePacketLoss_Send, cLoss);
+    pUtils->SetGlobalConfigValueFloat(k_ESteamNetworkingConfig_FakePacketReorder_Send, cReorder);
+    pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_FakePacketReorder_Time, 40);
+    spdlog::info("Fake network on what this bot sends: {:.0f} ms lag, {:.1f}% lost, {:.1f}% 40 ms late", cLag, cLoss, cReorder);
+}
+
 void Bot::Tick() noexcept
 {
     const auto now = Clock::now();
@@ -329,6 +359,7 @@ void Bot::Tick() noexcept
     case Phase::Idle:
         if (now >= m_connectAt)
         {
+            ApplyFakeNetwork();
             spdlog::info("Connecting to {}", m_options.Server);
             if (Connect(m_options.Server))
             {
@@ -1790,10 +1821,11 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             return true;
         }
 
-        // "atclash [<ms>]": stamped that long after the first clash relayed to this bot (negative: before it). Without
-        // a number, 225 ms before it -- the VR playback delay (CharacterService::RunRemoteUpdates) -- which is a hit the
-        // defender's game showed landing just as its weapon met this one. The first clash, because nothing of the
-        // player's touched this bot's weapons before it, while touches go on after it for as long as a hand rests there.
+        // "atclash [<ms>]": stamped that long after the first clash relayed to this bot (negative: before it).
+        // Without a number, at the clash's own tick: the defender saw the blades meet one playback delay after they
+        // crossed here, so this is a hit that came that delay after the crossing, whatever the delay is.
+        // The first clash, because nothing of the player's touched this bot's weapons before it, while touches go on
+        // after it for as long as a hand rests there.
         uint64_t tick = 0;
         if (args.size() > 2 && args[2] == "atclash")
         {
@@ -1802,7 +1834,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
                 spdlog::error("[script] hit ... atclash: no clash relayed yet");
                 return true;
             }
-            const int64_t cOffset = args.size() > 3 ? std::strtoll(args[3].c_str(), nullptr, 10) : -225;
+            const int64_t cOffset = args.size() > 3 ? std::strtoll(args[3].c_str(), nullptr, 10) : 0;
             tick = static_cast<uint64_t>(std::max<int64_t>(1, static_cast<int64_t>(m_firstClashTick) + cOffset));
         }
         SendHit(target, arg(1, -30.f), tick);

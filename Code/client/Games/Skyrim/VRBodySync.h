@@ -69,7 +69,8 @@ bool PlayClashSparks(const glm::vec3& acPoint) noexcept;
 //! The game's blade-block sound, at a clash's point; false when it could not be played.
 bool PlayClashSound(const glm::vec3& acPoint) noexcept;
 
-bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose) noexcept;
+//! Reads the player's VR pose in the body's frame; aOutHeading is the heading to send with it, the body's facing when known.
+bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHeading) noexcept;
 
 
 

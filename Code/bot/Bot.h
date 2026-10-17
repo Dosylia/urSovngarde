@@ -162,6 +162,7 @@ private:
     template <class T> bool SendMsg(const T& acMessage, bool aUnreliable = false) noexcept;
 
     void Tick() noexcept;
+    void ApplyFakeNetwork() noexcept;
     void SendAuthentication() noexcept;
     void Scout() noexcept;
     //! Fills in what a host would have provided, so Assign can run with nobody else in the world.

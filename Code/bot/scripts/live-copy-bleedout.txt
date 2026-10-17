@@ -4,9 +4,10 @@
 #
 # Players saw downed NPCs keep lying on the floor and slide along behind their owner once the owner's NPC had stood up.
 # The copy refused the owner's "bleedOutStop" (ReplayDiag), stayed in its bleedout pose, and followed the owner's walk lying down.
-# Here the game places a Mistwatch bandit (base C0115, made essential), knocks it down and stands it up while the bot records it.
-# Then the bot brings a bandit of its own and replays the recording on it, so the game's copy of it gets the owner's real actions.
-# (The server never hands a temporary live actor to another player, so the placed bandit itself cannot be taken over.)
+# Here the game places a Lydia (base A2C8E, made essential), knocks her down and stands her up while the bot records it.
+# Then the bot brings a Lydia of its own and replays the recording on her, so the game's copy of her gets the owner's real actions.
+# A unique base, not a levelled bandit: a levelled copy may pick another race here and is then not fed the owner's actions.
+# (The server never hands a temporary live actor to another player, so the placed Lydia itself cannot be taken over.)
 log live copy bleedout
 waitfor connected 45
 expect known me
@@ -14,12 +15,12 @@ waitfor known other 40
 wait 5
 
 log DO god on
-log -- a bandit ahead of the player, essential so it goes down instead of dying (the bot's bandit below shares the base)
-log DO papyrus ActorBase SetEssential C0115 b:true
-log DO place C0115 essential
+log -- a Lydia ahead of the player, essential so she goes down instead of dying (the bot's below shares the base)
+log DO papyrus ActorBase SetEssential A2C8E b:true
+log DO place A2C8E essential
 wait 8
 
-log -- the game knocks it down and stands it up again while the bot records it
+log -- the game knocks her down and stands her up again while the bot records it
 log DO sleep 3
 log DO papyrus Actor DamageActorValue placed s:Health f:100000
 log DO sleep 9
@@ -27,19 +28,25 @@ log DO papyrus Actor RestoreActorValue placed s:Health f:100000
 capture newest 22
 log DO papyrus Actor IsBleedingOut placed
 
-log -- the bot brings its own bandit and replays the recording on it; the game shows a copy of it
-npc temp C0115
+log -- the bot brings its own Lydia and replays the recording on her; the game shows a copy of her
+npc temp A2C8E
 waitfor owned == 1 20
 wait 6
 # No health left, as a hero beaten down in a fight: the copy goes down by itself, and its own health is what the game checks before it lets it stand up.
 npclife alive 0
 wait 3
+# Watched through the whole replay: down in bleedout, then on its feet at the end.
+log CHECK npc standing 26
 replay npc
 wait 3
 log DO papyrus Actor IsBleedingOut npc
 log SHOT after of npc
-log CHECK absent ReplayDiag: 'bleedOutStop' refused
+# The copy falls into its own bleedout in a ragdoll, so it may refuse the owner's "bleedOutStop"; it must still get up.
+log CHECK logged KnockDown: NPC copy \w+ is up again
+log CHECK absent KnockDown: NPC copy \w+ still lies
+log CHECK absent Base form differs
 log CHECK game alive
+log DO papyrus ActorBase SetEssential A2C8E b:false
 log DO god off
 wait 3
 log done

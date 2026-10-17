@@ -32,7 +32,8 @@ Checks:
 
 A line `log DO console <command>` runs that console command in the game at that point of the script, and
 `log DO key <name> <ms>` holds a key down in the game for that long (DevBench's keyboard input; `w` walks the player
-forward even in VR), and `log DO load last` loads the most recent save (while connected, which is the point of asking). `log DO combat on` and
+forward even in VR), `log DO look <degrees> <ms> [hold <ms>] [back]` turns the virtual headset that far over that time
+while both hands rest still at the sides (positive turns left; `back` returns it), and `log DO load last` loads the most recent save (while connected, which is the point of asking). `log DO combat on` and
 `log DO combat off` switch combat AI (off is the run's default, so a creature a test spawns just stands there; on makes
 it come for the player, which is how it is made to move). `log DO god on` and
 `log DO god off` set god mode for a script that sends the player somewhere dangerous: the away tests go to wherever
@@ -550,6 +551,27 @@ class Run:
                     x = papyrus('ObjectReference', 'GetPositionX', form)
                     ok = isinstance(x, (int, float))
                     detail = 'actor %s, x %s' % (form, x)
+                elif what == 'turned' and words[2] == 'below':
+                    # "copy turned below <degrees> <seconds>": the copy's heading, sampled five times a second, stays
+                    # within that many degrees over that time (a head turn of its player must not turn its body).
+                    limit, seconds = float(words[3]), float(words[4])
+                    angles = []
+                    end = time.time() + seconds
+                    while time.time() < end:
+                        a = papyrus('ObjectReference', 'GetAngleZ', form)
+                        if isinstance(a, (int, float)):
+                            angles.append(float(a))
+                        time.sleep(0.2)
+                    if angles:
+                        # Unwrapped, so a heading crossing 0/360 counts as the small turn it is.
+                        unwrapped = [angles[0]]
+                        for a in angles[1:]:
+                            unwrapped.append(unwrapped[-1] + ((a - unwrapped[-1] + 180.0) % 360.0 - 180.0))
+                        turned = max(unwrapped) - min(unwrapped)
+                        ok = turned < limit
+                        detail = 'actor %s turned %.0f degrees over %d samples' % (form, turned, len(angles))
+                    else:
+                        detail = 'actor %s: no heading read' % form
                 elif what == '3d':
                     loaded = papyrus('ObjectReference', 'Is3DLoaded', form)
                     ok = loaded is True
@@ -612,6 +634,30 @@ class Run:
                     held = papyrus('Actor', 'IsEquipped', form, [{'form': '0x' + words[2]}])
                     ok = isinstance(held, bool) and held is (what == 'equipped')
                     detail = 'actor %s, IsEquipped(%s) %s' % (form, words[2], held)
+                elif what in ('standing', 'lying'):
+                    # "npc standing|lying [seconds]": how high the copy's pelvis is drawn above its reference, the feet.
+                    # A body on its feet carries it about 60 units up, kneeling in bleedout about 35, lying on the floor under 25.
+                    # With seconds it is watched that long, and the reference's travel while the pelvis is low is reported too.
+                    seconds = float(words[2]) if len(words) > 2 else 0.0
+                    end = time.time() + seconds
+                    heights, low_travel, last = [], 0.0, None
+                    while True:
+                        at = position(form)
+                        pelvis = [papyrus_global('NetImmerse', 'GetNodeWorldPosition' + axis, [{'form': '0x' + form}, 'NPC Pelvis [Pelv]', False]) for axis in 'XYZ']
+                        if at and all(isinstance(v, (int, float)) for v in pelvis):
+                            heights.append(pelvis[2] - at[2])
+                            if last and heights[-1] < 25.0:
+                                low_travel += math.dist(at, last)
+                            last = at
+                        if time.time() >= end:
+                            break
+                        time.sleep(0.3)
+                    if not heights:
+                        detail = 'actor %s: no pelvis or position read' % form
+                    else:
+                        ok = heights[-1] >= 45.0 if what == 'standing' else heights[-1] < 25.0
+                        detail = 'actor %s, pelvis %.0f units above its feet (lowest %.0f, highest %.0f over %d samples); the reference travelled %.0f units while the pelvis was low' % (
+                            form, heights[-1], min(heights), max(heights), len(heights), low_travel)
                 elif what == 'health':
                     value = papyrus('Actor', 'GetActorValue', form, ['Health'])
                     base = papyrus('Actor', 'GetBaseActorValue', form, ['Health'])
@@ -657,7 +703,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -753,6 +799,49 @@ class Run:
                         print('   (%s hand swings from %.2f to %.2f over %d ms%s: %s)' % (side, x0, x1, ms, ', then holds %d ms' % hold if hold else '', 'queued' if r.get('queued') else r), flush=True)
                     except Exception as e:
                         print('   FAIL  swing: %s' % type(e).__name__, flush=True)
+                        self.results.append((False, text.strip(), type(e).__name__))
+                elif text.startswith('DO look '):
+                    # "DO look <degrees> <ms> [hold <ms>] [back]": the headset turns from straight ahead to that yaw (positive
+                    # turns left) over <ms>, holds, and with "back" turns straight ahead again over <ms>.
+                    # Both hands rest still low at the sides: a head turn with the body still.
+                    words = text.split()
+                    try:
+                        degrees, ms = float(words[2]), int(words[3])
+                        hold = int(words[5]) if len(words) > 5 and words[4] == 'hold' else 0
+                        back = words[-1] == 'back'
+                        base = tool('input', {'action': 'observe', 'device': 'vrTrackedSet'})['frame']
+                        steps = max(2, ms // 20)
+                        held = hold // 20
+                        frames = []
+                        for i in range(steps + 1 + held + (steps if back else 0)):
+                            if i <= steps + held:
+                                share = min(i, steps) / steps
+                            else:
+                                share = 1.0 - (i - steps - held) / steps
+                            yaw = math.radians(degrees) * share
+                            c_, s_ = math.cos(yaw), math.sin(yaw)
+                            f = json.loads(json.dumps(base))
+                            f.pop('seq', None)
+                            f['tMs'] = i * 20
+                            f['hmd']['matrix'] = [c_, 0, s_, 0, 0, 1, 0, 1.6, -s_, 0, c_, 0]
+                            f['left']['matrix'] = [1, 0, 0, -0.25, 0, 1, 0, 1.0, 0, 0, 1, -0.1]
+                            f['right']['matrix'] = [1, 0, 0, 0.25, 0, 1, 0, 1.0, 0, 0, 1, -0.1]
+                            for d in ('hmd', 'left', 'right'):
+                                f[d].update({'available': True, 'connected': True, 'valid': True, 'trackingResult': 200})
+                                if f[d].get('index') is None:
+                                    f[d]['index'] = {'hmd': 0, 'left': 2, 'right': 3}[d]
+                                for key in ('velocity', 'angularVelocity'):
+                                    f[d].setdefault(key, [0.0, 0.0, 0.0])
+                                if d != 'hmd' and not f[d].get('controller'):
+                                    f[d]['controller'] = {'axes': [[0.0, 0.0]] * 5, 'packetNumber': 1, 'pressed': 0, 'touched': 0}
+                            for d in ('left', 'right'):
+                                f[d]['controller']['packetNumber'] = (base[d].get('controller') or {}).get('packetNumber', 1) + i + 1
+                            frames.append(f)
+                        r = tool('input', {'action': 'sequence', 'device': 'vrTrackedSet', 'frames': frames, 'owner': 'live-check'}, timeout=15)
+                        print('   (headset turns %.0f degrees over %d ms%s%s: %s)' % (degrees, ms, ', then holds %d ms' % hold if hold else '', ' and back' if back else '',
+                                                                              'queued' if r.get('queued') else r), flush=True)
+                    except Exception as e:
+                        print('   FAIL  look: %s' % type(e).__name__, flush=True)
                         self.results.append((False, text.strip(), type(e).__name__))
                 elif text.startswith('DO key '):
                     parts = text.split()
@@ -865,8 +954,20 @@ class Run:
                     # as "placed" for later "DO papyrus" lines; "essential" makes its base essential, so it goes down instead
                     # of dying. Papyrus through DevBench needs every argument, PlaceAtMe's defaults included.
                     words = text.split()
+                    spawned_before = len(session_lines())
                     returned = papyrus('ObjectReference', 'PlaceAtMe', '14', [{'form': '0x' + words[2]}, 1, False, False])
                     self.placed = returned.get('formId', '').replace('0x', '') if isinstance(returned, dict) else None
+                    if not self.placed and isinstance(returned, dict):
+                        # DevBench returns no form id for a reference with a script attached (Lydia's WIDeadBodyCleanupScript).
+                        # The client logs every new actor it finds, so the newest of that name is the one placed.
+                        name = papyrus('Form', 'GetName', words[2])
+                        for _ in range(20):
+                            time.sleep(0.25)
+                            found = [m2.group(1) for m2 in (re.search(r'Spawn Actor: ([0-9A-Fa-f]+), and NPC (.*)$', l) for l in session_lines()[spawned_before:])
+                                     if m2 and m2.group(2).strip() == name]
+                            if found:
+                                self.placed = found[-1]
+                                break
                     if self.placed:
                         heading = math.radians(papyrus('ObjectReference', 'GetAngleZ', '14') or 0.0)
                         papyrus('ObjectReference', 'MoveTo', self.placed, [{'form': '0x14'}, 90.0 * math.sin(heading), 90.0 * math.cos(heading), 0.0, False])

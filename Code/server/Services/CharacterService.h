@@ -81,7 +81,6 @@ protected:
     ActorData BuildActorData(const entt::entity acEntity) const noexcept;
 
     void ProcessFactionsChanges() const noexcept;
-    void ProcessMovementChanges() const noexcept;
 
 private:
     World& m_world;

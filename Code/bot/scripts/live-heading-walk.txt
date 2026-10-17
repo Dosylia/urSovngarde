@@ -1,0 +1,33 @@
+# Walks the player forward, right, back and left, then turns only the headset, so the client logs walk and turn values.
+#
+#   python Tools\VR\live-check.py live-heading-walk
+#
+# Each "HeadingMove:" line gives the walk heading, the actor's heading, the graph's Direction and the process direction.
+log live heading walk
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- forward
+log DO key w 2500
+wait 4
+log -- right
+log DO key d 2500
+wait 4
+log -- back
+log DO key s 2500
+wait 4
+log -- left
+log DO key a 2500
+wait 4
+log -- standing, the head turns 60 degrees left and back, the hands still
+log DO look 60 1000 hold 3000
+wait 5
+log -- and 60 degrees right
+log DO look -60 1000 hold 3000
+wait 5
+log CHECK logged HeadingMove:
+log CHECK game alive
+log done
+stop

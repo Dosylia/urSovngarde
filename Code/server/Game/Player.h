@@ -49,7 +49,7 @@ struct Player
     [[nodiscard]] bool IsHiddenFromPublicPage() const noexcept { return m_hiddenFromPublicPage; }
     void SetHiddenFromPublicPage(bool aHidden) noexcept { m_hiddenFromPublicPage = aHidden; }
 
-    void Send(const ServerMessage& acServerMessage) const;
+    void Send(const ServerMessage& acServerMessage, TiltedPhoques::EPacketFlags aFlags = TiltedPhoques::kReliable) const;
     // For voice: a lost packet is a short gap, never a delay behind a resend.
     void SendUnreliable(const ServerMessage& acServerMessage) const;
 

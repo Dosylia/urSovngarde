@@ -24,6 +24,9 @@
 #ifdef SKYRIMVR
 #include <PlayerCharacter.h>
 #include <Games/Skyrim/VRBodySync.h>
+#include <BSAnimationGraphManager.h>
+#include <Structs/AnimationGraphDescriptorManager.h>
+#include <Structs/AnimationGraphDescriptor.h>
 #endif
 
 extern thread_local const char* g_animErrorCode;
@@ -77,18 +80,18 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
         // Late actions recorded while the body was alive would stand a corpse back up, so once dying or dead that part is kept.
         // Death messages own it.
         constexpr uint32_t cLifeStateMask = 0x1E00000;
-        // Another player's copy never goes down (ActorValueService keeps it at 25 health).
-        // It keeps its own life state and knock state (bits 25-27), and the owner's "Ragdoll" is not replayed on it.
-        // A replayed fall would leave the copy on the floor, since the later "GetUpBegin" does not stand it up.
+        // Every copy keeps its own knock state (bits 25-27): its fall and its get-up run on this game's physics.
+        // With the owner's written over it, a copy thrown to the floor here would count as standing and never get up (live-copy-knockdown).
         constexpr uint32_t cKnockStateMask = 0xE000000;
+        // Another player's copy never goes down (ActorValueService keeps it at 25 health).
+        // It keeps its own life state too, and the owner's "Ragdoll" is not replayed on it.
+        // A replayed fall would leave the copy on the floor, since the later "GetUpBegin" does not stand it up.
         const bool cPlayerCopy = apActor->GetExtension()->IsRemotePlayer();
         const uint32_t cOwnStateBefore = apActor->actorState.flags1;
-        if (cPlayerCopy)
-            apActor->actorState.flags1 = (first.State1 & ~(cLifeStateMask | cKnockStateMask)) | (apActor->actorState.flags1 & (cLifeStateMask | cKnockStateMask));
-        else if (apActor->actorState.IsDeadOrDying())
-            apActor->actorState.flags1 = (first.State1 & ~cLifeStateMask) | (apActor->actorState.flags1 & cLifeStateMask);
-        else
-            apActor->actorState.flags1 = first.State1;
+        uint32_t keptMask = cKnockStateMask;
+        if (cPlayerCopy || apActor->actorState.IsDeadOrDying())
+            keptMask |= cLifeStateMask;
+        apActor->actorState.flags1 = (first.State1 & ~keptMask) | (apActor->actorState.flags1 & keptMask);
         apActor->actorState.flags2 = first.State2;
 
         if (cPlayerCopy && !first.EventName.empty() && _stricmp(first.EventName.c_str(), "Ragdoll") == 0)
@@ -236,6 +239,40 @@ void AnimationSystem::AddAction(RemoteAnimationComponent& aAnimationComponent, c
     TrimBacklog(aAnimationComponent, 0);
 }
 
+#ifdef SKYRIMVR
+// Where the graph's "Direction" float sits among the variables the player sends, or -1 when its behavior has none.
+// Looked up by name once per behavior descriptor, because a modded behavior can put it elsewhere.
+static int PlayerDirectionSlot(Actor* apPlayer) noexcept
+{
+    static size_t s_hash = 0;
+    static int s_slot = -1;
+    const size_t cHash = apPlayer->GetExtension()->GraphDescriptorHash;
+    if (cHash == s_hash)
+        return s_slot;
+    s_hash = cHash;
+    s_slot = -1;
+
+    const AnimationGraphDescriptor* pDescriptor = AnimationGraphDescriptorManager::Get().GetDescriptor(cHash);
+    BSAnimationGraphManager* pManager = nullptr;
+    if (!pDescriptor || !apPlayer->animationGraphHolder.GetBSAnimationGraph(&pManager))
+        return s_slot;
+    {
+        BSScopedLock<BSRecursiveLock> _{pManager->lock};
+        // The player's variables are always read from graph 0 (SaveAnimationVariables).
+        for (const auto& [index, name] : pManager->DumpAnimationVariables(false, 0))
+        {
+            if (name != "Direction")
+                continue;
+            for (size_t i = 0; i < pDescriptor->FloatLookupTable.size(); ++i)
+                if (pDescriptor->FloatLookupTable[i] == index)
+                    s_slot = static_cast<int>(i);
+        }
+    }
+    pManager->Release();
+    return s_slot;
+}
+#endif
+
 void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMovementSnapshot, LocalComponent& localComponent, LocalAnimationComponent& animationComponent, FormIdComponent& formIdComponent)
 {
     const auto pForm = TESForm::GetById(formIdComponent.Id);
@@ -274,7 +311,8 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
         auto* pPlayer = static_cast<PlayerCharacter*>(pActor);
 
         VRPose pose{};
-        if (!VRBodySync::CaptureLocalPose(pPlayer, pose))
+        float heading = pActor->rotation.z;
+        if (!VRBodySync::CaptureLocalPose(pPlayer, pose, heading))
         {
             // The other player then sees this body in the plain animation pose.
             // Logged so it can be told apart from a problem on the receiving side.
@@ -284,6 +322,34 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
             {
                 s_nextWarn = now + 10s;
                 spdlog::warn("VRBodySync: could not read the local VR pose (skeleton bones not found), the other player sees the animation pose instead");
+            }
+        }
+        else
+        {
+            // The body's facing is sent as the heading, so a head turn alone does not turn the copy's hips and legs.
+            // The game's walk direction is relative to its own heading, which follows the headset, so it is re-based on the body.
+            float turn = std::fmod(heading - pActor->rotation.z, glm::two_pi<float>());
+            if (turn > glm::pi<float>())
+                turn -= glm::two_pi<float>();
+            else if (turn < -glm::pi<float>())
+                turn += glm::two_pi<float>();
+            movement.Rotation.y = heading;
+            // The process direction is in radians from -pi to pi: 0 forward, pi/2 right.
+            if (pActor->currentProcess && pActor->currentProcess->middleProcess)
+            {
+                float direction = std::fmod(movement.Direction - turn, glm::two_pi<float>());
+                if (direction > glm::pi<float>())
+                    direction -= glm::two_pi<float>();
+                else if (direction < -glm::pi<float>())
+                    direction += glm::two_pi<float>();
+                movement.Direction = direction;
+            }
+            // The graph's Direction is a fraction of a turn clockwise from the heading: 0 forward, 0.25 right.
+            if (const int cSlot = PlayerDirectionSlot(pActor); cSlot >= 0 && static_cast<size_t>(cSlot) < movement.Variables.Floats.size())
+            {
+                float& direction = movement.Variables.Floats[cSlot];
+                direction -= turn / glm::two_pi<float>();
+                direction -= std::floor(direction);
             }
         }
         update.UpdatedVRPose = pose;

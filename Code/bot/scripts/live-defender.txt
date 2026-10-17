@@ -5,8 +5,8 @@
 #
 # The steps of live-clash give a clash in the player's game: the HIGGS-held sword meets the copy's sword, and the clash
 # reaches this bot with the server tick it was seen at. The bot hits the player twice for 30: first before any clash,
-# which should land, then stamped 225 ms before the clash (the VR playback delay: the hit is seen on the player's
-# screen just as the blades met), which the player's game should drop.
+# which should land, then stamped at the clash's own tick (a hit that came one playback delay after the blades crossed,
+# whatever the delay), which the player's game should drop.
 log live defender
 waitfor connected 45
 # Daylight, for a screenshot that shows something (the test game's clock; her saves are put back afterwards).
@@ -78,17 +78,19 @@ wait 2
 log CHECK player dropped 0
 log CHECK logged Defender's rule: a hit of 30 from player \d+ is blocked
 
-# The window's early edge: a clash counts from 325 ms before the hit happened (300 ms before it, and it is seen 225 ms
-# after). Stamped 300 ms before the first clash a hit is blocked; 360 ms before it, it lands -- nothing of the player's
-# had touched this bot's weapons yet.
+# The window's late edge: a clash counts up to 100 ms after the hit is seen here, which is one playback delay after it
+# happened. Before the first clash nothing of the player's had touched this bot's weapons, so these hits meet no other
+# clash. Stamped 100 ms before the clash a hit is blocked at any delay; 300 ms before it, it lands while the copy is
+# shown under 200 ms late, which the game's own playback line must say first.
+log CHECK logged PlaybackDiag: player copy \w+ shown ([0-9]|[1-9][0-9]|1[0-9][0-9]) ms behind
 log CHECK player mark
 wait 1
-hit other -30 atclash -300
+hit other -30 atclash -100
 wait 2
 log CHECK player dropped 0
 log CHECK player mark
 wait 1
-hit other -30 atclash -360
+hit other -30 atclash -300
 wait 2
 log CHECK player dropped 30
 

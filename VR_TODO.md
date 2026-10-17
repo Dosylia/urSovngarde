@@ -25,7 +25,7 @@ Both players must run the current tools folder (v1.9.3-12-gf7decbde-dirty.934076
 of the player who watches: in the session of 2026-10-14 evening Seen still ran 4ccd5ff, so nothing that his game draws
 or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
 
-Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on 5342bc0). Current build f56dc9e
+Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on 5342bc0). Current build 3d63d8e
 (deployed, client and server). Both players need it.
 
 - [ ] **Cutscene voice lines and subtitles out of step in a party** (upstream ea0f6c39, ported 2026-10-17; a protocol
@@ -62,28 +62,19 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       at once after the put-down), `live-world-object-reload` (new) 6 of 6: the plate keeps its 3D after a carry and
       after its cell loads again. To see in play: carry a cup past the other player; it moves smoothly in steps, and
       they can lift it once it is down.
-- [ ] **Downed essential NPCs slide on the floor** (player 2, 2026-10-16): on player 2's screen no NPC was a copy, so it
-      is his own NPCs (our SetPosition hook, PLANCK or HIGGS). `Tools/VR/bleedout-slide.py` knocks an essential bandit
-      down in the rig, connected then offline: first run 180 against 142 units, but the bandit stood up inside the 12 s,
-      so the run needs to measure only while it lies down. On player 1's screen a copy stayed downed after its owner
-      got up (21:16:54 `'bleedOutStop' refused`).
-      Rig 2026-10-16 (97b6cd0), `bleedout-slide.py` now keeps the bandit down and reads its pelvis node: kneeling in
-      bleedout, idle or with the player's sword swept across it every 2.5 s, it does not move, connected or offline
-      (pelvis net 0-1 units; the 2 units a sample are the breathing loop). Our SetPosition hook behaves the same
-      offline, and calls the game's own function, so it is no longer a suspect. Players described NPCs lying flat, which
-      is a knock-down (PLANCK), and the rig's scripted swings make no PLANCK hit. Since 97b6cd0 every game logs
-      `DownedTravel: own NPC ... moved N units in M ms while down (life state, knock state)` for its own NPCs (checked in
-      the rig: a push gave `moved 643 units ... knock state 1`).
-      2026-10-17 (5342bc0), in Sovngarde: player 1 owned the heroes and knocked 29C12 and 29C10 down. Player 1's game:
-      `DownedTravel` at 08:00:57 and 08:03:15, the moment each got up. Player 2's copies, the same moments:
-      `'bleedOutStop' refused as an action ...; sent to its graph instead (not taken)`. So the owner's NPC stands up and
-      walks on, the copy refuses to get up, and it follows the walk lying down: the slide. The graph not taking the
-      event says the copy was not in the bleedout state at all, but lying in another. The rig does not reproduce it
-      yet: `live-copy-bleedout` (new: the game knocks an essential bandit down and up while the bot records it, then
-      the bot replays the recording on a bandit of its own, so the game's copy gets the owner's real actions) stands
-      the copy up at full, low and zero health. Since f56dc9e the refusal line adds the copy's own life state, knock
-      state and health from before the owner's state was written over it. To see in play: a downed NPC that gets up;
-      the `ReplayDiag: 'bleedOutStop' refused` line from the screen it slid on.
+- [ ] **Downed essential NPCs slide on the floor** (player 2, 2026-10-16 and 2026-10-17): the copy refused the
+      owner's get-up (`'bleedOutStop' refused ... (not taken)`) and followed the owner's walk lying down.
+      Cause, reproduced in the rig: at zero health the copy's own game puts it down with a ragdoll fall; each replayed
+      action then wrote the owner's knock state over the copy's, the copy's own update is skipped for copies, so its
+      get-up never ran, and interpolation moved the body lying on the floor.
+      Fixed in 502d883 (deployed, client and server): NPC copies keep their own knock state, a knocked-down copy runs
+      its own update and is not moved while it lies, and a get-up still queued after 1.5 s gets `GetUpBegin`.
+      Rig: `live-copy-bleedout` (the copy falls in its own ragdoll; on 7a9e33a without the last part it lay there:
+      `still lies after 15 s`; on 502d883 up after 5.3 s, 8 units of travel while down) and `live-copy-knockdown`
+      (the owner's NPC thrown over while down; the copy lies 6 s, gets up by itself). Not seen in play yet.
+      To see in play: knock an essential NPC down, let it get up, watch it on the other player's screen. Read there:
+      `KnockDown: NPC copy X lies in its own ragdoll`, `... sent it 'GetUpBegin' (taken)`, `... is up again after N ms`;
+      `KnockDown: ... still lies after 15 s` means a copy still stuck.
 - [ ] **Two-handed sword grip sometimes wrong** (player 2): his greatsword was equipped on the copy by the event path
       with the right-hand slot after a respawn (the snapshot path uses both hands since 9340761). Not shown to cause the
       grip; ask which screen it was.
@@ -187,11 +178,30 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       message), relays it on the server at once with Nagle off (ours batches at 50 Hz), sends NPCs in combat at 30 Hz,
       and sizes the delay per actor (snapshot interval + 95th-percentile jitter + 8 ms, eased at up to 10% speed).
       A shorter delay also moves the hit timing (`kHitSeenAfter` in ActorValueService).
+      Measured in play 2026-10-17 morning (fixed 225 ms): the newest update was a median 198 ms ahead of playback, so
+      the network used about 27 ms of the 225.
+      Session A, in 3d63d8e (deployed, client and server; no protocol change, but both players need it, since the
+      relayed tick now means the owner's): TiltedConnect at e6f5759; the server relays each movement message at once with the owner's tick
+      (the 50 Hz batch is gone, and with it the dropped `Flying` bit); each remote actor plays at its own delay
+      (upstream's PlaybackClock and its tests, extrapolation up to 150 ms with the error faded out); the defender's
+      rule takes the attacker copy's real delay. Still reliable: unreliable movement and actions split out are session
+      B, after this one is seen in play. Rig (100 fps): the bot's copy is shown 52-69 ms behind (225 before), the
+      newest update a median 31-42 ms ahead, 0-12 of 1000 updates with nothing ahead; live-walk 8/8, live-defender 22/22,
+      live-blade 6/6, live-creatures 7/7. With 40 ms lag, 2% loss and 10% late on the bot: delay 108-128 ms, 3-4% of
+      updates extrapolated, live-walk 8/8. Lines: `PlaybackDiag:` every 10 s per remote player, read by
+      `Tools/VR/session-report.py`. To see in play: the other player's hands, sword and walk closer to real time and as
+      smooth as before; blocks still blocking (`Defender's rule: ... is blocked`).
 - [ ] **Threads and stutters:** the `Health` lines near 200 threads in both games once Seen is updated (Waiting on a
       test or action); Seen's freezes (no frame for 46 s, 2026-10-11 18:11 and 21:36) gone with it.
 - [ ] **Crash lines on a real crash:** `CrashPlace: ...` (send the log's path to the launcher worker, which parses it)
       and `small crash dump ... (N KB)`. Watch for the PLANCK travel crash (`+0x3AC1A8`, `+0xCBFD24`), not seen since
       2026-10-03.
+- [ ] **The other player's body no longer turns with their head** (3d63d8e): the heading sent is the VRIK body's facing
+      (from the thighs) instead of the headset's, the pose is captured relative to it, and the walk direction values are
+      re-based on it; no protocol change. Rig: `live-head-turn` 5/5 (a 35 deg head turn with the hands still turned the
+      copy 9 deg), `live-walk` 8/8. To see in play: the copy's hips and legs stay still while its player looks around;
+      walking forward, sideways and back still plays the right legs (the rig cannot show that: its body and headset
+      differ by only 7 deg); `HeadingDiag:` sent heading off the body near 0 and off the headset during head turns.
 
 ## Waiting on a test or action
 
@@ -256,21 +266,6 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       One run crashed in CommunityShaders.dll+0x1208c8 (read at 0x144) at the start of the loading screen out of Mistwatch;
       the same crash came three times on 2026-10-12, all at Mistwatch loading screens in the rig, so it is not the battle
       mods. Watch for it in play: a crash right as a loading screen starts.
-- [ ] **The copy's body turns with the head** (2026-10-14): the game turns the actor with the headset and that heading
-      is sent, so the copy's hips and legs follow every head turn. First a measurement for one session (heading,
-      headset yaw, the VRIK body's yaw from the thighs), then send the VRIK body's facing as the heading and the head
-      relative to it (VRBodySync::CaptureLocalPose, AnimationSystem::Serialize; the walk animation needs care).
-      The measurement ships since b362737: every 30 s `HeadingDiag:` gives the sent heading's average and largest
-      distance from the headset yaw and from the body's facing (the line between the thighs), and how far the sent
-      heading turned while the body stayed still. Rig: standing still, sent = headset exactly, body 7 deg off; the
-      virtual headset turned 60 deg with the hands still, the actor's heading followed at once (237 -> 177 and back),
-      the body lagged up to 50 deg, and 22 of the 120 deg the heading turned came while the body did not move at all.
-      Seen in play 2026-10-17 (both games, 56 windows of 30 s): the sent heading is the headset's in every window
-      (1-2 deg on average); the body is 7-35 deg off on average and up to 172; standing and looking around, all of the
-      heading's turning came with the body still (player 2: 371 of 371, 329 of 329 deg). Confirmed: the fix is to send
-      the body's facing as the heading and the head relative to it. Not started. To check first: whether the VR pose's
-      bones are captured relative to the actor's heading (that frame would change too), and how the walk direction the
-      copy plays depends on the heading.
 - [ ] **Map greyed out indoors** (player 2, 2026-10-11 and 2026-10-14): no code of ours touches the map indoors and it
       worked outside. To settle it: open the map inside any building with the mod not connected.
 - [ ] **An in-headset menu:** the urSovngarde menu as a SteamVR dashboard tab with large text, a small overlay for chat.

@@ -1240,6 +1240,8 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
                         // The buffered points predate the silence and would drag the copy back through where it was.
                         pInterpolation->TimePoints.clear();
+                        pInterpolation->PositionError = {};
+                        pInterpolation->IsExtrapolating = false;
                         pInterpolation->Position = wanted;
                         pActor->ForcePosition(NiPoint3(wanted));
 
@@ -1516,7 +1518,7 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
         point.Direction = movement.Direction;
         point.VRPoseData = update.UpdatedVRPose;
 
-        InterpolationSystem::AddPoint(interpolationComponent, point);
+        InterpolationSystem::AddPoint(interpolationComponent, point, m_transport.GetMessageReceiveTime());
 
         for (const auto& action : update.ActionEvents)
         {
@@ -3306,15 +3308,13 @@ void CharacterService::RunWeaponTouch() noexcept {}
 
 void CharacterService::RunRemoteUpdates() noexcept
 {
-    // The same sample drives the reference and its visible skeleton, so a fast-moving body stays on its reference.
-    // 225 ms keeps headroom for network jitter while reducing the displacement in combat.
-#ifdef SKYRIMVR
-    constexpr uint64_t cPlaybackDelay = 225;
-#else
-    constexpr uint64_t cPlaybackDelay = 300;
-#endif
+    // Each actor plays at its own delay, from how its updates arrive (InterpolationSystem, PlaybackClock).
+    // The same tick drives the reference, its skeleton and its replayed actions, so a fast-moving body stays on its reference.
+    const double cNow = m_transport.GetLastPollTime();
+    // For an actor with no update yet: the fixed delay used before the playback clock.
+    constexpr uint64_t cFallbackDelay = 225;
     const uint64_t nowTick = m_transport.GetClock().GetCurrentTick();
-    const uint64_t tick = nowTick > cPlaybackDelay ? nowTick - cPlaybackDelay : 0;
+    const uint64_t fallbackTick = nowTick > cFallbackDelay ? nowTick - cFallbackDelay : 0;
 
     // Interpolation has to keep running even if the actor is not in view, otherwise we will never know if we need to spawn it
     auto interpolatedEntities = m_world.view<RemoteComponent, InterpolationComponent>();
@@ -3331,7 +3331,7 @@ void CharacterService::RunRemoteUpdates() noexcept
             pActor = Cast<Actor>(pForm);
         }
 
-        InterpolationSystem::Update(pActor, interpolationComponent, tick);
+        InterpolationSystem::Update(pActor, interpolationComponent, cNow);
 
 #ifdef SKYRIMVR
         // Cheap: it returns at once unless this is a dead body within arm's reach.
@@ -3358,7 +3358,9 @@ void CharacterService::RunRemoteUpdates() noexcept
         if (!pActor)
             continue;
 
-        AnimationSystem::Update(m_world, pActor, animationComponent, tick);
+        const auto* pInterpolation = m_world.try_get<InterpolationComponent>(entity);
+        const uint64_t cActorTick = pInterpolation ? InterpolationSystem::GetPlaybackTick(*pInterpolation) : 0;
+        AnimationSystem::Update(m_world, pActor, animationComponent, cActorTick ? cActorTick : fallbackTick);
     }
 
     auto facegenView = m_world.view<FormIdComponent, FaceGenComponent>();

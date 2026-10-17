@@ -30,7 +30,7 @@ struct TransportService : Client
     // Closes any existing connection first, so it does not linger on the server.
     bool Connect(const std::string& acEndpoint) noexcept;
 
-    bool Send(const ClientMessage& acMessage) const noexcept;
+    bool Send(const ClientMessage& acMessage, TiltedPhoques::EPacketFlags aFlags = TiltedPhoques::kReliable) const noexcept;
     // For voice: a lost packet is a short gap, never a delay behind a resend.
     bool SendUnreliable(const ClientMessage& acMessage) const noexcept;
 
@@ -40,6 +40,10 @@ struct TransportService : Client
     void OnUpdate() override;
 
     [[nodiscard]] bool IsOnline() const noexcept { return m_connected; }
+    //! When the message being handled arrived, in ms on the local network clock; only meaningful while handling one.
+    [[nodiscard]] double GetMessageReceiveTime() const noexcept;
+    //! The local network clock in ms when this frame's messages were polled: "now" for remote playback.
+    [[nodiscard]] double GetLastPollTime() const noexcept { return m_lastPollTime; }
     void SetServerPassword(const std::string& acPassword) noexcept { m_serverPassword = acPassword; }
     const uint32_t& GetLocalPlayerId() const noexcept { return m_localPlayerId; }
 
@@ -57,6 +61,7 @@ private:
     World& m_world;
     entt::dispatcher& m_dispatcher;
     bool m_connected;
+    double m_lastPollTime{};
     String m_serverPassword{};
     uint32_t m_localPlayerId;
 

@@ -24,6 +24,7 @@
 #include <Packet.hpp>
 
 #include <ScriptExtender.h>
+#include <steam/isteamnetworkingutils.h>
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -82,7 +83,7 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
     };
 }
 
-bool TransportService::Send(const ClientMessage& acMessage) const noexcept
+bool TransportService::Send(const ClientMessage& acMessage, TiltedPhoques::EPacketFlags aFlags) const noexcept
 {
     static thread_local ScratchAllocator s_allocator(1 << 18);
 
@@ -102,7 +103,7 @@ bool TransportService::Send(const ClientMessage& acMessage) const noexcept
         acMessage.Serialize(writer);
         TiltedPhoques::PacketView packet(reinterpret_cast<char*>(buffer.GetWriteData()), writer.Size());
 
-        Client::Send(&packet);
+        Client::Send(&packet, aFlags);
 
         return true;
     }
@@ -229,7 +230,13 @@ void TransportService::HandleUpdate(const UpdateEvent& acEvent) noexcept
 {
     PerfScope perfScope("TransportService::HandleUpdate");
 
+    m_lastPollTime = static_cast<double>(SteamNetworkingUtils()->GetLocalTimestamp()) / 1000.0;
     Update();
+}
+
+double TransportService::GetMessageReceiveTime() const noexcept
+{
+    return static_cast<double>(GetCurrentMessageReceiveTime()) / 1000.0;
 }
 
 void TransportService::HandleConnected(const ConnectedEvent& acEvent) noexcept

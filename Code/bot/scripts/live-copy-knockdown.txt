@@ -1,0 +1,59 @@
+# A copy of an essential NPC that is knocked flat while it is down, then gets up and walks, must get up here too.
+#
+#   python Tools\VR\live-check.py live-copy-knockdown
+#
+# Players saw downed NPCs lie flat and slide along behind their owner once the owner's NPC had stood up and walked on.
+# live-copy-bleedout covers a plain bleedout; here the owner's NPC is also thrown to the floor while it is down.
+# The game places a Lydia (base A2C8E, made essential), knocks her into bleedout, pushes her over, stands her up
+# and sets her on the player, while the bot records it.
+# A unique base, not a levelled bandit: a levelled copy may pick another race here and is then not fed the owner's actions.
+# Then the bot brings a Lydia of its own and replays the recording on it, so the game's copy gets the owner's real actions.
+log live copy knockdown
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- a Lydia ahead of the player, essential so she goes down instead of dying (the bot's below shares the base)
+log DO papyrus ActorBase SetEssential A2C8E b:true
+log DO place A2C8E essential
+wait 8
+
+log -- the game knocks her down, throws her over, stands her up and sets her on the player while the bot records it
+log DO sleep 3
+log DO papyrus Actor DamageActorValue placed s:Health f:100000
+log DO sleep 4
+log DO papyrus ObjectReference PushActorAway 14 placed f:8
+log DO sleep 6
+log DO papyrus Actor RestoreActorValue placed s:Health f:100000
+log DO combat on
+log DO sleep 2
+log DO papyrus Actor StartCombat placed 14
+capture newest 28
+log DO combat off
+log DO papyrus Actor IsBleedingOut placed
+
+log -- the bot brings its own Lydia and replays the recording on her; the game shows a copy of her
+npc temp A2C8E
+waitfor owned == 1 20
+wait 6
+# No health left, as a hero beaten down in a fight: the copy goes down by itself, as in live-copy-bleedout.
+npclife alive 0
+wait 3
+# Watched through the whole replay: where its pelvis is drawn, and how far it travels while lying.
+log CHECK npc standing 34
+replay npc
+wait 3
+log DO papyrus Actor IsBleedingOut npc
+log SHOT after of npc
+log CHECK absent Base form differs
+log CHECK logged KnockDown: NPC copy \w+ lies in its own ragdoll
+log CHECK logged KnockDown: NPC copy \w+ is up again
+log CHECK absent KnockDown: NPC copy \w+ still lies
+log CHECK game alive
+log DO papyrus ActorBase SetEssential A2C8E b:false
+log DO god off
+wait 3
+log done
+stop

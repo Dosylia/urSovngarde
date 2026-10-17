@@ -230,7 +230,6 @@ void CharacterService::HandOffAbandonedActors() const noexcept
 void CharacterService::OnUpdate(const UpdateEvent&) const noexcept
 {
     ProcessFactionsChanges();
-    ProcessMovementChanges();
     HandOffAbandonedActors();
 }
 
@@ -399,7 +398,6 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
 
         auto& movementComponent = view.get<MovementComponent>(*it);
         movementComponent.Position = message.Position;
-        movementComponent.Sent = true;
     }
 
     // A normal release starts a fresh search; a declined grant keeps the failed candidates so ownership cannot bounce.
@@ -474,6 +472,11 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
     acMessage.pPlayer->MarkMovement();
 
+    // Relayed at once to every other player in range, with the owner's own tick: each receiving game times its playback
+    // from when the owner captured the update, not from when the server passed it on.
+    TiltedPhoques::Map<Player*, ServerReferencesMoveRequest> relays;
+    const auto characterView = m_world.view<CharacterComponent>();
+
     for (auto& entry : message.Updates)
     {
         const auto entity = static_cast<entt::entity>(entry.first);
@@ -507,6 +510,7 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
         cellIdComponent.WorldSpaceId = movement.WorldSpaceId;
         cellIdComponent.CenterCoords = GridCellCoords::CalculateGridCellCoords(movement.Position.x, movement.Position.y);
 
+        Vector<ActionEvent> actions;
         for (auto& action : update.ActionEvents)
         {
             auto [canceled, reason] = GameServer::Get()->GetWorld().GetScriptService().HandleCharacterMove(entity);
@@ -514,13 +518,30 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
                 continue;
 
             animationComponent.CurrentAction = action;
-
-            animationComponent.Actions.push_back(animationComponent.CurrentAction);
+            actions.push_back(action);
         }
 
         animationComponent.ActionsReplayCache.AppendAll(update.ActionEvents);
 
-        movementComponent.Sent = false;
+        const auto cCharacter = characterView.find(entity);
+        const bool cIsDragon = cCharacter != characterView.end() && characterView.get<CharacterComponent>(*cCharacter).IsDragon();
+        for (Player* pPlayer : m_world.GetPlayerManager())
+        {
+            if (pPlayer == acMessage.pPlayer || !cellIdComponent.IsInRange(pPlayer->GetCellComponent(), cIsDragon))
+                continue;
+
+            auto& relay = relays[pPlayer];
+            auto& relayed = relay.Updates[entry.first];
+            relayed.UpdatedMovement = movement;
+            relayed.UpdatedVRPose = update.UpdatedVRPose;
+            relayed.ActionEvents = actions;
+        }
+    }
+
+    for (auto it = relays.begin(); it != relays.end(); ++it)
+    {
+        it.value().Tick = message.Tick;
+        it->first->Send(it->second);
     }
 }
 
@@ -754,7 +775,6 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     movementComponent.Tick = pServer->GetTick();
     movementComponent.Position = message.Position;
     movementComponent.Rotation = {message.Rotation.x, 0.f, message.Rotation.y};
-    movementComponent.Sent = false;
 
     m_world.emplace<AnimationComponent>(cEntity);
 
@@ -1086,80 +1106,6 @@ void CharacterService::ProcessFactionsChanges() const noexcept
     for (auto [pPlayer, message] : messages)
     {
         if (!message.Changes.empty())
-            pPlayer->Send(message);
-    }
-}
-
-void CharacterService::ProcessMovementChanges() const noexcept
-{
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenSnapshots = 1000ms / 50;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenSnapshots)
-        return;
-
-    lastSendTimePoint = now;
-
-    const auto characterView = m_world.view<CharacterComponent, CellIdComponent, MovementComponent, AnimationComponent, OwnerComponent>();
-
-    TiltedPhoques::Map<Player*, ServerReferencesMoveRequest> messages;
-
-    for (auto pPlayer : m_world.GetPlayerManager())
-    {
-        auto& message = messages[pPlayer];
-
-        message.Tick = GameServer::Get()->GetTick();
-    }
-
-    for (auto entity : characterView)
-    {
-        auto& characterComponent = characterView.get<CharacterComponent>(entity);
-        auto& movementComponent = characterView.get<MovementComponent>(entity);
-        auto& cellIdComponent = characterView.get<CellIdComponent>(entity);
-        auto& ownerComponent = characterView.get<OwnerComponent>(entity);
-        auto& animationComponent = characterView.get<AnimationComponent>(entity);
-
-        // If we have nothing new to send skip this
-        if (movementComponent.Sent == true)
-            continue;
-
-        for (auto pPlayer : m_world.GetPlayerManager())
-        {
-            if (pPlayer == ownerComponent.GetOwner())
-                continue;
-
-            if (!cellIdComponent.IsInRange(pPlayer->GetCellComponent(), characterComponent.IsDragon()))
-                continue;
-
-            auto& message = messages[pPlayer];
-            auto& update = message.Updates[World::ToInteger(entity)];
-            auto& movement = update.UpdatedMovement;
-
-            movement.Position = movementComponent.Position;
-
-            movement.Rotation.x = movementComponent.Rotation.x;
-            movement.Rotation.y = movementComponent.Rotation.z;
-
-            movement.Direction = movementComponent.Direction;
-            movement.Variables = movementComponent.Variables;
-
-            update.UpdatedVRPose = movementComponent.VRPoseData;
-            update.ActionEvents = animationComponent.Actions;
-        }
-    }
-
-    m_world.view<AnimationComponent>().each([](AnimationComponent& animationComponent)
-    {
-        // Remove actions we've sent
-        animationComponent.Actions.clear();
-    });
-
-    m_world.view<MovementComponent>().each([](MovementComponent& movementComponent) { movementComponent.Sent = true; });
-
-    for (auto& [pPlayer, message] : messages)
-    {
-        if (!message.Updates.empty())
             pPlayer->Send(message);
     }
 }

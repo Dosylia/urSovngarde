@@ -1561,8 +1561,10 @@ char TP_MAKE_THISCALL(HookActorProcess, Actor, float aDeltaTime)
     // An actor we do not extend is not remote, so it takes the normal path.
     //
     // Bleeding out is the game's recoverable downed state, so it is processed here like a dying body, or the NPC never gets up.
+    // So is an NPC copy knocked to the floor: its get-up runs here, once its ragdoll has come to rest.
     const ActorExtension* pExtension = apThis->GetExtension();
-    if (pExtension && pExtension->IsRemote() && !apThis->actorState.IsDeadOrDying() && !apThis->actorState.IsBleedingOut())
+    const bool cKnockedNpc = pExtension && !pExtension->IsRemotePlayer() && apThis->actorState.IsKnockedDown();
+    if (pExtension && pExtension->IsRemote() && !apThis->actorState.IsDeadOrDying() && !apThis->actorState.IsBleedingOut() && !cKnockedNpc)
     {
         if (apThis->currentProcess)
         {

@@ -697,7 +697,7 @@ void GameServer::OnDisconnection(const ConnectionId_t aConnectionId, EDisconnect
     UpdateTitle();
 }
 
-void GameServer::Send(const ConnectionId_t aConnectionId, const ServerMessage& acServerMessage) const
+void GameServer::Send(const ConnectionId_t aConnectionId, const ServerMessage& acServerMessage, TiltedPhoques::EPacketFlags aFlags) const
 {
     static thread_local TiltedPhoques::ScratchAllocator s_allocator{1 << 18};
 
@@ -708,7 +708,7 @@ void GameServer::Send(const ConnectionId_t aConnectionId, const ServerMessage& a
     acServerMessage.Serialize(writer);
 
     TiltedPhoques::PacketView packet(reinterpret_cast<char*>(buffer.GetWriteData()), static_cast<uint32_t>(writer.Size()));
-    Server::Send(aConnectionId, &packet);
+    Server::Send(aConnectionId, &packet, aFlags);
 
     s_allocator.Reset();
 }

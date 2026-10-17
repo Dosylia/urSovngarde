@@ -27,6 +27,10 @@ struct ActorState : IMovementState
     }
     bool IsDeadOrDying() const noexcept { return IsDying() || IsDead(); }
 
+    //! KNOCK_STATE_ENUM, bits 25-27 of flags1 (CommonLibVR ActorState1).
+    //! Anything but normal (0) is a body thrown down, lying in its ragdoll, or getting up.
+    bool IsKnockedDown() const noexcept { return (flags1 & 0xE000000) != 0; }
+
     //! ATTACK_STATE_ENUM, bits 28-31 of flags1.
     //! Bow values (CommonLibVR): 8 kBowDraw, 9 kBowAttached (arrow on the string), 10 kBowDrawn (pulled), 11 kBowReleasing, 12 kBowReleased.
     uint32_t AttackState() const noexcept { return (flags1 >> 28) & 0xF; }

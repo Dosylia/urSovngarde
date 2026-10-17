@@ -8,6 +8,8 @@ target("TPTests")
     add_files("*.cpp")
     -- The public server's admin keys: pure code, the hash handed in (no OpenSSL here).
     add_files("../server/AdminKeys.cpp")
+    -- The client's remote playback timing has no game dependencies.
+    add_files("../client/Systems/PlaybackClock.cpp")
     add_deps("SkyrimEncoding")
     if is_plat("windows") then
         -- SmallDump.h (client) writes minidumps.

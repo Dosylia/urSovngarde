@@ -17,12 +17,35 @@
 #include <Games/Skyrim/VRBodySync.h>
 #endif
 
-void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterpolationComponent, const uint64_t aTick) noexcept
+namespace
 {
+// Past the newest point the actor keeps moving for at most this long, then holds still until data arrives.
+constexpr double cMaxExtrapolation = 150.0;
+// Larger corrections snap instead of sliding the actor into place.
+constexpr float cMaxPositionCorrection = 256.f;
+// Time constant of a correction fading out: about 95% of it is gone after three times this.
+constexpr double cPositionCorrectionTime = 50.0;
+// Two points further apart than this are a teleport, not movement to cross.
+constexpr float cTeleportDistance = 1024.f;
+} // namespace
+
+uint64_t InterpolationSystem::GetPlaybackTick(const InterpolationComponent& acInterpolationComponent) noexcept
+{
+    const double cTick = acInterpolationComponent.Clock.GetRenderTick();
+    return acInterpolationComponent.Clock.IsRunning() && cTick > 0.0 ? static_cast<uint64_t>(cTick) : 0;
+}
+
+void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterpolationComponent, const double aNow) noexcept
+{
+    const double cDeltaTime = aInterpolationComponent.Clock.Advance(aNow);
+
     auto& movements = aInterpolationComponent.TimePoints;
 
     if (movements.size() < 2)
         return;
+
+    const double cRenderTick = aInterpolationComponent.Clock.GetRenderTick();
+    const uint64_t aTick = GetPlaybackTick(aInterpolationComponent);
 
     while (movements.size() > 2)
     {
@@ -66,6 +89,23 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
                 int64_t& worstSeen = s_starvedActors[apActor->formID];
                 if (ahead < worstSeen)
                     worstSeen = ahead;
+            }
+        }
+
+        // Each remote player's playback clock: the delay it settled on and what it is made of.
+        static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_nextClockLog;
+        const auto cClockNow = std::chrono::steady_clock::now();
+        if (apActor && apActor->GetExtension() && apActor->GetExtension()->IsRemotePlayer() && aInterpolationComponent.Clock.IsRunning())
+        {
+            auto& next = s_nextClockLog[apActor->formID];
+            if (cClockNow >= next)
+            {
+                next = cClockNow + 10s;
+                const auto& clock = aInterpolationComponent.Clock;
+                spdlog::info("PlaybackDiag: player copy {:X} shown {:.0f} ms behind its newest possible update (snapshot interval {:.0f} ms, jitter {:.0f} ms), "
+                             "playback rate {:.2f}, extrapolating {}",
+                             apActor->formID, clock.GetTargetDelay(), clock.GetSnapshotInterval(), clock.GetJitter(), clock.GetPlaybackRate(),
+                             aInterpolationComponent.IsExtrapolating);
             }
         }
 
@@ -119,17 +159,45 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     }
 #endif
 
-    // Do not subtract unsigned ticks until their order is known.
-    // A clock correction or a newly trimmed buffer can put playback before its first point; that holds the first position.
-    float delta = 0.f;
-    if (aTick >= second.Tick)
-        delta = 1.f;
-    else if (aTick > first.Tick && second.Tick > first.Tick)
-        delta = static_cast<float>(aTick - first.Tick) / static_cast<float>(second.Tick - first.Tick);
+    // Before the first point it holds the first position; past the newest one it keeps going the way the actor moved.
+    const double cTickDelta = second.Tick > first.Tick ? static_cast<double>(second.Tick - first.Tick) : 0.0;
+    const bool cIsTeleport = glm::distance(first.Position, second.Position) > cTeleportDistance;
+    float delta = 1.f;
+    bool isExtrapolating = false;
+    glm::vec3 target{};
+    if (cRenderTick <= static_cast<double>(second.Tick))
+    {
+        if (cTickDelta > 0.0)
+            delta = static_cast<float>(std::clamp((cRenderTick - static_cast<double>(first.Tick)) / cTickDelta, 0.0, 1.0));
+        // A teleport happens at once, when its point is reached.
+        if (cIsTeleport && delta < 1.f)
+            delta = 0.f;
+        target = TiltedPhoques::Lerp(first.Position, second.Position, delta);
+    }
+    else
+    {
+        target = second.Position;
+        if (!cIsTeleport && cTickDelta > 0.0)
+        {
+            const double cExtrapolationTime = std::min(cRenderTick - static_cast<double>(second.Tick), cMaxExtrapolation);
+            target = TiltedPhoques::Lerp(first.Position, second.Position, static_cast<float>(1.0 + cExtrapolationTime / cTickDelta));
+            isExtrapolating = true;
+        }
+    }
 
-    const NiPoint3 position{TiltedPhoques::Lerp(first.Position, second.Position, delta)};
+    // The late point arrived, so the actor is no longer where extrapolation put it: the difference fades out.
+    auto& positionError = aInterpolationComponent.PositionError;
+    if (aInterpolationComponent.HasNewTimePoint && aInterpolationComponent.IsExtrapolating)
+        positionError = aInterpolationComponent.Position - target;
+    if (cIsTeleport || glm::length(positionError) > cMaxPositionCorrection)
+        positionError = {};
+    else
+        positionError *= static_cast<float>(std::exp(-cDeltaTime / cPositionCorrectionTime));
+    aInterpolationComponent.HasNewTimePoint = false;
+    aInterpolationComponent.IsExtrapolating = isExtrapolating;
 
-    aInterpolationComponent.Position = position;
+    aInterpolationComponent.Position = target + positionError;
+    const NiPoint3 position{aInterpolationComponent.Position};
 
     // The pose and actor position must come from the same instant.
     // Different playback ticks put the visible body and hands ahead of the actor/controller that combat collides with.
@@ -276,6 +344,64 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     if (apActor->actorState.IsDying() || apActor->actorState.IsBleedingOut())
         return;
 
+    // An NPC copy thrown to the floor lies in its own ragdoll until it gets up here (its knock state is its own).
+    // Moved meanwhile, the body would glide along the floor behind its owner (live-copy-knockdown).
+    const ActorExtension* pExtension = apActor->GetExtension();
+    const bool cKnockedNpc = !apActor->actorState.IsDead() && apActor->actorState.IsKnockedDown() && pExtension && !pExtension->IsRemotePlayer();
+    {
+        // One line when such a copy goes down, one when it is up again, and one if it still lies after 15 s.
+        struct Down
+        {
+            std::chrono::steady_clock::time_point Since;
+            std::chrono::steady_clock::time_point QueuedSince;
+            bool SentGetUp;
+            bool SaidLong;
+        };
+        static TiltedPhoques::Map<uint32_t, Down> s_down;
+        // KNOCK_STATE_ENUM 5: the ragdoll has come to rest and the get-up is queued.
+        constexpr uint32_t cKnockQueued = 5;
+        const uint32_t cKnockState = (apActor->actorState.flags1 >> 25) & 0x7;
+        const auto cNow = std::chrono::steady_clock::now();
+        const auto it = s_down.find(apActor->formID);
+        if (cKnockedNpc && it == s_down.end())
+        {
+            s_down[apActor->formID] = Down{cNow, {}, false, false};
+            spdlog::info("KnockDown: NPC copy {:X} lies in its own ragdoll (knock state {}); it stays where it fell until it gets up", apActor->formID, cKnockState);
+        }
+        else if (cKnockedNpc)
+        {
+            // Here the owner is no longer bleeding out (that returned above), so the copy should get up too.
+            // A copy that fell into its own bleedout has the owner's life state written over it, and its queued get-up then never starts.
+            // The graph's own get-up event starts it (live-copy-bleedout).
+            Down& down = it.value();
+            if (cKnockState != cKnockQueued)
+                down.QueuedSince = {};
+            else if (down.QueuedSince == std::chrono::steady_clock::time_point{})
+                down.QueuedSince = cNow;
+            else if (!down.SentGetUp && cNow - down.QueuedSince > 1500ms)
+            {
+                down.SentGetUp = true;
+                BSFixedString event("GetUpBegin");
+                const bool cTaken = apActor->SendAnimationEvent(&event);
+                spdlog::info("KnockDown: NPC copy {:X} waited {} ms with its get-up queued; sent it 'GetUpBegin' ({})", apActor->formID,
+                             std::chrono::duration_cast<std::chrono::milliseconds>(cNow - down.QueuedSince).count(), cTaken ? "taken" : "not taken");
+            }
+            if (!down.SaidLong && cNow - down.Since > 15s)
+            {
+                down.SaidLong = true;
+                spdlog::warn("KnockDown: NPC copy {:X} still lies after 15 s (knock state {})", apActor->formID, cKnockState);
+            }
+        }
+        else if (!cKnockedNpc && it != s_down.end())
+        {
+            spdlog::info("KnockDown: NPC copy {:X} is up again after {} ms", apActor->formID,
+                         std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count());
+            s_down.erase(it);
+        }
+    }
+    if (cKnockedNpc)
+        return;
+
     if (apActor->actorState.IsDead())
     {
         // A dead body is moved to where the owner's corpse lies, but only when it is clearly elsewhere.
@@ -301,7 +427,9 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         static uint32_t s_worstActor = 0;
         static std::chrono::steady_clock::time_point s_nextLog = std::chrono::steady_clock::now() + 10s;
 
-        if (glm::distance(static_cast<glm::vec3>(apActor->position), position) > 2.f)
+        // A move is counted by speed, over 50 units a second, so it does not depend on the frame rate.
+        const float cStep = glm::distance(static_cast<glm::vec3>(apActor->position), static_cast<glm::vec3>(position));
+        if (cDeltaTime > 0.0 && cStep / static_cast<float>(cDeltaTime) > 0.05f)
         {
             ++s_moved;
             // Counted only when the variables are unchanged and all zero.
@@ -367,8 +495,12 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     apActor->SetRotation(finalX, finalY, finalZ);
 }
 
-void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationComponent, const InterpolationComponent::TimePoint& acPoint) noexcept
+void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationComponent, const InterpolationComponent::TimePoint& acPoint, const double aArrivalTime) noexcept
 {
+    // A duplicate carries nothing new.
+    if (!aInterpolationComponent.Clock.AddSample(aArrivalTime, acPoint.Tick))
+        return;
+
     // Interpolating between two points too far apart for any actor to travel would drag (or launch) the actor across.
     // The buffer keeps no worldspace, so points either side of a worldspace change can be hundreds of cells apart.
     // Points are about 0.1 s apart, so a step over a cell (4096 units) drops the buffer and the actor arrives at the new place.
@@ -415,6 +547,7 @@ void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationCompone
 
     if (!inserted)
         aInterpolationComponent.TimePoints.push_back(acPoint);
+    aInterpolationComponent.HasNewTimePoint = true;
 
     // Normally Update consumes old points each frame.
     // If the playback clock stalls or the sender's clock runs ahead, the buffer would grow without bound, so keep the newest few seconds.

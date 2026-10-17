@@ -147,6 +147,8 @@ SLIDE = re.compile(r'SlideDiag: (\d+) of (\d+) moves of a remote body')
 SILENCE = re.compile(r'Silence: sent nothing for (\d+) ms; menus \[([^\]]*)\]')
 JUMP = re.compile(r'JumpDiag: a buffered point was ([0-9.]+) units from the one before it, at \(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\).*?(\d+) since')
 BACKLOG = re.compile(r'newest buffered tick (-?\d+) to (-?\d+) ms ahead of playback, (\d+) updates had no future point')
+PLAYERS_AHEAD = re.compile(r'InterpDiag players: (\d+) updates, newest point ahead of playback: lowest (-?\d+), 1% (-?\d+), 5% (-?\d+), median (-?\d+) ms; (\d+) had none ahead')
+PLAYBACK = re.compile(r'PlaybackDiag: player copy (\w+) shown (\d+) ms behind its newest possible update \(snapshot interval (\d+) ms, jitter (\d+) ms\), playback rate ([\d.]+), extrapolating (\w+)')
 SLOW_UPDATE = re.compile(r'Mod update took ([0-9.]+) ms, slowest section ([A-Za-z:]+)')
 SKELETON_SEARCH = re.compile(r'local skeleton searched in ([0-9.]+) ms')
 NOT_POSED = re.compile(r'not posed this time: (.+?) \(')
@@ -270,6 +272,24 @@ def analyse(lines):
                         % (worst_behind, starved)))
         else:
             out.append(('Interpolation backlog', 'worst %d ms behind playback, %d updates with nothing after them: healthy.' % (worst_behind, starved)))
+
+    ahead = [tuple(int(v) for v in m.groups()) for m in (PLAYERS_AHEAD.search(l) for l in lines) if m]
+    if ahead:
+        updates = sum(a[0] for a in ahead)
+        none = sum(a[5] for a in ahead)
+        medians = sorted(a[4] for a in ahead)
+        out.append(('Remote players ahead of playback',
+                    '%d windows, %d updates: median of the per-window medians %d ms, lowest 5%% at worst %d ms, lowest %d ms; %d updates (%.1f%%) had no point ahead '
+                    '(the actor extrapolated or held). How much of the delay the network really used.'
+                    % (len(ahead), updates, medians[len(medians) // 2], min(a[3] for a in ahead), min(a[1] for a in ahead), none, 100.0 * none / max(updates, 1))))
+
+    clocks = [m.groups() for m in (PLAYBACK.search(l) for l in lines) if m]
+    if clocks:
+        delays = sorted(int(c[1]) for c in clocks)
+        out.append(('Playback delay (adaptive)',
+                    '%d samples: delay median %d ms, range %d-%d ms; snapshot interval median %d ms, jitter median %d ms; extrapolating in %d samples.'
+                    % (len(clocks), delays[len(delays) // 2], delays[0], delays[-1], sorted(int(c[2]) for c in clocks)[len(clocks) // 2],
+                       sorted(int(c[3]) for c in clocks)[len(clocks) // 2], sum(1 for c in clocks if c[5] == 'true'))))
 
     slides = [(int(m.group(1)), int(m.group(2))) for m in (SLIDE.search(l) for l in lines) if m]
     if slides:

@@ -1,0 +1,36 @@
+# A head turn alone turns only the copy's head: its body and legs keep facing where the player's body faces.
+#
+#   python Tools\VR\live-check.py live-head-turn
+#
+# The game sends the VRIK body's facing as the heading and the pose relative to it.
+# The player turns only the headset, hands still, while this bot records what it is sent about them.
+# Played back as this bot's own character, the game's copy of it must keep its heading through the head turn.
+# A large turn held long makes VRIK turn the body too, so the turn is kept small and short.
+log live head turn
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 6
+log CHECK copy exists
+wait 2
+
+log -- the player looks 35 degrees left and back, the hands still, while this bot records
+log DO look 35 800 hold 1500 back
+capture other 5
+wait 1
+
+log -- the recording, played twice as this bot's own character: the copy's heading must stay put
+infront 120
+wait 3
+log DO sleep 1
+log SHOT turned of copy
+log CHECK copy turned below 15 8
+replay me 2
+wait 2
+
+# HeadingDiag reports every 30 s: the heading sent is the body's facing, not the headset's.
+wait 30
+log CHECK logged HeadingDiag: .*off the body \(thighs\) by [0-3] \(most
+log CHECK game alive
+log done
+stop
