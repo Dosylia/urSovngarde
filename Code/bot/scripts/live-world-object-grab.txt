@@ -1,0 +1,60 @@
+# An object the other player carried and let go of can be lifted here at once, by hand (HIGGS).
+#
+#   python Tools\VR\live-check.py live-world-object-grab
+#
+# Players found that once one of them had lifted an object, the other could not lift it any more.
+# The bot carries the wooden plate by Mistwatch (reference 92D04), as live-world-object does, then lets go of it two ways:
+# put down (a rest is sent), and dropped mid-carry (nothing more is sent).
+# Each time the game's hand grabs it through HiggsVR.GrabObject: HIGGS must pull it, and the pull must be sent as this
+# player's carry. The rig's controllers never close the hand, so the plate lands at the player's feet instead of in the
+# hand; a pull is still proof that the object was handed back to physics and that HIGGS takes it.
+# Never grab a reference placed a moment before: HIGGS crashed on one in the rig (higgs_vr.dll+0x605ae).
+log live world object grab
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log DO console cow Tamriel 34 -9
+wait 30
+log DO console player.moveto 92D04
+wait 8
+# HIGGS only grabs with a hand that holds no weapon.
+log DO papyrus Actor SheatheWeapon 14
+wait 3
+
+log -- the bot carries the plate and puts it down
+moveobject 92D04 139080 -33240 -9600 held
+wait 0.5
+moveobject 92D04 139060 -33230 -9600 held
+wait 0.5
+moveobject 92D04 139040 -33220 -9600 held
+wait 0.5
+moveobject 92D04 139040 -33220 -9600 rest
+wait 2
+log CHECK logged WorldObject: 92D04 was put down over there; handed back to physics here
+log DO grab ref 92D04 right pull
+wait 3
+log CHECK logged WorldObject: 92D04 is being moved here
+wait 2
+log DO release right
+# Let go here, it comes to rest before the bot takes it.
+wait 4
+
+log -- the bot takes it again and drops it mid-carry
+moveobject 92D04 139080 -33240 -9600 held
+wait 0.5
+moveobject 92D04 139100 -33250 -9600 held
+wait 0.5
+moveobject 92D04 139120 -33260 -9600 held
+wait 4
+log CHECK logged WorldObject: 92D04 stopped being moved over there; handed back to physics here
+log DO grab ref 92D04 left pull
+wait 3
+log CHECK atleast 2 WorldObject: 92D04 is being moved here
+log CHECK game alive
+log DO god off
+wait 3
+log done
+stop

@@ -88,6 +88,11 @@ foreach ($name in @('urSovngarde.exe', 'urSovngarde.pdb', 'SkyrimTogetherVR.exe'
 Copy-Item $exe (Join-Path $Destination 'urSovngarde.exe') -Force
 Copy-Item $pdb (Join-Path $Destination 'urSovngarde.pdb') -Force
 
+# The players' own scripts go with every build, so the folder they are sent never carries an old one.
+foreach ($name in @('collect-logs.ps1', 'collect-logs.bat', 'setup-connect.ps1', 'setup-connect.bat', 'update.ps1', 'update.bat')) {
+    Copy-Item (Join-Path $PSScriptRoot $name) (Join-Path $Destination $name) -Force
+}
+
 # The MO2 executable that runs the old name is pointed at the new one, MO2 closed (it writes its own settings back
 # when it closes, and the launcher never closes it). Open, a copy under the old name keeps Play on the new build
 # until the next deploy with MO2 closed.

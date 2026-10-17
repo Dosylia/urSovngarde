@@ -413,6 +413,13 @@ class Run:
                 hits = [l for l in session_lines()[self.log_start:] if rx.search(l)]
                 ok = not hits
                 detail = 'none' if ok else '%d lines, e.g. %s' % (len(hits), hits[0][35:140].strip())
+            elif who == 'atleast':
+                # "atleast <n> <regular expression>": the client wrote at least n such lines since this script began.
+                wanted = int(words[1])
+                rx = re.compile(' '.join(words[2:]))
+                hits = [l for l in session_lines()[self.log_start:] if rx.search(l)]
+                ok = len(hits) >= wanted
+                detail = '%d lines (wanted %d)%s' % (len(hits), wanted, ', the last ' + hits[-1][35:140].strip() if hits else '')
             elif who == 'logged':
                 # "logged <regular expression>": the client wrote such a line since this script began. For a test
                 # whose point is that a certain path was taken, not only that the game survived it.
@@ -645,7 +652,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO drop .*|DO grab .*|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -844,11 +851,26 @@ class Run:
                             papyrus('ObjectReference', 'SetPosition', '14', [me[0] + step[0], me[1] + step[1], me[2] + step[2]])
                         time.sleep(pause)
                     print('   (walked %d steps of (%.0f, %.0f, %.0f))' % (int(w[5]), step[0], step[1], step[2]), flush=True)
-                elif text.startswith('DO grab dropped ') or text.startswith('DO grab npc '):
+                elif text.startswith('DO release '):
+                    # "DO release left|right": HIGGS's hand lets go of what it holds (the hand switched off and on again).
+                    is_left = text.split()[2] == 'left'
+                    papyrus_global('HiggsVR', 'DisableHand', [is_left])
+                    time.sleep(0.5)
+                    papyrus_global('HiggsVR', 'EnableHand', [is_left])
+                    print('   (HIGGS %s hand let go; it now holds %s)' % ('left' if is_left else 'right', papyrus_global('HiggsVR', 'GetGrabbedObject', [is_left])), flush=True)
+                elif text.startswith('DO grab dropped ') or text.startswith('DO grab npc ') or text.startswith('DO grab ref '):
                     # "DO grab dropped left|right": HIGGS's hand takes what "DO drop ... here" dropped (HiggsVR.GrabObject;
                     # no controllers needed). "DO grab npc left|right": the game's copy of the bot's NPC (a corpse, say).
-                    is_left = text.split()[3] == 'left'
-                    ref = getattr(self, 'dropped_here', None) if text.startswith('DO grab dropped ') else self.subject('npc')[0]
+                    # "DO grab ref <hex> left|right [pull]": any reference, such as an object the other player just moved.
+                    # With "pull" the hold is not checked: the rig's controllers make HIGGS pull an object to the player's
+                    # feet but never close the hand on it, so only the pull (sent as this player's carry) can be checked.
+                    words = text.split()
+                    pull_only = words[-1] == 'pull'
+                    if words[2] == 'ref':
+                        ref, is_left = words[3], words[4] == 'left'
+                    else:
+                        is_left = words[3] == 'left'
+                        ref = getattr(self, 'dropped_here', None) if words[2] == 'dropped' else self.subject('npc')[0]
                     # Why a hand would refuse: HIGGS grabs only with an idle (or selecting) hand that is not disabled and
                     # not the hand of a drawn weapon.
                     for side in (False, True):
@@ -865,7 +887,8 @@ class Run:
                     held_id = held.get('formId', '') if isinstance(held, dict) else str(held)
                     ok = bool(ref) and isinstance(held, dict) and int(held_id, 16) & 0xFFFFFFFF == int(ref, 16) & 0xFFFFFFFF
                     print('   (HIGGS: can grab %s, grab %s, now holds %s)' % (can, grab, held), flush=True)
-                    self.results.append((ok, text.strip(), 'holds %s' % held))
+                    if not pull_only:
+                        self.results.append((ok, text.strip(), 'holds %s' % held))
                 elif text.strip() == 'DO bring held to copy weapon':
                     # Moves the player by however far the held item is from the centre of the copy's sword body, so the
                     # hand -- and what it holds -- goes there.

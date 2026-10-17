@@ -25,7 +25,8 @@ Both players must run the current tools folder (v1.9.3-12-gf7decbde-dirty.934076
 of the player who watches: in the session of 2026-10-14 evening Seen still ran 4ccd5ff, so nothing that his game draws
 or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
 
-Session of 2026-10-16 evening (both on d3c1974; player 2 joined first). Build fb88297 (deployed, client and server):
+Session of 2026-10-16 evening (both on d3c1974; player 2 joined first). Current build 97b6cd0 (deployed, client and
+server; it has everything fb88297 had). Both players need it.
 
 - [ ] **Player 1 cannot see her own arrows** (new on 2026-10-16; player 2 saw them on her bow and saw her shots).
       Her log has every draw (states 8, 9, 10) and nothing of ours touches her own arrow; no echo of her ArrowNocked
@@ -44,20 +45,41 @@ Session of 2026-10-16 evening (both on d3c1974; player 2 joined first). Build fb
       object dropped off the watch list mid-carry never sent its rest (8 of 20 carries); a hand pausing 600 ms counted
       as a put-down, which the other side lets go of after 500 ms; a carry near the other player's copy was never sent.
       Since fb88297: carried objects stay watched until they rest, rest needs 1 s of stillness, and a restart within 3 s
-      of this player's own carry is sent next to the other player. Rig: `live-world-object` 8 of 8. Not settled: why
-      the other player can't lift it after (our state is always handed back to physics; HIGGS may refuse while the
-      other game still moves it). To see in play: carry a cup past the other player, then let them take it.
+      of this player's own carry is sent next to the other player. Rig: `live-world-object` 8 of 8.
+      Lifting after the other player: `live-world-object-grab` (new, 97b6cd0) has the bot carry the plate and put it down,
+      then carry it again and drop it mid-carry; each time the game's HIGGS hand grabs it at once. 6 of 6: HIGGS pulls it
+      and the pull goes out as this player's carry (the rig's hands mostly cannot close, so the hold itself is not
+      checked; once it even held). So an object is free here as soon as the other side lets go. What players met was
+      most likely the other game still sending (held 2 s after a carry stopped without a rest, fixed above). To see in
+      play: carry a cup past the other player, put it down, and let them take it at once.
 - [ ] **Downed essential NPCs slide on the floor** (player 2, 2026-10-16): on player 2's screen no NPC was a copy, so it
       is his own NPCs (our SetPosition hook, PLANCK or HIGGS). `Tools/VR/bleedout-slide.py` knocks an essential bandit
       down in the rig, connected then offline: first run 180 against 142 units, but the bandit stood up inside the 12 s,
       so the run needs to measure only while it lies down. On player 1's screen a copy stayed downed after its owner
       got up (21:16:54 `'bleedOutStop' refused`).
+      Rig 2026-10-16 (97b6cd0), `bleedout-slide.py` now keeps the bandit down and reads its pelvis node: kneeling in
+      bleedout, idle or with the player's sword swept across it every 2.5 s, it does not move, connected or offline
+      (pelvis net 0-1 units; the 2 units a sample are the breathing loop). Our SetPosition hook behaves the same
+      offline, and calls the game's own function, so it is no longer a suspect. Players described NPCs lying flat, which
+      is a knock-down (PLANCK), and the rig's scripted swings make no PLANCK hit. Since 97b6cd0 every game logs
+      `DownedTravel: own NPC ... moved N units in M ms while down (life state, knock state)` for its own NPCs (checked in
+      the rig: a push gave `moved 643 units ... knock state 1`). To see in play: when one slides, say the time and
+      whose screen; both logs.
 - [ ] **Two-handed sword grip sometimes wrong** (player 2): his greatsword was equipped on the copy by the event path
       with the right-hand slot after a respawn (the snapshot path uses both hands since 9340761). Not shown to cause the
       grip; ask which screen it was.
-- [ ] **Player 2's crash at 20:55** (not connected, 2 s after a load in Sovngarde): a freed scene-graph node visited by
+- [!] **Player 2's crash at 20:55** (not connected, 2 s after a load in Sovngarde): a freed scene-graph node visited by
       culling, the same family as KNOWN_ISSUES's +0xCBFD24; nothing of ours in it. Needs his
-      `logs\crash_UTC_2026-10-16_18-55-15.small.dmp` (collect-logs leaves small dumps out).
+      `logs\crash_UTC_2026-10-16_18-55-15.small.dmp`, sent by hand (it is a day old by the next session).
+      collect-logs left the small dumps out (it looked in the client folder, not its `logs`); since 97b6cd0 it takes
+      the two newest small dumps (two crashes, not one crash's two dumps), and the client deploy copies the players'
+      scripts (collect-logs, setup-connect, update) into the tools folder each time, so an old one is never sent.
+- [ ] **CommunityShaders.dll+0x1208c8 (read at 0x144) at a loading screen**: four times in the rig (2026-10-12 three
+      times, 2026-10-16 once), always the first instant of a load out of Mistwatch, never yet in play. Nothing of ours
+      in it: no deleted actor in a register, the render thread, and the actors spawning that instant are the game's
+      own cell load. Watch for it in play.
+- [ ] **HIGGS crash on a scripted grab** in the rig (higgs_vr.dll+0x605ae, 2026-10-16 22:09): HiggsVR.GrabObject on a
+      plate placed by PlaceAtMe a moment before. A test-only call; noted in `live-world-object-grab`.
 - [ ] `Character with remote id ... is already spawned` is routine (the server re-sends at each cell crossing): debug
       level since fb88297.
 

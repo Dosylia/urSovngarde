@@ -52,11 +52,16 @@ Get-ChildItem $skse -Filter 'crash-*.log' -ErrorAction SilentlyContinue |
 
 # Newest crash dump from the last day. They are large, but compress well.
 $dumps = @(Get-ChildItem $ClientFolder -Filter 'crash_*.dmp' -ErrorAction SilentlyContinue)
+# Our crash handler writes its small dumps next to the client log.
+$dumps += @(Get-ChildItem (Join-Path $ClientFolder 'logs') -Filter 'crash_*.dmp' -ErrorAction SilentlyContinue)
 $overwrite = Join-Path (Split-Path (Split-Path $ClientFolder -Parent) -Parent) 'overwrite\Root'
 $dumps += @(Get-ChildItem $overwrite -Filter 'crash_*.dmp' -ErrorAction SilentlyContinue)
 # Two, not one: a crash and the one before it are often the pair that tells them apart. They are large, so not
-# more than two.
-$dumps | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-1) } |
+# more than two. A crash leaves a small dump and a full one; the small ones come first, so two dumps are two crashes.
+$dumps = @($dumps | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-1) })
+$small = @($dumps | Where-Object { $_.Name -like '*.small.dmp' })
+if ($small.Count -gt 0) { $dumps = $small }
+$dumps |
     Sort-Object LastWriteTime -Descending | Select-Object -First 2 |
     ForEach-Object { Add-File $_.FullName }
 

@@ -433,6 +433,47 @@ ActorValues StandingValues(const ActorValues& acValues, const uint32_t aFormId) 
     }
     return values;
 }
+
+// Measurement: an NPC this game runs that travels while it lies down (bleedout, essential down, knocked down).
+// Players saw downed essential NPCs slide along the floor; this says on whose game, and in which state.
+// Called about ten times a second per NPC; one line per NPC at most every five seconds.
+void NoteDownedTravel(uint32_t aFormId) noexcept
+{
+    struct Down
+    {
+        NiPoint3 From;
+        std::chrono::steady_clock::time_point Since;
+        std::chrono::steady_clock::time_point SaidAt;
+    };
+    static TiltedPhoques::Map<uint32_t, Down> s_down;
+
+    Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    const uint32_t cFlags = pActor ? pActor->actorState.flags1 : 0;
+    const uint32_t cLife = (cFlags >> 21) & 0xF;  // ACTOR_LIFE_STATE: 3 unconscious, 7 essential down, 8 bleedout
+    const uint32_t cKnock = (cFlags >> 25) & 0x7; // KNOCK_STATE_ENUM: 0 normal, anything else on the way down or up
+    const bool cDown = pActor && !pActor->actorState.IsDeadOrDying() && (pActor->actorState.IsBleedingOut() || cLife == 3 || cKnock != 0);
+    if (!cDown)
+    {
+        s_down.erase(aFormId);
+        return;
+    }
+
+    const auto cNow = std::chrono::steady_clock::now();
+    auto [it, fresh] = s_down.try_emplace(aFormId, Down{pActor->position, cNow, {}});
+    if (fresh || cNow - it->second.Since < 1s)
+        return;
+    const NiPoint3 cAt = pActor->position;
+    const float dx = cAt.x - it->second.From.x, dy = cAt.y - it->second.From.y, dz = cAt.z - it->second.From.z;
+    const float cMoved = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (cMoved > 30.f && cNow - it->second.SaidAt > 5s)
+    {
+        it.value().SaidAt = cNow;
+        spdlog::info("DownedTravel: own NPC {:X} moved {:.0f} units in {} ms while down (life state {}, knock state {}), now at ({:.0f}, {:.0f}, {:.0f})", aFormId, cMoved,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count(), cLife, cKnock, cAt.x, cAt.y, cAt.z);
+    }
+    it.value().From = cAt;
+    it.value().Since = cNow;
+}
 } // namespace
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
@@ -2994,6 +3035,9 @@ void CharacterService::RunLocalUpdates() const noexcept
 
         if (!fullSnapshot && formIdComponent.Id != 0x14)
             continue;
+
+        if (formIdComponent.Id != 0x14)
+            NoteDownedTravel(formIdComponent.Id);
 
         AnimationSystem::Serialize(m_world, message, localComponent, animationComponent, formIdComponent);
     }
