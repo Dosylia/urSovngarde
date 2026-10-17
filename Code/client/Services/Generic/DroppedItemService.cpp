@@ -71,6 +71,20 @@ constexpr float kMovedAngle = 0.05f;
 //! Physics settling and a still hand stay under this, and each restart holds the object in the other games again.
 constexpr float kRestartDistance = 8.f;
 constexpr float kRestartAngle = 0.3f;
+// A move from the other side further than this is a jump (a load, a teleport), made with MoveTo; nearer ones move the 3D in place.
+constexpr float kMoveInPlaceDistance = 1000.f;
+
+// Puts an object the other side moves where it says, without building its 3D again when it only moved a little.
+void PlaceMovedObject(TESObjectREFR* apRef, const glm::vec3& acPosition, const glm::vec3& acRotation) noexcept
+{
+    apRef->SetRotation(acRotation.x, acRotation.y, acRotation.z);
+    const NiPoint3 cTarget(acPosition);
+    const glm::vec3 cNow(apRef->position.x, apRef->position.y, apRef->position.z);
+    if (apRef->GetNiNode() && glm::distance(cNow, acPosition) < kMoveInPlaceDistance)
+        apRef->SetPositionInPlace(cTarget);
+    else if (TESObjectCELL* pCell = apRef->GetParentCellEx())
+        apRef->MoveTo(pCell, cTarget);
+}
 
 //! Where an item really is: its node's world transform follows physics, while the reference's position may lag.
 //! NiAVObject::world is at 0x7C, as VRBodySync reads it.
@@ -750,7 +764,10 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
             pRef->SetMotionType(TESObjectREFR::kMotionDynamic);
             motion.Held = false;
             motion.QuietUntil = aNow + cHoldFor;
-            spdlog::info("WorldObject: {:X} {}; handed back to physics here", cFormId, motion.RemoteAtRest ? "was put down over there" : "stopped being moved over there");
+            spdlog::info("WorldObject: {:X} {}; handed back to physics here ({} of its {} moves here rebuilt its 3D)", cFormId,
+                         motion.RemoteAtRest ? "was put down over there" : "stopped being moved over there", motion.HeldRebuilds, motion.HeldMoves);
+            motion.HeldMoves = 0;
+            motion.HeldRebuilds = 0;
         }
 
         if (motion.Held || aNow < motion.QuietUntil)
@@ -877,11 +894,14 @@ void DroppedItemService::OnNotifyWorldObjectMove(const NotifyWorldObjectMove& ac
 
     const glm::vec3 position(acMessage.Position);
     const NiNode* pNodeBefore = pRef->GetNiNode();
-    pRef->SetRotation(acMessage.Rotation.x, acMessage.Rotation.y, acMessage.Rotation.z);
-    if (TESObjectCELL* pObjectCell = pRef->GetParentCellEx())
-        pRef->MoveTo(pObjectCell, NiPoint3(position));
-    if (const NiNode* pNodeAfter = pRef->GetNiNode(); pNodeBefore && pNodeAfter && pNodeAfter != pNodeBefore)
-        pRef->SetMotionType(TESObjectREFR::kMotionKeyframed);
+    PlaceMovedObject(pRef, position, acMessage.Rotation);
+    ++motion.HeldMoves;
+    if (const NiNode* pNodeAfter = pRef->GetNiNode(); pNodeBefore && pNodeAfter != pNodeBefore)
+    {
+        ++motion.HeldRebuilds;
+        if (pNodeAfter)
+            pRef->SetMotionType(TESObjectREFR::kMotionKeyframed);
+    }
 
     motion.LastRemote = now;
     motion.LastPosition = position;
@@ -917,9 +937,7 @@ void DroppedItemService::OnNotifyDroppedItemMove(const NotifyDroppedItemMove& ac
 
     const glm::vec3 position(acMessage.Position);
     const NiNode* pNodeBefore = pRef->GetNiNode();
-    pRef->SetRotation(acMessage.Rotation.x, acMessage.Rotation.y, acMessage.Rotation.z);
-    if (TESObjectCELL* pCell = pRef->GetParentCellEx())
-        pRef->MoveTo(pCell, NiPoint3(position));
+    PlaceMovedObject(pRef, position, acMessage.Rotation);
 
     // A rebuilt 3D has a dynamic body again, which would fall, so it is held again.
     // Logged once, to learn whether a move ever rebuilds it.

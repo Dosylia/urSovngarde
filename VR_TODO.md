@@ -25,8 +25,8 @@ Both players must run the current tools folder (v1.9.3-12-gf7decbde-dirty.934076
 of the player who watches: in the session of 2026-10-14 evening Seen still ran 4ccd5ff, so nothing that his game draws
 or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
 
-Session of 2026-10-16 evening (both on d3c1974; player 2 joined first). Current build 97b6cd0 (deployed, client and
-server; it has everything fb88297 had). Both players need it.
+Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on 5342bc0). Current build f56dc9e
+(deployed, client and server). Both players need it.
 
 - [ ] **Cutscene voice lines and subtitles out of step in a party** (upstream ea0f6c39, ported 2026-10-17; a protocol
       change, so both players need 5342bc0 or later). Every game plays a quest's scenes itself, and the relayed line
@@ -36,11 +36,6 @@ server; it has everything fb88297 had). Both players need it.
       on the other side; a repeat within a second is no longer sent. Rig: `live-scene-dialogue` 3 of 3 (Whiterun's
       market scene 5B1BA sent with its scene, each line once). The skip itself needs two real games. To see in play: a
       quest scene with both players near, voices in step and no line cut short.
-- [ ] **Player 1 cannot see her own arrows** (new on 2026-10-16; player 2 saw them on her bow and saw her shots).
-      Her log has every draw (states 8, 9, 10) and nothing of ours touches her own arrow; no echo of her ArrowNocked
-      came back. Since fb88297 `ArrowDiag:` logs her own arrow nodes (VR room nodes, first and third person) with
-      parent, hidden flag and distance from each hand, whenever they change while a weapon is out. Rig: builds and runs,
-      but the rig cannot nock. To see in play: draw once before F6 and once after; send the log either way.
 - [ ] **Arrow held in the hand before nocking** not seen by the other player: not sent at all. The same `ArrowDiag:`
       lines show which node the game makes for it, which is what to send.
 - [ ] **Player 2's hits did not hurt player 1 much** (21:02-21:03): on player 2's game, player 1's sword and shield
@@ -58,8 +53,15 @@ server; it has everything fb88297 had). Both players need it.
       then carry it again and drop it mid-carry; each time the game's HIGGS hand grabs it at once. 6 of 6: HIGGS pulls it
       and the pull goes out as this player's carry (the rig's hands mostly cannot close, so the hold itself is not
       checked; once it even held). So an object is free here as soon as the other side lets go. What players met was
-      most likely the other game still sending (held 2 s after a carry stopped without a rest, fixed above). To see in
-      play: carry a cup past the other player, put it down, and let them take it at once.
+      most likely the other game still sending (held 2 s after a carry stopped without a rest, fixed above).
+      2026-10-17 (5342bc0): carries now end with a put-down every time, but the cup still blinked nearly invisible
+      while carried, and player 2 could not lift it after. Measured in the rig: every move from the carrier rebuilt the
+      object's 3D on the other side (`6 of its 6 moves here rebuilt its 3D`): MoveTo builds the 3D again. Since f56dc9e
+      a move of under 1000 units uses the game's own SetPosition, which moves the 3D in place (`0 of its 6 moves`);
+      MoveTo stays for a jump. Rig: `live-world-object` 8 of 8, `live-world-object-grab` 6 of 6 (the hand held the plate
+      at once after the put-down), `live-world-object-reload` (new) 6 of 6: the plate keeps its 3D after a carry and
+      after its cell loads again. To see in play: carry a cup past the other player; it moves smoothly in steps, and
+      they can lift it once it is down.
 - [ ] **Downed essential NPCs slide on the floor** (player 2, 2026-10-16): on player 2's screen no NPC was a copy, so it
       is his own NPCs (our SetPosition hook, PLANCK or HIGGS). `Tools/VR/bleedout-slide.py` knocks an essential bandit
       down in the rig, connected then offline: first run 180 against 142 units, but the bandit stood up inside the 12 s,
@@ -71,8 +73,17 @@ server; it has everything fb88297 had). Both players need it.
       offline, and calls the game's own function, so it is no longer a suspect. Players described NPCs lying flat, which
       is a knock-down (PLANCK), and the rig's scripted swings make no PLANCK hit. Since 97b6cd0 every game logs
       `DownedTravel: own NPC ... moved N units in M ms while down (life state, knock state)` for its own NPCs (checked in
-      the rig: a push gave `moved 643 units ... knock state 1`). To see in play: when one slides, say the time and
-      whose screen; both logs.
+      the rig: a push gave `moved 643 units ... knock state 1`).
+      2026-10-17 (5342bc0), in Sovngarde: player 1 owned the heroes and knocked 29C12 and 29C10 down. Player 1's game:
+      `DownedTravel` at 08:00:57 and 08:03:15, the moment each got up. Player 2's copies, the same moments:
+      `'bleedOutStop' refused as an action ...; sent to its graph instead (not taken)`. So the owner's NPC stands up and
+      walks on, the copy refuses to get up, and it follows the walk lying down: the slide. The graph not taking the
+      event says the copy was not in the bleedout state at all, but lying in another. The rig does not reproduce it
+      yet: `live-copy-bleedout` (new: the game knocks an essential bandit down and up while the bot records it, then
+      the bot replays the recording on a bandit of its own, so the game's copy gets the owner's real actions) stands
+      the copy up at full, low and zero health. Since f56dc9e the refusal line adds the copy's own life state, knock
+      state and health from before the owner's state was written over it. To see in play: a downed NPC that gets up;
+      the `ReplayDiag: 'bleedOutStop' refused` line from the screen it slid on.
 - [ ] **Two-handed sword grip sometimes wrong** (player 2): his greatsword was equipped on the copy by the event path
       with the right-hand slot after a respawn (the snapshot path uses both hands since 9340761). Not shown to cause the
       grip; ask which screen it was.
@@ -86,6 +97,12 @@ server; it has everything fb88297 had). Both players need it.
       times, 2026-10-16 once), always the first instant of a load out of Mistwatch, never yet in play. Nothing of ours
       in it: no deleted actor in a register, the render thread, and the actors spawning that instant are the game's
       own cell load. Watch for it in play.
+- [ ] **Freeze in the Alduin fight** (player 1, 2026-10-17 08:10): no frame from 08:10:05, music still playing,
+      SteamVR "Waiting"; no crash entry. The watchdog: the main thread waits inside the game (`SkyrimVR+0x5b8d4c`, the
+      main-loop frames the Community Shaders crashes also go through), and the thread that last ran our update waits
+      inside the game too; none of our code on either stack. What the main thread waited for is not in the log. Since
+      f56dc9e the watchdog writes every thread's stack to `logsreeze.small.dmp` once per stall (one file, the latest
+      freeze; collect-logs takes it). To see in play: after a freeze, that file.
 - [ ] **HIGGS crash on a scripted grab** in the rig (higgs_vr.dll+0x605ae, 2026-10-16 22:09): HiggsVR.GrabObject on a
       plate placed by PlaceAtMe a moment before. A test-only call; noted in `live-world-object-grab`.
 - [ ] `Character with remote id ... is already spawned` is routine (the server re-sends at each cell crossing): debug
@@ -248,8 +265,12 @@ server; it has everything fb88297 had). Both players need it.
       heading turned while the body stayed still. Rig: standing still, sent = headset exactly, body 7 deg off; the
       virtual headset turned 60 deg with the hands still, the actor's heading followed at once (237 -> 177 and back),
       the body lagged up to 50 deg, and 22 of the 120 deg the heading turned came while the body did not move at all.
-      To see in play: nothing to do but play; send both logs. What to read: the body gap while standing and looking
-      around, against walking.
+      Seen in play 2026-10-17 (both games, 56 windows of 30 s): the sent heading is the headset's in every window
+      (1-2 deg on average); the body is 7-35 deg off on average and up to 172; standing and looking around, all of the
+      heading's turning came with the body still (player 2: 371 of 371, 329 of 329 deg). Confirmed: the fix is to send
+      the body's facing as the heading and the head relative to it. Not started. To check first: whether the VR pose's
+      bones are captured relative to the actor's heading (that frame would change too), and how the walk direction the
+      copy plays depends on the heading.
 - [ ] **Map greyed out indoors** (player 2, 2026-10-11 and 2026-10-14): no code of ours touches the map indoors and it
       worked outside. To settle it: open the map inside any building with the mod not connected.
 - [ ] **An in-headset menu:** the urSovngarde menu as a SteamVR dashboard tab with large text, a small overlay for chat.

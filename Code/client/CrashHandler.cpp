@@ -1020,6 +1020,18 @@ DWORD WINAPI WatchdogMain(LPVOID) noexcept
         const DWORD cUpdate = s_updateThreadId.load(std::memory_order_relaxed);
         if (cUpdate != cMain)
             LogThread("thread that last ran our update", cUpdate);
+
+        // Every thread's stack, once per stall: a main thread waiting says nothing about what it waits for.
+        // One file, overwritten by the next freeze, so freezes never fill the folder.
+        if (reportsForBeat == 1)
+        {
+            const auto cPath = TiltedPhoques::GetPath() / "logs" / "freeze.small.dmp";
+            DWORD error = 0;
+            if (const uint64_t cSize = SmallDump::Write(cPath, nullptr, nullptr, error))
+                spdlog::error("FreezeWatchdog: every thread's stack written to logs\\freeze.small.dmp ({} KB)", cSize / 1024);
+            else
+                spdlog::error("FreezeWatchdog: the freeze dump could not be written (error {:#x})", error);
+        }
         spdlog::default_logger()->flush();
     }
 }

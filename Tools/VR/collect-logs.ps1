@@ -61,6 +61,9 @@ $dumps += @(Get-ChildItem $overwrite -Filter 'crash_*.dmp' -ErrorAction Silently
 $dumps = @($dumps | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-1) })
 $small = @($dumps | Where-Object { $_.Name -like '*.small.dmp' })
 if ($small.Count -gt 0) { $dumps = $small }
+# The freeze watchdog's dump of every thread (one file, the latest freeze), when it is from the last day.
+$freeze = Get-Item (Join-Path $ClientFolder 'logs\freeze.small.dmp') -ErrorAction SilentlyContinue
+if ($freeze -and $freeze.LastWriteTime -gt (Get-Date).AddDays(-1)) { Add-File $freeze.FullName }
 $dumps |
     Sort-Object LastWriteTime -Descending | Select-Object -First 2 |
     ForEach-Object { Add-File $_.FullName }

@@ -1546,6 +1546,24 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
                     if (!actor.IsPlayer && !actor.OwnedByUs && (actor.Base.BaseId & 0x00FFFFFF) == wanted)
                         m_captureId = actor.ServerId;
             }
+            else if (!args.empty() && args[0] == "newest")
+            {
+                // "capture newest <seconds>": the NPC whose copy reached this bot last, such as one the game just placed.
+                for (auto it = m_actors.rbegin(); it != m_actors.rend(); ++it)
+                    if (!it->IsPlayer && !it->OwnedByUs && it->ServerId != m_serverId)
+                    {
+                        m_captureId = it->ServerId;
+                        break;
+                    }
+            }
+            else if (!args.empty() && args[0].rfind("ref:", 0) == 0)
+            {
+                // "capture ref:<hex> <seconds>": the actor of that placed reference, as "claim ref:" finds it.
+                const uint32_t wanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
+                for (const auto& actor : m_actors)
+                    if ((actor.Ref.BaseId & 0x00FFFFFF) == wanted && actor.Ref != GameId{})
+                        m_captureId = actor.ServerId;
+            }
             else if (!args.empty())
                 m_captureId = static_cast<uint32_t>(std::strtoul(args[0].c_str(), nullptr, 16));
 
@@ -2337,6 +2355,26 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // want; the ones about what is left behind when a player walks away need somebody to stay behind.
     // "claim ref:<hex> [follower]": ask the server for the actor of that reference, as a game asks for an actor it has
     // loaded (a party leader's claim) or for its own follower (RequestOwnershipClaim::Follower).
+    // "claim captured": ask for the actor the last "capture" recorded, so "replay npc" can play the recording onto the game's copy.
+    if (name == "claim" && !args.empty() && args[0] == "captured")
+    {
+        const KnownActor* pFound = nullptr;
+        for (const auto& actor : m_actors)
+            if (actor.ServerId == m_captureId)
+                pFound = &actor;
+        if (!pFound)
+        {
+            spdlog::error("[script] claim: the captured actor is not known any more");
+            return true;
+        }
+        RequestOwnershipClaim request{};
+        request.ServerId = pFound->ServerId;
+        request.ExpectedOwnershipEpoch = pFound->OwnershipEpoch;
+        SendMsg(request);
+        spdlog::info("[script] claimed the captured actor {:X} at epoch {}", request.ServerId, request.ExpectedOwnershipEpoch);
+        return true;
+    }
+
     if (name == "claim" && !args.empty() && args[0].rfind("ref:", 0) == 0)
     {
         const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;

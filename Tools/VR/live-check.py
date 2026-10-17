@@ -374,6 +374,11 @@ class Run:
                 found = sorted({m.group(1) for m in (rx.search(l) for l in session_lines()[self.log_start:]) if m})
                 ok = 0 < len(found) <= most
                 detail = '%d: %s' % (len(found), ', '.join(found))
+            elif who == 'ref' and words[2] == '3d':
+                # "ref <hex> 3d": the game has that reference's 3D loaded (an object it shows).
+                loaded = papyrus('ObjectReference', 'Is3DLoaded', words[1])
+                ok = loaded is True
+                detail = 'reference %s, Is3DLoaded %s' % (words[1], loaded)
             elif who == 'ref' and words[2] == 'base':
                 # "ref <hex> base <hex>": the base the game's levelled actor at that reference has now.
                 form = words[1]
@@ -652,7 +657,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|DO face .*|DO console .*|DO key .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO walk .*|DO bring .*|DO sample .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -774,11 +779,15 @@ class Run:
                         if w in ('copy', 'npc'):
                             f, _ = self.subject(w)
                             return {'form': '0x' + (f or '0')}
+                        if w == 'placed':
+                            return {'form': '0x' + (getattr(self, 'placed', None) or '0')}
                         return {'form': '0x' + w}
                     args = [arg(w) for w in words[5:]]
                     target = words[4]
                     if target in ('copy', 'npc'):
                         target, _ = self.subject(target)
+                    elif target == 'placed':
+                        target = getattr(self, 'placed', None)
                     result = papyrus(words[2], words[3], target, args) if target else 'ERR no %s' % words[4]
                     print('   (papyrus %s.%s on %s: %s)' % (words[2], words[3], words[4], result), flush=True)
                     if isinstance(result, str) and result.startswith('ERR'):
@@ -851,6 +860,23 @@ class Run:
                             papyrus('ObjectReference', 'SetPosition', '14', [me[0] + step[0], me[1] + step[1], me[2] + step[2]])
                         time.sleep(pause)
                     print('   (walked %d steps of (%.0f, %.0f, %.0f))' % (int(w[5]), step[0], step[1], step[2]), flush=True)
+                elif text.startswith('DO place '):
+                    # "DO place <base hex> [essential]": one of that actor placed 90 units ahead of the player, remembered
+                    # as "placed" for later "DO papyrus" lines; "essential" makes its base essential, so it goes down instead
+                    # of dying. Papyrus through DevBench needs every argument, PlaceAtMe's defaults included.
+                    words = text.split()
+                    returned = papyrus('ObjectReference', 'PlaceAtMe', '14', [{'form': '0x' + words[2]}, 1, False, False])
+                    self.placed = returned.get('formId', '').replace('0x', '') if isinstance(returned, dict) else None
+                    if self.placed:
+                        heading = math.radians(papyrus('ObjectReference', 'GetAngleZ', '14') or 0.0)
+                        papyrus('ObjectReference', 'MoveTo', self.placed, [{'form': '0x14'}, 90.0 * math.sin(heading), 90.0 * math.cos(heading), 0.0, False])
+                        if 'essential' in words[3:]:
+                            base = papyrus('ObjectReference', 'GetBaseObject', self.placed)
+                            if isinstance(base, dict):
+                                papyrus('ActorBase', 'SetEssential', base.get('formId', '').replace('0x', ''), [True])
+                    print('   (placed %s as %s)' % (words[2], self.placed), flush=True)
+                    if not self.placed:
+                        self.results.append((False, text.strip(), 'PlaceAtMe returned %s' % returned))
                 elif text.startswith('DO release '):
                     # "DO release left|right": HIGGS's hand lets go of what it holds (the hand switched off and on again).
                     is_left = text.split()[2] == 'left'

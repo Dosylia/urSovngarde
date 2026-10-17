@@ -197,6 +197,9 @@ struct TESObjectREFR : TESForm
     void SetMotionType(int32_t aMotionType) const noexcept;
     void Enable() const noexcept;
     void MoveTo(TESObjectCELL* apCell, const NiPoint3& acPosition) const noexcept;
+    //! Moves the reference and its 3D where they are, as the game moves actors every frame.
+    //! MoveTo builds the 3D again instead, which shows as the object blinking when done several times a second.
+    void SetPositionInPlace(const NiPoint3& acPosition) noexcept;
     void PayGold(int32_t aAmount) noexcept;
     void PayGoldToContainer(TESObjectREFR* pContainer, int32_t aAmount) noexcept;
     bool SendAnimationEvent(BSFixedString* apEventName) noexcept;

@@ -450,6 +450,15 @@ void TESObjectREFR::MoveTo(TESObjectCELL* apCell, const NiPoint3& acPosition) co
     TiltedPhoques::ThisCall(s_internalMoveTo, this, GetNullHandle(), apCell, apCell->worldspace, acPosition, rotation);
 }
 
+void TESObjectREFR::SetPositionInPlace(const NiPoint3& acPosition) noexcept
+{
+    // TESObjectREFR::SetPosition (SE 19363, AE 19790), the function Actor.cpp hooks for actors.
+    TP_THIS_FUNCTION(TSetPosition, char, TESObjectREFR, NiPoint3&);
+    POINTER_SKYRIMSE(TSetPosition, s_setPosition, 19790, 19790);
+    NiPoint3 position = acPosition;
+    TiltedPhoques::ThisCall(s_setPosition, this, position);
+}
+
 void TESObjectREFR::PayGold(int32_t aAmount) noexcept
 {
     ScopedInventoryOverride _;

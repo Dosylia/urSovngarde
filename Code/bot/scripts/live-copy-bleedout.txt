@@ -1,0 +1,46 @@
+# A copy of an essential NPC that goes down and gets up again must get up here too.
+#
+#   python Tools\VR\live-check.py live-copy-bleedout
+#
+# Players saw downed NPCs keep lying on the floor and slide along behind their owner once the owner's NPC had stood up.
+# The copy refused the owner's "bleedOutStop" (ReplayDiag), stayed in its bleedout pose, and followed the owner's walk lying down.
+# Here the game places a Mistwatch bandit (base C0115, made essential), knocks it down and stands it up while the bot records it.
+# Then the bot brings a bandit of its own and replays the recording on it, so the game's copy of it gets the owner's real actions.
+# (The server never hands a temporary live actor to another player, so the placed bandit itself cannot be taken over.)
+log live copy bleedout
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- a bandit ahead of the player, essential so it goes down instead of dying (the bot's bandit below shares the base)
+log DO papyrus ActorBase SetEssential C0115 b:true
+log DO place C0115 essential
+wait 8
+
+log -- the game knocks it down and stands it up again while the bot records it
+log DO sleep 3
+log DO papyrus Actor DamageActorValue placed s:Health f:100000
+log DO sleep 9
+log DO papyrus Actor RestoreActorValue placed s:Health f:100000
+capture newest 22
+log DO papyrus Actor IsBleedingOut placed
+
+log -- the bot brings its own bandit and replays the recording on it; the game shows a copy of it
+npc temp C0115
+waitfor owned == 1 20
+wait 6
+# No health left, as a hero beaten down in a fight: the copy goes down by itself, and its own health is what the game checks before it lets it stand up.
+npclife alive 0
+wait 3
+replay npc
+wait 3
+log DO papyrus Actor IsBleedingOut npc
+log SHOT after of npc
+log CHECK absent ReplayDiag: 'bleedOutStop' refused
+log CHECK game alive
+log DO god off
+wait 3
+log done
+stop

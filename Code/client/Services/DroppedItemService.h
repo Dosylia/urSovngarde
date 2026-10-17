@@ -82,6 +82,9 @@ private:
         uint32_t BaseFormId{};
         bool Moving{};
         bool Held{};
+        //! Measurement: the other side's moves applied while held, and how many of them rebuilt the object's 3D.
+        uint32_t HeldMoves{};
+        uint32_t HeldRebuilds{};
         //! The other side's last update said it was put down.
         //! Still held for a moment, since a still hand sends the same.
         bool RemoteAtRest{};

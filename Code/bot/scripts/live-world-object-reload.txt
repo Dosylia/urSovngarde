@@ -1,0 +1,42 @@
+# An object the other player carried keeps its 3D here, also once its cell loads again.
+#
+#   python Tools\VR\live-check.py live-world-object-reload
+#
+# The bot carries a plate by Mistwatch (reference 92CFD) and puts it down; the game must show it then, and after the
+# player travels away and back (the cell built again).
+log live world object reload
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log DO console player.moveto 92CFD
+wait 8
+log CHECK ref 92CFD 3d
+
+log -- the bot carries the plate and puts it down
+moveobject 92CFD 139080 -33240 -9640 held
+wait 0.5
+moveobject 92CFD 139060 -33230 -9640 held
+wait 0.5
+moveobject 92CFD 139040 -33220 -9640 held
+wait 0.5
+moveobject 92CFD 139040 -33220 -9640 rest
+wait 3
+log CHECK logged WorldObject: 92CFD was put down over there
+log CHECK ref 92CFD 3d
+
+log -- away and back: the plate's cell is built again
+log DO console cow Tamriel 20 -4
+wait 25
+log DO console cow Tamriel 34 -9
+wait 25
+log DO console player.moveto 92CFD
+wait 8
+log CHECK ref 92CFD 3d
+log CHECK game alive
+log DO god off
+wait 3
+log done
+stop

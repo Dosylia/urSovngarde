@@ -9,6 +9,7 @@
 
 #include <Forms/BGSAction.h>
 #include <Forms/TESNPC.h>
+#include <Forms/ActorValueInfo.h>
 #include <AI/AIProcess.h>
 #include <Misc/MiddleProcess.h>
 
@@ -81,6 +82,7 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
         // A replayed fall would leave the copy on the floor, since the later "GetUpBegin" does not stand it up.
         constexpr uint32_t cKnockStateMask = 0xE000000;
         const bool cPlayerCopy = apActor->GetExtension()->IsRemotePlayer();
+        const uint32_t cOwnStateBefore = apActor->actorState.flags1;
         if (cPlayerCopy)
             apActor->actorState.flags1 = (first.State1 & ~(cLifeStateMask | cKnockStateMask)) | (apActor->actorState.flags1 & (cLifeStateMask | cKnockStateMask));
         else if (apActor->actorState.IsDeadOrDying())
@@ -122,7 +124,11 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
         {
             BSFixedString event("bleedOutStop");
             const bool cSent = apActor->SendAnimationEvent(&event);
-            spdlog::info("ReplayDiag: 'bleedOutStop' refused as an action on {:X}; sent to its graph instead ({})", apActor->formID, cSent ? "taken" : "not taken");
+            // The copy's own state before the owner's was written over it: what the game judged the action on.
+            spdlog::info("ReplayDiag: 'bleedOutStop' refused as an action on {:X}; sent to its graph instead ({}); before it the copy had life state {}, knock state {}, "
+                         "health {:.0f}; the owner's life state {}",
+                         apActor->formID, cSent ? "taken" : "not taken", (cOwnStateBefore >> 21) & 0xF, (cOwnStateBefore >> 25) & 0x7,
+                         apActor->GetActorValue(ActorValueInfo::kHealth), (first.State1 >> 21) & 0xF);
         }
 
         // TEMPORARY diagnostic for remote NPCs sliding while the game refuses most of their moveStart and turnStop replays.
