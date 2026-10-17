@@ -354,6 +354,36 @@ def hand_path(side, waypoints):
     return tool('input', {'action': 'sequence', 'device': 'vrTrackedSet', 'frames': frames, 'owner': 'live-check'}, timeout=15)
 
 
+def both_grips(ms):
+    """Both controllers resting at the player's sides with both grip buttons (OpenVR button 2) held for ms, then let go
+    (DevBench `input vrTrackedSet`, 20 ms frames built on the current frame, the headset at 1.6 m looking forward)."""
+    base = tool('input', {'action': 'observe', 'device': 'vrTrackedSet'})['frame']
+    frames = []
+    steps = ms // 20 + 1
+    for i in range(steps + 1):
+        held = i < steps
+        f = json.loads(json.dumps(base))
+        f.pop('seq', None)
+        f['tMs'] = i * 20
+        f['hmd']['matrix'] = [1, 0, 0, 0, 0, 1, 0, 1.6, 0, 0, 1, 0]
+        f['left']['matrix'] = [1, 0, 0, -0.25, 0, 1, 0, 1.0, 0, 0, 1, -0.1]
+        f['right']['matrix'] = [1, 0, 0, 0.25, 0, 1, 0, 1.0, 0, 0, 1, -0.1]
+        for d in ('hmd', 'left', 'right'):
+            f[d].update({'available': True, 'connected': True, 'valid': True, 'trackingResult': 200})
+            if f[d].get('index') is None:
+                f[d]['index'] = {'hmd': 0, 'left': 2, 'right': 3}[d]
+            for key in ('velocity', 'angularVelocity'):
+                f[d].setdefault(key, [0.0, 0.0, 0.0])
+            if d != 'hmd' and not f[d].get('controller'):
+                f[d]['controller'] = {'axes': [[0.0, 0.0]] * 5, 'packetNumber': 1, 'pressed': 0, 'touched': 0}
+        for d in ('left', 'right'):
+            f[d]['controller']['packetNumber'] = (base[d].get('controller') or {}).get('packetNumber', 1) + i + 1
+            f[d]['controller']['pressed'] = 4 if held else 0
+            f[d]['controller']['touched'] = 4 if held else 0
+        frames.append(f)
+    return tool('input', {'action': 'sequence', 'device': 'vrTrackedSet', 'frames': frames, 'owner': 'live-check'}, timeout=15)
+
+
 def screenshot(name, target=None):
     """The game's own screenshot through DevBench, moved out of the mod manager's overwrite folder.
 
@@ -858,7 +888,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -1136,6 +1166,16 @@ class Run:
                     print('   (placed %s as %s)' % (words[2], self.placed), flush=True)
                     if not self.placed:
                         self.results.append((False, text.strip(), 'PlaceAtMe returned %s' % returned))
+                elif text.startswith('DO grip both '):
+                    # "DO grip both <ms>": both controller grips held that long, then let go (both_grips), as a downed player gives up.
+                    ms = int(text.split()[3])
+                    try:
+                        r = both_grips(ms)
+                        print('   (both grips held %d ms: %s)' % (ms, 'queued' if r.get('queued') else r), flush=True)
+                        time.sleep(ms / 1000.0 + 0.5)
+                    except Exception as e:
+                        print('   FAIL  grip both: %s' % e, flush=True)
+                        self.results.append((False, text.strip(), str(e)))
                 elif text.startswith('DO release '):
                     # "DO release left|right": HIGGS's hand lets go of what it holds (the hand switched off and on again).
                     is_left = text.split()[2] == 'left'

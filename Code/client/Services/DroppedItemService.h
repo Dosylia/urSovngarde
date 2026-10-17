@@ -85,6 +85,8 @@ private:
         //! Measurement: the other side's moves applied while held, and how many of them rebuilt the object's 3D.
         uint32_t HeldMoves{};
         uint32_t HeldRebuilds{};
+        //! Where the other side last put it, to compare with where its 3D is drawn when it is let go.
+        glm::vec3 RemoteTarget{};
         //! The other side's last update said it was put down.
         //! Still held for a moment, since a still hand sends the same.
         bool RemoteAtRest{};

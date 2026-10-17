@@ -61,6 +61,8 @@ private:
     void EndDown(Player* apPlayer, NotifyDownedState::State aChange, const char* acWhy) noexcept;
     //! Nobody in this player's party is left standing: every member respawns. False when someone still stands.
     bool EndFallenParty(Player* apPlayer) noexcept;
+    //! Every member still standing is somewhere else or too far to come in time (ReviveRules::NobodyCanCome).
+    bool NobodyCanCome(Player* apDowned) const noexcept;
     //! Once a second: the time ran out, nobody is left standing (a member left), or a member joined who was not told yet.
     void CheckDowned() noexcept;
 

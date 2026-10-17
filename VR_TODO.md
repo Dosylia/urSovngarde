@@ -25,8 +25,8 @@ Both players must run the current tools folder (v1.9.3-12-gf7decbde-dirty.934076
 of the player who watches: in the session of 2026-10-14 evening Seen still ran 4ccd5ff, so nothing that his game draws
 or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
 
-Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on 5342bc0). Current build 3d63d8e
-(deployed, client and server). Both players need it.
+Sessions of 2026-10-16 evening (both on d3c1974), 2026-10-17 morning (both on 5342bc0) and 2026-10-17 evening (both
+on ce86908). Current build 0ff0808 (deployed, client and server; protocol 33ef1cbe, as ce86908). Both players need it.
 
 - [ ] **Cutscene voice lines and subtitles out of step in a party** (upstream ea0f6c39, ported 2026-10-17; a protocol
       change, so both players need 5342bc0 or later). Every game plays a quest's scenes itself, and the relayed line
@@ -36,8 +36,18 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       on the other side; a repeat within a second is no longer sent. Rig: `live-scene-dialogue` 3 of 3 (Whiterun's
       market scene 5B1BA sent with its scene, each line once). The skip itself needs two real games. To see in play: a
       quest scene with both players near, voices in step and no line cut short.
-- [ ] **Arrow held in the hand before nocking** not seen by the other player: not sent at all. The same `ArrowDiag:`
-      lines show which node the game makes for it, which is what to send.
+- [ ] **Arrow held in the hand before nocking** not seen by the other player: not sent at all (again 2026-10-17
+      22:06:46 on ce86908). From the `ArrowDiag:` lines in play: at attack state 0 the `ArrowNode` under the player's
+      world node moves to about 67 units from the right hand and gains an `Arrow:0` child.
+      In the tree since 28995d2 (a protocol change, ade54224: both players and the server must update): the archer's
+      game finds that arrow at the hand's hold node, ten times a second, and sends it with where it sits against the
+      third-person hand bone (`ArrowNocked: sent this player's arrow in the hand (...)`). The other game attaches the
+      arrow on its copy and keeps it where the archer holds it. From the hand to the string it is the same arrow, laid
+      along the bow as before. Compiled, TPTests 52 of 52 (two arrow round trips). Rig: `live-arrow-hand` (new: the
+      bot's copy holds the arrow at the hand, then on the string; the game's player draws and the bot hears the arrow
+      in the hand) not run yet. There is no red run: before this, nothing at all was sent for an arrow in the hand.
+      To see in play: draw a bow in front of the other player; they see the arrow in your hand. Read on their side
+      `ArrowNocked: ... arrow held in the right hand as its owner holds it, its head N units from the hand`.
 - [ ] **Player 2's hits did not hurt player 1 much** (21:02-21:03): on player 2's game, player 1's sword and shield
       bodies were taken out of the world while the world was busy; we dropped our record anyway, and the next frame
       left the bodies alone as someone else's (`already in a world; left alone`) for the rest of the fight. Player 2's
@@ -62,6 +72,13 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       at once after the put-down), `live-world-object-reload` (new) 6 of 6: the plate keeps its 3D after a carry and
       after its cell loads again. To see in play: carry a cup past the other player; it moves smoothly in steps, and
       they can lift it once it is down.
+      2026-10-17 evening (ce86908): both players lifted the same cup in turn, but neither saw the other carry it, and
+      player 2 found it where it first stood. The game's SetPosition moves only the reference, not the 3D nor its
+      collision, and the rig read the reference. Red on c09bd58 (`live-world-object` now reads where the 3D is drawn
+      when it is let go): 216 units from where the bot put it, and it came to rest where it started. Since 0ff0808 each
+      move also warps the 3D and its collision there (`Update3DPosition`): 0 units, at rest where the bot put it,
+      `live-world-object` 9 of 9. Not seen in play yet. To see in play: carry a cup in front of the other player; read
+      `its 3D is N units from the last place it was put` on the other side (a few units at most).
 - [ ] **Downed essential NPCs slide on the floor** (player 2, 2026-10-16 and 2026-10-17): the copy refused the
       owner's get-up (`'bleedOutStop' refused ... (not taken)`) and followed the owner's walk lying down.
       Cause, reproduced in the rig: at zero health the copy's own game puts it down with a ragdoll fall; each replayed
@@ -75,11 +92,18 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       Both scripts now REQUIRE that the recording holds the owner's get-up and that the copy lay flat, and judge the
       body against its feet (`npc slide below 100`, `npc standing`). Red run 2026-10-17 on a build with the fix off:
       `live-copy-bleedout` RED (the lying copy carried 1287 units along the floor, still lying at the end), the slide
-      players saw. Still to run on a build with the fix: both scripts green with these checks, and the knockdown red
-      run again (its first one was INVALID: the rig's game stopped answering).
-      To see in play: knock an essential NPC down, let it get up, watch it on the other player's screen. Read there:
-      `KnockDown: NPC copy X lies in its own ragdoll`, `... sent it 'GetUpBegin' (taken)`, `... is up again after N ms`;
-      `KnockDown: ... still lies after 15 s` means a copy still stuck.
+      players saw.
+      Seen in play 2026-10-17 evening (ce86908): the downed NPC stood back up, then jumped a little.
+      The copy gets up where it fell and then followed its owner's NPC at once. Red on c09bd58: up 219 units from where
+      its owner had it, crossed in one frame (12389 units a second). Since 0ff0808 it walks the gap at up to 300 units a
+      second on top of its owner's motion (a gap over 512 still closes at once). Rig on 0ff0808: `live-copy-knockdown`
+      5 of 5 (325 units, at most 301 units a second), `live-copy-bleedout` 4 of 4 (371 units, at most 464); both also
+      still pass the slide and standing checks. The legs play the owner's animation meanwhile, so with the owner
+      standing still the copy may glide for about a second; to be judged in play.
+      To see in play: knock an essential NPC down, let it get up, watch it on the other player's screen: no jump.
+      Read there: `KnockDown: ... is up again after N ms, D units from where its owner has it` and `... moved at most
+      N units a second in its first N ms up` (a few hundred; thousands is a jump); `... still lies after 15 s` means a
+      copy still stuck.
 - [!] **Player 2's crash at 20:55** (not connected, 2 s after a load in Sovngarde): a freed scene-graph node visited by
       culling, the same family as KNOWN_ISSUES's +0xCBFD24; nothing of ours in it. Needs his
       `logs\crash_UTC_2026-10-16_18-55-15.small.dmp`, sent by hand (it is a day old by the next session).
@@ -194,6 +218,13 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       updates extrapolated, live-walk 8/8. Lines: `PlaybackDiag:` every 10 s per remote player, read by
       `Tools/VR/session-report.py`. To see in play: the other player's hands, sword and walk closer to real time and as
       smooth as before; blocks still blocking (`Defender's rule: ... is blocked`).
+      In play 2026-10-17 evening (both on ce86908, which holds session A): the other player shown a median 74 ms behind
+      (player 1) and 76 ms (player 2), 90% of readings under 88 ms; 0.3% and 1.7% of updates with nothing ahead.
+      From 22:03:10 to 22:03:50, fighting right after player 1 was revived, player 2's delay for player 1 sat at its
+      250 ms cap (jitter up to 344 ms); gaps of up to 2.6 s with nothing ahead came at 22:08 and 22:13. Causes not
+      looked at; if it shows again, compare with player 1's frame times at that moment.
+      Blocks still decided: 9 blocked, 26 landed. No complaint about movement from the players. Next: session B
+      (unreliable movement, actions split), a protocol change.
 - [ ] **Threads and stutters:** the `Health` lines near 200 threads in both games once Seen is updated (Waiting on a
       test or action); Seen's freezes (no frame for 46 s, 2026-10-11 18:11 and 21:36) gone with it.
 - [ ] **Crash lines on a real crash:** `CrashPlace: ...` (send the log's path to the launcher worker, which parses it)

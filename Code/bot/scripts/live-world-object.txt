@@ -53,7 +53,9 @@ wait 0.5
 moveobject 92D04 139020 -33210 -9600 rest
 log CHECK logged WorldObject: 92D04 is being moved over there; holding it here and following
 wait 4
-log CHECK logged WorldObject: 92D04 was put down over there; handed back to physics here \(0 of its \d+ moves here rebuilt its 3D\)
+# Where its 3D is drawn when it is let go, against where the bot put it: a plate whose reference moves but whose 3D stays behind
+# is not seen moving at all (the players' cup).
+log CHECK logged WorldObject: 92D04 was put down over there; handed back to physics here \(0 of its \d+ moves here rebuilt its 3D; its 3D is \d units from the last place it was put\)
 
 # An item one player moves or touches must stay usable for the other player.
 # The plate was just held and let go here; the player must still be able to take it.

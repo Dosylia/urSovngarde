@@ -145,6 +145,25 @@ TEST_CASE("nobody is left to revive when every member is down, a party left with
     REQUIRE(ReviveRules::NobodyToRevive({true, true, true}));
 }
 
+TEST_CASE("a downed player waits only while a standing member could come: same place, within reach", "[revive]")
+{
+    using ReviveRules::Helper;
+    constexpr float cFar = ReviveRules::cComeToHelpUnits + 1.f;
+
+    // Nobody standing is NobodyToRevive's case.
+    REQUIRE_FALSE(ReviveRules::NobodyCanCome({}));
+    REQUIRE_FALSE(ReviveRules::NobodyCanCome({Helper{true, true, 500.f}}));
+    REQUIRE_FALSE(ReviveRules::NobodyCanCome({Helper{true, true, ReviveRules::cComeToHelpUnits}}));
+    REQUIRE(ReviveRules::NobodyCanCome({Helper{true, true, cFar}}));
+    // Another worldspace or interior: however close the numbers, they cannot come.
+    REQUIRE(ReviveRules::NobodyCanCome({Helper{true, false, 100.f}}));
+    // One who can come is enough.
+    REQUIRE_FALSE(ReviveRules::NobodyCanCome({Helper{true, false, 100.f}, Helper{true, true, 2000.f}}));
+    REQUIRE(ReviveRules::NobodyCanCome({Helper{true, false, 100.f}, Helper{true, true, cFar}}));
+    // A member whose place the server does not know yet might be near: the wait goes on.
+    REQUIRE_FALSE(ReviveRules::NobodyCanCome({Helper{false, false, 0.f}, Helper{true, true, cFar}}));
+}
+
 TEST_CASE("a player not revived respawns at the party leader's safe point, else their own, else the game's spot", "[revive]")
 {
     using ReviveRules::RespawnPoint;

@@ -20,6 +20,7 @@
 #include <Messages/NotifyDroppedItemMove.h>
 #include <Messages/ClashRequest.h>
 #include <Messages/ArrowNockedRequest.h>
+#include <Messages/NotifyArrowNocked.h>
 #include <Messages/VoiceDataRequest.h>
 #include <Messages/VoiceStateRequest.h>
 #include <Messages/NotifyVoiceData.h>
@@ -1232,6 +1233,17 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         const glm::vec3 cPlace(message.Position);
         spdlog::info("World object {:X}:{:X} moved to ({:.0f}, {:.0f}, {:.0f}){}", message.ObjectId.ModId, message.ObjectId.BaseId, cPlace.x, cPlace.y, cPlace.z,
                      message.Taken ? ", taken" : message.AtRest ? ", at rest" : "");
+        return;
+    }
+
+    if (opcode == NotifyArrowNocked::Opcode)
+    {
+        // What a game said of its player's arrow: on the string, in a hand (and where it sits there), or gone.
+        const auto& message = static_cast<const NotifyArrowNocked&>(acMessage);
+        spdlog::info("Arrow of {}: {}{}", message.ServerId, message.Nocked ? "on the string" : message.InHand ? "in the hand" : "gone",
+                     message.InHand ? fmt::format(" ({} hand, its head at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units from the hand bone)", message.HandSide ? "right" : "left",
+                                                  message.HandOffset.x, message.HandOffset.y, message.HandOffset.z, glm::length(message.HandOffset))
+                                    : std::string());
         return;
     }
 
@@ -2459,9 +2471,24 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
     // "nock on|off": an arrow on this character's bow string, or none, as a VR client says it (ArrowNockedRequest); the
     // server passes it on and the other players' games attach the arrow on their copy of this character.
+    // "nock hand [left|right] [x y z]": an arrow held in that hand (right by default), its head at x y z in the space of
+    // the hand bone (by default where a VR player's game holds it).
     if (name == "nock")
     {
         ArrowNockedRequest request{};
+        if (!args.empty() && args[0] == "hand")
+        {
+            request.InHand = true;
+            request.HandSide = args.size() > 1 && args[1] == "left" ? 0 : 1;
+            request.HandOffset = glm::vec3{0.f, 0.f, 67.f};
+            float x = 0.f, y = 0.f, z = 0.f;
+            if (args.size() > 4 && ParseFloat(args[2], x) && ParseFloat(args[3], y) && ParseFloat(args[4], z))
+                request.HandOffset = glm::vec3{x, y, z};
+            SendMsg(request);
+            spdlog::info("[script] arrow in the {} hand, its head at ({:.0f}, {:.0f}, {:.0f})", request.HandSide ? "right" : "left", request.HandOffset.x, request.HandOffset.y,
+                         request.HandOffset.z);
+            return true;
+        }
         request.Nocked = args.empty() || args[0] != "off";
         SendMsg(request);
         spdlog::info("[script] arrow {} the string", request.Nocked ? "on" : "off");

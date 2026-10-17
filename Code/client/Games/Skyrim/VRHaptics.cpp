@@ -69,6 +69,23 @@ bool Pulse(const bool aRightHand, uint16_t aDurationMicroSec) noexcept
     return true;
 }
 
+bool GripHeld(const bool aRightHand) noexcept
+{
+    vr::IVRSystem* pSystem = GetVRSystem();
+    if (!pSystem)
+        return false;
+
+    const vr::TrackedDeviceIndex_t device =
+        pSystem->GetTrackedDeviceIndexForControllerRole(aRightHand ? vr::TrackedControllerRole_RightHand : vr::TrackedControllerRole_LeftHand);
+    if (device == vr::k_unTrackedDeviceIndexInvalid)
+        return false;
+
+    vr::VRControllerState_t state{};
+    if (!pSystem->GetControllerState(device, &state, sizeof(state)))
+        return false;
+    return (state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_Grip)) != 0;
+}
+
 } // namespace VRHaptics
 
 #else
@@ -76,6 +93,11 @@ bool Pulse(const bool aRightHand, uint16_t aDurationMicroSec) noexcept
 namespace VRHaptics
 {
 bool Pulse(bool, uint16_t) noexcept
+{
+    return false;
+}
+
+bool GripHeld(bool) noexcept
 {
     return false;
 }

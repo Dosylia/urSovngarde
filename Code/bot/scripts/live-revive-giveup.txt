@@ -1,0 +1,41 @@
+# Giving up while down: the game's player goes down in a party, holds both controller grips for 3 s, and respawns at
+# once at the party's safe point instead of waiting out the revive time.
+#
+#   python Tools\VR\live-check.py live-revive-giveup
+#   python Tools\VR\live-check.py --expect-fail live-revive-giveup     on a build without it: must be RED
+#
+# The Sleep/Wait Menu opened and closed gives a safe point where the player stands. The player walks away and goes down
+# with this bot standing by, so the server waits (Gameplay:uDownedSeconds); then both grips are held.
+# The rig's controllers are DevBench's (live-check both_grips), so this checks the hold and what follows, not the feel.
+log live revive giveup
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log -- a safe point here
+log DO menu 2 Sleep/Wait Menu
+wait 6
+log REQUIRE logged PlayerService: safe point in cell
+log CHECK spot mark
+log -- the player walks away from it
+log DO walk 40 0 0 25
+wait 4
+log REQUIRE spot away 250
+log -- the player goes down; this bot stands by and does not revive it
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 2
+log REQUIRE logged PlayerService: the server gives \d+ s to be revived
+log -- both grips held for 3.5 s: the player gives up, long before the wait would end
+log DO grip both 3500
+waitfor downstate other respawned 8
+expect downstate other respawned
+wait 10
+log CHECK spot back 150
+log CHECK player alive
+log CHECK absent PlayerService: the bleedout ended by itself
+wait 3
+log CHECK game alive
+log done
+stop

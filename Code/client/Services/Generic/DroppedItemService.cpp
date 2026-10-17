@@ -81,7 +81,11 @@ void PlaceMovedObject(TESObjectREFR* apRef, const glm::vec3& acPosition, const g
     const NiPoint3 cTarget(acPosition);
     const glm::vec3 cNow(apRef->position.x, apRef->position.y, apRef->position.z);
     if (apRef->GetNiNode() && glm::distance(cNow, acPosition) < kMoveInPlaceDistance)
+    {
+        // That moves only the reference: its 3D and collision are moved to it too, warped there.
         apRef->SetPositionInPlace(cTarget);
+        apRef->Update3DPosition(true);
+    }
     else if (TESObjectCELL* pCell = apRef->GetParentCellEx())
         apRef->MoveTo(pCell, cTarget);
 }
@@ -773,8 +777,10 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
             pRef->SetMotionType(TESObjectREFR::kMotionDynamic);
             motion.Held = false;
             motion.QuietUntil = aNow + cHoldFor;
-            spdlog::info("WorldObject: {:X} {}; handed back to physics here ({} of its {} moves here rebuilt its 3D)", cFormId,
-                         motion.RemoteAtRest ? "was put down over there" : "stopped being moved over there", motion.HeldRebuilds, motion.HeldMoves);
+            // Where its 3D is drawn, against the last place the other side put it: what this player sees of the carry.
+            spdlog::info("WorldObject: {:X} {}; handed back to physics here ({} of its {} moves here rebuilt its 3D; its 3D is {:.0f} units from the last place it was put)",
+                         cFormId, motion.RemoteAtRest ? "was put down over there" : "stopped being moved over there", motion.HeldRebuilds, motion.HeldMoves,
+                         glm::distance(position, motion.RemoteTarget));
             motion.HeldMoves = 0;
             motion.HeldRebuilds = 0;
         }
@@ -914,6 +920,7 @@ void DroppedItemService::OnNotifyWorldObjectMove(const NotifyWorldObjectMove& ac
 
     motion.LastRemote = now;
     motion.LastPosition = position;
+    motion.RemoteTarget = position;
     motion.LastRotation = acMessage.Rotation;
     motion.Moving = false;
     motion.RemoteAtRest = acMessage.AtRest;

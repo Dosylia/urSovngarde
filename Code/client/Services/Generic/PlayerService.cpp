@@ -40,11 +40,45 @@
 #include <Forms/TESRace.h>
 #include <Interface/UI.h>
 #include <Services/PartyService.h>
+#include <Games/Skyrim/VRHaptics.h>
+#include <Games/Skyrim/VRBanner.h>
 
 namespace
 {
 // A third of the health back: enough to get away, not enough to fight on as if nothing happened.
 constexpr float cRevivedHealthShare = 0.3f;
+
+// While down: the game's own low-health heartbeat (Skyrim.esm UIHealthHeartbeatALPSD), a loop that plays until stopped.
+constexpr uint32_t cHeartbeatSound = 0x4DAAD;
+// Revived: the restoration spell's cast (Skyrim.esm MAGRestorationFFFireSD).
+constexpr uint32_t cReviveSound = 0x3F361;
+// The heartbeat felt in both hands: two beats, then a pause, about 55 a minute.
+constexpr auto cHeartbeatCycle = 1100ms;
+constexpr auto cFirstBeat = 70ms;
+constexpr auto cSecondBeatAt = 250ms;
+constexpr auto cSecondBeat = 50ms;
+constexpr auto cRevivePulse = 300ms;
+// Both grips held this long while down gives up the wait.
+constexpr auto cGiveUpHold = 3s;
+// "YOU DIED" in a dark red as the screen fades out; the place's name in gold as it fades back in.
+constexpr uint32_t cDiedColour = 0xA31919;
+constexpr uint32_t cPlaceColour = 0xD4AF37;
+
+// The name a player gives where it stands: its location ("Riverwood"), else its cell's, else its worldspace's.
+const char* PlaceNameOf(const PlayerCharacter* apPlayer) noexcept
+{
+    const auto nameOf = [](const TESForm* apForm) -> const char*
+    {
+        const char* pName = apForm ? apForm->GetName() : nullptr;
+        return pName && *pName ? pName : nullptr;
+    };
+    const char* pPlace = nameOf(apPlayer->locationForm);
+    if (!pPlace)
+        pPlace = nameOf(apPlayer->GetParentCellEx());
+    if (!pPlace)
+        pPlace = nameOf(apPlayer->GetWorldSpace());
+    return pPlace;
+}
 
 // The cell of a safe point: the interior itself, or the exterior cell at its position in its worldspace, which may need loading.
 TESObjectCELL* FindSafePointCell(World& aWorld, const GameId& acCellId, const GameId& acWorldSpaceId, const glm::vec3& acPosition) noexcept
@@ -88,6 +122,8 @@ void PlayerService::OnUpdate(const UpdateEvent&) noexcept
     RunSafePointUpdates();
     RunRespawnUpdates();
     RunPostDeathUpdates();
+    RunDownedCues();
+    VRBanner::Update();
     RunDifficultyUpdates();
     RunLevelUpdates();
     RunBeastFormDetection();
@@ -127,6 +163,10 @@ void PlayerService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
             FadeOutGame(false, true, 0.5f, true, 2.f);
         spdlog::info("PlayerService: the connection dropped while the player was down; up again where it lies");
     }
+    StopHeartbeat();
+    m_giveUpSince = {};
+    m_revivePulseUntil = {};
+    VRBanner::Hide();
     // What a revive or a respawn left running is finished now: with the death system off, RunPostDeathUpdates no longer runs.
     if (m_godmodeStart)
     {
@@ -207,8 +247,13 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         // The server ends the wait (kDied); this game steps in only if that word never comes.
         m_respawnDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(acMessage.SecondsLeft) + 10s;
         spdlog::info("PlayerService: the server gives {} s to be revived", acMessage.SecondsLeft);
+#ifdef SKYRIMVR
+        if (acMessage.SecondsLeft > 0)
+            Utils::ShowHudMessage(String(fmt::format("urSovngarde: you are down; your party has {} seconds to revive you, or hold both grips to give up", acMessage.SecondsLeft)));
+#else
         if (acMessage.SecondsLeft > 0)
             Utils::ShowHudMessage(String(fmt::format("urSovngarde: you are down; your party has {} seconds to revive you", acMessage.SecondsLeft)));
+#endif
         break;
     case NotifyDownedState::kRevived:
         if (m_downState != DownState::kDown)
@@ -367,8 +412,10 @@ void PlayerService::RunRespawnUpdates() noexcept
         m_respawnDeadline = cNow + 5s;
         m_standingUp = false;
         m_loadingSeen = false;
+        m_giveUpSince = {};
         m_transport.Send(PlayerDownedRequest());
         spdlog::info("PlayerService: player is down, waiting for a revive");
+        StartHeartbeat();
         return;
     }
 
@@ -380,6 +427,7 @@ void PlayerService::RunRespawnUpdates() noexcept
             if (m_loadingSeen)
             {
                 spdlog::info("PlayerService: a save was loaded while down; up again without a respawn");
+                StopHeartbeat();
                 m_downState = DownState::kUp;
                 PlayerDownedRequest up{};
                 up.IsDown = false;
@@ -390,6 +438,12 @@ void PlayerService::RunRespawnUpdates() noexcept
             // A bleedout that ends by itself cannot be revived any more; the player respawns as it always did.
             spdlog::info("PlayerService: the bleedout ended by itself {} ms after going down; respawning",
                          std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count());
+            StartRespawn(m_ownSafePoint);
+        }
+        else if (HeldToGiveUp(cNow))
+        {
+            // The server ends the down and answers with the party's respawn point (StartRespawn, kRespawned).
+            spdlog::info("PlayerService: the player gave up the wait (both grips held {} s); respawning", std::chrono::duration_cast<std::chrono::seconds>(cGiveUpHold).count());
             StartRespawn(m_ownSafePoint);
         }
         else if (cNow >= m_respawnDeadline)
@@ -450,6 +504,10 @@ void PlayerService::RunRespawnUpdates() noexcept
 
 void PlayerService::StartRespawn(const SafePoint& acWhere) noexcept
 {
+    StopHeartbeat();
+    m_giveUpSince = {};
+    // Held through the fade and the respawn; the place's name replaces it as the screen comes back (RunPostDeathUpdates).
+    VRBanner::Show("YOU DIED", cDiedColour, 120, 5.f);
     m_downState = DownState::kRespawning;
     m_respawnPoint = acWhere;
     m_loadingSeen = false;
@@ -555,12 +613,82 @@ void PlayerService::StandUp(const uint32_t aReviverId) noexcept
 
     m_downState = DownState::kUp;
 
+    // Felt and heard: one strong pulse in both hands and the restoration spell's sound, where the player lies.
+    StopHeartbeat();
+    m_revivePulseUntil = cNow + cRevivePulse;
+    if (!GameSound::Play(cReviveSound, &pPlayer->position))
+        spdlog::warn("PlayerService: the revive sound did not play");
+
     const auto& players = m_world.GetPartyService().GetPlayers();
     const auto name = players.find(aReviverId);
     const String who = name != players.end() ? name->second : String("A party member");
     spdlog::info("PlayerService: revived by player {} '{}' after {} ms down; health {:.0f}", aReviverId, who.c_str(),
                  std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count(), pPlayer->GetActorValue(ActorValueInfo::kHealth));
     Utils::ShowHudMessage(String("urSovngarde: ") + who + " revived you");
+}
+
+void PlayerService::RunDownedCues() noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < m_revivePulseUntil)
+    {
+        VRHaptics::Pulse(false, 3999);
+        VRHaptics::Pulse(true, 3999);
+        return;
+    }
+    if (m_downState != DownState::kDown)
+        return;
+
+    // Both grips held: a buzz rising towards the moment the player gives up, in place of the heartbeat.
+    if (m_giveUpSince != std::chrono::steady_clock::time_point{})
+    {
+        const float cShare = std::min(1.f, std::chrono::duration<float>(cNow - m_giveUpSince) / std::chrono::duration<float>(cGiveUpHold));
+        const auto cLength = static_cast<uint16_t>(400.f + cShare * 3500.f);
+        VRHaptics::Pulse(false, cLength);
+        VRHaptics::Pulse(true, cLength);
+        return;
+    }
+
+    const auto cInCycle = (cNow - m_heartbeatSince) % cHeartbeatCycle;
+    if (cInCycle < cFirstBeat || (cInCycle >= cSecondBeatAt && cInCycle < cSecondBeatAt + cSecondBeat))
+    {
+        VRHaptics::Pulse(false, 3999);
+        VRHaptics::Pulse(true, 3999);
+    }
+}
+
+bool PlayerService::HeldToGiveUp(const std::chrono::steady_clock::time_point aNow) noexcept
+{
+    if (!VRHaptics::GripHeld(false) || !VRHaptics::GripHeld(true))
+    {
+        if (m_giveUpSince != std::chrono::steady_clock::time_point{})
+            spdlog::info("PlayerService: both grips let go before giving up");
+        m_giveUpSince = {};
+        return false;
+    }
+    if (m_giveUpSince == std::chrono::steady_clock::time_point{})
+    {
+        m_giveUpSince = aNow;
+        spdlog::info("PlayerService: both grips held while down; giving up unless let go");
+    }
+    return aNow - m_giveUpSince >= cGiveUpHold;
+}
+
+void PlayerService::StartHeartbeat() noexcept
+{
+    m_heartbeatSince = std::chrono::steady_clock::now();
+    if (m_heartbeatSound.SoundId != 0xFFFFFFFF)
+        return;
+    const bool cPlaying = GameSound::Play(cHeartbeatSound, nullptr, &m_heartbeatSound);
+    spdlog::info("PlayerService: down: the heartbeat in both hands, and its sound {}", cPlaying ? "playing" : "NOT playing");
+}
+
+void PlayerService::StopHeartbeat() noexcept
+{
+    if (m_heartbeatSound.SoundId == 0xFFFFFFFF)
+        return;
+    const bool cStopped = GameSound::Stop(m_heartbeatSound);
+    spdlog::info("PlayerService: the heartbeat sound {}", cStopped ? "stopped" : "would not stop");
 }
 
 // Doesn't seem to respawn quite yet
@@ -579,6 +707,10 @@ void PlayerService::RunPostDeathUpdates() noexcept
 
         // Fade in first, so the player can see again even if something below fails.
         FadeOutGame(false, true, 0.5f, true, 2.f);
+        if (const char* pPlace = PlaceNameOf(PlayerCharacter::Get()))
+            VRBanner::Show(pPlace, cPlaceColour, 84, 3.f);
+        else
+            VRBanner::Hide();
 
         PlayerCharacter::SetGodMode(true);
         m_godmodeStart = true;
@@ -716,17 +848,9 @@ void PlayerService::RunCrashPlaceNote() noexcept
     const PlayerCharacter* pPlayer = PlayerCharacter::Get();
     if (!pPlayer)
         return;
-    const auto nameOf = [](const TESForm* apForm) -> const char* {
-        const char* pName = apForm ? apForm->GetName() : nullptr;
-        return pName && *pName ? pName : nullptr;
-    };
     const TESWorldSpace* pWorldSpace = pPlayer->GetWorldSpace();
     const TESObjectCELL* pCell = pPlayer->GetParentCellEx();
-    const char* pPlace = nameOf(pPlayer->locationForm);
-    if (!pPlace)
-        pPlace = nameOf(pCell);
-    if (!pPlace)
-        pPlace = nameOf(pWorldSpace);
+    const char* pPlace = PlaceNameOf(pPlayer);
     const std::string place = pPlace ? fmt::format("'{}'", pPlace) : std::string("none");
     const uint32_t cellId = pCell ? pCell->formID : 0;
 

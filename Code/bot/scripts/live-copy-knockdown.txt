@@ -59,6 +59,10 @@ log REQUIRE absent Base form differs
 log REQUIRE npc went down
 log CHECK npc slide below 100
 log CHECK npc standing
+# Once up, the copy must walk on to where its owner has the NPC, not jump there.
+# An NPC runs at about 400 units a second; a jump of even 20 units in one frame is over 1000.
+# Measured each frame by the client: the "DO watch npc" samples are too far apart to see a jump.
+log CHECK logged KnockDown: NPC copy \w+ moved at most [0-9]{1,3} units a second in its first \d+ ms up
 log CHECK game alive
 log DO papyrus ActorBase SetEssential A2C8E b:false
 log DO god off

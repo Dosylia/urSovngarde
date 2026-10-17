@@ -49,6 +49,12 @@ bool NobodyToRevive(const std::vector<bool>& acMembersDown) noexcept
     return !acMembersDown.empty() && std::all_of(acMembersDown.begin(), acMembersDown.end(), [](const bool aDown) { return aDown; });
 }
 
+bool NobodyCanCome(const std::vector<Helper>& acStanding) noexcept
+{
+    return !acStanding.empty() && std::none_of(acStanding.begin(), acStanding.end(), [](const Helper& acHelper)
+                                               { return !acHelper.Known || (acHelper.SamePlace && acHelper.Distance <= cComeToHelpUnits); });
+}
+
 RespawnPoint ChooseRespawnPoint(const bool aLeaderHasSafePoint, const bool aHasOwnSafePoint) noexcept
 {
     if (aLeaderHasSafePoint)

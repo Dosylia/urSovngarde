@@ -3045,12 +3045,33 @@ void CharacterService::RunLocalUpdates() const noexcept
         // Nocked from state 9 (the arrow on the string, pulled or not) until the bow is shot or put away (0).
         // A VR draw goes 8, 9, 10 (pulled), and back to 9 and 8 while it still sits on the string, so 8 keeps it.
         const bool cNocked = attackState >= 9 || (s_nockedSent && attackState >= 8);
-        if (cNocked != s_nockedSent && m_transport.IsConnected())
+        // Before that, an arrow held in the hand: taken from the quiver, or ready after a shot.
+        // Sent when it comes and goes, and again when the hand holds it differently (at most once a second).
+        const VRBodySync::ArrowHold cHold = !cNocked && pPlayer->actorState.IsWeaponDrawn() ? VRBodySync::LocalArrowHold() : VRBodySync::ArrowHold{};
+        static VRBodySync::ArrowHold s_holdSent{};
+        static std::chrono::steady_clock::time_point s_holdSentAt{};
+        // A dot product of the two rotations under 0.996 is a turn of more than about 10 degrees.
+        const bool cHoldMoved = cHold.InHand && s_holdSent.InHand && now - s_holdSentAt >= 1s &&
+                                (cHold.Side != s_holdSent.Side || glm::distance(cHold.Offset, s_holdSent.Offset) > 3.f ||
+                                 std::abs(glm::dot(cHold.Rotation, s_holdSent.Rotation)) < 0.996f);
+        if ((cNocked != s_nockedSent || cHold.InHand != s_holdSent.InHand || cHoldMoved) && m_transport.IsConnected())
         {
             ArrowNockedRequest request{};
             request.Nocked = cNocked;
+            request.InHand = cHold.InHand;
+            request.HandSide = cHold.Side;
+            request.HandOffset = cHold.Offset;
+            request.HandRotation = cHold.Rotation;
             if (m_transport.Send(request))
+            {
                 s_nockedSent = cNocked;
+                s_holdSent = cHold;
+                s_holdSentAt = now;
+                spdlog::info("ArrowNocked: sent this player's arrow {}{}", cNocked ? "on the string" : cHold.InHand ? "in the hand" : "gone",
+                             cHold.InHand ? fmt::format(" ({} hand, its head at ({:.0f}, {:.0f}, {:.0f}) in the hand bone's space)", cHold.Side ? "right" : "left", cHold.Offset.x,
+                                                        cHold.Offset.y, cHold.Offset.z)
+                                          : std::string());
+            }
         }
     }
 #endif
@@ -3732,10 +3753,11 @@ void CharacterService::OnNotifyArrowNocked(const NotifyArrowNocked& acMessage) c
         return;
 
     // The arrow is the game's own: it takes the copy's equipped ammo, so none means nothing to put on the string.
-    if (acMessage.Nocked && (!pActor->GetEquippedAmmo() || !pActor->actorState.IsWeaponDrawn()))
+    const bool cWanted = acMessage.Nocked || acMessage.InHand;
+    if (cWanted && (!pActor->GetEquippedAmmo() || !pActor->actorState.IsWeaponDrawn()))
     {
-        spdlog::info("ArrowNocked: {:X} (server {:X}) has an arrow on the string over there, but this copy has {}; not attached", pActor->formID, acMessage.ServerId,
-                     pActor->GetEquippedAmmo() ? "its weapon sheathed" : "no arrows equipped");
+        spdlog::info("ArrowNocked: {:X} (server {:X}) has an arrow {} over there, but this copy has {}; not attached", pActor->formID, acMessage.ServerId,
+                     acMessage.Nocked ? "on the string" : "in the hand", pActor->GetEquippedAmmo() ? "its weapon sheathed" : "no arrows equipped");
         return;
     }
 
@@ -3759,10 +3781,21 @@ void CharacterService::OnNotifyArrowNocked(const NotifyArrowNocked& acMessage) c
 #ifdef SKYRIMVR
     size_t before = 0;
     VRBodySync::NodesNamedLike(pActor, "arrow", 0, before);
-    VRBodySync::SetArrowNocked(pActor->formID, acMessage.Nocked);
+    // An arrow going from the hand to the string, or back, is the same arrow: only how it is held changes.
+    const bool cHad = VRBodySync::HasCopyArrow(pActor->formID);
+    VRBodySync::ArrowHold hold{};
+    hold.InHand = acMessage.InHand && !acMessage.Nocked;
+    hold.Side = acMessage.HandSide;
+    hold.Offset = acMessage.HandOffset;
+    hold.Rotation = acMessage.HandRotation;
+    VRBodySync::SetArrowNocked(pActor->formID, acMessage.Nocked, hold);
+    if (cWanted != cHad)
+        reinterpret_cast<TArrow>(pVtable[cWanted ? cAttachSlot : cDetachSlot])(pActor, pBipedHolder);
+#else
+    reinterpret_cast<TArrow>(pVtable[cWanted ? cAttachSlot : cDetachSlot])(pActor, pBipedHolder);
 #endif
-    reinterpret_cast<TArrow>(pVtable[acMessage.Nocked ? cAttachSlot : cDetachSlot])(pActor, pBipedHolder);
-    spdlog::info("ArrowNocked: {:X} (server {:X}): arrow {} the string", pActor->formID, acMessage.ServerId, acMessage.Nocked ? "put on" : "taken off");
+    spdlog::info("ArrowNocked: {:X} (server {:X}): arrow {}", pActor->formID, acMessage.ServerId,
+                 acMessage.Nocked ? "put on the string" : acMessage.InHand ? "held in the hand" : "taken off the string");
 #ifdef SKYRIMVR
     // TEMPORARY: which arrow nodes the copy has, until the arrow is checked in a session.
     size_t after = 0;

@@ -54,9 +54,23 @@ void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexce
 //! Measurement: the heading sent for this player against the headset's yaw and the VRIK body's facing (from the thighs).
 //! Sampled ten times a second, one `HeadingDiag:` line every 30 s.
 void NoteHeading(PlayerCharacter* apPlayer) noexcept;
-//! This copy has an arrow on its bow string (NotifyArrowNocked).
-//! The arrow is laid from the string hand to the bow hand each frame, instead of where the game's flat attachment puts it.
-void SetArrowNocked(uint32_t aFormId, bool aNocked) noexcept;
+//! An arrow held in a hand, not on the string: which hand, and where the arrow model sits in the space of its third-person bone.
+struct ArrowHold
+{
+    bool InHand = false;
+    //! 0 left, 1 right.
+    uint8_t Side = 1;
+    glm::vec3 Offset{};
+    glm::quat Rotation{1.f, 0.f, 0.f, 0.f};
+};
+//! The arrow the local player holds in a hand, as the last pose capture found it (at most ten times a second).
+ArrowHold LocalArrowHold() noexcept;
+//! This copy has an arrow on its bow string, or in a hand (acHold.InHand), or neither (NotifyArrowNocked).
+//! The arrow is laid from the string hand to the bow hand, or where the owner holds it, each frame.
+//! The game's flat attachment puts it anywhere on a hand posed from VR.
+void SetArrowNocked(uint32_t aFormId, bool aNocked, const ArrowHold& acHold = {}) noexcept;
+//! Whether this copy has an arrow attached by SetArrowNocked, on the string or in a hand.
+bool HasCopyArrow(uint32_t aFormId) noexcept;
 //! Where the local player's hand is in the world, left (0) or right (1): the first-person hand, which follows the controller.
 bool LocalHandPosition(uint8_t aSide, glm::vec3& aOut) noexcept;
 //! Whether this player's HIGGS bodies, or what they hold, touched another player's weapon body at that point in the last half second.

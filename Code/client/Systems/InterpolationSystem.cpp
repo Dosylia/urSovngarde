@@ -27,6 +27,21 @@ constexpr float cMaxPositionCorrection = 256.f;
 constexpr double cPositionCorrectionTime = 50.0;
 // Two points further apart than this are a teleport, not movement to cross.
 constexpr float cTeleportDistance = 1024.f;
+
+// A copy that got up away from where its owner has it closes the gap at most this many units a second faster than its owner moves.
+constexpr float cGetUpCatchUpSpeed = 300.f;
+// A gap wider than this is closed at once: walking it would take too long.
+constexpr float cGetUpCatchUpDistance = 512.f;
+
+// An NPC copy that just got up, while it closes the gap to where its owner has it and the speed of its steps is measured.
+struct Rising
+{
+    std::chrono::steady_clock::time_point Since;
+    float Fastest;
+    // Where it stands against where its owner has it; shrinks to nothing.
+    glm::vec3 Offset;
+};
+TiltedPhoques::Map<uint32_t, Rising> s_rising;
 } // namespace
 
 uint64_t InterpolationSystem::GetPlaybackTick(const InterpolationComponent& acInterpolationComponent) noexcept
@@ -394,9 +409,13 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         }
         else if (!cKnockedNpc && it != s_down.end())
         {
-            spdlog::info("KnockDown: NPC copy {:X} is up again after {} ms", apActor->formID,
-                         std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count());
+            // How far it stood up from where its owner has it: the copy jumps that far when it follows again.
+            spdlog::info("KnockDown: NPC copy {:X} is up again after {} ms, {:.0f} units from where its owner has it", apActor->formID,
+                         std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count(),
+                         glm::distance(static_cast<glm::vec3>(apActor->position), static_cast<glm::vec3>(position)));
             s_down.erase(it);
+            const glm::vec3 cGap = static_cast<glm::vec3>(apActor->position) - static_cast<glm::vec3>(position);
+            s_rising[apActor->formID] = Rising{cNow, 0.f, glm::length(cGap) <= cGetUpCatchUpDistance ? cGap : glm::vec3{}};
         }
     }
     if (cKnockedNpc)
@@ -467,7 +486,30 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     }
 #endif
 
-    apActor->ForcePosition(position);
+    // A copy that just got up walks on to where its owner has it instead of jumping there.
+    // The fastest it moves meanwhile is logged: a jump is far faster than a walk.
+    NiPoint3 placed = position;
+    if (const auto rising = s_rising.find(apActor->formID); rising != s_rising.end())
+    {
+        glm::vec3& offset = rising.value().Offset;
+        const float cLeft = glm::length(offset);
+        const float cClosed = cGetUpCatchUpSpeed * static_cast<float>(cDeltaTime) / 1000.f;
+        offset = cLeft > cClosed ? offset * ((cLeft - cClosed) / cLeft) : glm::vec3{};
+        placed = NiPoint3(static_cast<glm::vec3>(position) + offset);
+
+        const float cStep = glm::distance(static_cast<glm::vec3>(apActor->position), static_cast<glm::vec3>(placed));
+        if (cDeltaTime > 0.0)
+            rising.value().Fastest = std::max(rising->second.Fastest, cStep * 1000.f / static_cast<float>(cDeltaTime));
+        const auto cUpFor = std::chrono::steady_clock::now() - rising->second.Since;
+        if ((cUpFor > 2s && offset == glm::vec3{}) || cUpFor > 5s)
+        {
+            spdlog::info("KnockDown: NPC copy {:X} moved at most {:.0f} units a second in its first {} ms up", apActor->formID, rising->second.Fastest,
+                         std::chrono::duration_cast<std::chrono::milliseconds>(cUpFor).count());
+            s_rising.erase(rising);
+        }
+    }
+
+    apActor->ForcePosition(placed);
     SpawnReveal::Placed(apActor);
     // A creature of another kind than the owner's (see MarkForeignGraph) keeps its own animation state.
     if (!aInterpolationComponent.ForeignGraph)

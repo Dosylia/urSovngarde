@@ -1,0 +1,32 @@
+# A downed player whose standing party members are all too far to come (another place, or over 100 m) respawns at once:
+# when the last one in reach goes away during the wait, and when it goes down with nobody in reach.
+#
+#   powershell -File Tools\VR\run-bot-tests.ps1 -Pair downedfar
+#
+# The leader on the other side reacts to this side's states, so the two need no shared clock.
+log downedfar actor
+waitfor connected 45
+collect spawn
+record downedfar actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+log -- the leader stands by: going down waits
+down
+waitfor downstate me down 5
+expect downstate me down
+log -- the leader goes fifteen cells away during the wait: the wait ends
+waitfor downstate me died 15
+expect downstate me died
+log -- the leader is still away: going down again ends at once, never announced as a down
+wait 3
+down
+wait 3
+expect downcount me died == 2
+expect downcount me down == 1
+expect connected
+record off
+report bot-downedfar-actor.txt
+log done
+stop

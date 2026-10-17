@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Structs/GameId.h>
+#include <Games/Skyrim/GameSound.h>
 
 struct World;
 struct TransportService;
@@ -69,6 +70,13 @@ private:
     void StartRespawn(const SafePoint& acWhere) noexcept;
     //! A party member revived the player: back on its feet where it lies, with part of its health.
     void StandUp(uint32_t aReviverId) noexcept;
+    //! Every frame: while down, the heartbeat in both hands, or a rising buzz while both grips are held; after a revive, one strong pulse.
+    void RunDownedCues() noexcept;
+    //! While down: both grips held long enough to give up the wait.
+    bool HeldToGiveUp(std::chrono::steady_clock::time_point aNow) noexcept;
+    //! The heartbeat sound starts as the player goes down and stops however the down ends.
+    void StartHeartbeat() noexcept;
+    void StopHeartbeat() noexcept;
     /**
      * @brief Make sure difficulty doesn't get changed while connected
      */
@@ -106,6 +114,11 @@ private:
     bool m_standingUp = false;
     float m_revivedHealth = 0.f;
     std::chrono::steady_clock::time_point m_standUpDeadline{};
+    // The cues of being down: the heartbeat's sound and when its beats began, when both grips began to be held, and how long a revive's pulse lasts.
+    GameSound::Handle m_heartbeatSound{};
+    std::chrono::steady_clock::time_point m_heartbeatSince{};
+    std::chrono::steady_clock::time_point m_giveUpSince{};
+    std::chrono::steady_clock::time_point m_revivePulseUntil{};
     int32_t m_serverDifficulty = 6;
     int32_t m_previousDifficulty = 6;
 

@@ -115,6 +115,11 @@ void ReviveService::OnPlayerDowned(const PacketEvent<PlayerDownedRequest>& acMes
     // The last one standing going down ends the party's wait at once: nobody is told to revive a player who respawns straight away.
     if (EndFallenParty(pPlayer))
         return;
+    if (NobodyCanCome(pPlayer))
+    {
+        EndDown(pPlayer, NotifyDownedState::kDied, "is down with every standing member elsewhere or too far to come");
+        return;
+    }
 
     spdlog::info("Revive: player {} '{}' is down; {} s to be revived ({} in the party)", pPlayer->GetId(), pPlayer->GetUsername().c_str(), cSeconds, cParty.size());
 
@@ -331,6 +336,31 @@ bool ReviveService::EndFallenParty(Player* apPlayer) noexcept
     return true;
 }
 
+bool ReviveService::NobodyCanCome(Player* apDowned) const noexcept
+{
+    CellIdComponent downedCell{};
+    glm::vec3 downedAt{};
+    const bool cDownedKnown = GetPlace(m_world, apDowned, downedCell, downedAt);
+
+    std::vector<ReviveRules::Helper> standing;
+    for (const Player* pMember : PartyOf(apDowned))
+    {
+        if (pMember == apDowned || IsDown(pMember->GetId()))
+            continue;
+        ReviveRules::Helper helper{};
+        CellIdComponent memberCell{};
+        glm::vec3 memberAt{};
+        if (cDownedKnown && GetPlace(m_world, pMember, memberCell, memberAt))
+        {
+            helper.Known = true;
+            helper.SamePlace = downedCell.IsInInteriorCell() ? downedCell.Cell == memberCell.Cell : downedCell.WorldSpaceId == memberCell.WorldSpaceId;
+            helper.Distance = glm::distance(downedAt, memberAt);
+        }
+        standing.push_back(helper);
+    }
+    return ReviveRules::NobodyCanCome(standing);
+}
+
 void ReviveService::CheckDowned() noexcept
 {
     const auto cNow = std::chrono::steady_clock::now();
@@ -359,6 +389,12 @@ void ReviveService::CheckDowned() noexcept
 
         if (EndFallenParty(pPlayer))
             continue;
+
+        if (NobodyCanCome(pPlayer))
+        {
+            EndDown(pPlayer, NotifyDownedState::kDied, "was left with every standing member elsewhere or too far to come");
+            continue;
+        }
 
         // A member who joined after this player went down was not told yet: told now, with the time left.
         Downed& downed = m_downed[cId];

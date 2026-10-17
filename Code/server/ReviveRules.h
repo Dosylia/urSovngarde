@@ -42,6 +42,24 @@ uint32_t DownedSeconds(size_t aPartySize, uint32_t aPartySeconds) noexcept;
 //! Then nobody is left to revive them, and they all respawn.
 bool NobodyToRevive(const std::vector<bool>& acMembersDown) noexcept;
 
+//! How far a standing party member may be from a downed player for the wait to be worth it: about 100 m.
+//! Further, or in another worldspace or interior, they cannot come in time, and the player respawns at once.
+constexpr float cComeToHelpUnits = 7000.f;
+
+//! Where one standing party member is, against the downed player, by the server's positions.
+struct Helper
+{
+    //! The server has a place for both of them.
+    bool Known{};
+    //! The same worldspace outdoors, or the same interior cell.
+    bool SamePlace{};
+    float Distance{};
+};
+
+//! Nobody standing can come in time: each one is somewhere else or further than cComeToHelpUnits.
+//! A member whose place is not known counts as able to come; no standing member at all is NobodyToRevive's case.
+bool NobodyCanCome(const std::vector<Helper>& acStanding) noexcept;
+
 enum class RespawnPoint
 {
     kPartyLeader,
