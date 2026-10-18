@@ -1,0 +1,36 @@
+# Reviving a downed party member by hand: this bot goes down, and the game's player holds a hand on its character until it is revived.
+#
+#   python Tools\VR\live-check.py live-revive-hand
+#
+# ReviveService watches the local hands near a downed party member's body and asks the server after four seconds of holding.
+# The rig's controller is moved by DevBench ("DO hold"), so this checks the hand position and the request, not how the gesture feels.
+# In the rig the held pose lands 65 units from the body, out of reach.
+# The revive comes from the resting pose (46 units) once the hand is back, about 15 s after "DO hold" begins, hence the 25 s wait.
+# Run it right after live-revive: from a fresh start the rig's resting hand stays out of reach (cause unknown).
+# So it checks the request and the server's answer, not the held gesture.
+log live revive hand
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- this bot goes down
+down
+waitfor downstate me down 10
+expect downstate me down
+wait 2
+log CHECK logged Revive: player \d+ '.*' is down
+wait 2
+
+log -- the player holds its right hand on the bot's character for eight seconds
+log DO hold copy right 50 8
+waitfor downstate me revived 25
+expect downstate me revived
+wait 3
+log CHECK logged Revive: holding a hand on player
+log CHECK logged Revive: held a hand on player .* long enough
+wait 3
+log CHECK game alive
+wait 3
+log done
+stop

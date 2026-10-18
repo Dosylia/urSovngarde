@@ -1,6 +1,8 @@
-# A copy of an essential NPC that is knocked flat while it is down, then gets up and walks, must get up here too.
+# A copy of an essential NPC that is knocked flat while it is down, then gets up and walks, must get up here too, and
+# never slide along the floor.
 #
 #   python Tools\VR\live-check.py live-copy-knockdown
+#   python Tools\VR\live-check.py --expect-fail live-copy-knockdown     on a build without the fix: must be RED
 #
 # Players saw downed NPCs lie flat and slide along behind their owner once the owner's NPC had stood up and walked on.
 # live-copy-bleedout covers a plain bleedout; here the owner's NPC is also thrown to the floor while it is down.
@@ -8,6 +10,10 @@
 # and sets her on the player, while the bot records it.
 # A unique base, not a levelled bandit: a levelled copy may pick another race here and is then not fed the owner's actions.
 # Then the bot brings a Lydia of its own and replays the recording on it, so the game's copy gets the owner's real actions.
+#
+# A run counts only when (REQUIRE): the recording holds the owner's fall, the owner's NPC really moved while down, the
+# copy is the owner's kind, and the copy lay flat at some point. It is then judged on two things: the lying copy was not
+# carried along the floor, and it is on its feet at the end.
 log live copy knockdown
 waitfor connected 45
 expect known me
@@ -33,6 +39,8 @@ log DO papyrus Actor StartCombat placed 14
 capture newest 28
 log DO combat off
 log DO papyrus Actor IsBleedingOut placed
+log REQUIRE bot logged Captured action names of \w+: .*\bRagdoll\b
+log REQUIRE logged DownedTravel: own NPC \w+ moved \d+ units in \d+ ms while down
 
 log -- the bot brings its own Lydia and replays the recording on her; the game shows a copy of her
 npc temp A2C8E
@@ -41,16 +49,20 @@ wait 6
 # No health left, as a hero beaten down in a fight: the copy goes down by itself, as in live-copy-bleedout.
 npclife alive 0
 wait 3
-# Watched through the whole replay: where its pelvis is drawn, and how far it travels while lying.
-log CHECK npc standing 34
+# The copy's pose through the whole replay and a few seconds after it, judged below.
+log DO watch npc 34
 replay npc
 wait 3
 log DO papyrus Actor IsBleedingOut npc
 log SHOT after of npc
-log CHECK absent Base form differs
-log CHECK logged KnockDown: NPC copy \w+ lies in its own ragdoll
-log CHECK logged KnockDown: NPC copy \w+ is up again
-log CHECK absent KnockDown: NPC copy \w+ still lies
+log REQUIRE absent Base form differs
+log REQUIRE npc went down
+log CHECK npc slide below 100
+log CHECK npc standing
+# Once up, the copy must walk on to where its owner has the NPC, not jump there.
+# An NPC runs at about 400 units a second; a jump of even 20 units in one frame is over 1000.
+# Measured each frame by the client: the "DO watch npc" samples are too far apart to see a jump.
+log CHECK logged KnockDown: NPC copy \w+ moved at most [0-9]{1,3} units a second in its first \d+ ms up
 log CHECK game alive
 log DO papyrus ActorBase SetEssential A2C8E b:false
 log DO god off

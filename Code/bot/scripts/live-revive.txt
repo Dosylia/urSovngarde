@@ -1,0 +1,41 @@
+# A downed player revived by a party member: the game's player goes down, this bot revives it, and it stands up.
+#
+#   python Tools\VR\live-check.py live-revive
+#
+# The game's player is essential and cannot recover by itself (Actor::SetPlayerRespawnMode), so at zero health it waits in bleedout.
+# PlayerService tells the server (PlayerDownedRequest), the server gives the party its time, and a revive stands the player up (PlayerService::StandUp).
+log live revive
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the player goes down
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 2
+log CHECK logged PlayerService: player is down, waiting for a revive
+log CHECK logged PlayerService: the server gives \d+ s to be revived
+log CHECK logged PlayerService: down: the heartbeat in both hands, and its sound playing
+wait 4
+
+log -- this bot revives it
+revive other
+waitfor downstate other revived 10
+expect downstate other revived
+wait 6
+log CHECK logged PlayerService: revived by player
+log CHECK logged PlayerService: the revived player is up
+log CHECK logged PlayerService: the heartbeat sound stopped
+log CHECK absent PlayerService: the revive sound did not play
+log DO papyrus Actor IsBleedingOut 14
+log DO papyrus Actor GetActorValuePercentage 14 s:Health
+log CHECK player alive
+wait 3
+log SHOT up of player
+wait 5
+log CHECK game alive
+wait 3
+log done
+stop

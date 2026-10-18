@@ -62,6 +62,9 @@ enum ClientOpcode : unsigned char
     kVoiceDataRequest,
     kVoiceStateRequest,
     kArrowNockedRequest,
+    kPlayerDownedRequest,
+    kReviveRequest,
+    kSafePointRequest,
     kRequestSleep,
     kClientOpcodeMax
 };
@@ -130,6 +133,7 @@ enum ServerOpcode : unsigned char
     kNotifyVoiceData,
     kNotifyPlayerWhereabouts,
     kNotifyArrowNocked,
+    kNotifyDownedState,
     kNotifySleep,
     kServerOpcodeMax
 };

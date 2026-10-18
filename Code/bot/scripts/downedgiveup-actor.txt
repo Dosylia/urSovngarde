@@ -1,0 +1,28 @@
+# A downed player whose own game stops waiting (no word from the server, or a bleedout that ended by itself) and respawns.
+# The server must end the down then, not when the respawn is over: a revive in between would be accepted and then ignored.
+# And the player respawns where the server would have sent it: the party leader's safe point.
+#
+#   powershell -File Tools\VR\run-bot-tests.ps1 -Pair downedgiveup
+log downedgiveup actor
+waitfor connected 45
+collect spawn
+record downedgiveup actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+log -- going down
+down
+waitfor downstate me down 10
+expect downstate me down
+wait 2
+log -- this game gives up the wait and respawns
+giveup
+waitfor downstate me respawned 10
+expect downstate me respawned
+expect respawnpoint me 500 600
+expect connected
+record off
+report bot-downedgiveup-actor.txt
+log done
+stop

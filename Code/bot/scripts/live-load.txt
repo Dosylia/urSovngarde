@@ -29,7 +29,9 @@ log CHECK game inworld
 log CHECK player alive
 wait 3
 
-log -- killed, brought back by the mod, then a load
+log -- killed alone (this bot leaves the party, so nobody waits for a revive), brought back by the mod, then a load
+party leave
+wait 3
 log DO console player.kill
 wait 14
 log CHECK player alive

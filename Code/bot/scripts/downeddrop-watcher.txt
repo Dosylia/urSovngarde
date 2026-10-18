@@ -1,0 +1,19 @@
+# The other half of downeddrop: the party's leader, told the other side is down, must then be told it left.
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it.
+party lead
+log downeddrop watcher
+waitfor connected 45
+collect spawn
+record downeddrop watcher
+waitfor known other 40
+log -- the other side goes down, then its connection goes
+waitfor downstate other down 30
+expect downstate other down
+waitfor downstate other left 20
+expect downstate other left
+expect connected
+record off
+report bot-downeddrop-watcher.txt
+log done
+stop

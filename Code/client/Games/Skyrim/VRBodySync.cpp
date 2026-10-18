@@ -2,6 +2,7 @@
 
 #include <Games/Skyrim/VRBodySync.h>
 #include <Games/Skyrim/VRHaptics.h>
+#include <Games/Skyrim/GameSound.h>
 
 #include <Actor.h>
 #include <Games/ActorExtension.h>
@@ -3042,13 +3043,19 @@ void EndWeaponTouch() noexcept
     }
 }
 
-// Copies with an arrow on their bow string (NotifyArrowNocked).
+// Copies with an arrow on their bow string or in a hand (NotifyArrowNocked).
 // The game attaches the arrow to the hand bone as a third-person draw holds it, which points anywhere on a hand posed from VR.
-// PlaceNockedArrows lays it from the string hand to the bow hand once the hands are posed.
+// PlaceNockedArrows lays it from the string hand to the bow hand, or where the owner holds it, once the hands are posed.
 std::mutex s_nockedLock;
-// Per copy, the "Arrow:0" nodes it had before the arrow was attached; only a node not in this list is the nocked arrow.
-// The quiver model's root is also named "Arrow:0", and the nocked arrow is made a moment after AttachArrow returns.
-std::unordered_map<uint32_t, std::vector<void*>> s_nocked;
+struct CopyArrow
+{
+    // The "Arrow:0" nodes the copy had before the arrow was attached; only a node not in this list is its arrow.
+    // The quiver model's root is also named "Arrow:0", and the arrow is made a moment after AttachArrow returns.
+    std::vector<void*> Before;
+    // Held in a hand, not on the string.
+    ArrowHold Hold;
+};
+std::unordered_map<uint32_t, CopyArrow> s_nocked;
 
 std::vector<void*> ArrowNodesOf(void* apRoot) noexcept
 {
@@ -3076,13 +3083,14 @@ constexpr float kArrowNockDistance = 64.f;
 
 void PlaceNockedArrows() noexcept
 {
-    std::vector<std::pair<uint32_t, std::vector<void*>>> ids;
+    std::vector<std::pair<uint32_t, CopyArrow>> ids;
     {
         std::scoped_lock lock(s_nockedLock);
         ids.assign(s_nocked.begin(), s_nocked.end());
     }
-    for (const auto& [cFormId, cBefore] : ids)
+    for (const auto& [cFormId, cArrow] : ids)
     {
+        const std::vector<void*>& cBefore = cArrow.Before;
         Actor* pActor = Cast<Actor>(TESForm::GetById(cFormId));
         void* pRoot = pActor ? pActor->GetNiNode() : nullptr;
         if (!pRoot)
@@ -3129,25 +3137,41 @@ void PlaceNockedArrows() noexcept
         const glm::vec3 cStringAt = ToGlm(At<NiTransform>(pHands[1 - bowSide], kWorldOffset).translate);
         const glm::vec3 cBowAt = ToGlm(At<NiTransform>(pHands[bowSide], kWorldOffset).translate);
         const glm::vec3 cAlong = cBowAt - cStringAt;
-        if (!(glm::length(cAlong) > 1.f))
-            continue;
-        const glm::vec3 cForward = glm::normalize(cAlong);
-        glm::vec3 up{0.f, 0.f, 1.f};
-        if (std::abs(glm::dot(up, cForward)) > 0.95f)
-            up = glm::vec3{1.f, 0.f, 0.f};
-        const glm::vec3 cRight = glm::normalize(glm::cross(cForward, up));
-        const glm::vec3 cUp = glm::cross(cRight, cForward);
-        // Columns are where the arrow's own x, y and z axes go: y along the shot (kArrowForward).
-        const glm::mat3 cWanted(cRight, cForward, cUp);
-
         void* pArrow = items[arrow].pObject;
         NiTransform current = At<NiTransform>(pArrow, kWorldOffset);
+        glm::mat3 wanted{};
+        glm::vec3 wantedAt{};
+        if (cArrow.Hold.InHand)
+        {
+            // Where the owner holds it against the hand's third-person bone, which this copy's hand is posed from.
+            const NiTransform& hand = At<NiTransform>(pHands[cArrow.Hold.Side & 1], kWorldOffset);
+            const glm::mat3 cHandRotation = ToGlm(hand.rotate);
+            wanted = cHandRotation * glm::mat3_cast(cArrow.Hold.Rotation);
+            wantedAt = ToGlm(hand.translate) + cHandRotation * (cArrow.Hold.Offset * hand.scale);
+            if (!std::isfinite(wantedAt.x) || !std::isfinite(wanted[0][0]))
+                continue;
+        }
+        else
+        {
+            if (!(glm::length(cAlong) > 1.f))
+                continue;
+            const glm::vec3 cForward = glm::normalize(cAlong);
+            glm::vec3 up{0.f, 0.f, 1.f};
+            if (std::abs(glm::dot(up, cForward)) > 0.95f)
+                up = glm::vec3{1.f, 0.f, 0.f};
+            const glm::vec3 cRight = glm::normalize(glm::cross(cForward, up));
+            const glm::vec3 cUp = glm::cross(cRight, cForward);
+            // Columns are where the arrow's own x, y and z axes go: y along the shot (kArrowForward).
+            wanted = glm::mat3(cRight, cForward, cUp);
+            // The origin is the head, so it goes one arrow length ahead of the string hand and the nock lands on the string.
+            wantedAt = cStringAt + cForward * (kArrowNockDistance * current.scale);
+        }
+
         const glm::vec3 pivot = ToGlm(current.translate);
-        const glm::mat3 delta = cWanted * glm::transpose(ToGlm(current.rotate));
+        const glm::mat3 delta = wanted * glm::transpose(ToGlm(current.rotate));
         NiTransform placed = current;
-        placed.rotate = FromGlm(cWanted);
-        // The origin is the head, so it goes one arrow length ahead of the string hand and the nock lands on the string.
-        placed.translate = FromGlm(cStringAt + cForward * (kArrowNockDistance * current.scale));
+        placed.rotate = FromGlm(wanted);
+        placed.translate = FromGlm(wantedAt);
         At<NiTransform>(pArrow, kWorldOffset) = placed;
         // Everything below the arrow node moves with it.
         for (size_t i = static_cast<size_t>(arrow) + 1; i < items.size(); ++i)
@@ -3166,7 +3190,7 @@ void PlaceNockedArrows() noexcept
         // The third-person draw animation does this, but a VR owner draws by hand and the copy has no animation for that.
         // Only within a draw's reach of the bow hand, so a pose that is not a draw leaves the string alone.
         float stringMoved = -1.f;
-        for (size_t i = 0; i < items.size(); ++i)
+        for (size_t i = 0; i < items.size() && !cArrow.Hold.InHand; ++i)
         {
             const char* pName = GetName(items[i].pObject);
             if (!pName || std::strcmp(pName, "Bow_StringBone2") != 0)
@@ -3189,29 +3213,55 @@ void PlaceNockedArrows() noexcept
             break;
         }
 
+        // Once every 10 s, and at once when the arrow goes from the hand to the string or back.
         static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextSaid;
+        static std::unordered_map<uint32_t, bool> s_saidInHand;
         auto& next = s_nextSaid[cFormId];
-        if (const auto cNow = std::chrono::steady_clock::now(); cNow >= next)
+        const auto cSaid = s_saidInHand.find(cFormId);
+        if (const auto cNow = std::chrono::steady_clock::now(); cNow >= next || cSaid == s_saidInHand.end() || cSaid->second != cArrow.Hold.InHand)
         {
             next = cNow + std::chrono::seconds(10);
-            spdlog::info("ArrowNocked: {:X} arrow laid from the {} hand to the bow, {:.0f} units, turned {:.0f} degrees from where the game had it; string {}", cFormId,
-                         bowSide ? "left" : "right", glm::length(cAlong), DegreesOf(delta),
-                         stringMoved >= 0.f ? fmt::format("drawn back {:.0f} units to the hand", stringMoved) : std::string("left alone (no string bone, or not a draw's reach)"));
+            s_saidInHand[cFormId] = cArrow.Hold.InHand;
+            if (cArrow.Hold.InHand)
+                spdlog::info("ArrowNocked: {:X} arrow held in the {} hand as its owner holds it, its head {:.0f} units from the hand (hand scale {:.2f}), turned {:.0f} degrees from "
+                             "where the game had it",
+                             cFormId, cArrow.Hold.Side ? "right" : "left", glm::distance(wantedAt, ToGlm(At<NiTransform>(pHands[cArrow.Hold.Side & 1], kWorldOffset).translate)),
+                             At<NiTransform>(pHands[cArrow.Hold.Side & 1], kWorldOffset).scale, DegreesOf(delta));
+            else
+                spdlog::info("ArrowNocked: {:X} arrow laid from the {} hand to the bow, {:.0f} units, turned {:.0f} degrees from where the game had it; string {}", cFormId,
+                             bowSide ? "left" : "right", glm::length(cAlong), DegreesOf(delta),
+                             stringMoved >= 0.f ? fmt::format("drawn back {:.0f} units to the hand", stringMoved) : std::string("left alone (no string bone, or not a draw's reach)"));
         }
     }
 }
 
-void SetArrowNocked(uint32_t aFormId, bool aNocked) noexcept
+void SetArrowNocked(uint32_t aFormId, bool aNocked, const ArrowHold& acHold) noexcept
 {
+    const bool cWanted = aNocked || acHold.InHand;
+    {
+        // An arrow already there only changes how it is held: the nodes from before it was attached still tell it apart.
+        std::scoped_lock lock(s_nockedLock);
+        if (const auto it = s_nocked.find(aFormId); it != s_nocked.end() && cWanted)
+        {
+            it->second.Hold = aNocked ? ArrowHold{} : acHold;
+            return;
+        }
+    }
     std::vector<void*> before;
-    if (aNocked)
+    if (cWanted)
         if (Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId)); pActor && pActor->GetNiNode())
             before = ArrowNodesOf(pActor->GetNiNode());
     std::scoped_lock lock(s_nockedLock);
-    if (aNocked)
-        s_nocked[aFormId] = std::move(before);
+    if (cWanted)
+        s_nocked[aFormId] = CopyArrow{std::move(before), aNocked ? ArrowHold{} : acHold};
     else
         s_nocked.erase(aFormId);
+}
+
+bool HasCopyArrow(uint32_t aFormId) noexcept
+{
+    std::scoped_lock lock(s_nockedLock);
+    return s_nocked.contains(aFormId);
 }
 
 void OnFrameEnd() noexcept
@@ -3644,6 +3694,15 @@ void* FirstPersonHand(PlayerCharacter* apPlayer, const size_t aSide) noexcept
     }
 
     return GetName(pHand) == s_name[aSide] ? pHand : nullptr;
+}
+
+bool LocalHandPosition(const uint8_t aSide, glm::vec3& aOut) noexcept
+{
+    void* pHand = aSide <= 1 ? FirstPersonHand(PlayerCharacter::Get(), aSide) : nullptr;
+    if (!pHand)
+        return false;
+    aOut = ToGlm(At<NiTransform>(pHand, kWorldOffset).translate);
+    return true;
 }
 
 // Whether this hand holds something that parries: a weapon, or for the left hand a worn shield.
@@ -4229,6 +4288,18 @@ std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, siz
     return out;
 }
 
+// The VR nodes (bow aim, arrow snap and hold) hang below PlayerWorldNode, found up from the headset node.
+void* LocalWorldNode(PlayerCharacter* apPlayer) noexcept
+{
+    if (!apPlayer || !HeadsetTransform())
+        return nullptr;
+    void* pNode = At<void*>(apPlayer, kHmdNodeOffset);
+    for (int depth = 0; pNode && depth < 16; ++depth, pNode = At<void*>(pNode, kParentOffset))
+        if (const char* pName = GetName(pNode); pName && std::strcmp(pName, "PlayerWorldNode") == 0)
+            return pNode;
+    return nullptr;
+}
+
 void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexcept
 {
 #ifdef SKYRIMVR
@@ -4243,15 +4314,7 @@ void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexce
         return;
     s_nextWalk = now + std::chrono::milliseconds(200);
 
-    // The VR nodes (bow aim, arrow snap and hold) hang below PlayerWorldNode, found up from the headset node.
-    void* pWorldNode = nullptr;
-    if (HeadsetTransform())
-    {
-        void* pNode = At<void*>(apPlayer, kHmdNodeOffset);
-        for (int depth = 0; pNode && depth < 16 && !pWorldNode; ++depth, pNode = At<void*>(pNode, kParentOffset))
-            if (const char* pName = GetName(pNode); pName && std::strcmp(pName, "PlayerWorldNode") == 0)
-                pWorldNode = pNode;
-    }
+    void* pWorldNode = LocalWorldNode(apPlayer);
 
     // The first-person skeleton, from its root bone's parent, in case it does not hang below PlayerWorldNode.
     void* pFirstPerson = nullptr;
@@ -4485,45 +4548,11 @@ bool PlayClashSound(const glm::vec3& acPoint) noexcept
     // Skyrim.esm WPNBlockBlade1HandVsOtherSD: the game's own sound for a one-handed blade blocked by a weapon.
     // It is what the sound marker WPNBlockBladeVsOther (0x137D0) plays.
     constexpr uint32_t kBladeBlockSound = 0x3C73C;
-    constexpr uint8_t kSoundDescriptorType = 0x80; // FormType SNDR (CommonLibVR-NG FormTypes.h)
-    constexpr uint32_t kSoundDescriptorInterface = 0x20; // BGSSoundDescriptorForm's BSISoundDescriptor
-
-    // BSSoundHandle (CommonLibVR-NG): sound id, "assume success", state.
-    struct SoundHandle
-    {
-        uint32_t SoundId = 0xFFFFFFFF;
-        bool AssumeSuccess = false;
-        uint8_t Pad05 = 0;
-        uint16_t Pad06 = 0;
-        uint32_t State = 0;
-    };
-    using TGetAudioManager = void*();
-    using TGetSoundHandle = bool(void* apManager, SoundHandle& aHandle, void* apDescriptor, uint32_t aFlags);
-    using TSetPosition = bool(SoundHandle* apHandle, NiPoint3 aPosition);
-    using TPlay = bool(SoundHandle* apHandle);
-    POINTER_SKYRIMSE(TGetAudioManager, s_getAudioManager, 66391, 66391);
-    POINTER_SKYRIMSE(TGetSoundHandle, s_getSoundHandle, 66404, 66404);
-    POINTER_SKYRIMSE(TSetPosition, s_setPosition, 66370, 66370);
-    POINTER_SKYRIMSE(TPlay, s_play, 66355, 66355);
-    if (!s_getAudioManager.Get() || !s_getSoundHandle.Get() || !s_setPosition.Get() || !s_play.Get())
-        return false;
-
-    TESForm* pForm = TESForm::GetById(kBladeBlockSound);
-    if (!pForm || static_cast<uint8_t>(pForm->formType) != kSoundDescriptorType)
-        return false;
-    void* pManager = s_getAudioManager.Get()();
-    if (!pManager)
-        return false;
-    SoundHandle handle{};
-    // 0x1A: the flags CommonLibVR-NG's BSAudioManager::Play passes.
-    if (!s_getSoundHandle.Get()(pManager, handle, reinterpret_cast<uint8_t*>(pForm) + kSoundDescriptorInterface, 0x1A))
-        return false;
     NiPoint3 position;
     position.x = acPoint.x;
     position.y = acPoint.y;
     position.z = acPoint.z;
-    s_setPosition.Get()(&handle, position);
-    return s_play.Get()(&handle);
+    return GameSound::Play(kBladeBlockSound, &position);
 }
 
 // Where this player's weapons are held, relative to the third-person hands the pose is read from (VRPose::HasWeapons).
@@ -4612,6 +4641,63 @@ void CaptureWeapons(PlayerCharacter* apPlayer, void* apRoot, const BoneNodes& ac
     for (size_t side = 0; side < 2; ++side)
         for (int axis = 0; axis < 3; ++axis)
             aOutPose.WeaponOffset[side][axis] = offset[side][axis];
+}
+
+// The arrow the local player holds in a hand, as CaptureArrowHold last found it.
+std::mutex s_arrowHoldLock;
+ArrowHold s_arrowHold;
+
+// The game holds the arrow taken from the quiver in "ArrowNode" below PlayerWorldNode, at "ArrowHoldOffsetNode" of the hand's wand node.
+// Its model "Arrow:0" is shown while the arrow is in the hand; far from every hand, or hidden, there is none.
+// Its place goes in the space of the hand's third-person bone, which the other players' copies pose from this player's.
+void CaptureArrowHold(PlayerCharacter* apPlayer, const BoneNodes& acNodes, const std::chrono::steady_clock::time_point aNow) noexcept
+{
+    constexpr uint32_t cFlagsOffset = 0x10C; // NiAVObject::flags on VR, bit 0 hidden (as SpawnReveal)
+    static std::chrono::steady_clock::time_point s_nextLook{};
+    if (aNow < s_nextLook)
+        return;
+    s_nextLook = aNow + std::chrono::milliseconds(100);
+
+    ArrowHold hold{};
+    const auto cFound = [&]() {
+        void* pWorldNode = LocalWorldNode(apPlayer);
+        void* pArrowNode = pWorldNode ? FindShallowest(pWorldNode, "ArrowNode") : nullptr;
+        void* pModel = pArrowNode ? FindShallowest(pArrowNode, "Arrow:0") : nullptr;
+        void* pHoldNode = pWorldNode ? FindShallowest(pWorldNode, "ArrowHoldOffsetNode") : nullptr;
+        if (!pModel || !pHoldNode || (At<uint32_t>(pArrowNode, cFlagsOffset) & 1u) || (At<uint32_t>(pModel, cFlagsOffset) & 1u))
+            return false;
+        const NiTransform& model = At<NiTransform>(pModel, kWorldOffset);
+        if (model.scale < 0.01f)
+            return false;
+        // The hand is the one whose wand node holds the hold node.
+        void* pHoldParent = At<void*>(pHoldNode, kParentOffset);
+        void* pWand = pHoldParent ? At<void*>(pHoldParent, kParentOffset) : nullptr;
+        const char* pWandName = pWand ? GetName(pWand) : nullptr;
+        if (!pWandName)
+            return false;
+        hold.Side = std::strcmp(pWandName, "LeftWandNode") == 0 ? 0 : 1;
+        // The arrow sits at the hold node while it is in the hand, and is sent far away when it is not.
+        if (glm::distance(ToGlm(At<NiTransform>(pArrowNode, kWorldOffset).translate), ToGlm(At<NiTransform>(pHoldNode, kWorldOffset).translate)) > 20.f)
+            return false;
+        void* pHand = acNodes[hold.Side == 0 ? VRPose::kLeftHand : VRPose::kRightHand];
+        if (!pHand)
+            return false;
+        const NiTransform& hand = At<NiTransform>(pHand, kWorldOffset);
+        const glm::mat3 cInverseHand = glm::transpose(ToGlm(hand.rotate));
+        hold.Offset = cInverseHand * (ToGlm(model.translate) - ToGlm(hand.translate)) / std::max(hand.scale, 0.05f);
+        hold.Rotation = glm::normalize(glm::quat_cast(cInverseHand * ToGlm(model.rotate)));
+        // The head lies about an arrow's length from the hand; farther, the body's hand did not reach the controller.
+        return std::isfinite(hold.Offset.x) && std::isfinite(hold.Offset.y) && std::isfinite(hold.Offset.z) && glm::length(hold.Offset) < 150.f;
+    };
+    hold.InHand = cFound();
+    std::scoped_lock lock(s_arrowHoldLock);
+    s_arrowHold = hold;
+}
+
+ArrowHold LocalArrowHold() noexcept
+{
+    std::scoped_lock lock(s_arrowHoldLock);
+    return s_arrowHold;
 }
 
 bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHeading) noexcept
@@ -4818,6 +4904,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
     }
 
     CaptureWeapons(apPlayer, pRoot, nodes, aOutPose, now);
+    CaptureArrowHold(apPlayer, nodes, now);
 
     // Fingers: sent only when both hands' bones are known, and only when they changed or a second has passed.
     // The resend lets a player who arrives later still get them.

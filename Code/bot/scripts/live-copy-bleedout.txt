@@ -1,13 +1,18 @@
-# A copy of an essential NPC that goes down and gets up again must get up here too.
+# A copy of an essential NPC that goes down and gets up again must get up here too, and never slide along the floor.
 #
 #   python Tools\VR\live-check.py live-copy-bleedout
+#   python Tools\VR\live-check.py --expect-fail live-copy-bleedout     on a build without the fix: must be RED
 #
 # Players saw downed NPCs keep lying on the floor and slide along behind their owner once the owner's NPC had stood up.
-# The copy refused the owner's "bleedOutStop" (ReplayDiag), stayed in its bleedout pose, and followed the owner's walk lying down.
+# The copy refused the owner's "bleedOutStop" (ReplayDiag) and followed the owner's walk lying down.
 # Here the game places a Lydia (base A2C8E, made essential), knocks her down and stands her up while the bot records it.
 # Then the bot brings a Lydia of its own and replays the recording on her, so the game's copy of her gets the owner's real actions.
 # A unique base, not a levelled bandit: a levelled copy may pick another race here and is then not fed the owner's actions.
 # (The server never hands a temporary live actor to another player, so the placed Lydia itself cannot be taken over.)
+#
+# A run counts only when (REQUIRE): the recording holds the owner's get-up, the owner's NPC really moved while down, the
+# copy is the owner's kind, and the copy lay flat at some point. It is then judged on two things: the lying copy was not
+# carried along the floor, and it is on its feet at the end.
 log live copy bleedout
 waitfor connected 45
 expect known me
@@ -27,6 +32,8 @@ log DO sleep 9
 log DO papyrus Actor RestoreActorValue placed s:Health f:100000
 capture newest 22
 log DO papyrus Actor IsBleedingOut placed
+log REQUIRE bot logged Captured action names of \w+: .*\bbleedOutStop\b
+log REQUIRE logged DownedTravel: own NPC \w+ moved \d+ units in \d+ ms while down \(life state 7
 
 log -- the bot brings its own Lydia and replays the recording on her; the game shows a copy of her
 npc temp A2C8E
@@ -35,16 +42,16 @@ wait 6
 # No health left, as a hero beaten down in a fight: the copy goes down by itself, and its own health is what the game checks before it lets it stand up.
 npclife alive 0
 wait 3
-# Watched through the whole replay: down in bleedout, then on its feet at the end.
-log CHECK npc standing 26
+# The copy's pose through the whole replay and a few seconds after it, judged below.
+log DO watch npc 30
 replay npc
 wait 3
 log DO papyrus Actor IsBleedingOut npc
 log SHOT after of npc
-# The copy falls into its own bleedout in a ragdoll, so it may refuse the owner's "bleedOutStop"; it must still get up.
-log CHECK logged KnockDown: NPC copy \w+ is up again
-log CHECK absent KnockDown: NPC copy \w+ still lies
-log CHECK absent Base form differs
+log REQUIRE absent Base form differs
+log REQUIRE npc went down
+log CHECK npc slide below 100
+log CHECK npc standing
 log CHECK game alive
 log DO papyrus ActorBase SetEssential A2C8E b:false
 log DO god off

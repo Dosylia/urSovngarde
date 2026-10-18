@@ -10,6 +10,8 @@ target("TPTests")
     add_files("../server/AdminKeys.cpp")
     -- The client's remote playback timing has no game dependencies.
     add_files("../client/Systems/PlaybackClock.cpp")
+    -- Who may revive whom (ReviveRules): plain values in and out.
+    add_files("../server/ReviveRules.cpp")
     -- The shared clock, for the hours a sleep adds.
     add_files("../common/DateTime.cpp")
     add_includedirs("../common", "..")

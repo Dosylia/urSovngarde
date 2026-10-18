@@ -1,27 +1,32 @@
-# A death in a dungeon with a respawn override names its cell by editor id, so the override can apply on VR.
+# A death in a dungeon: the player comes back at the safe point its arrival left there, named by the cell's editor id.
 #
 #   python Tools\VR\live-check.py live-respawn-cell
 #
-# CellRespawnOverrides (upstream #875) finds a dungeon's respawn spot by the cell's editor id; whether VR keeps cell
-# editor ids was unknown, since every death logged since was outdoors ("in cell 8F7B 'Wilderness'"). Here the player
-# dies in Stillborn Cave (StillbornCave01, one of the default overrides) and the respawn must name it.
+# The loading screen of the arrival gives a safe point where the player stands (PlayerService::RunSafePointUpdates), and a
+# death respawns there; CellRespawnOverrides (upstream #875) is only for a respawn without any safe point. Whether VR keeps
+# cell editor ids was unknown, since every death logged before was outdoors ("in cell 8F7B 'Wilderness'"); the respawn
+# line names the cell. This bot leaves the party, so the player dies alone and is not waited for.
+# Risk: with no safe point in the cave (in combat on arrival), the respawn goes back outside, the travel that crashes the rig.
 log live respawn cell
 waitfor connected 45
 expect known me
 waitfor known other 40
 wait 5
+party leave
+wait 2
 
 log -- into Stillborn Cave
 log DO console coc StillbornCave01
 wait 25
 log CHECK game inworld
+log CHECK logged PlayerService: safe point in cell \w+ 'StillbornCave01'
 
 log -- the player dies there
 log DO console player.kill
 wait 14
 log CHECK game alive
 log CHECK player alive
-log CHECK logged RespawnPlayer: in cell \w+ 'StillbornCave01', at its override position
+log CHECK logged RespawnPlayer: at the safe point in cell \w+ 'StillbornCave01'
 wait 3
 
 # No travel back outside: console travel out of Stillborn Cave crashes the game in Community Shaders, with or without

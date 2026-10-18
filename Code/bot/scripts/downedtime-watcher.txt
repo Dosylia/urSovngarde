@@ -1,0 +1,22 @@
+# The other half of the not-revived-in-time test: the party's leader, with a safe point, which never revives the other side.
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it.
+party lead
+log downedtime watcher
+waitfor connected 45
+collect spawn
+record downedtime watcher
+waitfor known other 40
+safepoint 1000 2000 300
+
+log -- the other side goes down; nobody revives it
+waitfor downstate other down 30
+expect downstate other down
+waitfor downstate other died 80
+expect downstate other died
+expect respawnpoint other 1000 2000
+expect connected
+record off
+report bot-downedtime-watcher.txt
+log done
+stop

@@ -1,0 +1,31 @@
+# One half of the party-has-fallen test: both members of a party of two go down, and the server ends it for both.
+#
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair partyfall
+#
+# Run alone, not in run-all-pairs: the test server puts every bot in one party, and a party only falls when all of its members are down.
+log partyfall actor
+waitfor connected 45
+collect spawn
+record partyfall actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+
+log -- going down first
+down
+waitfor downstate me down 10
+expect downstate me down
+
+log -- the other side goes down too: the whole party has fallen, and respawns at its leader's safe point
+waitfor downstate me fallen 20
+expect downstate me fallen
+expect downstate other fallen
+# The other side's down ended the party at once: it is never announced as one to revive.
+expect downcount other down == 0
+expect respawnpoint me 500 600
+expect connected
+record off
+report bot-partyfall-actor.txt
+log done
+stop

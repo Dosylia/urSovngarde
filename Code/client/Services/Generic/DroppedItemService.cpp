@@ -81,7 +81,11 @@ void PlaceMovedObject(TESObjectREFR* apRef, const glm::vec3& acPosition, const g
     const NiPoint3 cTarget(acPosition);
     const glm::vec3 cNow(apRef->position.x, apRef->position.y, apRef->position.z);
     if (apRef->GetNiNode() && glm::distance(cNow, acPosition) < kMoveInPlaceDistance)
+    {
+        // That moves only the reference: its 3D and collision are moved to it too, warped there.
         apRef->SetPositionInPlace(cTarget);
+        apRef->Update3DPosition(true);
+    }
     else if (TESObjectCELL* pCell = apRef->GetParentCellEx())
         apRef->MoveTo(pCell, cTarget);
 }
@@ -670,7 +674,16 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
                 continue;
             m_objectCandidates.push_back(pRef->formID);
             if (m_objectCandidates.size() >= 128)
+            {
+                // Measurement: the watch list is full, so movable objects past the first 128 the cell lists go unwatched.
+                static std::chrono::steady_clock::time_point s_nextFullLog{};
+                if (aNow >= s_nextFullLog)
+                {
+                    s_nextFullLog = aNow + std::chrono::seconds(30);
+                    spdlog::info("WorldObject: 128 movable objects within {:.0f} units are watched, the most there is room for; others nearby are not", cWatchRadius);
+                }
                 break;
+            }
         }
 
         // Held for the other player until it is let go, and carried here until it comes to rest, wherever it is now.
@@ -764,8 +777,10 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
             pRef->SetMotionType(TESObjectREFR::kMotionDynamic);
             motion.Held = false;
             motion.QuietUntil = aNow + cHoldFor;
-            spdlog::info("WorldObject: {:X} {}; handed back to physics here ({} of its {} moves here rebuilt its 3D)", cFormId,
-                         motion.RemoteAtRest ? "was put down over there" : "stopped being moved over there", motion.HeldRebuilds, motion.HeldMoves);
+            // Where its 3D is drawn, against the last place the other side put it: what this player sees of the carry.
+            spdlog::info("WorldObject: {:X} {}; handed back to physics here ({} of its {} moves here rebuilt its 3D; its 3D is {:.0f} units from the last place it was put)",
+                         cFormId, motion.RemoteAtRest ? "was put down over there" : "stopped being moved over there", motion.HeldRebuilds, motion.HeldMoves,
+                         glm::distance(position, motion.RemoteTarget));
             motion.HeldMoves = 0;
             motion.HeldRebuilds = 0;
         }
@@ -905,6 +920,7 @@ void DroppedItemService::OnNotifyWorldObjectMove(const NotifyWorldObjectMove& ac
 
     motion.LastRemote = now;
     motion.LastPosition = position;
+    motion.RemoteTarget = position;
     motion.LastRotation = acMessage.Rotation;
     motion.Moving = false;
     motion.RemoteAtRest = acMessage.AtRest;

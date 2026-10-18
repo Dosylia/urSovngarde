@@ -25,8 +25,9 @@ Both players must run the current tools folder (v1.9.3-12-gf7decbde-dirty.934076
 of the player who watches: in the session of 2026-10-14 evening Seen still ran 4ccd5ff, so nothing that his game draws
 or simulates (the arrow, the bow on join, the copy's ragdoll) could show the new code.
 
-Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on 5342bc0). Current build 3d63d8e
-(deployed, client and server). Both players need it.
+Sessions of 2026-10-16 evening (both on d3c1974), 2026-10-17 morning (both on 5342bc0) and 2026-10-17 evening (both
+on ce86908). Current build 440f5e0 (deployed, client and server; protocol ade54224, changed by the arrow in the hand).
+Both players need it.
 
 - [ ] **Cutscene voice lines and subtitles out of step in a party** (upstream ea0f6c39, ported 2026-10-17; a protocol
       change, so both players need 5342bc0 or later). Every game plays a quest's scenes itself, and the relayed line
@@ -36,8 +37,23 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       on the other side; a repeat within a second is no longer sent. Rig: `live-scene-dialogue` 3 of 3 (Whiterun's
       market scene 5B1BA sent with its scene, each line once). The skip itself needs two real games. To see in play: a
       quest scene with both players near, voices in step and no line cut short.
-- [ ] **Arrow held in the hand before nocking** not seen by the other player: not sent at all. The same `ArrowDiag:`
-      lines show which node the game makes for it, which is what to send.
+- [ ] **Arrow held in the hand before nocking** not seen by the other player: not sent at all (again 2026-10-17
+      22:06:46 on ce86908). From the `ArrowDiag:` lines in play: at attack state 0 the `ArrowNode` under the player's
+      world node moves to about 67 units from the right hand and gains an `Arrow:0` child.
+      In the tree since 28995d2 (a protocol change, ade54224: both players and the server must update): the archer's
+      game finds that arrow at the hand's hold node, ten times a second, and sends it with where it sits against the
+      third-person hand bone (`ArrowNocked: sent this player's arrow in the hand (...)`). The other game attaches the
+      arrow on its copy and keeps it where the archer holds it. From the hand to the string it is the same arrow, laid
+      along the bow as before. Compiled, TPTests 52 of 52 (two arrow round trips). Rig on 440f5e0 (c1's build, which
+      holds it): `live-arrow-hand` (new) 9 of 10. The rig player drew a bow and the bot heard the arrow in the right
+      hand, its head 82 units from the hand bone. The bot's arrow went into the copy's right hand, its head 57 units
+      from it, then onto the string and off again. The one failure was the check: it expected 60-74 units and forgot
+      the hand bone's scale (67 times a scale under 1). It now takes 40-79, and the line prints the hand scale from the
+      next build. The screenshots show nothing (the copy too far and bent over), so only the log says where the arrow
+      is drawn. `live-arrow-nock` 9 of 9 (regression). There is no red run: before this, nothing at all was sent for
+      an arrow in the hand.
+      To see in play: draw a bow in front of the other player; they see the arrow in your hand. Read on their side
+      `ArrowNocked: ... arrow held in the right hand as its owner holds it, its head N units from the hand`.
 - [ ] **Player 2's hits did not hurt player 1 much** (21:02-21:03): on player 2's game, player 1's sword and shield
       bodies were taken out of the world while the world was busy; we dropped our record anyway, and the next frame
       left the bodies alone as someone else's (`already in a world; left alone`) for the rest of the fight. Player 2's
@@ -62,6 +78,13 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       at once after the put-down), `live-world-object-reload` (new) 6 of 6: the plate keeps its 3D after a carry and
       after its cell loads again. To see in play: carry a cup past the other player; it moves smoothly in steps, and
       they can lift it once it is down.
+      2026-10-17 evening (ce86908): both players lifted the same cup in turn, but neither saw the other carry it, and
+      player 2 found it where it first stood. The game's SetPosition moves only the reference, not the 3D nor its
+      collision, and the rig read the reference. Red on c09bd58 (`live-world-object` now reads where the 3D is drawn
+      when it is let go): 216 units from where the bot put it, and it came to rest where it started. Since 0ff0808 each
+      move also warps the 3D and its collision there (`Update3DPosition`): 0 units, at rest where the bot put it,
+      `live-world-object` 9 of 9. Not seen in play yet. To see in play: carry a cup in front of the other player; read
+      `its 3D is N units from the last place it was put` on the other side (a few units at most).
 - [ ] **Downed essential NPCs slide on the floor** (player 2, 2026-10-16 and 2026-10-17): the copy refused the
       owner's get-up (`'bleedOutStop' refused ... (not taken)`) and followed the owner's walk lying down.
       Cause, reproduced in the rig: at zero health the copy's own game puts it down with a ragdoll fall; each replayed
@@ -72,12 +95,21 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       Rig: `live-copy-bleedout` (the copy falls in its own ragdoll; on 7a9e33a without the last part it lay there:
       `still lies after 15 s`; on 502d883 up after 5.3 s, 8 units of travel while down) and `live-copy-knockdown`
       (the owner's NPC thrown over while down; the copy lies 6 s, gets up by itself). Not seen in play yet.
-      To see in play: knock an essential NPC down, let it get up, watch it on the other player's screen. Read there:
-      `KnockDown: NPC copy X lies in its own ragdoll`, `... sent it 'GetUpBegin' (taken)`, `... is up again after N ms`;
-      `KnockDown: ... still lies after 15 s` means a copy still stuck.
-- [ ] **Two-handed sword grip sometimes wrong** (player 2): his greatsword was equipped on the copy by the event path
-      with the right-hand slot after a respawn (the snapshot path uses both hands since 9340761). Not shown to cause the
-      grip; ask which screen it was.
+      Both scripts now REQUIRE that the recording holds the owner's get-up and that the copy lay flat, and judge the
+      body against its feet (`npc slide below 100`, `npc standing`). Red run 2026-10-17 on a build with the fix off:
+      `live-copy-bleedout` RED (the lying copy carried 1287 units along the floor, still lying at the end), the slide
+      players saw.
+      Seen in play 2026-10-17 evening (ce86908): the downed NPC stood back up, then jumped a little.
+      The copy gets up where it fell and then followed its owner's NPC at once. Red on c09bd58: up 219 units from where
+      its owner had it, crossed in one frame (12389 units a second). Since 0ff0808 it walks the gap at up to 300 units a
+      second on top of its owner's motion (a gap over 512 still closes at once). Rig on 0ff0808: `live-copy-knockdown`
+      5 of 5 (325 units, at most 301 units a second), `live-copy-bleedout` 4 of 4 (371 units, at most 464); both also
+      still pass the slide and standing checks. The legs play the owner's animation meanwhile, so with the owner
+      standing still the copy may glide for about a second; to be judged in play.
+      To see in play: knock an essential NPC down, let it get up, watch it on the other player's screen: no jump.
+      Read there: `KnockDown: ... is up again after N ms, D units from where its owner has it` and `... moved at most
+      N units a second in its first N ms up` (a few hundred; thousands is a jump); `... still lies after 15 s` means a
+      copy still stuck.
 - [!] **Player 2's crash at 20:55** (not connected, 2 s after a load in Sovngarde): a freed scene-graph node visited by
       culling, the same family as KNOWN_ISSUES's +0xCBFD24; nothing of ours in it. Needs his
       `logs\crash_UTC_2026-10-16_18-55-15.small.dmp`, sent by hand (it is a day old by the next session).
@@ -167,7 +199,8 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       not grab a bandit body after Emma dragged it -- no motion of it was seen in his game.
 - [ ] **A death:** the respawn's health lines (after the respawn, when god mode ends) for the second down of
       2026-10-11 21:12; in a dungeon, the respawn at its own spot (`RespawnPlayer: in cell ... at its override
-      position`).
+      position`). With the revive build, a respawn goes to the last safe point instead (`RespawnPlayer: at the safe
+      point in cell ...`), and the override only applies without one.
 - [ ] **A load within a minute of a death:** it crashes the rig every time (`skyrimvrtools.dll+0x71B5`); no real session
       has done it yet.
 - [ ] **A real dragon flying** in one game: the other game never takes it over until it lands.
@@ -191,6 +224,13 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       updates extrapolated, live-walk 8/8. Lines: `PlaybackDiag:` every 10 s per remote player, read by
       `Tools/VR/session-report.py`. To see in play: the other player's hands, sword and walk closer to real time and as
       smooth as before; blocks still blocking (`Defender's rule: ... is blocked`).
+      In play 2026-10-17 evening (both on ce86908, which holds session A): the other player shown a median 74 ms behind
+      (player 1) and 76 ms (player 2), 90% of readings under 88 ms; 0.3% and 1.7% of updates with nothing ahead.
+      From 22:03:10 to 22:03:50, fighting right after player 1 was revived, player 2's delay for player 1 sat at its
+      250 ms cap (jitter up to 344 ms); gaps of up to 2.6 s with nothing ahead came at 22:08 and 22:13. Causes not
+      looked at; if it shows again, compare with player 1's frame times at that moment.
+      Blocks still decided: 9 blocked, 26 landed. No complaint about movement from the players. Next: session B
+      (unreliable movement, actions split), a protocol change.
 - [ ] **Threads and stutters:** the `Health` lines near 200 threads in both games once Seen is updated (Waiting on a
       test or action); Seen's freezes (no frame for 46 s, 2026-10-11 18:11 and 21:36) gone with it.
 - [ ] **Crash lines on a real crash:** `CrashPlace: ...` (send the log's path to the launcher worker, which parses it)
@@ -204,6 +244,64 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       differ by only 7 deg); `HeadingDiag:` sent heading off the body near 0 and off the headset during head turns.
 
 ## Waiting on a test or action
+
+- [!] **Revive and respawn** (merged 2026-10-17; with the review fixes protocol 33ef1cbe, so every player and the public
+      server need the build): a player at
+      zero health stays down; a party member who holds a hand on them for 4 s revives them (up with 30 % health, 3 s of
+      god mode). The server ends every wait (ReviveService, rules in ReviveRules): not revived within
+      `Gameplay:uDownedSeconds` (60), nobody in the party left standing (all down, or the others left the party), or down
+      alone (at once). The player then respawns at the party leader's last safe point, else its own, else the game's old
+      spot. A safe point is where the game would have autosaved: after a loading screen (a load door, fast travel, a
+      loaded save), a sleep or wait, or on connecting, never in combat. No world reset: the owner asked for "a better
+      respawn", not the last save. A refused revive tells the reviver why, and the hold starts over; a member who joins
+      while someone is down is told; a save loaded while down stands the player up, with no respawn and no gold lost.
+      Found and fixed in the rig: a connection dropped while down let the game kill the player and load the last save
+      (the health now comes back first); on VR the respawn's knock (upstream `KnockExplosion`) threw the player
+      thousands of units (5761 in one run), so VR skips it. The messages are HUD text until the "You died" screen is
+      decided. Tests 2026-10-17 on the final build: `TPTests [revive]` 5 cases; bot pairs `downed` (in run-all-pairs;
+      its watcher failed once in 5 runs, cause unknown, the server's side of that run was right), `partyfall`,
+      `downedtime`, `downedleave` (alone), `run-all-pairs` 14/14; rig `live-revive` 7/7, `live-revive-hand` 5/5 (only right after
+      live-revive), `live-revive-timeout` 12/12 (back within 1 unit of the safe point; a VR bleedout lasts the whole
+      60 s), `live-partyfall` 9/9, `live-down-alone` 5/5, `live-death` 9/9, `live-down-disconnect` 9/9,
+      `live-safepoint-travel` 4/4. Not run: `live-respawn-cell` (the coc out of Mistwatch hit the known Community
+      Shaders crash), `live-load` and `live-load-dead` (a load after a death crashes the rig). Not seen in play.
+      To read in a session: `PlayerService: safe point in cell ...` (where they are made), `RespawnPlayer: at the safe
+      point in cell ...`, the server's `Revive: ... respawning at the party leader's safe point`, `Revive: holding a
+      hand on player ..., N units from its body` (the 50-unit reach is a guess), `the revived player is up; health N`.
+      Open: whether a downed player's copy shows the bleedout pose on the other side; whether a VR player who died
+      ragdolled gets stuck now that the respawn does not knock it; a safe point in an interior (not tested in the rig).
+      Not done: the revive gesture (options first, as the owner asked).
+      Review fixes (2026-10-17, ce86908): a downed player who leaves the party or the server is announced to the members
+      told it was down (`NotifyDownedState::kLeft`; before, they kept trying to revive it); a respawn this game starts
+      on its own ends the down on the server at once and goes to the server's respawn point (`PlayerDownedRequest`
+      `Respawning`, answered `kRespawned`); the last one standing going down is no longer announced as "down" before
+      "party fallen"; the "party fallen" message only when it applies; a disconnect ends a revive's or respawn's god
+      mode and fade-in and forgets this game's safe point; a hold ends 20 units past the reach that starts it; the bot's
+      `safepoint` and `respawnpoint` no longer throw. Bot pairs, each failing on the build before the fix: `partyfall`
+      (new `downcount` check), `downedgone`, `downeddrop`, `downedgiveup`; all eight revive pairs and TPTests pass on
+      ce86908. Rig on ce86908 (a regression check: none of these was written to fail without the client fixes):
+      `live-revive` 7/7, `live-revive-hand` 5/5, `live-revive-timeout` 12/12, `live-partyfall` 9/9,
+      `live-down-disconnect` 9/9. Open, for the author: the VR respawn knock skipped instead of fixed; any loading
+      screen taken as a loaded save (a teleport during the fade calls the respawn off; `TESLoadGameEvent` is exact);
+      `live-revive-hand` passes from the resting hand, never the held one.
+      After the play session of 2026-10-17 evening (the owner's choices, 440f5e0, no protocol change of its own):
+      while down, a slow double heartbeat in both controllers and the game's heartbeat sound (`UIHealthHeartbeatALPSD`);
+      on a revive one strong pulse in both hands and the restoration spell's sound (the game has no breath-in sound);
+      both grips held 3 s gives up the wait (a rising buzz; letting go cancels; the server answers with the party's
+      respawn point, as for any respawn this game starts); the server ends the wait at once when every standing member
+      is in another interior or worldspace or over 7000 units (100 m) away, checked on going down and every second;
+      "YOU DIED" in red on a head-locked overlay as the screen fades, then the place's name in gold for 3 s on waking.
+      The grips are read from OpenVR and from the game's own controller devices (Oculus Touch reports the grip as
+      Axis2, so both buttons count). Tests: `TPTests` 52/52 (new case for the distance rule); bot pair `downedfar` red on
+      28995d2 (the actor stayed down), green with all nine revive pairs on 8b9d192 (its server is 440f5e0's); rig
+      `live-revive-giveup` red on 28995d2, 12/12 on 440f5e0 (a 1.5 s hold let go cancels, the 3 s hold respawns 1 unit
+      from the safe point, both banners logged); on 8b9d192 (same cues, grips read from OpenVR only) `live-revive`
+      10/10 (heartbeat on and off, revive sound played) and `live-blade` 6/6 on 440f5e0 (the clash sound moved).
+      In the rig the grips came from the game's devices (`OpenVR 0, game 2`); the OpenVR read, the feel of the pulses,
+      the sounds' volume and the banner's size and place are only judged in a headset. Not seen in play.
+      To read: `both grips held while down (OpenVR N, game N)`, `the player gave up the wait`, `heartbeat ... playing`,
+      `the heartbeat sound stopped`, `VRBanner: '...' shown`, `the revive sound did not play` (should never show), the
+      server's `is down with every standing member elsewhere or too far to come`.
 
 - [!] **Seen's update:** DynDOLOD DLL NG Alpha-43 (Nexus 97720, replacing his `DynDOLOD DLL NG` files) and the host's
       combined VR Address Library file (`E:\FUS\mods\VR Address Library for SKSEVR\SKSE\Plugins\version-1-4-15-0.csv`;
@@ -223,6 +321,69 @@ Sessions of 2026-10-16 evening (both on d3c1974) and 2026-10-17 morning (both on
       which part of the appearance did not load.
 
 ## Open work
+
+- [ ] **Crash applying the owner's inventory to an NPC with no AI process** (hub reports 20261017-211633-bb01369d and
+      20261017-211914-2214ee75, a public v1.9.3 player in the Helgen intro, twice). The triage calls it "back after its
+      fix" because it matches the address only (SkyrimVR.exe+683850); it is not that bug: our crash handler finds no
+      actor of ours in any register, and RSI is Ralof (2BF9E), alive. Both crashes come right after `Received remote
+      actor, form id: 2BF9E`, on that thread: ReconcileActorData > SetActorInventory > the game's
+      InventoryChanges::RemoveItem (15821) > AIProcess::ClearFurniture (38773) with no process (RCX 0). The same path
+      has no guard in the current code. What set it off: VRConnectService reconnects when the character's name
+      changes, and that player's name flipped between 'Prisoner' and 'Prisoner2' a few seconds after each save load
+      (not our code), so it reconnected five times in 15 minutes and re-applied every inventory each time. Ralof also
+      sent 182 Unequip actions in a second there. Two more reports (2026-10-17 23:17, same player): the same crash on
+      Legate Quentin Cipius (BF561) 1.2 s after he appeared, with no reconnect, an Imperial Sword in RAX.
+      Correction: the function names above come from CrashLogger's nearest known id and are not reliable. What the
+      registers show: `mov rax, [rcx+0x08]` with RCX 0 is a read of an AI process's `middleProcess` (AIProcess+0x08),
+      where the equipped hands are kept. The actor had no AI process, while our inventory apply equipped a weapon on it.
+      Fixed in 8397d86 (deployed, client and server; protocol unchanged since 440f5e0):
+      - A full inventory for an actor with no loaded AI process (`currentProcess` and its `middleProcess`) waits until
+        it has one (`Inventory of X kept until the actor is loaded here`, then `... applied now that the actor is
+        loaded here`). No rig run reproduces the crash: an actor in that state could not be made on demand.
+        `live-copy-bleedout` 4 of 4 and `live-temp-reconnect` 8 of 8 as a regression, and no inventory held back in
+        them.
+      - The client compares the character's name once, 5 s after each loading screen, not every 2 s in play.
+        `live-rename` (new): the game renames the player while connected. RED on 440f5e0 (it reconnected), 4 of 4 on
+        8397d86. Not tested: loading another character's save while connected (the rig has one save).
+      The same two fixes are in the hotfix v1.9.4 prepared in `C:\dev\TiltedEvolution-hotfix` (v1.9.3 plus these).
+      Not seen in play yet. To see in play: no `connecting again` line except after loading another character.
+      The `+24E6D0` crash in the same reports (the AI thread on an actor with no cell, 3 ms after our teleports of
+      actors into cells outside the loaded area) is not fixed; it came 20 s after one of the name-flip reconnects.
+- [ ] **Trustworthy rig tests** (asked 2026-10-17: fixes that pass in the rig keep failing in play, and builds and runs
+      cost time, so a test must be worth it). Seen on 2026-10-16/17: `live-copy-bleedout` passed while testing nothing
+      (its copy replayed no actions); `live-world-object` passed while the cup flickered (it read our own log lines,
+      not the object); `live-blade` passed though the rig's slow swings never make the PLANCK hit the fix was about; a
+      slide check passed only by accident (per-frame steps of stepwise playback); `live-defender` hard-coded the old
+      225 ms delay; scripted HIGGS grabs crash the game (higgs_vr.dll+0x605ae); the rig runs at 60 or 100 fps while
+      the players run at about 45. Plan:
+      1. Audit every live script: what it guards, whether its checks read the game (state, positions, screenshots) or
+         only our log lines, its preconditions, its false-pass risks, its timing assumptions (in progress).
+      2. Rig realism: frame rate pinned near the players', fake network on by default for timing tests.
+      3. A test counts only when shown red on the build without the fix and green with it; a precondition that fails
+         makes the run INVALID, never a pass; results kept in a history file, flaky tests marked.
+      4. Checks on what the player sees, not on what our code says it did.
+      5. After each play session, each rig-tested item gets "rig said / play said", to learn which tests predict play.
+      Done 2026-10-17 (tools only, no build): the audit of all 68 live scripts (top false passes: copy-bleedout and
+      copy-knockdown passed with a copy that never went down; hands passes at 65-74 units, above the original 27-32
+      unit bug; world-object read our log lines and ignored the flicker count; defender passed when no hit was sent;
+      blade can never make the PLANCK hit; look, temp-reuse, creatures and game-drops). `live-check.py` now gives
+      INVALID (failed `log REQUIRE`, or the bot could not do a line's part), INCONCLUSIVE (SKIPPED is no longer a
+      pass), RED / NOT RED (`--expect-fail` on a build without the fix), reads across a log rotation, and keeps every
+      run in the toolbox's `test-history/live.jsonl` with build, frame rate and network. Scripted swings now carry the
+      controller's velocity. `live-world-object` samples the plate's 3D through the whole carry (`ref 92D04 3d steady
+      3`) and requires `0 of N moves rebuilt its 3D`; `live-defender` needs one log line per hit. The rules
+      (toolbox `rules/working.md`): red before the fix, REQUIRE the preconditions, report rig results as rig results.
+      The rig's frame rate follows the desktop monitors (SteamVR's null headset draws into a desktop window): 60 Hz
+      normally, 100 since one monitor went up on 2026-10-17 morning. HIGGS takes two physics steps a frame below 70
+      fps (the players near 45, the rig at 60) and one above, so the weapon bodies read 85-100 units off at 100 fps and
+      0.3 on average at 60 (32 readings, none over 30). `headless.ps1 up` now prints the monitors' rates and warns
+      above 60. Rig at 60 fps on 3d63d8e: live-defender ok; live-world-object's new checks pass (the plate's 3D never
+      unloaded in 81 and 83 samples during the carry; `0 of its 6 moves rebuilt its 3D`, a pattern the old code's
+      `6 of its 6` fails); its opening game-to-bot move was missed in one of two runs, unexplained so far (a log line
+      for a full watch list goes into the next build).
+      Next: the copy-bleedout and copy-knockdown scripts (the session that owns them is reworking them, with a red
+      run), the hands threshold (80 units against a 27-32 unit bug), the stale default suite, a precise bot-side
+      `objectmoves` condition, and a choice for the owner: let the rig set the monitors to 60 Hz while it runs.
 
 - [ ] **Handling a living NPC the other game runs: send the pull** (decided 2026-10-10: the grabber's game sends the
       pull to the game that runs the NPC, which applies it). Needs a safe way to tell when a HIGGS hand holds a copy:
