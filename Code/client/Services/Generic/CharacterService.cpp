@@ -81,6 +81,7 @@
 #include <Games/Memory.h>
 #include <Forms/ActorValueInfo.h>
 #include <Games/TES.h>
+#include <AI/AIProcess.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
 #include <Games/Skyrim/Interface/UI.h>
@@ -474,6 +475,12 @@ void NoteDownedTravel(uint32_t aFormId) noexcept
     it.value().From = cAt;
     it.value().Since = cNow;
 }
+
+// Whether the game's equip code can run on this actor: an AI process with its middle-high data, as actors loaded here have.
+bool HasLoadedProcess(const Actor* apActor) noexcept
+{
+    return apActor && apActor->currentProcess && apActor->currentProcess->middleProcess;
+}
 } // namespace
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
@@ -576,9 +583,19 @@ void CharacterService::ReconcileActorData(
 
     if (aApplyInventory)
     {
-        const Inventory currentInventory = apActor->GetActorInventory();
-        if (currentInventory.Entries != acActorData.InitialInventory.Entries || currentInventory.CurrentMagicEquipment != acActorData.InitialInventory.CurrentMagicEquipment)
-            apActor->SetActorInventory(acActorData.InitialInventory);
+        // Equipping and unequipping read the actor's AI process: an actor not loaded here has none, and the game crashes on it.
+        if (!HasLoadedProcess(apActor))
+        {
+            m_pendingInventories[apActor->formID] = acActorData.InitialInventory;
+            spdlog::info("Inventory of {:X} kept until the actor is loaded here (no AI process yet)", apActor->formID);
+        }
+        else
+        {
+            m_pendingInventories.erase(apActor->formID);
+            const Inventory currentInventory = apActor->GetActorInventory();
+            if (currentInventory.Entries != acActorData.InitialInventory.Entries || currentInventory.CurrentMagicEquipment != acActorData.InitialInventory.CurrentMagicEquipment)
+                apActor->SetActorInventory(acActorData.InitialInventory);
+        }
     }
 
     if (apActor->IsDead() != acActorData.IsDead)
@@ -840,6 +857,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     {
         PerfScope perfScope("CharacterService::ApplyCachedWeaponDraws");
         ApplyCachedWeaponDraws(acUpdateEvent);
+        ApplyPendingInventories();
     }
     {
         PerfScope perfScope("CharacterService::ProcessLeveledConforms");
@@ -3618,6 +3636,29 @@ void CharacterService::RunExperienceUpdates() noexcept
     m_transport.Send(message);
 
     spdlog::debug("Sending over experience {}", message.Experience);
+}
+
+void CharacterService::ApplyPendingInventories() noexcept
+{
+    for (auto it = m_pendingInventories.begin(); it != m_pendingInventories.end();)
+    {
+        Actor* pActor = Cast<Actor>(TESForm::GetById(it->first));
+        if (!pActor)
+        {
+            it = m_pendingInventories.erase(it);
+            continue;
+        }
+        if (!HasLoadedProcess(pActor))
+        {
+            ++it;
+            continue;
+        }
+        const Inventory current = pActor->GetActorInventory();
+        if (current.Entries != it->second.Entries || current.CurrentMagicEquipment != it->second.CurrentMagicEquipment)
+            pActor->SetActorInventory(it->second);
+        spdlog::info("Inventory of {:X} applied now that the actor is loaded here", it->first);
+        it = m_pendingInventories.erase(it);
+    }
 }
 
 void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) noexcept

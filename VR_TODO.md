@@ -331,9 +331,24 @@ Both players need it.
       has no guard in the current code. What set it off: VRConnectService reconnects when the character's name
       changes, and that player's name flipped between 'Prisoner' and 'Prisoner2' a few seconds after each save load
       (not our code), so it reconnected five times in 15 minutes and re-applied every inventory each time. Ralof also
-      sent 182 Unequip actions in a second there. Two fixes to make, each with a red rig run first: no inventory applied
-      to an actor without an AI process (applied once it has one), and the reconnect tied to a loaded save, not to the
-      name.
+      sent 182 Unequip actions in a second there. Two more reports (2026-10-17 23:17, same player): the same crash on
+      Legate Quentin Cipius (BF561) 1.2 s after he appeared, with no reconnect, an Imperial Sword in RAX.
+      Correction: the function names above come from CrashLogger's nearest known id and are not reliable. What the
+      registers show: `mov rax, [rcx+0x08]` with RCX 0 is a read of an AI process's `middleProcess` (AIProcess+0x08),
+      where the equipped hands are kept. The actor had no AI process, while our inventory apply equipped a weapon on it.
+      Fixed in 8397d86 (deployed, client and server; protocol unchanged since 440f5e0):
+      - A full inventory for an actor with no loaded AI process (`currentProcess` and its `middleProcess`) waits until
+        it has one (`Inventory of X kept until the actor is loaded here`, then `... applied now that the actor is
+        loaded here`). No rig run reproduces the crash: an actor in that state could not be made on demand.
+        `live-copy-bleedout` 4 of 4 and `live-temp-reconnect` 8 of 8 as a regression, and no inventory held back in
+        them.
+      - The client compares the character's name once, 5 s after each loading screen, not every 2 s in play.
+        `live-rename` (new): the game renames the player while connected. RED on 440f5e0 (it reconnected), 4 of 4 on
+        8397d86. Not tested: loading another character's save while connected (the rig has one save).
+      The same two fixes are in the hotfix v1.9.4 prepared in `C:\dev\TiltedEvolution-hotfix` (v1.9.3 plus these).
+      Not seen in play yet. To see in play: no `connecting again` line except after loading another character.
+      The `+24E6D0` crash in the same reports (the AI thread on an actor with no cell, 3 ms after our teleports of
+      actors into cells outside the loaded area) is not fixed; it came 20 s after one of the name-flip reconnects.
 - [ ] **Trustworthy rig tests** (asked 2026-10-17: fixes that pass in the rig keep failing in play, and builds and runs
       cost time, so a test must be worth it). Seen on 2026-10-16/17: `live-copy-bleedout` passed while testing nothing
       (its copy replayed no actions); `live-world-object` passed while the cup flickered (it read our own log lines,

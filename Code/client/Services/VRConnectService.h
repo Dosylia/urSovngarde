@@ -67,7 +67,8 @@ private:
     std::chrono::steady_clock::time_point m_attemptStarted{};
     // The character's name when the connection was made; another one loaded since means connecting again.
     TiltedPhoques::String m_connectedName;
-    std::chrono::steady_clock::time_point m_nextNameCheck{};
+    // A loading screen was seen since the last name check: the name is compared once the game has settled after it.
+    bool m_nameCheckDue{false};
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;

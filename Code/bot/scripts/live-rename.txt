@@ -1,0 +1,23 @@
+# A player renamed in play stays connected.
+#
+#   python Tools\VR\live-check.py live-rename
+#   python Tools\VR\live-check.py --expect-fail live-rename     on a build without the fix: must be RED
+#
+# The client connects again when another character is loaded, and tells that by the character's name.
+# A quest or a mod can rename the player in play (a new game's intro flipped one between "Prisoner" and "Prisoner2"),
+# which is not another character. Each reconnect sends every actor again, and applying their inventories again crashed
+# a player twice. Here the game renames the player's base while connected; the client must not connect again.
+log live rename
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the player's base renamed in play, as a quest or a mod does
+log DO papyrus Form SetName 7 s:Prisoner2
+wait 15
+log CHECK absent VRConnectService: the character is now
+log CHECK absent Disconnected from server
+log CHECK game alive
+log done
+stop
