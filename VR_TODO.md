@@ -343,6 +343,23 @@ Both players need it.
       Spell damage on an NPC another game runs is fine: it arrives once, as health changes with the caster's perks; the
       AddTarget that comes with it is not applied there (`live-spell-damage`, 2 of 2, bot 6 of 6).
 
+- [ ] **A public group of four on a 1400-mod list** (logs of two of them, 2026-10-17, both on v1.9.3; the same group
+      sent the Ralof and start-up crash reports). Fps fine (median 80-87); private memory 10 to 28 GB over 2h15.
+      - **Corpses flung around (ours):** a Draugr corpse copy (380B7) was moved back to its owner's corpse twice a
+        second for 3 minutes, each time found 100-1183 units away: every move throws the ragdoll off again. 1437
+        `CorpseDiag: ... moved there` lines in one player's 40 minutes. PlaceCorpse needs to stop when a move does
+        not stick (and to find why the ragdoll flies: Physical Collision VR is in their list).
+      - **Freeze (player 2, 19:06, 44 s then killed):** the main thread waits in the game (`SkyrimVR+0x5b8d4c`, as
+        player 1's Alduin freeze) under HDT-SMP; the other thread reported is in RaceMenu's skee64 and OBody. None of
+        our code on either stack; it came 13 s after a burst of NPC copies we spawned (412 `already spawned`
+        warnings in the minute before).
+      - **Fingers not synced on their skeleton:** 536 flattened bones and the forearm-to-hand parent check fails
+        (`no usable flattened bone array`), so no copy's fingers move and the local ones are not sent. The body,
+        arms and head are posed from nodes. Fix: accept a twist bone between forearm and hand; needs their skeleton.
+      - **Other players' projectiles refused by the game:** `No projectile found` 112 and 200 times (the game's
+        Launch gave a handle with no projectile); those arrows or spells were not seen.
+      - The reconnects were the name check during character creation (the intro's name, then the chosen one); v1.9.4 compares the
+        name only after a loading screen. `OnNotifyActorTeleport: failed to retrieve actor` 61 and 50 times.
 - [ ] **Crash applying the owner's inventory to an NPC with no AI process** (hub reports 20261017-211633-bb01369d and
       20261017-211914-2214ee75, a public v1.9.3 player in the Helgen intro, twice). The triage calls it "back after its
       fix" because it matches the address only (SkyrimVR.exe+683850); it is not that bug: our crash handler finds no
@@ -368,8 +385,43 @@ Both players need it.
         8397d86. Not tested: loading another character's save while connected (the rig has one save).
       The same two fixes are in the hotfix v1.9.4 prepared in `C:\dev\TiltedEvolution-hotfix` (v1.9.3 plus these).
       Not seen in play yet. To see in play: no `connecting again` line except after loading another character.
-      The `+24E6D0` crash in the same reports (the AI thread on an actor with no cell, 3 ms after our teleports of
-      actors into cells outside the loaded area) is not fixed; it came 20 s after one of the name-flip reconnects.
+      The `+24E6D0` crash in the same reports (3 ms after our teleports of actors into cells outside the loaded
+      area) is not fixed; it came 20 s after one of the name-flip reconnects.
+- [ ] **`+24E6D0`: the game's streaming thread on a cell that is gone, after our teleports** (ours; twice on v1.9.4,
+      2026-10-18 15:15 and 15:22 UTC, reports 20261018-151548-79ee996d and -152224-4aefa2b9; once on v1.9.3 the
+      evening before; once for player 1 on 2026-10-03). Not "the AI thread": the crashing thread runs a
+      `QueuedPromoteLargeReferencesTask` (loading a cell's large distant references) for a static whose cell is null,
+      in `TESObjectCELL::GetWorldSpace`. Each time it comes 3 to 47 ms after a burst of `Successfully teleported
+      actor` lines (4 and 12 in one update, which took 335 and 210 ms), and R15 held the cell we had just moved Ralof
+      into. The server sends `NotifyActorTeleport` to every player whenever an owner relinquishes an actor
+      (server `CharacterService::OnOwnershipTransferRequest`), and `MoveActor` calls `TESWorldSpace::LoadCell` for an
+      exterior cell outside the loaded area, queueing streaming work on cells this player never enters. Upstream
+      has the same code. In the tree since 4c41069, not built into a release: a teleport is not made when the actor is
+      not loaded here and the place it goes is not loaded here either (`Teleport of actor X not made`). Rig test
+      `live-teleport-far` (new; bot `release ref:<hex> at <x> <y> <z>`): Lydia taken by the bot, the player travels
+      away, the bot lets her go as last seen in a third place. RED with the fix switched off (the game loaded that far
+      cell and moved her there), 5 of 5 on 4c41069. Not seen in play yet.
+- [ ] **Copies the server removes were freed while the game held them** (ours; 2026-10-18 15:35 UTC, two players
+      7 s apart: hub reports 20261018-153552-c5fa034b, `SkyrimVR.exe+714EB2`, labelled "fixed", and
+      20261018-153541-63d12066, `VCRUNTIME140.dll+4AE1` from our code; player 2's logs of 2026-10-18 17:35 hold the second).
+      Both right after the server removed dozens of copies at once: our crash handler found the copy deleted 270 ms
+      earlier with 3 handles still in R15 (FF001213), and the other game crashed 27 ms after deleting two such copies.
+      `DeleteTempActor` (the server's removal) freed a copy at once whatever its handles, and the wait list for
+      unloaded copies (24 slots) overflowed in the same bursts (10 and 41 `waiting list was full` frees).
+      In the tree since 4c41069: the server's removal goes through the same wait (disabled and queued until the game
+      lets go), and the list holds 256 instead of 24 (TPTests `[copyremoval]`, a 130-copy burst). Rig test
+      `live-copy-removed` (new; bot `npc temp <base> summon`): six summoned bears next to the player, let go, so the
+      server removes them. RED with the fix switched off (all six freed with 3 handles held), 4 of 4 on 4c41069 (all
+      six disabled and queued). Every rig script's end showed the same before: the bot's player copy freed with 3
+      handles held when the bot left (216 times in the rig logs). Not seen in play yet.
+- [ ] **SteamVR would not start** (2026-10-18 17:38): `bind: 10013` on 127.0.0.1:27062, SteamVR's web port, inside a
+      range Windows reserved (27018-27117, Hyper-V, WSL or Docker), then "Failed to start server with error 146". It
+      blocks the headset too. Cleared by `net stop winnat` and `net start winnat` as administrator; if it comes back,
+      `netsh int ipv4 set dynamic tcp start=49152 num=16384` keeps the reservations away from SteamVR's ports.
+- [ ] **Rig game hung once at a bot's arrival** (2026-10-18 18:01, 4c41069 with both fixes switched off): every thread
+      waiting, no log line after the bot's player copy got its 3D, no freeze dump (the watchdog's thread stopped too).
+      Not seen again in the next four runs. No debugger on this PC to read the stacks; if it comes back, a dump made
+      by hand (Task Manager, "Create memory dump file") before closing the game.
 - [ ] **Trustworthy rig tests** (asked 2026-10-17: fixes that pass in the rig keep failing in play, and builds and runs
       cost time, so a test must be worth it). Seen on 2026-10-16/17: `live-copy-bleedout` passed while testing nothing
       (its copy replayed no actions); `live-world-object` passed while the cup flickered (it read our own log lines,

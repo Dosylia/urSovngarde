@@ -2664,6 +2664,9 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.IsDragon = !args.empty() && args.back() == "dragon";
         // "npc temp <base> mount": registered as a horse one can ride (CharacterComponent::IsMount on the server).
         request.IsMount = !args.empty() && args.back() == "mount";
+        // "npc temp <base> summon": registered as this player's summon, which the server removes for everyone once it is
+        // let go of ("release"), as when a summon's time runs out.
+        request.IsPlayerSummon = !args.empty() && args.back() == "summon";
         request.ReferenceId = temporary ? GameId(std::numeric_limits<uint32_t>::max(), 0xFF000000u | (cookie & 0x00FFFFFFu)) : GameId(m_skyrimModId, baseId);
         m_npcReference = request.ReferenceId;
         m_npcCookies[cookie] = request.ReferenceId;
@@ -2746,10 +2749,20 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     }
 
     // Hand an owned actor back, which starts the server's search for the next owner.
+    // "release <server id|ref:<hex>|any> [at <x> <y> <z>]": with "at", the actor was last seen at that place in Skyrim's
+    // worldspace, as a game says when it lets go of an actor it unloaded; the server then tells the other players to
+    // move it there (NotifyActorTeleport).
     if (name == "release")
     {
         KnownActor* pActor = nullptr;
-        if (!args.empty() && args[0] != "any")
+        if (!args.empty() && args[0].rfind("ref:", 0) == 0)
+        {
+            const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
+            for (auto& actor : m_actors)
+                if ((actor.Ref.BaseId & 0x00FFFFFF) == cWanted && actor.Ref != GameId{})
+                    pActor = &actor;
+        }
+        else if (!args.empty() && args[0] != "any")
         {
             const uint32_t wanted = static_cast<uint32_t>(std::strtoul(args[0].c_str(), nullptr, 16));
             for (auto& actor : m_actors)
@@ -2777,6 +2790,16 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         // server's, and drops it silently.
         request.OwnershipEpoch = pActor->OwnershipEpoch;
         request.Reason = OwnershipReleaseReason::Relinquish;
+        float x = 0.f, y = 0.f, z = 0.f;
+        if (args.size() > 4 && args[1] == "at" && ParseFloat(args[2], x) && ParseFloat(args[3], y) && ParseFloat(args[4], z))
+        {
+            // Tamriel, Skyrim.esm's exterior worldspace.
+            request.WorldSpaceId = GameId{m_skyrimModId, 0x3C};
+            request.Position.x = x;
+            request.Position.y = y;
+            request.Position.z = z;
+            spdlog::info("[script] actor {:X} handed back as last seen at ({:.0f}, {:.0f}, {:.0f}) in Tamriel", pActor->ServerId, x, y, z);
+        }
         SendMsg(request);
 
         pActor->OwnedByUs = false;

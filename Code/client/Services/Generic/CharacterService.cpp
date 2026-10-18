@@ -481,6 +481,33 @@ bool HasLoadedProcess(const Actor* apActor) noexcept
 {
     return apActor && apActor->currentProcess && apActor->currentProcess->middleProcess;
 }
+
+// Whether an actor is in this player's loaded area: it has its 3D and its cell is attached.
+bool IsActorLoadedHere(Actor* apActor) noexcept
+{
+    const TESObjectCELL* pCell = apActor ? apActor->GetParentCellEx() : nullptr;
+    return pCell && pCell->IsAttached() && apActor->GetNiNode();
+}
+
+// Whether a place is in this player's loaded area: an interior cell attached here, or an exterior cell of the player's
+// worldspace within the loaded grid (uGridsToLoad 5, which the server enforces: two cells either side of the centre).
+bool IsPlaceLoadedHere(World& aWorld, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) noexcept
+{
+    if (!acWorldSpaceId)
+    {
+        const auto* pCell = Cast<TESObjectCELL>(TESForm::GetById(aWorld.GetModSystem().GetGameId(acCellId)));
+        return pCell && pCell->IsAttached();
+    }
+
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    const TESWorldSpace* pPlayerWorldSpace = pPlayer ? pPlayer->GetWorldSpace() : nullptr;
+    const TES* pTES = TES::Get();
+    if (!pPlayerWorldSpace || !pTES || pPlayerWorldSpace->formID != aWorld.GetModSystem().GetGameId(acWorldSpaceId))
+        return false;
+
+    const GridCellCoords cCoordinates = GridCellCoords::CalculateGridCellCoords(acPosition);
+    return std::abs(cCoordinates.X - pTES->centerGridX) <= 2 && std::abs(cCoordinates.Y - pTES->centerGridY) <= 2;
+}
 } // namespace
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
@@ -721,7 +748,24 @@ void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
     if (pActor && ((pActor->formID & 0xFF000000) == 0xFF000000))
     {
         const uint32_t refWord = static_cast<uint32_t>(pActor->handleRefObject.refCount);
-        RecentDeletes::Record(pActor, aFormId, refWord & 0x3FF, refWord, RecentDeletes::kOnServersWord);
+        const uint32_t handles = refWord & 0x3FF;
+
+        // Freeing a copy the game still holds is a use-after-free.
+        // It is disabled and waits like a copy whose cell unloaded, until the game lets go of it (RunWaitingCopies).
+        if (CopyRemovalPolicy::OnRemoved(handles, s_waitingCopies.size()) == CopyRemovalPolicy::Action::WaitDisabled)
+        {
+            spdlog::info("Temporary Remote Held {:X}: {} handle(s) still on it, disabled and queued ({} of {} slots used); the server removed it",
+                         aFormId, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
+            pActor->Disable();
+            s_waitingCopies.push_back(WaitingCopy{aFormId, std::chrono::steady_clock::now()});
+            ReleaseGhostOf(aFormId);
+            return;
+        }
+        if (handles != 0)
+            spdlog::warn("CopyFreedHeld: {:X} freed immediately with {} handle(s) still outstanding -- the waiting list was full ({} slots)", aFormId, handles,
+                         CopyRemovalPolicy::kMaxWaiting);
+
+        RecentDeletes::Record(pActor, aFormId, handles, refWord, RecentDeletes::kOnServersWord);
         pActor->Delete();
         s_ownCopies.erase(aFormId); // the game may give this id to an actor of its own next
         spdlog::info("\tDeleted actor {:X}", aFormId);
@@ -2190,6 +2234,16 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     if (!pActor)
     {
         spdlog::error(__FUNCTION__ ": failed to retrieve actor to teleport.");
+        return;
+    }
+
+    // A teleport this player cannot see is not made: an actor not loaded here, going to a place not loaded here.
+    // Moving it there would load a far exterior cell, whose streaming can still run once the game has dropped the cell.
+    // The server keeps where the actor is; an actor that comes into view here later is placed by its assignment.
+    if (!IsActorLoadedHere(pActor) && !IsPlaceLoadedHere(m_world, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position))
+    {
+        spdlog::info("Teleport of actor {:X} not made: it is not loaded here, nor is the place it goes to (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))",
+                     pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
         return;
     }
 
