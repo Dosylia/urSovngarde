@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -36,7 +37,7 @@ const char* Describe(Refusal aRefusal) noexcept;
 
 //! How long a downed player can be revived: the server's setting in a party of two or more.
 //! Alone there is nobody to wait for, so none: the respawn starts at once, as it always did.
-uint32_t DownedSeconds(size_t aPartySize, uint32_t aPartySeconds) noexcept;
+uint32_t DownedSeconds(std::size_t aPartySize, uint32_t aPartySeconds) noexcept;
 
 //! Every member of the party is down, one flag per connected member (the downed player alone counts too).
 //! Then nobody is left to revive them, and they all respawn.

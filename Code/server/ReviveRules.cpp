@@ -39,7 +39,7 @@ const char* Describe(const Refusal aRefusal) noexcept
     return "unknown";
 }
 
-uint32_t DownedSeconds(const size_t aPartySize, const uint32_t aPartySeconds) noexcept
+uint32_t DownedSeconds(const std::size_t aPartySize, const uint32_t aPartySeconds) noexcept
 {
     return aPartySize >= 2 ? aPartySeconds : 0;
 }
