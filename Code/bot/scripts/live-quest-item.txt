@@ -1,0 +1,31 @@
+# A quest object picked up from the world reaches the other players, as a looted one does.
+#
+#   python Tools\VR\live-check.py live-quest-item
+#
+# A claw door needs the claw in each player's own inventory.
+# The others' games get theirs from this game's pick-up: the item reaches the copy of this player there, and that game hands one to its own player.
+# In the test save the Thieves Guild quest TGTQ01Handler runs, and its alias holds reference 44E13 (base 44E12) as a quest object, lying loose in Pinewatch.
+# The player picks it up there, and this bot, in the same cell, counts the item changes the server passes on.
+# Before the change only a temporary reference's pick-up was passed on, so a claw lying in the world never reached anyone.
+log live quest item
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO god on
+log DO console player.moveto 44E13
+wait 12
+cell 1F359
+wait 5
+log REQUIRE ref 44E13 3d
+
+log -- the player picks up the quest object
+log DO papyrus ObjectReference Activate 44E13 14 b:false
+wait 4
+log CHECK logged QuestItem: picked up quest object 44E12 \(reference 44E13\)
+expect invchanges 44E12 >= 1
+wait 2
+log DO god off
+log CHECK game alive
+log done
+stop

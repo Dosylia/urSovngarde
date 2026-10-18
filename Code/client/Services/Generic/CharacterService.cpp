@@ -1858,11 +1858,24 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
 
     if (itor != std::end(view))
     {
-        if (auto* pFormIdComponent = m_world.try_get<FormIdComponent>(*itor))
+        // A copy whose 3D has not loaded yet has no FormIdComponent; the spawn put its id on the RemoteComponent.
+        // Left behind, it would be taken for an actor of this game's own, and stay without its gear.
+        const auto& cRemote = view.get<RemoteComponent>(*itor);
+        uint32_t formId = 0;
+        if (const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(*itor))
+            formId = pFormIdComponent->Id;
+        else if (Actor* pCopy = Cast<Actor>(TESForm::GetById(cRemote.CachedRefId)); pCopy && pCopy->IsTemporary() &&
+                 (!cRemote.CachedBaseId || (pCopy->baseForm && pCopy->baseForm->formID == cRemote.CachedBaseId)))
         {
-            Actor* pActor = Cast<Actor>(TESForm::GetById(pFormIdComponent->Id));
+            formId = cRemote.CachedRefId;
+            spdlog::info("Removed before loading: server character {:X} is gone before its copy {:X} loaded; the copy goes too", acMessage.ServerId, formId);
+        }
+
+        if (formId)
+        {
+            Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
             if (pActor && pActor->IsTemporary())
-                CharacterService::DeleteTempActor(pFormIdComponent->Id);
+                CharacterService::DeleteTempActor(formId);
             else if (pActor)
                 pActor->GetExtension()->SetRemote(false);
         }

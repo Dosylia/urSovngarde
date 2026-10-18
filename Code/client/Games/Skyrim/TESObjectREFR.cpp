@@ -410,13 +410,11 @@ void TESObjectREFR::Delete() const noexcept
     s_pDelete(this);
 }
 
+// The game's own disable, not Papyrus's: that one queues a task in the script engine, and a save made before it runs keeps it.
+// Loaded later, the task names a form id the game may have given to something else since, as it does a temporary copy's.
 void TESObjectREFR::Disable() const noexcept
 {
-    using ObjectReference = TESObjectREFR;
-
-    PAPYRUS_FUNCTION(void, ObjectReference, Disable, bool);
-
-    s_pDisable(this, true);
+    const_cast<TESObjectREFR*>(this)->DisableImpl();
 }
 
 void TESObjectREFR::SetMotionType(const int32_t aMotionType) const noexcept

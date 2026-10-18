@@ -13,6 +13,7 @@
 #include <Messages/Message.h>
 #include <Messages/NotifyActorValueChanges.h>
 #include <Messages/NotifyDeathStateChange.h>
+#include <Messages/NotifyInventoryChanges.h>
 #include <Messages/NotifyHealthChangeBroadcast.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/NotifyDroppedItem.h>
@@ -1353,6 +1354,16 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         spdlog::info("Player {} '{}' left", message.PlayerId, message.Username.c_str());
         for (auto it = m_players.begin(); it != m_players.end();)
             it = it->PlayerId == message.PlayerId ? m_players.erase(it) : std::next(it);
+        return;
+    }
+
+    // An item another player's character took or gave, as the server passes it on: what `invchanges` asserts.
+    if (opcode == NotifyInventoryChanges::Opcode)
+    {
+        const auto& message = static_cast<const NotifyInventoryChanges&>(acMessage);
+        ++m_inventoryChanges[message.Item.BaseId.BaseId];
+        spdlog::info("Inventory change of server character {:X}: item {:X}:{:X}, count {}, quest item {}", message.ServerId, message.Item.BaseId.ModId,
+                     message.Item.BaseId.BaseId, message.Item.Count, message.Item.IsQuestItem);
         return;
     }
 
@@ -3408,6 +3419,26 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         const float value = static_cast<float>(m_voicesHeard);
         aOutWhy = fmt::format("{} voice piece(s) relayed from {} player(s)", m_voicesHeard, m_voicesHeardFrom.size());
         const std::string& op = acArgs[1];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
+    }
+
+    if (what == "invchanges")
+    {
+        // invchanges <hex base id> <op> <n>: changes of that item the server passed on for other players' characters.
+        uint32_t baseId = 0;
+        float wanted = 0.f;
+        if (acArgs.size() < 4 || !ParseHex(acArgs[1], baseId) || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const auto cFound = m_inventoryChanges.find(baseId);
+        const int cCount = cFound != m_inventoryChanges.end() ? cFound->second : 0;
+        const float value = static_cast<float>(cCount);
+        aOutWhy = fmt::format("{} change(s) of item {:X} passed on", cCount, baseId);
+        const std::string& op = acArgs[2];
         if (op == "==") return value == wanted;
         if (op == ">=") return value >= wanted;
         if (op == "<=") return value <= wanted;

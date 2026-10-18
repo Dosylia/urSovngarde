@@ -116,8 +116,9 @@ Both players need it.
       collect-logs left the small dumps out (it looked in the client folder, not its `logs`); since 97b6cd0 it takes
       the two newest small dumps (two crashes, not one crash's two dumps), and the client deploy copies the players'
       scripts (collect-logs, setup-connect, update) into the tools folder each time, so an old one is never sent.
-- [ ] **CommunityShaders.dll+0x1208c8 (read at 0x144) at a loading screen**: four times in the rig (2026-10-12 three
-      times, 2026-10-16 once), always the first instant of a load out of Mistwatch, never yet in play. Nothing of ours
+- [ ] **CommunityShaders.dll+0x1208c8 (read at 0x144) at a loading screen**: five times in the rig (2026-10-12 three
+      times, 2026-10-16 once, 2026-10-18 on `cow` out of Shroud Hearth Barrow back to Mistwatch), always the first
+      instant of a load, never yet in play. Nothing of ours
       in it: no deleted actor in a register, the render thread, and the actors spawning that instant are the game's
       own cell load. Watch for it in play.
 - [ ] **Freeze in the Alduin fight** (player 1, 2026-10-17 08:10): no frame from 08:10:05, music still playing,
@@ -338,6 +339,44 @@ Both players need it.
       player arrive`, `the down sound playing` (NOT playing would be the sting refused), `is reviving this player`,
       `stopped reviving this player`, the server's `Revive: player N '...' has a hand on` / `took the hand off`.
 
+- [!] **Quest items lying in the world reach the other players** (player 2 stuck at Korvanjund's claw door,
+      2026-10-18 21:49; build 154378b, client and server deployed, no protocol change). The keyhole script checks the
+      local player's own inventory for the claw. A claw looted from a body reached the other game through the
+      inventory sync, whose receiving game hands its own player one (the Golden and Diamond claws worked). A claw
+      picked up from the world (the Ebony Claw `5AF48`, reference `5AF49`) was sent to the others only when the
+      reference was temporary, so player 2 never got one and a reconnect could not help. Now a pick-up whose
+      reference a quest alias holds as a quest object is passed on too (`QuestItem: picked up quest object ...; sent
+      to the other players`). Rig: `live-quest-item` (TGTQ01Handler's 44E13 in Pinewatch, the bot in the same cell
+      counting what the server passes on) red on 0bb07c2 (0 changes passed on), 3/3 on 154378b (the change arrives
+      flagged as a quest item). The receiving game's hand-over to its own player needs two games: not checked in the
+      rig. Likely the same before: the Emerald, Ruby, Glass and Sapphire claws and Valthume's. To see in play: one
+      player picks up a claw lying in the world, the other's game logs nothing odd and the other player has a claw;
+      both doors open. A player stuck like this: `player.additem 5AF48 1` (the Ebony Claw), then the keyhole.
+- [!] **No more pending script disables in saves** (player 2's crash at 21:51, `SkyrimVR.exe+0x1939100`, a write
+      to 0x1 in RTTI data, called from `SkyrimScript::DisableFunctor`; build 154378b). Our disable of a copy went
+      through Papyrus's `ObjectReference.Disable`, which queues a task in the script engine. A loading screen opened
+      56 ms after a held copy was disabled, the autosave kept the task, and loading that save ran it on form
+      FF00126F, by then a base NPC: the task called a reference's function on it. 776fac00 made such disables
+      frequent (every copy removed while held). `TESObjectREFR::Disable` now calls the game's own disable
+      (`DisableImpl`, already used by the leveled-NPC reconciliation), for copies, dropped items and projectiles
+      alike. Rig on 154378b: `live-copy-removed` 4/4 (copies disabled and queued as before) and the raced copies of
+      `live-copy-door-race` read `IsDisabled` true. No red run: a save made in that window is not scriptable here.
+      Settled by player 2's `Autosave3_..._Korvanjund02_..._20261018194801` (.ess and .skse), read without loading it:
+      it should hold a DisableFunctor for FF00126F. Player 2 must not load that save. To see in play: no crash at a
+      load right after a player left the area.
+- [!] **A copy removed before it loaded is removed** (player 1's copy naked in front of Dragonsreach in player 2's
+      game, 2026-10-18 21:08; build 154378b). Player 2 arrived by fast travel as player 1 went through the door: the
+      server sent player 1's character, then removed it, before player 2's game had recorded the copy. The removal
+      then only stripped the copy's components, so the game kept the actor, announced it as an NPC of its own, and it
+      never got its gear. Now the removal finds the copy by the id the spawn kept (`Removed before loading: server
+      character N is gone before its copy N loaded; the copy goes too`). Rig: `live-copy-door-race` (the bot comes
+      back into view and enters Dragonsreach 60, 40, 25 and 10 ms later) red on 0bb07c2 (two raced copies left in the
+      game, enabled, not deleted), 5/5 on 154378b (four removed before loading, all disabled, no copy claimed, the
+      copy dressed when the bot came out). To see in play: no naked copy of the other player after arrivals at doors.
+- [!] **Player 2's Engine Fixes VR:** set `FormCaching = false` and `TreeLODReferenceCaching = false` in
+      `EngineFixesVR.ini`, as on the host since 2026-09-30. His crash at 21:34 (`SkyrimVR.exe+0x93CE11` while loading
+      a save, KNOWN_ISSUES section 6) took a freed form from a `tbb::concurrent_hash_map` node (R8: key 0x12F6, the
+      stale pointer as value), the layout of Engine Fixes VR's form cache; the game's own form map looks different.
 - [!] **Seen's update:** DynDOLOD DLL NG Alpha-43 (Nexus 97720, replacing his `DynDOLOD DLL NG` files) and the host's
       combined VR Address Library file (`E:\FUS\mods\VR Address Library for SKSEVR\SKSE\Plugins\version-1-4-15-0.csv`;
       his lacks id 19363, so Alpha-43 refuses to load, and a plain newer library crashes Community Shaders, KNOWN_ISSUES
@@ -357,6 +396,16 @@ Both players need it.
 
 ## Open work
 
+- [ ] **Freeze at a load: the game's allocator purging cells waits for good** (player 1, 2026-10-18 21:29, fast
+      travel near Whiterun's battle; the same main-thread stack as a public player's freeze at 08:52 and player 2's of
+      2026-10-11 21:36). From the bottom: a model copied for a load (`NiObject::Clone`), our pass-through
+      `HookFormAllocate`, `MemoryManager::Allocate`, a memory-manager callback, `TES::PurgeBufferedCells`, then a wait on
+      a semaphore that never comes (player 1's handle checked live: a Semaphore, not signalled). Private memory was
+      13.3, 15.5 and 16.3 GB; threads 703, 2494 and 152, so the thread pile-up below is not what they share. Engine
+      Fixes VR's `MemoryManager` is off in FUS (`MemoryManager = false`), so this is the game's own allocator; turning
+      it on replaces that allocator (our client chains to Engine Fixes' allocator), a mod-list setting the owner
+      decides. The small freeze dump keeps too little of the other threads' stacks to name the one that should
+      release the semaphore. Ralof spawned in the load of both the 08:52 and the 21:29 freezes.
 - [ ] **Freeze after DynDOLOD's threads piled up** (a public player on v1.9.4, 2026-10-18 08:52 their time, same
       server as the crash reports; `freeze.small.dmp` with it). The game's threads went from 222 to 703 in 20 minutes,
       then the main thread waited in the game (`SkyrimVR+0x15bb0a`) for 100 s right after a loading screen.
@@ -372,6 +421,17 @@ Both players need it.
       persistent NPCs the bot owns let go far away (the server sends no teleport for temporary ones). The fifth
       jump hit the known Community Shaders crash at a load (`+0x1208c8`). Other options: DynDOLOD DLL NG Alpha-33
       exists (a mod list change), and the freeze dump could go to DynDOLOD's author.
+- [ ] **An NPC that follows its owner indoors stays frozen outside** for the player left outside (Lydia in front of
+      Windhelm's palace, 2026-10-18 21:15, until player 2 went in 44 s later). The server relays an NPC's movement only
+      to players in range of its new cell and never removes it for the ones it left; `RemoveWhatLeftRange` runs only
+      when the viewer moves. Needs a removal from the server when an NPC's cell takes it out of a viewer's range: the
+      server's `CharacterService` relay belongs to the playback session (BOARD.md), so agree it there first.
+- [ ] **Placing another player's corpse costs 20-47 ms a move** (player 2 in Korvanjund, 2026-10-18 21:44-21:47):
+      every `CorpseDiag: ... moved there (19 bodies)` came in the same millisecond as a `Mod update took 20-47 ms,
+      slowest section CharacterService::RunRemoteUpdates`, 2-5 a 30 s window (`VRBodySync::PlaceCorpse` moving 18-22
+      rigid bodies under the world's write lock). Most of his 13-28 frames over 50 ms a window were not ours (three
+      1.1-1.6 s stops outside our update, frame rate already down to 36 fps outdoors). Measure inside `PlaceCorpse`
+      before changing it.
 - [ ] **PvP spell damage carries none of the caster's perks** (rig 2026-10-18, PvP on): Firebolt on the bot's
       character was sent as a health change of 40, its base magnitude, without the caster's Augmented Flames, its burn
       or difficulty; the same spell on an NPC dealt 30 plus a burn of 7.4. `HookAddTarget` sends `-fMagnitude` before

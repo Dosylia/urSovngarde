@@ -234,7 +234,11 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
 
     // This is here so that objects that are picked up on both clients, aka non temps, are synced through activation sync.
     // The inventory change event should always be sent to the server, otherwise the server inventory won't be updated.
-    bool shouldUpdateClients = apObject->IsTemporary() && !ScopedActivateOverride::IsOverriden();
+    // A quest object goes to the others as well: replayed there, the pick-up gives it to this player's copy, and their quest needs one of their own.
+    // Their game hands it to its player as it does a looted one (TESObjectREFR::AddOrRemoveItem).
+    bool shouldUpdateClients = (apObject->IsTemporary() || item.IsQuestItem) && !ScopedActivateOverride::IsOverriden();
+    if (item.IsQuestItem && shouldUpdateClients)
+        spdlog::info("QuestItem: picked up quest object {:X} (reference {:X}); sent to the other players", apObject->baseForm->formID, apObject->formID);
 
     // The player still needs its server entity and ownership epoch so stale inventory events can be rejected.
     if (const auto ownershipToken = Utils::GetLocalOwnershipToken(apThis->formID))

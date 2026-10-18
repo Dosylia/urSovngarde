@@ -272,6 +272,8 @@ private:
     mutable uint32_t m_lastOtherPlayerId{0};
     //! How many times the server sent each downed state for each player id, for `downcount`.
     std::map<uint32_t, std::map<std::string, int>> m_downCounts;
+    //! The items the server passed on as taken or given by another player's character, by base id, for `invchanges`.
+    std::map<uint32_t, int> m_inventoryChanges;
     //! Where the server said each player respawns (died, fallen or respawned); empty for the game's own spot.
     std::map<uint32_t, std::optional<glm::vec3>> m_respawnPoints;
     //! Why the server last refused a revive this bot asked for, or "none".
