@@ -17,4 +17,7 @@ struct ServerSettings
     bool DeathSystemEnabled{};
     bool SyncPlayerCalendar{};
     bool AutoPartyJoin{};
+
+    // VR: more menus run unpaused online (skills, map, sleep/wait; UI.cpp kOptionalUnpausedMenus), with the fixes that needs.
+    bool UnpausedMenus{};
 };

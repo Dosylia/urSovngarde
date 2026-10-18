@@ -96,6 +96,11 @@ TESObjectCELL* FindSafePointCell(World& aWorld, const GameId& acCellId, const Ga
 }
 } // namespace
 
+#ifdef SKYRIMVR
+#include <Interface/Menus/MapMenu.h>
+#include <Interface/UI.h>
+#endif
+
 PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
@@ -129,7 +134,30 @@ void PlayerService::OnUpdate(const UpdateEvent&) noexcept
     RunBeastFormDetection();
     RunPlaceUpdates();
     RunCrashPlaceNote();
+#ifdef SKYRIMVR
+    RunMapCloseUpdates();
+#endif
 }
+
+#ifdef SKYRIMVR
+// The map does not pause the game online (UI.cpp kAllowList), so a player can be worn down while reading it.
+// Any health loss closes it, a poison drain included; regeneration and potions only raise it.
+// This only asks, because it runs on a worker thread.
+void PlayerService::RunMapCloseUpdates() noexcept
+{
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return;
+
+    const float cHealth = pPlayer->GetActorValue(ActorValueInfo::kHealth);
+
+    static const BSFixedString s_mapName("MapMenu");
+    if (m_lastHealth >= 0.f && cHealth < m_lastHealth && IsMenuOpenUnpaused(s_mapName))
+        CloseMapMenu();
+
+    m_lastHealth = cHealth;
+}
+#endif
 
 void PlayerService::OnConnected(const ConnectedEvent& acEvent) noexcept
 {
