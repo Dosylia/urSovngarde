@@ -46,6 +46,8 @@
 #include <Messages/PlayerRespawnRequest.h>
 #include <Messages/PlayerDownedRequest.h>
 #include <Messages/ReviveRequest.h>
+#include <Messages/AddTargetRequest.h>
+#include <Messages/NotifyAddTarget.h>
 #include <Messages/SafePointRequest.h>
 #include <Messages/NotifyDownedState.h>
 #include <Messages/RequestActorValueChanges.h>
@@ -314,6 +316,7 @@ void Bot::OnDisconnected(EDisconnectReason aReason)
     m_downStates.clear();
     m_respawnPoints.clear();
     m_lastRefusal = "none";
+    m_addTargets.clear();
     m_names.clear();
     m_drops.clear();
     m_dropPlaces.clear();
@@ -1072,6 +1075,9 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         actor.HealthKnown = true;
         actor.LastChange = Clock::now();
         Record(Collect::Health, fmt::format("health {:X} delta {:+.1f} -> {:.1f} (from player {})", message.Id, message.DeltaHealth, actor.Health, message.AttackerPlayerId));
+        // What this bot, as the owner, would have to apply.
+        if (actor.OwnedByUs || message.Id == m_serverId)
+            spdlog::info("Health change of our {:X} by player {}: {:+.1f}", message.Id, message.AttackerPlayerId, message.DeltaHealth);
         return;
     }
 
@@ -1370,6 +1376,16 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             m_respawnPoints[message.PlayerId] = message.HasRespawnPoint ? std::optional<glm::vec3>(message.RespawnPosition) : std::nullopt;
         spdlog::info("Player {} is {} (revived by {}, {} s left, respawn point {})", message.PlayerId, pName, message.ReviverId, message.SecondsLeft,
                      message.HasRespawnPoint ? fmt::format("({:.0f}, {:.0f}, {:.0f})", message.RespawnPosition.x, message.RespawnPosition.y, message.RespawnPosition.z) : "none");
+        return;
+    }
+
+    // A magic effect another game applied: what `addtarget` asserts.
+    if (opcode == NotifyAddTarget::Opcode)
+    {
+        const auto& message = static_cast<const NotifyAddTarget&>(acMessage);
+        m_addTargets[message.SpellId.BaseId][message.EffectId.BaseId].push_back(message.CasterPerkFactor);
+        spdlog::info("Effect {:X} of spell {:X} applied to {:X} by {:X}, magnitude {:.2f}, caster's perks {:.2f}", message.EffectId.BaseId, message.SpellId.BaseId, message.TargetId,
+                     message.CasterId, message.Magnitude, message.CasterPerkFactor);
         return;
     }
 
@@ -1850,18 +1866,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // actually sends and the direction the server got wrong until 2026-09-24.
     if (name == "hit")
     {
-        uint32_t target = kNoId;
-        if (!args.empty() && args[0] == "other")
-        {
-            for (const auto& player : m_players)
-                if (player.ServerId != m_serverId)
-                {
-                    target = player.ServerId;
-                    break;
-                }
-        }
-        else if (!args.empty())
-            target = static_cast<uint32_t>(std::strtoul(args[0].c_str(), nullptr, 16));
+        const uint32_t target = args.empty() ? kNoId : TargetId(args[0]);
 
         if (target == kNoId)
         {
@@ -1940,6 +1945,33 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.Position = at;
         SendMsg(request);
         spdlog::info("[script] safe point at ({}, {}, {}) sent", args[0], args[1], args[2]);
+        return true;
+    }
+
+    // "effect <who> <spell hex> <effect hex> <magnitude> [caster's perk factor]": this bot's character applies that effect of a Skyrim.esm spell to someone
+    // (other, base:<hex> or a server id), as a caster's game sends it.
+    if (name == "effect")
+    {
+        uint32_t spell = 0;
+        uint32_t effect = 0;
+        float magnitude = 0.f;
+        float perkFactor = 1.f;
+        const uint32_t target = args.empty() ? kNoId : TargetId(args[0]);
+        if (args.size() < 4 || !ParseHex(args[1], spell) || !ParseHex(args[2], effect) || !ParseFloat(args[3], magnitude) ||
+            (args.size() > 4 && !ParseFloat(args[4], perkFactor)) || target == kNoId)
+        {
+            spdlog::error("[script] effect needs a target that is here, a spell, an effect and a magnitude");
+            return true;
+        }
+        AddTargetRequest request{};
+        request.TargetId = target;
+        request.CasterId = m_serverId;
+        request.SpellId = GameId(m_skyrimModId, spell);
+        request.EffectId = GameId(m_skyrimModId, effect);
+        request.Magnitude = magnitude;
+        request.CasterPerkFactor = perkFactor;
+        SendMsg(request);
+        spdlog::info("[script] effect {:X} of spell {:X} sent to {:X}, magnitude {:.1f}, caster's perks {:.2f}", effect, spell, target, magnitude, perkFactor);
         return true;
     }
 
@@ -2992,6 +3024,13 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
             return true;
         }
 
+        // "base:<hex>" is the newest NPC copy of that base, one the game made (DO place) and this bot only sees.
+        if (acArgs[aIndex].starts_with("base:"))
+        {
+            aOut = TargetId(acArgs[aIndex]);
+            return true;
+        }
+
         // "npc" is the first NPC this bot holds a copy of or owns. Like "other", a script cannot know its id.
         if (acArgs[aIndex] == "npc")
         {
@@ -3289,6 +3328,30 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         if (op == ">") return value > wanted;
         if (op == "<") return value < wanted;
         return std::nullopt;
+    }
+
+    if (what == "addtarget")
+    {
+        // addtarget <spell hex> <effect hex> <n> <factor>: the n-th caster's perk factor another game sent for that effect of that spell, within 1 %.
+        uint32_t spell = 0;
+        uint32_t effect = 0;
+        float wanted = 0.f;
+        if (acArgs.size() < 5 || !ParseHex(acArgs[1], spell) || !ParseHex(acArgs[2], effect) || !ParseFloat(acArgs[4], wanted))
+            return std::nullopt;
+        const size_t cIndex = std::strtoul(acArgs[3].c_str(), nullptr, 10);
+        const auto cSpell = m_addTargets.find(spell);
+        const std::vector<float>* pFactors = nullptr;
+        if (cSpell != m_addTargets.end())
+            if (const auto cEffect = cSpell->second.find(effect); cEffect != cSpell->second.end())
+                pFactors = &cEffect->second;
+        if (!pFactors || cIndex == 0 || cIndex > pFactors->size())
+        {
+            aOutWhy = fmt::format("{} factor(s) received for effect {:X} of spell {:X}", pFactors ? pFactors->size() : 0, effect, spell);
+            return false;
+        }
+        const float cValue = (*pFactors)[cIndex - 1];
+        aOutWhy = fmt::format("caster's perks {:.2f}", cValue);
+        return std::abs(cValue - wanted) <= std::abs(wanted) * 0.01f;
     }
 
     if (what == "refused")
@@ -3592,6 +3655,29 @@ uint32_t Bot::OtherPlayerIdOrLast() const noexcept
     if (const uint32_t cOther = OtherPlayerId())
         m_lastOtherPlayerId = cOther;
     return m_lastOtherPlayerId;
+}
+
+uint32_t Bot::TargetId(const std::string& acWho) const noexcept
+{
+    if (acWho == "other")
+    {
+        for (const auto& player : m_players)
+            if (player.ServerId != m_serverId)
+                return player.ServerId;
+        return kNoId;
+    }
+    if (acWho.starts_with("base:"))
+    {
+        const uint32_t cBase = static_cast<uint32_t>(std::strtoul(acWho.c_str() + 5, nullptr, 16));
+        uint32_t found = kNoId;
+        for (const auto& actor : m_actors)
+            if (!actor.IsPlayer && !actor.OwnedByUs && actor.Base.BaseId == cBase)
+                found = actor.ServerId;
+        return found;
+    }
+    char* pEnd = nullptr;
+    const unsigned long cId = std::strtoul(acWho.c_str(), &pEnd, 16);
+    return pEnd != acWho.c_str() ? static_cast<uint32_t>(cId) : kNoId;
 }
 
 KnownPlayer* Bot::FindPlayerCharacter(const uint32_t aServerId) noexcept

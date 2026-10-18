@@ -489,7 +489,7 @@ void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept
     }
 
     request.IsDualCasting = acEvent.IsDualCasting;
-    request.ApplyHealPerkBonus = acEvent.ApplyHealPerkBonus;
+    request.CasterPerkFactor = acEvent.CasterPerkFactor;
     request.ApplyStaminaPerkBonus = acEvent.ApplyStaminaPerkBonus;
 
     m_transport.Send(request);
@@ -569,7 +569,7 @@ void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
     if (pEffect->IsSlowEffect())
         pActor = PlayerCharacter::Get();
 
-    pActor->magicTarget.AddTarget(data, acMessage.ApplyHealPerkBonus, acMessage.ApplyStaminaPerkBonus);
+    pActor->magicTarget.AddTarget(data, acMessage.CasterPerkFactor, acMessage.ApplyStaminaPerkBonus);
     spdlog::debug("Applied remote magic effect");
 }
 
@@ -821,6 +821,6 @@ void MagicService::UpdateRevealOtherPlayersEffect(bool aForceTrigger) noexcept
         if (!pRemotePlayer)
             continue;
 
-        pRemotePlayer->magicTarget.AddTarget(data, false, false);
+        pRemotePlayer->magicTarget.AddTarget(data, 1.f, false);
     }
 }

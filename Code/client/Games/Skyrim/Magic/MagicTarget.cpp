@@ -33,8 +33,12 @@ static THasPerk* RealHasPerk = nullptr;
 static TGetPerkRank* RealGetPerkRank = nullptr;
 
 static thread_local bool s_autoSucceedEffectCheck = false;
-static thread_local bool s_applyHealPerkBonus = false;
 static thread_local bool s_applyStaminaPerkBonus = false;
+// While another game's heal or buff is applied here: how much its caster's perks multiplied it there.
+static thread_local float s_casterPerkFactor = 1.f;
+// While this game's player casts on another player's copy: how much the caster's perks multiplied the effect.
+static thread_local bool s_measurePerks = false;
+static thread_local float s_perkFactor = 1.f;
 
 void MagicTarget::DispelAllSpells(bool aNow) noexcept
 {
@@ -43,16 +47,16 @@ void MagicTarget::DispelAllSpells(bool aNow) noexcept
     TiltedPhoques::ThisCall(dispelAllSpells, this, aNow);
 }
 
-bool MagicTarget::AddTarget(AddTargetData& arData, bool aApplyHealPerkBonus, bool aApplyStaminaPerkBonus) noexcept
+bool MagicTarget::AddTarget(AddTargetData& arData, float aCasterPerkFactor, bool aApplyStaminaPerkBonus) noexcept
 {
     s_autoSucceedEffectCheck = true;
-    s_applyHealPerkBonus = aApplyHealPerkBonus;
+    s_casterPerkFactor = aCasterPerkFactor;
     s_applyStaminaPerkBonus = aApplyStaminaPerkBonus;
 
     bool result = TiltedPhoques::ThisCall(RealAddTarget, this, arData);
 
     s_autoSucceedEffectCheck = false;
-    s_applyHealPerkBonus = false;
+    s_casterPerkFactor = 1.f;
     s_applyStaminaPerkBonus = false;
 
     return result;
@@ -129,12 +133,18 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
         }
 
         if (arData.pSpell->IsHealingSpell())
-        {
-            addTargetEvent.ApplyHealPerkBonus = arData.pCaster->HasPerk(0x581f8);
             addTargetEvent.ApplyStaminaPerkBonus = arData.pCaster->HasPerk(0x581f9);
-        }
 
+        s_measurePerks = true;
+        s_perkFactor = 1.f;
         bool result = TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
+        s_measurePerks = false;
+
+        // The other player's game applies this with its copy of our player, which has none of our player's perks.
+        addTargetEvent.CasterPerkFactor = s_perkFactor;
+        if (s_perkFactor != 1.f)
+            spdlog::info("Magic: spell {:X} on remote player {:X}: the caster's perks make it {:.2f} times as strong", arData.pSpell->formID, pTargetActor->formID, s_perkFactor);
+
         if (result)
             World::Get().GetRunner().Trigger(addTargetEvent);
         return result;
@@ -208,10 +218,14 @@ bool TP_MAKE_THISCALL(HookFindTargets, MagicCaster, float afEffectivenessMult, i
 
 void TP_MAKE_THISCALL(HookAdjustForPerks, ActiveEffect, Actor* apCaster, MagicTarget* apTarget)
 {
+    const float cBefore = apThis->fMagnitude;
     TiltedPhoques::ThisCall(RealAdjustForPerks, apThis, apCaster, apTarget);
 
-    if (s_applyHealPerkBonus)
-        apThis->fMagnitude *= 1.5f;
+    if (s_measurePerks && cBefore != 0.f)
+        s_perkFactor = apThis->fMagnitude / cBefore;
+
+    // The magnitude another game sends is not what the effect uses, so its caster's perks are applied here.
+    apThis->fMagnitude *= s_casterPerkFactor;
 }
 
 bool TP_MAKE_THISCALL(HookHasPerk, Actor, TESForm* apPerk, void* apUnk1, double* afReturnValue)

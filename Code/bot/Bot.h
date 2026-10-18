@@ -192,6 +192,8 @@ private:
     const KnownPlayer* Host() const noexcept;
     //! The player id of the first other player whose character this bot was sent, or 0.
     uint32_t OtherPlayerId() const noexcept;
+    //! A script's target: "other" (the other player's character), "base:<hex>" (the newest NPC copy of that base) or a server id; kNoId if none.
+    uint32_t TargetId(const std::string& acWho) const noexcept;
     //! The same, or the last one found once it has gone: what the server said about a player that left is still about that player.
     uint32_t OtherPlayerIdOrLast() const noexcept;
     //! Move into the cell the host just entered, so a load door does not leave the bot outside.
@@ -274,6 +276,8 @@ private:
     std::map<uint32_t, std::optional<glm::vec3>> m_respawnPoints;
     //! Why the server last refused a revive this bot asked for, or "none".
     std::string m_lastRefusal{"none"};
+    //! The caster's perk factors of the effects other games applied (NotifyAddTarget), by spell and effect base id, in arrival order.
+    std::map<uint32_t, std::map<uint32_t, std::vector<float>>> m_addTargets;
     //! Items lying in the world as the server has told this bot, by the server's id: what `drops` counts and
     //! `pickup any` takes. The server sends one when an item is dropped in range and again on entering its cell.
     std::map<uint32_t, GameId> m_drops;

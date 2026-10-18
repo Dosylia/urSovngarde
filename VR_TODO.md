@@ -245,6 +245,19 @@ Both players need it.
 
 ## Waiting on a test or action
 
+- [!] **Healing perks on another player** (protocol bb9f5d95; every player and the server need the build): a heal or
+      buff cast on another player carries the caster's own perks. Before, the healed player's game applied it with its
+      copy of the caster, which has no perks, and only a flat 1.5 for perk 581F8 came through; in FUS that record is
+      Adamant's Light Weaver, not a healing perk, and Adamant's healing perks (Healer, Recovery) never arrived. Now the
+      caster's game measures what its perks did (`ActiveEffect::AdjustForPerks`) and sends that factor
+      (`CasterPerkFactor`); the healed player's game applies it in the same function. The message's magnitude is not
+      what the effect uses: a bot heal of Heal Other gave 40 whether it said 10, 30 or 80.
+      Rig `live-heal-perks` 9 of 9, bot 6 of 6: factors sent 1.50 (the rig character's Recovery 20) for Heal Other and
+      Healing Hands, 1.95 with Healer 50 added; the bot's Heal Other on the game's player gave 40 without a factor and
+      60 with 1.5. Not seen in play.
+      To see in play: heal the other player with Healing Hands or Heal Other; the caster's log has `Magic: spell ... on
+      remote player ...: the caster's perks make it N times as strong`, and the healed player gets what an NPC would.
+
 - [!] **Revive and respawn** (merged 2026-10-17; with the review fixes protocol 33ef1cbe, so every player and the public
       server need the build): a player at
       zero health stays down; a party member who holds a hand on them for 4 s revives them (up with 30 % health, 3 s of
@@ -321,6 +334,14 @@ Both players need it.
       which part of the appearance did not load.
 
 ## Open work
+
+- [ ] **PvP spell damage carries none of the caster's perks** (rig 2026-10-18, PvP on): Firebolt on the bot's
+      character was sent as a health change of 40, its base magnitude, without the caster's Augmented Flames, its burn
+      or difficulty; the same spell on an NPC dealt 30 plus a burn of 7.4. `HookAddTarget` sends `-fMagnitude` before
+      `AdjustForPerks` runs and does not apply the effect. Not changed: PvP rules are the host's design. Not known: whether
+      the victim's game also applies the caster's replayed projectile (a second hit); that needs two games.
+      Spell damage on an NPC another game runs is fine: it arrives once, as health changes with the caster's perks; the
+      AddTarget that comes with it is not applied there (`live-spell-damage`, 2 of 2, bot 6 of 6).
 
 - [ ] **Crash applying the owner's inventory to an NPC with no AI process** (hub reports 20261017-211633-bb01369d and
       20261017-211914-2214ee75, a public v1.9.3 player in the Helgen intro, twice). The triage calls it "back after its
