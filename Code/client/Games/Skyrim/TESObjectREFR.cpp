@@ -501,9 +501,24 @@ TESObjectREFR::OpenState TESObjectREFR::GetOpenState() noexcept
 {
     using ObjectReference = TESObjectREFR;
 
-    PAPYRUS_FUNCTION(TESObjectREFR::OpenState, ObjectReference, GetOpenState);
+    // Looked up until found, and never called while missing: a missing function crashed the game on the first door anyone used.
+    static std::atomic<const void*> s_pFunction{nullptr};
+    const void* pFunction = s_pFunction.load(std::memory_order_acquire);
+    if (!pFunction)
+    {
+        const auto& papyrus = World::Get().ctx().at<PapyrusService>();
+        pFunction = papyrus.Get("ObjectReference", "GetOpenState");
+        if (!pFunction)
+        {
+            static std::atomic_flag s_reported = ATOMIC_FLAG_INIT;
+            if (!s_reported.test_and_set())
+                spdlog::error("Papyrus: ObjectReference.GetOpenState not found among the {} functions recorded; doors are synced without their open state", papyrus.FunctionCount());
+            return kNone;
+        }
+        s_pFunction.store(pFunction, std::memory_order_release);
+    }
 
-    return s_pGetOpenState(this);
+    return PapyrusFunction<OpenState, ObjectReference>(pFunction)(this);
 }
 
 ExtraContainerChanges::Data* TESObjectREFR::GetContainerChanges() const noexcept

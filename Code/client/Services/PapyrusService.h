@@ -17,6 +17,7 @@ struct PapyrusService
     TP_NOCOPYMOVE(PapyrusService);
 
     const void* Get(const String& acNamespace, const String& acFunction) const noexcept;
+    size_t FunctionCount() const noexcept { return m_functions.size(); }
 
     void HandlePapyrusFunctionEvent(const PapyrusFunctionRegisterEvent&) noexcept;
 

@@ -38,6 +38,7 @@ activate 3F558 by other
 wait 10
 log CHECK player in Tamriel
 log CHECK logged Activation of .* came back from another game; not done again
+log CHECK absent Papyrus: ObjectReference.GetOpenState not found
 wait 3
 log CHECK game alive
 log DO god off
