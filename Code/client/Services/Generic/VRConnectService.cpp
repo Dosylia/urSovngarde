@@ -179,6 +179,7 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
     if (!IsInGame())
     {
         m_inGameSince = {};
+        m_nameCheckDue = true;
         return;
     }
     if (m_inGameSince == std::chrono::steady_clock::time_point{})
@@ -231,9 +232,11 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
         // Another character loaded while connected: reconnect, or the others keep seeing the old one.
         // The server keeps the name and body it was given when connecting.
         // The name is compared rather than the race, which changes in a werewolf's fight.
-        if (now >= m_nextNameCheck)
+        // Only once after each loading screen, when the cell has settled: a quest or a mod may rename the player in play.
+        // A name that changes in play is not another character, and each reconnect sends every actor again.
+        if (m_nameCheckDue && now - m_inGameSince >= kAutoConnectDelay)
         {
-            m_nextNameCheck = now + 2s;
+            m_nameCheckDue = false;
             const auto name = PlayerName();
             if (!name.empty() && !m_connectedName.empty() && name != m_connectedName)
             {
@@ -256,7 +259,7 @@ void VRConnectService::OnConnected(const ConnectedEvent&) noexcept
     m_failedAttempts = 0;
     m_autoConnectDone = true;
     m_connectedName = PlayerName();
-    m_nextNameCheck = {};
+    m_nameCheckDue = false;
 }
 
 void VRConnectService::OnDisconnected(const DisconnectedEvent&) noexcept

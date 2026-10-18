@@ -1,0 +1,84 @@
+# The arrow in the other player's hand, before it goes on the string.
+#
+#   python Tools\VR\live-check.py live-arrow-hand
+#
+# A VR archer holds an arrow in the hand from the moment the bow is drawn, and again after each shot.
+# The archer's game finds it (its "ArrowNode" at the hand's hold node, with its model shown) and says so in
+# ArrowNockedRequest, with where the arrow sits against the hand; the other game attaches the arrow on its copy and keeps
+# it there. Before this, nothing was sent for an arrow in the hand, and the other player saw an empty hand.
+#
+# First the bot is the archer: its copy here must hold the arrow where the bot says, then lay it on the string.
+# Then the game's player draws a bow, and the bot must hear of the arrow in that player's hand.
+log live arrow hand
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a hunting bow and iron arrows for this bot
+additem 13985 1
+additem 1397D 20
+wait 3
+equip 13985 both
+equip 1397D
+wait 5
+log REQUIRE copy equipped 13985
+log REQUIRE copy equipped 1397D
+
+log -- the copy draws in front of the headset, in an archer's pose (as live-arrow-nock)
+draw on
+wait 1
+teleport away
+wait 6
+teleport back
+wait 8
+infront 120
+wait 3
+capture other 12
+wait 1
+handtargets -8 45 110 6 8 118
+holdpose on
+replay me 2
+wait 3
+log DO face copy
+wait 3
+
+log -- an arrow in the copy's right hand, its head 67 units from the hand bone
+nock hand right
+wait 3
+log CHECK logged ArrowNocked: \w+ \(server \w+\): arrow held in the hand
+wait 2
+# Where this game drew it: the head as far from the copy's hand as the bot said, 67 units times the hand bone's scale.
+# The copy's hand scale is under 1 (57 units on 440f5e0), so anything from 40 to 79 is the arrow in the hand.
+log CHECK logged ArrowNocked: \w+ arrow held in the right hand as its owner holds it, its head [4-7][0-9] units from the hand
+log SHOT arrow-in-hand of copy
+wait 2
+
+log -- from the hand to the string: the same arrow, laid along the bow
+nock on
+wait 3
+log CHECK logged ArrowNocked: \w+ \(server \w+\): arrow put on the string
+wait 2
+log CHECK logged ArrowNocked: \w+ arrow laid from the
+log SHOT arrow-on-string of copy
+nock off
+wait 3
+log CHECK logged ArrowNocked: \w+ \(server \w+\): arrow taken off the string
+holdpose off
+wait 1
+
+log -- the game's player draws a bow: the arrow in that player's hand goes to the bot
+log DO console player.additem 13985 1
+log DO console player.additem 1397D 20
+wait 2
+log DO console player.equipitem 13985
+log DO console player.equipitem 1397D
+wait 2
+log DO papyrus Actor DrawWeapon 14
+wait 6
+log CHECK logged ArrowNocked: sent this player's arrow in the hand \(right hand
+log CHECK bot logged Arrow of \d+: in the hand \(right hand, its head at .*, ([4-9][0-9]|1[0-4][0-9]) units from the hand bone\)
+log CHECK game alive
+log CHECK game inworld
+log done
+stop

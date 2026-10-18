@@ -88,11 +88,14 @@ wait 1
 hit other -30 atclash -100
 wait 2
 log CHECK player dropped 0
+# One line per blocked hit: the two so far each need their own.
+log CHECK atleast 2 Defender's rule: a hit of 30 from player \d+ is blocked
 log CHECK player mark
 wait 1
 hit other -30 atclash -300
 wait 2
 log CHECK player dropped 30
+log CHECK atleast 2 Defender's rule: a hit of 30 from player \d+ lands
 
 # The other player's delay alone, every 10 s.
 log CHECK logged InterpDiag players: \d+ updates

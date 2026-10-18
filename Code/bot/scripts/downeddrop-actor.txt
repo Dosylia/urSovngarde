@@ -1,0 +1,25 @@
+# A downed player whose connection goes: the party must be told it is gone, or the others go on trying to revive it.
+#
+#   powershell -File Tools\VR\run-bot-tests.ps1 -Pair downeddrop
+#
+# This side goes down, then disconnects.
+log downeddrop actor
+waitfor connected 45
+collect spawn
+record downeddrop actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+log -- going down
+down
+waitfor downstate me down 10
+expect downstate me down
+wait 2
+log -- disconnecting while down
+record off
+report bot-downeddrop-actor.txt
+disconnect
+wait 5
+log done
+stop

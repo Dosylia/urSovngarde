@@ -1,0 +1,25 @@
+# The other half of downedfar: the party's leader stands by until the other side is down, then goes fifteen cells away
+# and stays there while the other side goes down a second time.
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it.
+party lead
+log downedfar watcher
+waitfor connected 45
+collect spawn
+record downedfar watcher
+waitfor known other 40
+log -- the other side goes down while this bot stands by
+waitfor downstate other down 40
+expect downstate other down
+wait 2
+log -- this bot goes far away during the wait
+teleport away
+waitfor downstate other died 15
+expect downstate other died
+log -- staying away while the other side goes down again
+wait 15
+expect connected
+record off
+report bot-downedfar-watcher.txt
+log done
+stop

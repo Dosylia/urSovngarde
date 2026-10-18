@@ -1,0 +1,24 @@
+# The other half of downedgiveup: the party's leader, with a safe point, told the other side respawned; a revive then is refused.
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it.
+party lead
+log downedgiveup watcher
+waitfor connected 45
+collect spawn
+record downedgiveup watcher
+waitfor known other 40
+safepoint 500 600 100
+log -- the other side goes down, then its game gives up the wait
+waitfor downstate other down 30
+expect downstate other down
+waitfor downstate other respawned 20
+expect downstate other respawned
+log -- too late: it is respawning, so a revive is refused
+revive other
+wait 3
+expect refused notdown
+expect connected
+record off
+report bot-downedgiveup-watcher.txt
+log done
+stop

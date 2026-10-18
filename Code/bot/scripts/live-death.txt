@@ -5,6 +5,8 @@
 # VR_TODO, "Death ends at the main menu, connected only" (2026-09-18 onwards; level-up, which took the same routine,
 # is confirmed fixed). The player is killed by console; PlayerService should bring them back five seconds later, in
 # the world, still connected -- not at the main menu, and not in a reload.
+# This bot leaves the party first: alone, nobody is waited for (a party would wait for a revive, live-revive-timeout),
+# and the player comes back at its last safe point.
 log live death
 waitfor connected 45
 collect spawn health death
@@ -13,6 +15,7 @@ waitfor known other 40
 wait 6
 log CHECK game inworld
 log CHECK player alive
+party leave
 wait 3
 
 log -- the player is killed
@@ -21,6 +24,7 @@ wait 14
 log CHECK game alive
 log CHECK game inworld
 log CHECK player alive
+log CHECK logged PlayerService: down alone; respawning
 wait 3
 
 log -- and once more, straight away

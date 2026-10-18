@@ -45,6 +45,9 @@ public:
     static void SetEnemyMeterTarget(uint32_t aHandle, uint16_t aLevel);
     //! When the game itself last pointed the meter at a real enemy; our driver leaves the meter alone then.
     static std::chrono::steady_clock::time_point LastGameEnemyMeterTargetAt();
+    //! How many loading screens the game has queued since it started (a load door, fast travel, a loaded save).
+    //! PlayerService takes the end of each as a safe point; the client's update does not see the screen itself.
+    static uint32_t LoadingScreensQueued();
 
     bool GetMenuOpen(const BSFixedString& acName) const;
     void CloseAllMenus();

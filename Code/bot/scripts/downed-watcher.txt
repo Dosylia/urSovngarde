@@ -1,0 +1,42 @@
+# The reviving half of the revive test, and the one that checks what the party is told.
+# It revives the other side once from beside it, then tries from far away, which must leave the other side down and tell this bot why.
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it; a revive is between party members.
+party lead
+log downed watcher
+waitfor connected 45
+collect spawn
+record downed watcher
+waitfor known other 40
+
+log -- the other side goes down
+waitfor downstate other down 30
+expect downstate other down
+
+log -- reviving it from beside it
+revive other
+waitfor downstate other revived 10
+expect downstate other revived
+
+log -- down again: this bot walks off before trying
+waitfor downstate other down 30
+teleport 6000 0
+wait 3
+revive other
+wait 3
+expect downstate other down
+expect refused toofar
+
+log -- the other side respawns instead
+waitfor downstate other respawned 30
+expect downstate other respawned
+
+log -- down once more: the other side loads a save, up without a revive
+waitfor downstate other down 30
+waitfor downstate other up 20
+expect downstate other up
+expect connected
+record off
+report bot-downed-watcher.txt
+log done
+stop

@@ -1,0 +1,29 @@
+# Nobody left: the game's player is down when the only other member, this bot, leaves the party.
+#
+#   python Tools\VR\live-check.py live-down-alone
+#
+# The server checks its downed players once a second (ReviveService::CheckDowned): a party with nobody standing respawns,
+# even one left with a single member. The player must not wait out the whole minute for a revive that cannot come.
+log live down alone
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the player goes down
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 3
+
+log -- this bot leaves the party: nobody is left to revive the player
+party leave
+wait 4
+log CHECK logged PlayerService: nobody is left to revive the player; respawning
+wait 12
+log CHECK logged PlayerService: respawning player
+log CHECK player alive
+wait 3
+log CHECK game alive
+log done
+stop

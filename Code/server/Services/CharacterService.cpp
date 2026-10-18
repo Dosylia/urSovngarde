@@ -1141,6 +1141,10 @@ void CharacterService::OnArrowNockedRequest(const PacketEvent<ArrowNockedRequest
     NotifyArrowNocked notify{};
     notify.ServerId = World::ToInteger(*character);
     notify.Nocked = acMessage.Packet.Nocked;
+    notify.InHand = acMessage.Packet.InHand;
+    notify.HandSide = acMessage.Packet.HandSide;
+    notify.HandOffset = acMessage.Packet.HandOffset;
+    notify.HandRotation = acMessage.Packet.HandRotation;
     if (!GameServer::Get()->SendToPlayersInRange(notify, *character, acMessage.pPlayer))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }

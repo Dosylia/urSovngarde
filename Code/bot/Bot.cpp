@@ -20,6 +20,7 @@
 #include <Messages/NotifyDroppedItemMove.h>
 #include <Messages/ClashRequest.h>
 #include <Messages/ArrowNockedRequest.h>
+#include <Messages/NotifyArrowNocked.h>
 #include <Messages/VoiceDataRequest.h>
 #include <Messages/VoiceStateRequest.h>
 #include <Messages/NotifyVoiceData.h>
@@ -43,6 +44,10 @@
 #include <Messages/NotifyRemoveCharacter.h>
 #include <Messages/NotifyRespawn.h>
 #include <Messages/PlayerRespawnRequest.h>
+#include <Messages/PlayerDownedRequest.h>
+#include <Messages/ReviveRequest.h>
+#include <Messages/SafePointRequest.h>
+#include <Messages/NotifyDownedState.h>
 #include <Messages/RequestActorValueChanges.h>
 #include <Messages/RequestDeathStateChange.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
@@ -306,6 +311,9 @@ void Bot::OnDisconnected(EDisconnectReason aReason)
     // for: after reconnecting, anything the bot knows must have arrived again.
     m_actors.clear();
     m_players.clear();
+    m_downStates.clear();
+    m_respawnPoints.clear();
+    m_lastRefusal = "none";
     m_names.clear();
     m_drops.clear();
     m_dropPlaces.clear();
@@ -1228,6 +1236,17 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         return;
     }
 
+    if (opcode == NotifyArrowNocked::Opcode)
+    {
+        // What a game said of its player's arrow: on the string, in a hand (and where it sits there), or gone.
+        const auto& message = static_cast<const NotifyArrowNocked&>(acMessage);
+        spdlog::info("Arrow of {}: {}{}", message.ServerId, message.Nocked ? "on the string" : message.InHand ? "in the hand" : "gone",
+                     message.InHand ? fmt::format(" ({} hand, its head at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units from the hand bone)", message.HandSide ? "right" : "left",
+                                                  message.HandOffset.x, message.HandOffset.y, message.HandOffset.z, glm::length(message.HandOffset))
+                                    : std::string());
+        return;
+    }
+
     if (opcode == NotifyDroppedItemRemoved::Opcode)
     {
         const auto& message = static_cast<const NotifyDroppedItemRemoved&>(acMessage);
@@ -1328,6 +1347,29 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         spdlog::info("Player {} '{}' left", message.PlayerId, message.Username.c_str());
         for (auto it = m_players.begin(); it != m_players.end();)
             it = it->PlayerId == message.PlayerId ? m_players.erase(it) : std::next(it);
+        return;
+    }
+
+    // A player's downed state, as the server tells the party: what `downstate`, `respawnpoint` and `refused` assert.
+    if (opcode == NotifyDownedState::Opcode)
+    {
+        const auto& message = static_cast<const NotifyDownedState&>(acMessage);
+        if (message.Change == NotifyDownedState::kReviveRefused)
+        {
+            static constexpr std::array<const char*, 8> cRefusals{"none", "self", "notdown", "late", "reviverdown", "party", "place", "toofar"};
+            const auto cRefusal = static_cast<size_t>(message.Refusal);
+            m_lastRefusal = cRefusal < cRefusals.size() ? cRefusals[cRefusal] : "unknown";
+            spdlog::info("Our revive of player {} was refused: {}", message.PlayerId, m_lastRefusal);
+            return;
+        }
+        static constexpr std::array<const char*, 8> cNames{"down", "revived", "respawned", "fallen", "died", "up", "refused", "left"};
+        const char* pName = message.Change < cNames.size() ? cNames[message.Change] : "unknown";
+        m_downStates[message.PlayerId] = pName;
+        ++m_downCounts[message.PlayerId][pName];
+        if (message.Change == NotifyDownedState::kDied || message.Change == NotifyDownedState::kPartyFallen || message.Change == NotifyDownedState::kRespawned)
+            m_respawnPoints[message.PlayerId] = message.HasRespawnPoint ? std::optional<glm::vec3>(message.RespawnPosition) : std::nullopt;
+        spdlog::info("Player {} is {} (revived by {}, {} s left, respawn point {})", message.PlayerId, pName, message.ReviverId, message.SecondsLeft,
+                     message.HasRespawnPoint ? fmt::format("({:.0f}, {:.0f}, {:.0f})", message.RespawnPosition.x, message.RespawnPosition.y, message.RespawnPosition.z) : "none");
         return;
     }
 
@@ -1653,6 +1695,12 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             for (size_t i = 0; i < sorted.size() && i < 6; ++i)
                 summary += fmt::format("{}{} x{}", i ? ", " : "", sorted[i].first, sorted[i].second);
             spdlog::info("Captured actions of {:X}: {} different, most frequent: {}", m_captureId, sorted.size(), summary);
+
+            // Every name once, in order, so a script can require that a recording holds a given action (live-check "bot logged").
+            std::string names;
+            for (const auto& entry : byName)
+                names += fmt::format("{}{}", names.empty() ? "" : ", ", entry.first);
+            spdlog::info("Captured action names of {:X}: {}", m_captureId, names);
         }
         return true;
     }
@@ -1845,6 +1893,71 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     {
         SendHealth(-4.f);
         SendDeath(true);
+        return true;
+    }
+
+    // "down": this bot's player goes down and waits for a revive, as a client says when its player's bleedout starts.
+    if (name == "down")
+    {
+        SendMsg(PlayerDownedRequest{});
+        spdlog::info("[script] down sent");
+        return true;
+    }
+
+    // "up": this bot's player is up again without a revive, as a client says when a save was loaded while down.
+    if (name == "up")
+    {
+        PlayerDownedRequest up{};
+        up.IsDown = false;
+        SendMsg(up);
+        spdlog::info("[script] up sent");
+        return true;
+    }
+
+    // "giveup": this bot's game stops waiting for a revive and respawns now, as a client does when the server's word never came or the bleedout ended by itself.
+    if (name == "giveup")
+    {
+        PlayerDownedRequest respawning{};
+        respawning.IsDown = false;
+        respawning.Respawning = true;
+        SendMsg(respawning);
+        spdlog::info("[script] giving up the wait sent");
+        return true;
+    }
+
+    // "safepoint <x> <y> <z>": this bot's game would have saved here (in its cell), as a client says after a loading screen.
+    if (name == "safepoint")
+    {
+        glm::vec3 at{};
+        if (args.size() < 3 || !ParseFloat(args[0], at.x) || !ParseFloat(args[1], at.y) || !ParseFloat(args[2], at.z))
+        {
+            spdlog::error("[script] safepoint needs x y z");
+            return true;
+        }
+        SafePointRequest request{};
+        request.CellId = m_cell;
+        request.WorldSpaceId = m_worldSpace;
+        request.Position = at;
+        SendMsg(request);
+        spdlog::info("[script] safe point at ({}, {}, {}) sent", args[0], args[1], args[2]);
+        return true;
+    }
+
+    // "revive other|<player id>": this bot held a hand on that downed player long enough, as a client asks then.
+    if (name == "revive")
+    {
+        uint32_t target = 0;
+        if (!args.empty() && args[0] == "other")
+            target = OtherPlayerId();
+        else if (args.empty() || !ParseHex(args[0], target))
+        {
+            spdlog::error("[script] revive needs 'other' or a hex player id");
+            return true;
+        }
+        ReviveRequest request{};
+        request.TargetPlayerId = target;
+        SendMsg(request);
+        spdlog::info("[script] revive of player {} sent", target);
         return true;
     }
 
@@ -2358,9 +2471,24 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
     // "nock on|off": an arrow on this character's bow string, or none, as a VR client says it (ArrowNockedRequest); the
     // server passes it on and the other players' games attach the arrow on their copy of this character.
+    // "nock hand [left|right] [x y z]": an arrow held in that hand (right by default), its head at x y z in the space of
+    // the hand bone (by default where a VR player's game holds it).
     if (name == "nock")
     {
         ArrowNockedRequest request{};
+        if (!args.empty() && args[0] == "hand")
+        {
+            request.InHand = true;
+            request.HandSide = args.size() > 1 && args[1] == "left" ? 0 : 1;
+            request.HandOffset = glm::vec3{0.f, 0.f, 67.f};
+            float x = 0.f, y = 0.f, z = 0.f;
+            if (args.size() > 4 && ParseFloat(args[2], x) && ParseFloat(args[3], y) && ParseFloat(args[4], z))
+                request.HandOffset = glm::vec3{x, y, z};
+            SendMsg(request);
+            spdlog::info("[script] arrow in the {} hand, its head at ({:.0f}, {:.0f}, {:.0f})", request.HandSide ? "right" : "left", request.HandOffset.x, request.HandOffset.y,
+                         request.HandOffset.z);
+            return true;
+        }
         request.Nocked = args.empty() || args[0] != "off";
         SendMsg(request);
         spdlog::info("[script] arrow {} the string", request.Nocked ? "on" : "off");
@@ -3106,6 +3234,72 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         return std::nullopt;
     }
 
+    if (what == "downstate")
+    {
+        // downstate me|other down|revived|respawned|fallen|none: the last downed state the server sent for that player.
+        if (acArgs.size() < 3)
+            return std::nullopt;
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerIdOrLast();
+        const auto cState = m_downStates.find(cPlayerId);
+        const std::string cNow = cState != m_downStates.end() ? cState->second : "none";
+        aOutWhy = fmt::format("player {} is {}", cPlayerId, cNow);
+        return cNow == acArgs[2];
+    }
+
+    if (what == "respawnpoint")
+    {
+        // respawnpoint me|other none|<x> <y>: where the server last said that player respawns (died or fallen), within 50 units.
+        if (acArgs.size() < 3)
+            return std::nullopt;
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerIdOrLast();
+        const auto cPoint = m_respawnPoints.find(cPlayerId);
+        if (cPoint == m_respawnPoints.end())
+        {
+            aOutWhy = fmt::format("no respawn told for player {}", cPlayerId);
+            return false;
+        }
+        if (!cPoint->second)
+        {
+            aOutWhy = fmt::format("player {} respawns at the game's own spot", cPlayerId);
+            return acArgs[2] == "none";
+        }
+        aOutWhy = fmt::format("player {} respawns at ({:.0f}, {:.0f}, {:.0f})", cPlayerId, cPoint->second->x, cPoint->second->y, cPoint->second->z);
+        float wantedX = 0.f;
+        float wantedY = 0.f;
+        if (acArgs[2] == "none" || acArgs.size() < 4 || !ParseFloat(acArgs[2], wantedX) || !ParseFloat(acArgs[3], wantedY))
+            return false;
+        return std::abs(cPoint->second->x - wantedX) <= 50.f && std::abs(cPoint->second->y - wantedY) <= 50.f;
+    }
+
+    if (what == "downcount")
+    {
+        // downcount me|other <state> <op> <n>: how many times the server sent that downed state for that player (down, revived, respawned, fallen, died, up, left).
+        float wanted = 0.f;
+        if (acArgs.size() < 5 || !ParseFloat(acArgs[4], wanted))
+            return std::nullopt;
+        const uint32_t cPlayerId = acArgs[1] == "me" ? m_playerId : OtherPlayerIdOrLast();
+        const auto cCounts = m_downCounts.find(cPlayerId);
+        const auto cCount = cCounts != m_downCounts.end() && cCounts->second.count(acArgs[2]) ? cCounts->second.at(acArgs[2]) : 0;
+        const float value = static_cast<float>(cCount);
+        aOutWhy = fmt::format("player {} was told '{}' {} time(s)", cPlayerId, acArgs[2], cCount);
+        const std::string& op = acArgs[3];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
+    }
+
+    if (what == "refused")
+    {
+        // refused <reason>|none: why the server last refused a revive this bot asked for (toofar, late, party, place, notdown, reviverdown, self).
+        if (acArgs.size() < 2)
+            return std::nullopt;
+        aOutWhy = fmt::format("last refusal: {}", m_lastRefusal);
+        return m_lastRefusal == acArgs[1];
+    }
+
     if (what == "voices")
     {
         // voices <op> <n>: pieces of other players' voices the server relayed to this bot (NotifyVoiceData).
@@ -3383,6 +3577,21 @@ const KnownPlayer* Bot::Host() const noexcept
         if (!pBest || player.PlayerId < pBest->PlayerId)
             pBest = &player;
     return pBest;
+}
+
+uint32_t Bot::OtherPlayerId() const noexcept
+{
+    for (const auto& player : m_players)
+        if (player.PlayerId != m_playerId)
+            return player.PlayerId;
+    return 0;
+}
+
+uint32_t Bot::OtherPlayerIdOrLast() const noexcept
+{
+    if (const uint32_t cOther = OtherPlayerId())
+        m_lastOtherPlayerId = cOther;
+    return m_lastOtherPlayerId;
 }
 
 KnownPlayer* Bot::FindPlayerCharacter(const uint32_t aServerId) noexcept

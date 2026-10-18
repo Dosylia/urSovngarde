@@ -148,6 +148,11 @@ private:
 
     Map<uint32_t, WeaponDrawData> m_weaponDrawUpdates{};
 
+    // Actor form ID -> a full inventory that came while the actor had no loaded AI process here (ReconcileActorData).
+    // The game's equip code reads that process, so the inventory waits until the actor has one (ApplyPendingInventories).
+    Map<uint32_t, Inventory> m_pendingInventories{};
+    void ApplyPendingInventories() noexcept;
+
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};

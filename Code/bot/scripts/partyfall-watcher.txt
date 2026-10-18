@@ -1,0 +1,25 @@
+# The other half of the party-has-fallen test: goes down once the other side is down, which leaves nobody standing.
+# As the party's leader it has a safe point first, and both are told to respawn there.
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it and the party has two members.
+party lead
+log partyfall watcher
+waitfor connected 45
+collect spawn
+record partyfall watcher
+waitfor known other 40
+safepoint 500 600 100
+
+log -- the other side goes down; this bot follows
+waitfor downstate other down 30
+down
+waitfor downstate me fallen 10
+expect downstate me fallen
+expect downstate other fallen
+expect respawnpoint me 500 600
+expect respawnpoint other 500 600
+expect connected
+record off
+report bot-partyfall-watcher.txt
+log done
+stop

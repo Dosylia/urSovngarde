@@ -1,0 +1,27 @@
+# A downed player who leaves the party: the members it leaves behind must be told it is gone, or they go on trying to revive it.
+#
+#   powershell -File Tools\VR\run-bot-tests.ps1 -Pair downedgone
+#
+# This side goes down, then leaves the party: alone, nobody can revive it, and it respawns at once (fallen).
+log downedgone actor
+waitfor connected 45
+collect spawn
+record downedgone actor
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+wait 3
+log -- going down
+down
+waitfor downstate me down 10
+expect downstate me down
+wait 2
+log -- leaving the party while down
+party leave
+waitfor downstate me fallen 15
+expect downstate me fallen
+expect connected
+record off
+report bot-downedgone-actor.txt
+log done
+stop

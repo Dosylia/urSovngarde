@@ -310,6 +310,9 @@ static bool HookPlayerControlsCanProcess(void* apControls)
 
 static void* (*UI_AddToActiveQueue)(UI*, IMenu*, void*);
 
+// Counted where the game queues it, on whichever thread does; read by UI::LoadingScreensQueued.
+static std::atomic<uint32_t> s_loadingScreensQueued{0};
+
 static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundItem /*In reality a reference*/)
 {
     // Logs every menu the game queues, connected or not; the launcher reads the "Menu queued" lines.
@@ -321,6 +324,8 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
             return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
         const BSFixedString* pName = apSelf->LookupMenuNameByInstance(apMenu);
         spdlog::info("Menu queued: {}{} (connected {})", pName ? pName->AsAscii() : "?", apMenu->PausesGame() ? " [pauses]" : "", World::Get().GetTransport().IsConnected() ? "yes" : "no");
+        if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Loading Menu") == 0)
+            ++s_loadingScreensQueued;
 #ifdef SKYRIMVR
         // The in-headset dashboard is made at the main menu, where a pause costs nothing.
         // Made later, on the first update in the world, it stops the game for up to 1.5 s right after the save loads.
@@ -474,6 +479,11 @@ void UI::SetEnemyMeterTarget(uint32_t aHandle, uint16_t aLevel)
 std::chrono::steady_clock::time_point UI::LastGameEnemyMeterTargetAt()
 {
     return s_lastGameEnemyMeterTargetAt;
+}
+
+uint32_t UI::LoadingScreensQueued()
+{
+    return s_loadingScreensQueued.load();
 }
 
 static TiltedPhoques::Initializer s_s(

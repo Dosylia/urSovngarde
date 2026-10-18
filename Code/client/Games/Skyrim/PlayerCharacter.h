@@ -114,7 +114,8 @@ struct PlayerCharacter : Actor
     void AddSkillExperience(int32_t aSkill, float aExperience) noexcept;
     float GetSkillExperience(Skills::Skill aSkill) const noexcept { return (*pSkills)->skills[aSkill].xp; }
 
-    NiPoint3 RespawnPlayer() noexcept;
+    //! Back on its feet with full health, at that safe point when given, else at the game's own spot for where it died.
+    NiPoint3 RespawnPlayer(TESObjectCELL* apSafePointCell = nullptr, const NiPoint3& acSafePoint = {}) noexcept;
 
     void PayCrimeGoldToAllFactions() noexcept;
 

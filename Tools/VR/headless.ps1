@@ -118,6 +118,45 @@ function Wait-Until([scriptblock]$test, [int]$seconds, [string]$what, [switch]$N
     throw "Timed out after $seconds s waiting for $what."
 }
 
+# The rig's frame rate: SteamVR's null headset draws into a desktop window, so the game runs at the monitors' refresh
+# rate (the fastest one), not at the headset's 90 Hz. HIGGS splits Havok's step by it: two steps a frame below 70 fps,
+# as for the players near 45, and one above. A monitor left at 100 Hz makes a rig run that physics and timing tests
+# cannot trust, so it is said before the run (and live-check keeps each run's frame rate in its history).
+function Get-MonitorRates {
+    Add-Type -AssemblyName System.Windows.Forms
+    if (-not ('RigMonitorModes' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class RigMonitorModes
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DEVMODE
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+        public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+        public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+        public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+        public short dmLogPixels;
+        public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool EnumDisplaySettings(string name, int mode, ref DEVMODE devmode);
+    public static int RefreshRate(string device)
+    {
+        var d = new DEVMODE();
+        d.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+        return EnumDisplaySettings(device, -1, ref d) ? d.dmDisplayFrequency : 0;
+    }
+}
+'@
+    }
+    foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
+        [pscustomobject]@{ Name = $screen.DeviceName; Hz = [RigMonitorModes]::RefreshRate($screen.DeviceName) }
+    }
+}
+
 function Show-Status {
     $health = Get-Health
     $game = Test-Running $gamePattern
@@ -265,6 +304,13 @@ if ($Action -eq 'down') { Stop-Everything; Show-Status; if ($script:downFailed) 
 # ---- up ----
 if (Test-Running '^(urSovngarde|SkyrimTogetherVR|SkyrimVR)$') { throw 'The game is already running. If that is a real session, leave it alone; otherwise run "down" first.' }
 if (Test-Running '^(vrserver|vrmonitor)$') { throw 'SteamVR is already running. If the headset is in use, leave it alone; otherwise close it first.' }
+
+$rates = @(Get-MonitorRates)
+$fastest = ($rates | Measure-Object -Property Hz -Maximum).Maximum
+Write-Host ('Monitors: ' + (($rates | ForEach-Object { '{0} {1} Hz' -f $_.Name, $_.Hz }) -join ', ') + "; the rig will run near $fastest fps.")
+if ($fastest -gt 60) {
+    Write-Host "A monitor runs above 60 Hz: the game will run near $fastest fps with one physics step a frame, while the players run near 45 fps with two. Timing and physics results of this run do not stand for play; set the monitors to 60 Hz for those." -ForegroundColor Yellow
+}
 
 $startedServer = $false
 # The tests run on one fixed save, since the newest one changes with every play session and changes the results with it.
