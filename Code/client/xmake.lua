@@ -75,6 +75,8 @@ target(name)
         add_defines("SKYRIMVR")
         -- Only the header is used: the game's own openvr_api.dll is called at runtime (VRDashboard.cpp).
         add_packages("openvr")
+        -- The game's font library is zlib-compressed (VRBanner.cpp).
+        add_packages("zlib")
     end
 end
 

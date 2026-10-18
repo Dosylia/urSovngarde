@@ -9,7 +9,7 @@ namespace VRBanner
 {
 //! @param acText UTF-8.
 //! @param aRgb The text's colour, 0xRRGGBB.
-//! @param aTextHeight How tall the letters are, in the overlay's 1024 pixels across.
+//! @param aTextHeight How tall the letters are, in 1024ths of the overlay's width.
 //! @param aHoldSeconds How long it stays fully shown, between the fades.
 void Show(const std::string& acText, uint32_t aRgb, int aTextHeight, float aHoldSeconds) noexcept;
 
