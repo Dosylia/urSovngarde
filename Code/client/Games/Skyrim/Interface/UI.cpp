@@ -6,6 +6,7 @@
 
 #include <World.h>
 #include <Services/CalendarService.h>
+#include <Interface/Menus/SleepWaitMenu.h>
 
 static bool g_RequestUnpauseAll{false};
 
@@ -143,6 +144,14 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
     // if the menu is empty we let the real function handle it.
     if (!apMenu || !World::Get().GetTransport().IsConnected() || stubs::g_IsSoulsREActive)
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
+
+#ifdef SKYRIMVR
+    if (SleepWaitHooksReady() && apSelf->FindMenuByName(BSFixedString("Sleep/Wait Menu")) == apMenu)
+    {
+        UnfreezeMenu(apMenu);
+        return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
+    }
+#endif
 
 #if 0
         if (auto* pName = apSelf->LookupMenuNameByInstance(apEntry))

@@ -20,6 +20,8 @@ public:
     CalendarService(World&, entt::dispatcher&, TransportService&);
 
     static bool AllowGameTick() noexcept;
+    // Blocks gameplay input while another party member sleeps; VR tracking continues normally.
+    static bool AreSleepControlsLocked() noexcept { return s_sleepControlsLocked.load(); }
     // The game queued its Fader Menu, which a sleep does before the clock moves. Any thread.
     static void OnFaderQueued() noexcept { s_faderQueued = true; }
 
@@ -39,10 +41,7 @@ private:
     void RestoreOnlineClock() noexcept;
     float SleptHours(const TimeModel& acNow) const noexcept;
     void UpdateWatch(double aDelta) noexcept;
-    void UpdateFade(double aDelta) noexcept;
     void StopWatching(float aHours) noexcept;
-    void StartWatchFade() noexcept;
-    void EndWatchFade() noexcept;
     void ReportCombat(double aDelta) noexcept;
     String PlayerName(uint32_t aPlayerId) const noexcept;
 
@@ -60,6 +59,9 @@ private:
         kFinishing, // waiting for the server's final time, including after cancellation
     };
     SleepState m_sleepState = SleepState::kIdle;
+#ifdef SKYRIMVR
+    uint64_t m_sleepMenuGeneration = 0;
+#endif
     TimeModel m_sleepStart{};
     double m_sleepRealSeconds = 0.0;
     float m_sleepSentHours = 0.f;
@@ -71,19 +73,10 @@ private:
     double m_sleepSendTimer = 0.0;
     double m_sleepHeartbeatTimer = 0.0;
 
-    // Another party member's sleep, watched from behind a black screen.
+    // Another party member's sleep: keep the world visible, with gameplay controls locked until it ends.
     std::optional<uint32_t> m_watchedSleeper;
     double m_watchHudTimer = 0.0;
-    // Watchers darken with image spaces, not the Fader Menu, so the HUD lines stay readable.
-    enum class WatchFade
-    {
-        kNone,
-        kFader,
-        kFadingOut,
-        kHolding,
-    };
-    WatchFade m_watchFade = WatchFade::kNone;
-    double m_watchFadeTimer = 0.0;
+    static inline std::atomic<bool> s_sleepControlsLocked{false};
     float m_watchHours = 0.f;
     double m_watchSilence = 0.0;
 

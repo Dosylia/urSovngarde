@@ -8,11 +8,10 @@
 #include <Messages/NotifySleep.h>
 #include <World.h>
 
-#include <Forms/ImageSpaceModifierInstanceForm.h>
-#include <Forms/TESImageSpaceModifier.h>
 #include <Forms/TESObjectCELL.h>
 #include <Games/References.h>
 #include <Interface/UI.h>
+#include <Interface/Menus/SleepWaitMenu.h>
 #include <PlayerCharacter.h>
 #include <TimeManager.h>
 #include <Utils.h>
@@ -36,7 +35,7 @@ constexpr float kMinSleepHours = 1.f / 60.f;
 constexpr double kSleepSendInterval = 0.2;
 constexpr double kSleepHeartbeatInterval = 5.0;
 constexpr float kSleepSendStep = 0.1f;
-// A watcher that hears nothing for this long fades back in on its own.
+// A watcher that hears nothing for this long regains controls on its own.
 constexpr double kWatchTimeout = 15.0;
 constexpr double kCombatCheckInterval = 0.5;
 
@@ -76,48 +75,6 @@ String FormatHour(float aTime)
     return fmt::format("{:02}:{:02}", cHour, cMinute).c_str();
 }
 
-// Skyrim.esm image-space fades. They darken the world but not the HUD, which the Fader Menu covers.
-constexpr uint32_t kFadeToBlackImod = 0xF756D;     // 3 s, animated, ends by itself
-constexpr uint32_t kFadeToBlackHoldImod = 0xF756E; // static, stays until stopped
-constexpr uint32_t kFadeToBlackBackImod = 0xF756F; // 2 s back to normal
-constexpr double kFadeToBlackSwap = 2.9;           // swap to the hold just before the fade ends
-
-TESImageSpaceModifier* GetImod(uint32_t aFormId) noexcept
-{
-    return reinterpret_cast<TESImageSpaceModifier*>(TESForm::GetById(aFormId));
-}
-
-// Skyrim.esm UIMenuPrevNextSD: what the Sleep/Wait menu's hour slider plays on every hour that passes.
-void PlayHourTick() noexcept
-{
-    constexpr uint32_t kHourTickSound = 0x3C753;
-    constexpr uint32_t kSoundDescriptorInterface = 0x20; // BGSSoundDescriptorForm's BSISoundDescriptor
-
-    // BSSoundHandle (CommonLibVR-NG), as in VRBodySync's PlayClashSound.
-    struct SoundHandle
-    {
-        uint32_t SoundId = 0xFFFFFFFF;
-        bool AssumeSuccess = false;
-        uint8_t Pad05 = 0;
-        uint16_t Pad06 = 0;
-        uint32_t State = 0;
-    };
-    using TGetAudioManager = void*();
-    using TGetSoundHandle = bool(void* apManager, SoundHandle& aHandle, void* apDescriptor, uint32_t aFlags);
-    using TPlay = bool(SoundHandle* apHandle);
-    POINTER_SKYRIMSE(TGetAudioManager, s_getAudioManager, 66391, 66391);
-    POINTER_SKYRIMSE(TGetSoundHandle, s_getSoundHandle, 66404, 66404);
-    POINTER_SKYRIMSE(TPlay, s_play, 66355, 66355);
-
-    TESForm* pForm = TESForm::GetById(kHourTickSound);
-    void* pManager = s_getAudioManager.Get() ? s_getAudioManager.Get()() : nullptr;
-    if (!pForm || !pManager || !s_getSoundHandle.Get() || !s_play.Get())
-        return;
-
-    SoundHandle handle{};
-    if (s_getSoundHandle.Get()(pManager, handle, reinterpret_cast<uint8_t*>(pForm) + kSoundDescriptorInterface, 0x1A))
-        s_play.Get()(&handle);
-}
 }
 
 bool CalendarService::s_gameClockLocked = false;
@@ -168,6 +125,9 @@ void CalendarService::OnTimeUpdate(const ServerTimeSettings& acMessage) noexcept
 
 void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
+#ifdef SKYRIMVR
+    ResolveDeferredSleepWait(false);
+#endif
     if (m_watchedSleeper)
         StopWatching(0.f);
 
@@ -175,7 +135,7 @@ void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
     m_fadeTimer = 0.f;
     ToggleGameClock(true);
 
-    EndWatchFade();
+    s_sleepControlsLocked = false;
     m_watchedSleeper.reset();
     m_sleepState = SleepState::kIdle;
     m_reportedCombat = false;
@@ -195,12 +155,20 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
     switch (acMessage.SleepEvent)
     {
     case Event::kGranted:
-        if (m_sleepState != SleepState::kAsking || !IsSleepMenuOpen())
+        if (m_sleepState != SleepState::kAsking || !IsSleepMenuOpen()
+#ifdef SKYRIMVR
+            || m_sleepMenuGeneration != SleepWaitMenuGeneration()
+#endif
+        )
         {
             // The menu closed before the answer came.
             RequestSleep cancel{};
             cancel.SleepStep = RequestSleep::Step::kCancel;
             m_transport.Send(cancel);
+#ifdef SKYRIMVR
+            // Await this grant's cancellation resync before asking for the replacement menu.
+            m_sleepState = SleepState::kFinishing;
+#endif
             return;
         }
 
@@ -216,8 +184,14 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
         s_faderQueued = false;
         m_sleepState = SleepState::kSleeping;
         ToggleGameClock(true);
+#ifdef SKYRIMVR
+        ResolveDeferredSleepWait(true);
+#endif
         return;
     case Event::kRevoked:
+#ifdef SKYRIMVR
+        ResolveDeferredSleepWait(false);
+#endif
         if (m_sleepState == SleepState::kSleeping || m_sleepState == SleepState::kFinishing)
         {
             // The server discarded this session. Restore the continuously maintained baseline before
@@ -235,6 +209,9 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
     {
         if (m_sleepState == SleepState::kAsking)
             m_sleepState = SleepState::kRefused;
+#ifdef SKYRIMVR
+        ResolveDeferredSleepWait(false);
+#endif
 
         String reason;
         if (acMessage.SleepEvent == Event::kRefusedDisabled)
@@ -256,7 +233,7 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
             m_watchedSleeper = acMessage.PlayerId;
             m_watchHudTimer = 0.0;
             m_watchHours = 0.f;
-            StartWatchFade();
+            s_sleepControlsLocked = true;
         }
 
         if (m_watchedSleeper != acMessage.PlayerId)
@@ -267,8 +244,6 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
         {
             // Our clock kept running too, so only the hours slept on top of it are added.
             const float cStep = acMessage.HoursSlept - m_watchHours;
-            if (std::floor(acMessage.HoursSlept) > std::floor(m_watchHours))
-                PlayHourTick();
             m_watchHours = acMessage.HoursSlept;
             m_onlineTime.AdvanceHours(cStep);
             m_fadeTimer = kTransitionSpeed;
@@ -309,52 +284,7 @@ void CalendarService::StopWatching(float aHours) noexcept
 
     // The server's resync follows with the shared clock and corrects anything left over.
     m_watchedSleeper.reset();
-    EndWatchFade();
-}
-
-void CalendarService::StartWatchFade() noexcept
-{
-    if (TESImageSpaceModifier* pFade = GetImod(kFadeToBlackImod); pFade && GetImod(kFadeToBlackHoldImod) && GetImod(kFadeToBlackBackImod))
-    {
-        ImageSpaceModifierInstanceForm::Trigger(pFade);
-        m_watchFade = WatchFade::kFadingOut;
-        m_watchFadeTimer = kFadeToBlackSwap;
-        return;
-    }
-
-    spdlog::warn("Sleep: the fade-to-black image spaces are missing, using the Fader Menu (HUD lines will be hidden)");
-    FadeOutGame(true, true, 1.0f, true, 2.f);
-    m_watchFade = WatchFade::kFader;
-}
-
-void CalendarService::EndWatchFade() noexcept
-{
-    switch (m_watchFade)
-    {
-    case WatchFade::kFadingOut:
-        ImageSpaceModifierInstanceForm::Stop(GetImod(kFadeToBlackImod));
-        ImageSpaceModifierInstanceForm::Trigger(GetImod(kFadeToBlackBackImod));
-        break;
-    case WatchFade::kHolding:
-        ImageSpaceModifierInstanceForm::Stop(GetImod(kFadeToBlackHoldImod));
-        ImageSpaceModifierInstanceForm::Trigger(GetImod(kFadeToBlackBackImod));
-        break;
-    case WatchFade::kFader: FadeOutGame(false, true, 0.5f, true, 2.f); break;
-    case WatchFade::kNone: break;
-    }
-    m_watchFade = WatchFade::kNone;
-}
-
-void CalendarService::UpdateFade(double aDelta) noexcept
-{
-    // The fade ends by itself after 3 s, so the hold takes over just before.
-    m_watchFadeTimer -= aDelta;
-    if (m_watchFade == WatchFade::kFadingOut && m_watchFadeTimer <= 0.0)
-    {
-        ImageSpaceModifierInstanceForm::Trigger(GetImod(kFadeToBlackHoldImod));
-        ImageSpaceModifierInstanceForm::Stop(GetImod(kFadeToBlackImod));
-        m_watchFade = WatchFade::kHolding;
-    }
+    s_sleepControlsLocked = false;
 }
 
 void CalendarService::UpdateWatch(double aDelta) noexcept
@@ -366,20 +296,33 @@ void CalendarService::UpdateWatch(double aDelta) noexcept
     m_watchSilence += aDelta;
     if (m_watchSilence >= kWatchTimeout)
     {
-        spdlog::warn("Sleep: nothing from player {:X} for {:.0f} s, fading back in", *m_watchedSleeper, kWatchTimeout);
+        spdlog::warn("Sleep: nothing from player {:X} for {:.0f} s, releasing sleep controls", *m_watchedSleeper, kWatchTimeout);
         StopWatching(0.f);
     }
 }
 
 void CalendarService::UpdateSleep(double aDelta) noexcept
 {
-    const bool cMenuOpen = IsSleepMenuOpen();
+    bool cMenuOpen = IsSleepMenuOpen();
+#ifdef SKYRIMVR
+    if (m_sleepState != SleepState::kIdle && m_sleepMenuGeneration != SleepWaitMenuGeneration())
+    {
+        // A close/reopen can happen between VM updates, even reusing the same IMenu address.
+        // Drain the old answer before asking again; its grant must not start the new confirmation.
+        if (m_sleepState == SleepState::kAsking)
+            return;
+        cMenuOpen = false;
+    }
+#endif
 
     switch (m_sleepState)
     {
     case SleepState::kIdle:
         if (cMenuOpen)
         {
+#ifdef SKYRIMVR
+            m_sleepMenuGeneration = SleepWaitMenuGeneration();
+#endif
             RequestSleep ask{};
             ask.SleepStep = RequestSleep::Step::kAsk;
             m_transport.Send(ask);
@@ -387,6 +330,7 @@ void CalendarService::UpdateSleep(double aDelta) noexcept
         }
         return;
     case SleepState::kAsking:
+#ifndef SKYRIMVR
         if (!cMenuOpen)
         {
             RequestSleep cancel{};
@@ -394,6 +338,9 @@ void CalendarService::UpdateSleep(double aDelta) noexcept
             m_transport.Send(cancel);
             m_sleepState = SleepState::kIdle;
         }
+#endif
+        // VR drains the outstanding reply even after closing: a late grant is cancelled and resynced
+        // in OnNotifySleep before the replacement menu may request its own grant.
         return;
     case SleepState::kRefused:
         if (!cMenuOpen)
@@ -414,7 +361,7 @@ void CalendarService::UpdateSleep(double aDelta) noexcept
     }
     const float cHours = SleptHours(ReadGameClock());
 
-    // The game's fade to black comes about 2 s before the clock moves, so the party is told at once.
+    // The native sleeper fades before the clock moves; lock the party's controls from that point.
     const bool cFaderQueued = s_faderQueued.exchange(false);
     m_sleepSendTimer -= aDelta;
     if ((cFaderQueued && !m_sleepAnnounced) || (m_sleepSendTimer <= 0.0 && cHours - m_sleepSentHours >= kSleepSendStep))
@@ -536,7 +483,6 @@ void CalendarService::HandleUpdate(const UpdateEvent& aEvent) noexcept
         ReportCombat(aEvent.Delta);
         UpdateSleep(aEvent.Delta);
         UpdateWatch(aEvent.Delta);
-        UpdateFade(aEvent.Delta);
     }
 
     if (m_transport.IsOnline() || s_gameClockLocked)

@@ -22,6 +22,7 @@
 #include <Events/HitEvent.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
+#include <Services/CalendarService.h>
 #endif
 #include <Events/RemoveSpellEvent.h>
 #include <Events/DroppedItemEvents.h>
@@ -1181,6 +1182,11 @@ static THitTarget* RealHitTarget = nullptr;
 // Our own clash keeps its block sound, sparks and buzz; a hit on his body goes through as before.
 void TP_MAKE_THISCALL(HookHitTarget, Actor, Actor* apTarget, void* apProjectile, bool aIsOffhand)
 {
+    // Physical hand tracking stays live while waiting for party sleep, including PLANCK weapon bodies.
+    // Those contacts must not turn a freely moving hand into an attack while controls are locked.
+    if (!apProjectile && CalendarService::AreSleepControlsLocked() && apThis == PlayerCharacter::Get())
+        return;
+
     if (apThis == PlayerCharacter::Get() && !apProjectile && apTarget)
     {
         const ActorExtension* pTarget = apTarget->GetExtension();

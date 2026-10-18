@@ -4,6 +4,9 @@
 #include <Games/Overrides.h>
 
 #include <World.h>
+#ifdef SKYRIMVR
+#include <Services/CalendarService.h>
+#endif
 #include <Services/PapyrusService.h>
 #include <Events/ActivateEvent.h>
 #include <Events/InventoryChangeEvent.h>
@@ -1082,6 +1085,11 @@ bool TP_MAKE_THISCALL(HookPlayAnimation, void, uint32_t auiStackID, TESObjectREF
 
 bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, uint8_t aUnk1, TESBoundObject* apObjectToGet, int32_t aCount, char aDefaultProcessing)
 {
+#ifdef SKYRIMVR
+    // Also guard activations issued directly by VR interactions, outside the native input handlers.
+    if (CalendarService::AreSleepControlsLocked() && apActivator == PlayerCharacter::Get() && !ScopedActivateOverride::IsOverriden())
+        return false;
+#endif
     Actor* pActivator = Cast<Actor>(apActivator);
 
     // Exclude books from activation since only reading them removes them from the cell
