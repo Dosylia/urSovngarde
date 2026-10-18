@@ -1,0 +1,45 @@
+# The death card says how the player died, as Minecraft's death messages do.
+#
+#   python Tools\VR\live-check.py live-death-line
+#
+# This bot leaves the party, so a downed player respawns at once (live-death).
+# First a death by console: no blow landed, so the line only says the player died.
+# Then a Netch, with combat AI on and the player's health forced low, downs the player with its first blow.
+# The game's hit event must carry the attacker (TESHitEvent's layout on VR), and the card must name it.
+# The card the player saw is written to logs\banner-death.png; look at it after the run.
+# Run it last: the Netch stays in the world, and goes on downing the player after each respawn.
+log live death line
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 6
+party leave
+wait 3
+
+log -- killed by console: nobody to name
+log DO console player.damageav health 100000
+wait 4
+log REQUIRE logged PlayerService: down alone; respawning
+log CHECK logged PlayerService: death card: .+ died
+log CHECK logged VRBanner: 'YOU DIED / .+ DIED' shown
+wait 12
+log CHECK player alive
+wait 3
+
+log -- a Netch downs the player
+log DO combat on
+wait 2
+log DO console player.forceav health 5
+log DO console player.placeatme 0202173B 1
+wait 25
+log REQUIRE logged DeathCause: the game's hits on the player arrive
+log CHECK logged PlayerService: the last blow before going down: attacker [0-9A-F]+, player 0
+log CHECK logged PlayerService: death card: .+ was (slain|killed) by Netch
+log CHECK logged VRBanner: 'YOU DIED / .+ WAS (SLAIN|KILLED) BY NETCH' shown
+wait 12
+log DO combat off
+wait 2
+log CHECK player alive
+log CHECK game alive
+log done
+stop

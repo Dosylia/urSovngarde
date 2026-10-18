@@ -77,6 +77,10 @@ private:
     //! The heartbeat sound starts as the player goes down and stops however the down ends.
     void StartHeartbeat() noexcept;
     void StopHeartbeat() noexcept;
+    //! While up: where the player stood lately, to tell a fall (m_downFell).
+    void SampleHeight(std::chrono::steady_clock::time_point aNow) noexcept;
+    //! How the player went down, as the death card says it ("Lydia was slain by Bandit Chief using Iron War Axe").
+    std::string DeathLine() const noexcept;
     /**
      * @brief Make sure difficulty doesn't get changed while connected
      */
@@ -119,6 +123,10 @@ private:
     std::chrono::steady_clock::time_point m_heartbeatSince{};
     std::chrono::steady_clock::time_point m_giveUpSince{};
     std::chrono::steady_clock::time_point m_revivePulseUntil{};
+    // The player's height lately (SampleHeight), and whether it had just dropped from high up when it went down.
+    std::array<std::pair<std::chrono::steady_clock::time_point, float>, 32> m_heights{};
+    size_t m_nextHeight = 0;
+    bool m_downFell = false;
     int32_t m_serverDifficulty = 6;
     int32_t m_previousDifficulty = 6;
 

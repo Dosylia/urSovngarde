@@ -29,6 +29,7 @@ expect downstate me revived
 wait 3
 log CHECK logged Revive: holding a hand on player
 log CHECK logged Revive: held a hand on player .* long enough
+expect downcount me held >= 1
 wait 3
 log CHECK game alive
 wait 3

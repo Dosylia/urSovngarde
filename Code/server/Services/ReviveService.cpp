@@ -135,6 +135,23 @@ void ReviveService::OnRevive(const PacketEvent<ReviveRequest>& acMessage) noexce
     Player* pReviver = acMessage.pPlayer;
     const uint32_t cTargetId = acMessage.Packet.TargetPlayerId;
 
+    // A hand going on or coming off is news only for the downed player: someone is reviving them, or stopped.
+    if (acMessage.Packet.HoldStage != ReviveRequest::kRevive)
+    {
+        Player* pTarget = m_world.GetPlayerManager().GetById(cTargetId);
+        const auto& cReviverParty = pReviver->GetParty().JoinedPartyId;
+        if (!pTarget || m_downed.find(cTargetId) == m_downed.end() || !cReviverParty || cReviverParty != pTarget->GetParty().JoinedPartyId)
+            return;
+        NotifyDownedState held{};
+        held.PlayerId = cTargetId;
+        held.Change = acMessage.Packet.HoldStage == ReviveRequest::kHoldStart ? NotifyDownedState::kReviveHeld : NotifyDownedState::kReviveLetGo;
+        held.ReviverId = pReviver->GetId();
+        pTarget->Send(held);
+        spdlog::info("Revive: player {} '{}' {} player {} '{}'", pReviver->GetId(), pReviver->GetUsername().c_str(),
+                     held.Change == NotifyDownedState::kReviveHeld ? "has a hand on" : "took the hand off", cTargetId, pTarget->GetUsername().c_str());
+        return;
+    }
+
     NotifyDownedState refused{};
     refused.PlayerId = cTargetId;
     refused.Change = NotifyDownedState::kReviveRefused;

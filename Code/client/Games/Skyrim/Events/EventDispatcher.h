@@ -106,6 +106,10 @@ struct TESHitEvent
 {
     TESObjectREFR* hit;
     TESObjectREFR* hitter;
+    // The rest as CommonLibVR has it.
+    uint32_t source;     // the weapon, spell or shout
+    uint32_t projectile; // the arrow's or spell's projectile
+    uint8_t flags;       // 1 power attack, 2 sneak attack, 4 bash, 8 blocked
 };
 
 struct TESLoadGameEvent

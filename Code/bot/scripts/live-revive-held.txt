@@ -1,0 +1,47 @@
+# A downed player is told who is reviving them: the game's player goes down, this bot puts its hand on it, takes it off, then revives it.
+#
+#   python Tools\VR\live-check.py live-revive-held
+#
+# The reviver's game says when its hand goes on and comes off (ReviveRequest stages); the server passes that to the downed player only.
+# The downed player's game then shows "<name> is reviving you" in the headset, and hides it when the hand comes off or the revive lands.
+# The line is an overlay the game's screenshots do not show, so the log lines are what is checked.
+log live revive held
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the player goes down, and hears it
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 2
+log REQUIRE logged PlayerService: player is down, waiting for a revive
+log CHECK logged PlayerService: player is down, waiting for a revive; dropped -?\d+ just before; the down sound playing
+wait 2
+
+log -- this bot puts its hand on the player
+revive other hold
+wait 2
+log CHECK logged PlayerService: player \d+ '.+' is reviving this player
+log CHECK logged VRBanner: '.+ is reviving you' shown
+expect downstate other down
+
+log -- and takes it off
+revive other letgo
+wait 2
+log CHECK logged PlayerService: player \d+ stopped reviving this player
+
+log -- then holds again and revives
+revive other hold
+wait 2
+revive other
+waitfor downstate other revived 10
+expect downstate other revived
+wait 6
+log CHECK logged PlayerService: revived by player
+log CHECK player alive
+wait 3
+log CHECK game alive
+log done
+stop

@@ -5,6 +5,8 @@
 
 enum class FormType : uint8_t
 {
+    Enchantment = 21,
+    Spell = 22,
     Scroll = 23,
     Armor = 26,
     Book = 27,
@@ -23,6 +25,7 @@ enum class FormType : uint8_t
     LeveledItem = 53,
     Character = 62,
     QuestItem = 77,
+    Shout = 119,
     Count = 0x87
 };
 

@@ -16,6 +16,7 @@
 #include <Events/HealthChangeEvent.h>
 #include <Events/ClashEvent.h>
 #include <PlayerCharacter.h>
+#include <Games/Skyrim/DeathCause.h>
 
 #include <Messages/NotifyActorValueChanges.h>
 #include <Messages/RequestActorValueChanges.h>
@@ -433,6 +434,10 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
     }
 
     pActor->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, newHealth);
+
+    // Another player's blow on this player: the death card may name them.
+    if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId && pActor == PlayerCharacter::Get())
+        DeathCause::RecordPlayerHit(acMessage.AttackerPlayerId);
 
     const float health = pActor->GetActorValue(ActorValueInfo::kHealth);
     if (!pActor->IsDead() && health <= 0.f)

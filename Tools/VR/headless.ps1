@@ -51,12 +51,24 @@ if (-not $fusRoot) {
 if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT to its directory.' }
 $mo2 = Join-Path $fusRoot 'ModOrganizer.exe'
 $mo2Ini = Join-Path $fusRoot 'ModOrganizer.ini'
-$mo2Shortcut = if ($Shortcut) { $Shortcut } elseif ((Test-Path -LiteralPath $mo2Ini) -and
-    (Select-String -LiteralPath $mo2Ini -Pattern '^\d+\\title=PLAY Skyrim Together VR$' -Quiet)) {
-    'PLAY Skyrim Together VR'
-} else {
-    'SkyrimTogetherVR'
+# The MO2 entry that runs the mod's program, found by its program: the launcher renames its title ("urSovngarde"), never its program.
+function Get-ModEntryTitle([string]$ini) {
+    if (-not (Test-Path -LiteralPath $ini)) { return $null }
+    $titles = @{}
+    $entry = $null
+    $inside = $false
+    foreach ($line in Get-Content -LiteralPath $ini) {
+        if ($line -match '^\[') { $inside = $line -eq '[customExecutables]'; continue }
+        if (-not $inside -or $line -notmatch '^(\d+)\\(binary|title)=(.*)$') { continue }
+        $index, $field, $value = $Matches[1], $Matches[2], $Matches[3]
+        if ($field -eq 'title') { $titles[$index] = $value }
+        elseif ($value -match '(^|[\\/])(urSovngarde|SkyrimTogetherVR)\.exe$') { $entry = $index }
+    }
+    if ($entry) { return $titles[$entry] }
+    return $null
 }
+$mo2Shortcut = if ($Shortcut) { $Shortcut } else { Get-ModEntryTitle $mo2Ini }
+if (-not $mo2Shortcut) { $mo2Shortcut = 'SkyrimTogetherVR' }
 $release = (Resolve-Path (Join-Path $PSScriptRoot '..\..\build\windows\x64\release')).Path
 $clientLog = Join-Path $fusRoot 'tools\Skyrim Together VR\logs\tp_client.log'
 $stateFile = Join-Path $env:TEMP 'st-headless-state.json'

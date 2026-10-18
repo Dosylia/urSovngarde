@@ -315,6 +315,28 @@ Both players need it.
       To read: `both grips held while down (OpenVR N, game N)`, `the player gave up the wait`, `heartbeat ... playing`,
       `the heartbeat sound stopped`, `VRBanner: '...' shown`, `the revive sound did not play` (should never show), the
       server's `is down with every standing member elsewhere or too far to come`.
+      Death card, death line, downed sound, "is reviving you" (the owner's request of 2026-10-18; build 0bb07c2, client
+      and server deployed; **protocol change**: `ReviveRequest` gained a hold stage, `NotifyDownedState` two changes, so
+      every player and the public server need this build). The "YOU DIED" banner is now a card: the title in the game's
+      Gaelic book letters between thin rules under an emblem, and below it how the player died in spaced capitals, as
+      Minecraft says it ("Lydia was slain by Bandit Chief using Iron War Axe", "was shot by", "was killed by X using
+      <spell>", "was bashed by", "fell from a high place", "was doomed to fall by", "died"). The killer comes from the
+      game's hit events on the player (`DeathCause`, the last blow up to 10 s before going down) or from another
+      player's network hit; a fall is a 500-unit drop within 1.2 s before going down with no blow in the last 0.5 s.
+      Going down plays the sneak attack's sting (`UISneakAttack`; the Slow Time shout's sound would not play, with or
+      without a position). The reviver's game says when its hand goes on and comes off; the server passes it to the
+      downed player only, who sees "<name> is reviving you" in gold until the hand comes off or the revive lands.
+      Tests: `TPTests` 57 cases (new `[death]` sentence cases, `[revive]` round trips for the hold stages, `[banner]`);
+      rig on 0bb07c2 `live-revive-held` 8/8 (down sound playing, held and let-go lines, revive), `live-death-line` 9/9
+      on the second run ("<character> died" by console, "was slain by Netch" from a Netch's blow; the first run on
+      0bb07c2 was INVALID, the Netch never attacked), on a7e448d `live-revive-hand` 5/5 (the bot told it was held);
+      on 77e162e the same death-line run also gave "was killed by Netch using Shock Touch" (spell path). The card the
+      game drew is `logs\banner-death.png`. The new checks are new log lines, so the earlier build could not pass
+      them; no red run. Not checked in the rig: the fall line, a bow's "shot by", another player's name (PvP), and
+      how the card and the sting look and sound in a headset. Not seen in play.
+      To read: `death card: ...`, `the last blow before going down: attacker ...`, `DeathCause: the game's hits on the
+      player arrive`, `the down sound playing` (NOT playing would be the sting refused), `is reviving this player`,
+      `stopped reviving this player`, the server's `Revive: player N '...' has a hand on` / `took the hand off`.
 
 - [!] **Seen's update:** DynDOLOD DLL NG Alpha-43 (Nexus 97720, replacing his `DynDOLOD DLL NG` files) and the host's
       combined VR Address Library file (`E:\FUS\mods\VR Address Library for SKSEVR\SKSE\Plugins\version-1-4-15-0.csv`;
@@ -335,6 +357,21 @@ Both players need it.
 
 ## Open work
 
+- [ ] **Freeze after DynDOLOD's threads piled up** (a public player on v1.9.4, 2026-10-18 08:52 their time, same
+      server as the crash reports; `freeze.small.dmp` with it). The game's threads went from 222 to 703 in 20 minutes,
+      then the main thread waited in the game (`SkyrimVR+0x15bb0a`) for 100 s right after a loading screen.
+      522 threads start in the C runtime's thread starter; in the freeze dump 188 of them stand in DynDOLOD DLL NG
+      (Alpha-32, in FUS too): `DynDOLOD::ObjectsUpdate` with `LoadWorlds`/`LoadData` above it (nearest symbols of its own
+      pdb), waiting; the other 334 had too little stack in the dump to say. They grew only in the minutes with our
+      `Successfully teleported actor` lines (08:33-08:35, 08:38, 08:41-08:44) and stayed flat in the minutes without.
+      Likely cause, not proven: our far teleports load far exterior cells (`MoveActor` > `LoadCell`), and DynDOLOD
+      starts an update thread for each. The fix in 4c41069 (no teleport an actor and a place both not loaded here)
+      would remove those loads. Rig, 2026-10-18 (DynDOLOD DLL NG Alpha-32 is in FUS too): four long jumps of the
+      player (`cow`) left 2 to 4 more threads each (151 to 161), not identified; ten papyrus SetPosition moves of
+      Lydia far away left none (that path may not load the far cell). Not yet tested: our own path, which needs
+      persistent NPCs the bot owns let go far away (the server sends no teleport for temporary ones). The fifth
+      jump hit the known Community Shaders crash at a load (`+0x1208c8`). Other options: DynDOLOD DLL NG Alpha-33
+      exists (a mod list change), and the freeze dump could go to DynDOLOD's author.
 - [ ] **PvP spell damage carries none of the caster's perks** (rig 2026-10-18, PvP on): Firebolt on the bot's
       character was sent as a health change of 40, its base magnitude, without the caster's Augmented Flames, its burn
       or difficulty; the same spell on an NPC dealt 30 plus a burn of 7.4. `HookAddTarget` sends `-fMagnitude` before

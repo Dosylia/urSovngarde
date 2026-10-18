@@ -42,6 +42,9 @@
 #include <Services/PartyService.h>
 #include <Games/Skyrim/VRHaptics.h>
 #include <Games/Skyrim/VRBanner.h>
+#include <Games/Skyrim/DeathCause.h>
+#include <Games/Skyrim/DeathSentence.h>
+#include <Components.h>
 
 namespace
 {
@@ -52,6 +55,16 @@ constexpr float cRevivedHealthShare = 0.3f;
 constexpr uint32_t cHeartbeatSound = 0x4DAAD;
 // Revived: the restoration spell's cast (Skyrim.esm MAGRestorationFFFireSD).
 constexpr uint32_t cReviveSound = 0x3F361;
+// Going down: the sneak attack's sting (Skyrim.esm UISneakAttack), heard at once so the down is not taken for a freeze.
+constexpr uint32_t cDownedSound = 0xC06CE;
+// The unarmed "weapon" a creature's or a fist's blow comes from: not worth naming.
+constexpr uint32_t cUnarmed = 0x1F4;
+// A drop this far within this long before going down is a fall; a hit in the last moments before it is what downed the player instead.
+constexpr float cFallDrop = 500.f;
+constexpr auto cFallWindow = 1200ms;
+constexpr auto cKillingBlow = 500ms;
+// The blow that downed the player is the last one this long before it went down.
+constexpr auto cBlowsCounted = 10s;
 // The heartbeat felt in both hands: two beats, then a pause, about 55 a minute.
 constexpr auto cHeartbeatCycle = 1100ms;
 constexpr auto cFirstBeat = 70ms;
@@ -113,6 +126,8 @@ PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_playerLevelConnection = m_dispatcher.sink<PlayerLevelEvent>().connect<&PlayerService::OnPlayerLevelEvent>(this);
     m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&PlayerService::OnPartyJoinedEvent>(this);
     m_partyLeftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&PlayerService::OnPartyLeftEvent>(this);
+
+    DeathCause::Start();
 }
 
 void PlayerService::OnUpdate(const UpdateEvent&) noexcept
@@ -286,6 +301,24 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
             spdlog::info("PlayerService: the server sends the respawn to the party's safe point");
         }
         break;
+    case NotifyDownedState::kReviveHeld:
+    {
+        if (m_downState != DownState::kDown)
+            return;
+        const auto& cPlayers = cParty.GetPlayers();
+        const auto cName = cPlayers.find(acMessage.ReviverId);
+        const String cWho = cName != cPlayers.end() ? cName->second : String("A party member");
+        spdlog::info("PlayerService: player {} '{}' is reviving this player", acMessage.ReviverId, cWho.c_str());
+        VRBanner::Show(std::string(cWho.c_str()) + " is reviving you", cPlaceColour, 72, 8.f);
+        Utils::ShowHudMessage(String("urSovngarde: ") + cWho + " is reviving you");
+        break;
+    }
+    case NotifyDownedState::kReviveLetGo:
+        if (m_downState != DownState::kDown)
+            return;
+        spdlog::info("PlayerService: player {} stopped reviving this player", acMessage.ReviverId);
+        VRBanner::Hide();
+        break;
     case NotifyDownedState::kStoodUp:
     case NotifyDownedState::kReviveRefused:
     case NotifyDownedState::kLeft: break;
@@ -393,6 +426,7 @@ void PlayerService::RunRespawnUpdates() noexcept
 
         if (!pPlayer->actorState.IsBleedingOut())
         {
+            SampleHeight(cNow);
             m_cachedMainSpellId = pPlayer->magicItems[0] ? pPlayer->magicItems[0]->formID : 0;
             m_cachedSecondarySpellId = pPlayer->magicItems[1] ? pPlayer->magicItems[1]->formID : 0;
             m_cachedPowerId = pPlayer->equippedShout ? pPlayer->equippedShout->formID : 0;
@@ -414,7 +448,15 @@ void PlayerService::RunRespawnUpdates() noexcept
         m_loadingSeen = false;
         m_giveUpSince = {};
         m_transport.Send(PlayerDownedRequest());
-        spdlog::info("PlayerService: player is down, waiting for a revive");
+        float highest = pPlayer->position.z;
+        for (const auto& [cAt, cHeight] : m_heights)
+            if (cAt != std::chrono::steady_clock::time_point{} && cNow - cAt <= cFallWindow)
+                highest = std::max(highest, cHeight);
+        m_downFell = highest - pPlayer->position.z >= cFallDrop;
+        m_heights = {};
+        const bool cDownSound = GameSound::Play(cDownedSound, nullptr);
+        spdlog::info("PlayerService: player is down, waiting for a revive; dropped {:.0f} just before; the down sound {}", highest - pPlayer->position.z,
+                     cDownSound ? "playing" : "NOT playing");
         StartHeartbeat();
         return;
     }
@@ -507,7 +549,10 @@ void PlayerService::StartRespawn(const SafePoint& acWhere) noexcept
     StopHeartbeat();
     m_giveUpSince = {};
     // Held through the fade and the respawn; the place's name replaces it as the screen comes back (RunPostDeathUpdates).
-    VRBanner::Show("YOU DIED", cDiedColour, 120, 5.f);
+    const std::string cLine = DeathLine();
+    spdlog::info("PlayerService: death card: {}", cLine);
+    VRBanner::ShowDeath("YOU DIED", DeathSentence::Capitals(cLine), cDiedColour, 5.f);
+    Utils::ShowHudMessage(String(cLine.c_str()));
     m_downState = DownState::kRespawning;
     m_respawnPoint = acWhere;
     m_loadingSeen = false;
@@ -625,6 +670,7 @@ void PlayerService::StandUp(const uint32_t aReviverId) noexcept
     spdlog::info("PlayerService: revived by player {} '{}' after {} ms down; health {:.0f}", aReviverId, who.c_str(),
                  std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count(), pPlayer->GetActorValue(ActorValueInfo::kHealth));
     Utils::ShowHudMessage(String("urSovngarde: ") + who + " revived you");
+    VRBanner::Hide();
 }
 
 void PlayerService::RunDownedCues() noexcept
@@ -673,6 +719,62 @@ bool PlayerService::HeldToGiveUp(const std::chrono::steady_clock::time_point aNo
         spdlog::info("PlayerService: both grips held while down (OpenVR {}, game {}); giving up unless let go", cGrips.OpenVR, cGrips.Game);
     }
     return aNow - m_giveUpSince >= cGiveUpHold;
+}
+
+void PlayerService::SampleHeight(const std::chrono::steady_clock::time_point aNow) noexcept
+{
+    const auto& cLast = m_heights[(m_nextHeight + m_heights.size() - 1) % m_heights.size()];
+    if (aNow - cLast.first < 50ms)
+        return;
+    m_heights[m_nextHeight] = {aNow, PlayerCharacter::Get()->position.z};
+    m_nextHeight = (m_nextHeight + 1) % m_heights.size();
+}
+
+std::string PlayerService::DeathLine() const noexcept
+{
+    PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    const char* pVictim = pPlayer->baseForm ? pPlayer->baseForm->GetName() : nullptr;
+    const std::string cVictim = pVictim && *pVictim ? pVictim : "The Dragonborn";
+
+    // Blows on the player once down do not count; the game may tell of the last one a moment after.
+    DeathSentence::Cause cause{};
+    const auto cHit = DeathCause::LastBetween(m_downedAt - cBlowsCounted, m_downedAt + cKillingBlow);
+    cause.Fell = m_downFell && (!cHit || cHit->At < m_downedAt - cKillingBlow);
+    if (!cHit)
+        return DeathSentence::Describe(cVictim, cause);
+
+    // Another player is named as the party knows them.
+    const auto& cPlayers = m_world.GetPartyService().GetPlayers();
+    uint32_t playerId = cHit->AttackerPlayerId;
+    Actor* pAttacker = Cast<Actor>(TESForm::GetById(cHit->AttackerFormId));
+    if (!playerId && pAttacker && pAttacker->GetExtension() && pAttacker->GetExtension()->IsRemotePlayer())
+    {
+        auto view = m_world.view<FormIdComponent, PlayerComponent>();
+        for (const auto cEntity : view)
+            if (view.get<FormIdComponent>(cEntity).Id == pAttacker->formID)
+                playerId = view.get<PlayerComponent>(cEntity).Id;
+    }
+    if (const auto cName = cPlayers.find(playerId); playerId && cName != cPlayers.end())
+        cause.Killer = cName->second.c_str();
+    else if (pAttacker && pAttacker->baseForm && pAttacker->baseForm->GetName())
+        cause.Killer = pAttacker->baseForm->GetName();
+    else if (playerId)
+        cause.Killer = "another player";
+
+    // What it was done with, and how.
+    const TESForm* pSource = cHit->SourceFormId ? TESForm::GetById(cHit->SourceFormId) : nullptr;
+    const FormType cType = pSource ? pSource->formType : FormType::Count;
+    if (cType == FormType::Spell || cType == FormType::Scroll || cType == FormType::Enchantment || cType == FormType::Shout)
+        cause.Kind = DeathSentence::How::kMagic;
+    else if (cHit->ProjectileFormId)
+        cause.Kind = DeathSentence::How::kShot;
+    else if (cHit->Flags & DeathCause::kBashFlag)
+        cause.Kind = DeathSentence::How::kBash;
+    if (pSource && pSource->formID != cUnarmed && pSource->GetName())
+        cause.With = pSource->GetName();
+    spdlog::info("PlayerService: the last blow before going down: attacker {:X}, player {}, source {:X}, projectile {:X}, flags {}, {} ms before", cHit->AttackerFormId,
+                 playerId, cHit->SourceFormId, cHit->ProjectileFormId, cHit->Flags, std::chrono::duration_cast<std::chrono::milliseconds>(m_downedAt - cHit->At).count());
+    return DeathSentence::Describe(cVictim, cause);
 }
 
 void PlayerService::StartHeartbeat() noexcept

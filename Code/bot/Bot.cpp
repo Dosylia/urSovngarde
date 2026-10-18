@@ -1368,6 +1368,14 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             spdlog::info("Our revive of player {} was refused: {}", message.PlayerId, m_lastRefusal);
             return;
         }
+        // To this bot only, while down: a hand is on it, or came off. Counted, but the downed state stays.
+        if (message.Change == NotifyDownedState::kReviveHeld || message.Change == NotifyDownedState::kReviveLetGo)
+        {
+            const char* pHold = message.Change == NotifyDownedState::kReviveHeld ? "held" : "letgo";
+            ++m_downCounts[message.PlayerId][pHold];
+            spdlog::info("Player {} is {} by player {}", message.PlayerId, pHold, message.ReviverId);
+            return;
+        }
         static constexpr std::array<const char*, 8> cNames{"down", "revived", "respawned", "fallen", "died", "up", "refused", "left"};
         const char* pName = message.Change < cNames.size() ? cNames[message.Change] : "unknown";
         m_downStates[message.PlayerId] = pName;
@@ -1975,7 +1983,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "revive other|<player id>": this bot held a hand on that downed player long enough, as a client asks then.
+    // "revive other|<player id> [hold|letgo]": this bot held a hand on that downed player long enough, as a client asks then.
+    // With hold or letgo, only that its hand went on or came off, as a client says while holding.
     if (name == "revive")
     {
         uint32_t target = 0;
@@ -1988,8 +1997,12 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
         ReviveRequest request{};
         request.TargetPlayerId = target;
+        if (args.size() > 1 && args[1] == "hold")
+            request.HoldStage = ReviveRequest::kHoldStart;
+        else if (args.size() > 1 && args[1] == "letgo")
+            request.HoldStage = ReviveRequest::kHoldStop;
         SendMsg(request);
-        spdlog::info("[script] revive of player {} sent", target);
+        spdlog::info("[script] revive of player {} sent (stage {})", target, static_cast<int>(request.HoldStage));
         return true;
     }
 
@@ -3335,7 +3348,7 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
 
     if (what == "downcount")
     {
-        // downcount me|other <state> <op> <n>: how many times the server sent that downed state for that player (down, revived, respawned, fallen, died, up, left).
+        // downcount me|other <state> <op> <n>: how many times the server sent that downed state for that player (down, revived, respawned, fallen, died, up, left, held, letgo).
         float wanted = 0.f;
         if (acArgs.size() < 5 || !ParseFloat(acArgs[4], wanted))
             return std::nullopt;
