@@ -479,9 +479,6 @@ template <class T> struct VersionDbPtr
                     const char* pHarmless = nullptr;
                     switch (m_id)
                     {
-                    case 36564: pHarmless = "Main::MainLoop; the hook is an empty placeholder"; break;
-                    case 40412: pHarmless = "the Papyrus VM destructor; the hook is an empty placeholder"; break;
-                    case 104788: pHarmless = "RegisterPapyrusFunction; hooked from the VM vtable instead, see HookBindEverythingToScript"; break;
                     case 0: pHarmless = "BSTaskletManager thread naming, deliberately disabled on VR"; break;
                     default: break;
                     }
