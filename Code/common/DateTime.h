@@ -14,10 +14,10 @@ struct DateTime
 
     bool operator==(const DateTime& other) const;
     void Update(uint64_t aDeltaTick);
-    // Moves the clock forward by game hours, rolling over days, months and years as Update does.
+    // Moves by game hours, including rolling back provisional sleep progress.
     void AdvanceHours(float aHours);
     float GetDeltaTime(uint64_t aDeltaTick) const noexcept;
-    float GetTimeInDays() const noexcept;
+    double GetTimeInDays() const noexcept;
 
     TimeModel m_timeModel;
 };

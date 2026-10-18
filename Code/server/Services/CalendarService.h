@@ -3,6 +3,7 @@
 #include <Events/PacketEvent.h>
 #include <DateTime.h>
 #include <Structs/GameId.h>
+#include <SleepSession.h>
 
 struct World;
 struct UpdateEvent;
@@ -49,14 +50,14 @@ private:
     void AskToSleep(Player* apPlayer) noexcept;
     void SendToSleepAudience(float aHours, bool aFinished) const noexcept;
     void EndSleep(float aHours) noexcept;
+    void ExpireSleep() noexcept;
 
     DateTime m_dateTime;
     uint64_t m_lastTick = 0;
     bool m_timeSetFromFirstPlayer = false;
 
-    std::optional<uint32_t> m_sleeperId;
+    SleepSession m_sleepSession;
     Vector<uint32_t> m_sleepAudience; // the sleeper's party at the grant, sleeper excluded
-    uint64_t m_lastSleepTick = 0;
     TiltedPhoques::Set<uint32_t> m_playersInCombat;
 
     World& m_world;

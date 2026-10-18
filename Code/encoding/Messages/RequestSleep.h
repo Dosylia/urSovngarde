@@ -15,6 +15,7 @@ struct RequestSleep final : ClientMessage
         kFinish,   // done, move everybody by HoursSlept
         kCancel,   // the menu closed without the clock moving
         kCombat,   // not a sleep: this player entered (InCombat) or left combat
+        kHeartbeat, // renew the grant while the menu is open, even before the clock moves
     };
 
     RequestSleep()

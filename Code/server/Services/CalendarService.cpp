@@ -22,11 +22,6 @@ namespace
 {
 Console::Setting bEnableSleep{"Gameplay:bEnableSleep", "Lets a party member's sleep or wait move the clock forward for everybody, with their party fading out while it runs. Private servers only", true};
 
-// Vanilla sleep and wait stop at 24 hours.
-constexpr float kMaxSleepHours = 24.f;
-// A sleeper that has gone quiet this long has lost its session, and another player may sleep.
-constexpr uint64_t kSleepTimeoutMs = 60000;
-
 bool IsAdmin(const Player* apPlayer) noexcept
 {
     for (const auto cSession : GameServer::Get()->GetAdminSessions())
@@ -50,12 +45,11 @@ void CalendarService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept
     const uint32_t cId = acEvent.pPlayer->GetId();
     m_playersInCombat.erase(cId);
 
-    // The sleeper's clock went with them, so the party wakes up and the next resync puts their hour back.
-    if (m_sleeperId == cId)
+    // Roll back the audience's provisional hours and resync immediately.
+    if (m_sleepSession.GetPlayerId() == cId)
     {
         spdlog::info("Sleep: player {:X} left while sleeping, waking their party", cId);
-        SendToSleepAudience(0.f, true);
-        m_sleeperId.reset();
+        EndSleep(0.f);
     }
 
     std::erase(m_sleepAudience, cId);
@@ -65,6 +59,7 @@ void CalendarService::OnSleepRequest(const PacketEvent<RequestSleep>& acMessage)
 {
     Player* pPlayer = acMessage.pPlayer;
     const RequestSleep& cRequest = acMessage.Packet;
+    ExpireSleep();
 
     switch (cRequest.SleepStep)
     {
@@ -80,17 +75,16 @@ void CalendarService::OnSleepRequest(const PacketEvent<RequestSleep>& acMessage)
     default: break;
     }
 
-    if (m_sleeperId != pPlayer->GetId())
+    const auto cHours = m_sleepSession.Accept(pPlayer->GetId(), cRequest, GameServer::Get()->GetTick());
+    if (!cHours)
         return;
-
-    m_lastSleepTick = GameServer::Get()->GetTick();
-    const float cHours = std::clamp(cRequest.HoursSlept, 0.f, kMaxSleepHours);
 
     switch (cRequest.SleepStep)
     {
-    case RequestSleep::Step::kProgress: SendToSleepAudience(cHours, false); break;
-    case RequestSleep::Step::kFinish: EndSleep(cHours); break;
+    case RequestSleep::Step::kProgress: SendToSleepAudience(*cHours, false); break;
+    case RequestSleep::Step::kFinish: EndSleep(*cHours); break;
     case RequestSleep::Step::kCancel: EndSleep(0.f); break;
+    case RequestSleep::Step::kHeartbeat: break;
     default: break;
     }
 }
@@ -108,10 +102,10 @@ void CalendarService::AskToSleep(Player* apPlayer) noexcept
         answer.SleepEvent = NotifySleep::Event::kRefusedDisabled;
     else if (!cAllowed)
         answer.SleepEvent = NotifySleep::Event::kRefusedNotAllowed;
-    else if (m_sleeperId && *m_sleeperId != apPlayer->GetId() && GameServer::Get()->GetTick() - m_lastSleepTick < kSleepTimeoutMs)
+    else if (m_sleepSession.GetPlayerId() && m_sleepSession.GetPlayerId() != apPlayer->GetId())
     {
         answer.SleepEvent = NotifySleep::Event::kRefusedBusy;
-        answer.PlayerId = *m_sleeperId;
+        answer.PlayerId = *m_sleepSession.GetPlayerId();
     }
     else
     {
@@ -133,12 +127,7 @@ void CalendarService::AskToSleep(Player* apPlayer) noexcept
 
     if (answer.SleepEvent == NotifySleep::Event::kGranted)
     {
-        // A session the old sleeper never closed wakes its audience first.
-        if (m_sleeperId && *m_sleeperId != apPlayer->GetId())
-            SendToSleepAudience(0.f, true);
-
-        m_sleeperId = apPlayer->GetId();
-        m_lastSleepTick = GameServer::Get()->GetTick();
+        m_sleepSession.Start(apPlayer->GetId(), GameServer::Get()->GetTick());
         m_sleepAudience.clear();
         if (pParty)
             for (const Player* pMember : pParty->Members)
@@ -151,12 +140,12 @@ void CalendarService::AskToSleep(Player* apPlayer) noexcept
 
 void CalendarService::SendToSleepAudience(float aHours, bool aFinished) const noexcept
 {
-    if (!m_sleeperId)
+    if (!m_sleepSession.GetPlayerId())
         return;
 
     NotifySleep notify{};
     notify.SleepEvent = aFinished ? NotifySleep::Event::kFinished : NotifySleep::Event::kProgress;
-    notify.PlayerId = *m_sleeperId;
+    notify.PlayerId = *m_sleepSession.GetPlayerId();
     notify.HoursSlept = aHours;
 
     for (const uint32_t cId : m_sleepAudience)
@@ -168,14 +157,30 @@ void CalendarService::EndSleep(float aHours) noexcept
 {
     SendToSleepAudience(aHours, true);
 
-    m_sleeperId.reset();
+    m_sleepSession.Reset();
     m_sleepAudience.clear();
 
-    if (aHours <= 0.f)
+    if (aHours > 0.f)
+        m_dateTime.AdvanceHours(aHours);
+    // Even a cancelled chooser has paused the sleeper's local clock while the server kept running.
+    SendTimeResync();
+}
+
+void CalendarService::ExpireSleep() noexcept
+{
+    if (!m_sleepSession.HasExpired(GameServer::Get()->GetTick()))
         return;
 
-    m_dateTime.AdvanceHours(aHours);
-    SendTimeResync();
+    const uint32_t cId = *m_sleepSession.GetPlayerId();
+    if (Player* pPlayer = PlayerManager::Get()->GetById(cId))
+    {
+        NotifySleep revoked{};
+        revoked.SleepEvent = NotifySleep::Event::kRevoked;
+        revoked.PlayerId = cId;
+        pPlayer->Send(revoked);
+    }
+    spdlog::warn("Sleep: player {:X} stopped renewing their grant, revoking it", cId);
+    EndSleep(0.f);
 }
 
 void CalendarService::OnUpdate(const UpdateEvent&) noexcept
@@ -192,6 +197,7 @@ void CalendarService::OnUpdate(const UpdateEvent&) noexcept
     auto delta = now - m_lastTick;
     m_lastTick = now;
     m_dateTime.Update(delta);
+    ExpireSleep();
 }
 
 void CalendarService::OnPlayerJoin(const PlayerJoinEvent& acEvent) noexcept

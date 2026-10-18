@@ -36,6 +36,7 @@ private:
     void OnNotifySleep(const NotifySleep&) noexcept;
     void UpdateSleep(double aDelta) noexcept;
     void FinishSleep() noexcept;
+    void RestoreOnlineClock() noexcept;
     float SleptHours(const TimeModel& acNow) const noexcept;
     void UpdateWatch(double aDelta) noexcept;
     void UpdateFade(double aDelta) noexcept;
@@ -56,6 +57,7 @@ private:
         kAsking,
         kRefused,
         kSleeping,
+        kFinishing, // waiting for the server's final time, including after cancellation
     };
     SleepState m_sleepState = SleepState::kIdle;
     TimeModel m_sleepStart{};
@@ -67,6 +69,7 @@ private:
     double m_sleepGrace = 0.0;
     static inline std::atomic<bool> s_faderQueued{false};
     double m_sleepSendTimer = 0.0;
+    double m_sleepHeartbeatTimer = 0.0;
 
     // Another party member's sleep, watched from behind a black screen.
     std::optional<uint32_t> m_watchedSleeper;

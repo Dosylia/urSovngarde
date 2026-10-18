@@ -16,6 +16,7 @@ struct NotifySleep final : ServerMessage
         kRefusedCombat,    // to the sleeper: PlayerId is in combat
         kProgress,         // to the party: PlayerId has slept HoursSlept so far
         kFinished,         // to the party: PlayerId woke up after HoursSlept
+        kRevoked,          // to the sleeper: stop using the game clock; an authoritative resync follows
     };
 
     NotifySleep()

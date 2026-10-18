@@ -34,6 +34,7 @@ constexpr double kWatchHudInterval = 2.5;
 constexpr float kMinSleepHours = 1.f / 60.f;
 // Progress goes out at most this often, and only once the clock has moved this far.
 constexpr double kSleepSendInterval = 0.2;
+constexpr double kSleepHeartbeatInterval = 5.0;
 constexpr float kSleepSendStep = 0.1f;
 // A watcher that hears nothing for this long fades back in on its own.
 constexpr double kWatchTimeout = 15.0;
@@ -57,6 +58,15 @@ TimeModel ReadGameClock() noexcept
     model.Month = static_cast<uint32_t>(pGameTime->GameMonth->f);
     model.Year = static_cast<uint32_t>(pGameTime->GameYear->f);
     return model;
+}
+
+void WriteGameClock(const TimeModel& acTime) noexcept
+{
+    auto* pGameTime = TimeData::Get();
+    pGameTime->GameHour->f = acTime.Time;
+    pGameTime->GameDay->f = static_cast<float>(acTime.Day);
+    pGameTime->GameMonth->f = static_cast<float>(acTime.Month);
+    pGameTime->GameYear->f = static_cast<float>(acTime.Year);
 }
 
 String FormatHour(float aTime)
@@ -128,8 +138,17 @@ CalendarService::CalendarService(World& aWorld, entt::dispatcher& aDispatcher, T
 
 void CalendarService::OnTimeUpdate(const ServerTimeSettings& acMessage) noexcept
 {
+    // A join or admin change can resync the server while a sleep is in progress. Keep the native clock
+    // and provisional audience progress until the session ends; every end path sends a fresh resync.
+    if (m_sleepState == SleepState::kSleeping || m_watchedSleeper)
+        return;
+
+    if (m_sleepState == SleepState::kFinishing)
+        m_sleepState = SleepState::kIdle;
+
     // disable the game clock
     ToggleGameClock(false);
+    m_lastTick = m_world.GetTick();
     m_onlineTime.m_timeModel.TimeScale = acMessage.timeModel.TimeScale;
     m_onlineTime.m_timeModel.Time = acMessage.timeModel.Time;
 
@@ -149,6 +168,9 @@ void CalendarService::OnTimeUpdate(const ServerTimeSettings& acMessage) noexcept
 
 void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
+    if (m_watchedSleeper)
+        StopWatching(0.f);
+
     // signal a time transition
     m_fadeTimer = 0.f;
     ToggleGameClock(true);
@@ -190,9 +212,21 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
         m_sleepStill = 0.0;
         m_sleepGrace = kSleepGrace;
         m_sleepSendTimer = 0.0;
+        m_sleepHeartbeatTimer = 0.0;
         s_faderQueued = false;
         m_sleepState = SleepState::kSleeping;
         ToggleGameClock(true);
+        return;
+    case Event::kRevoked:
+        if (m_sleepState == SleepState::kSleeping || m_sleepState == SleepState::kFinishing)
+        {
+            // The server discarded this session. Restore the continuously maintained baseline before
+            // its resync, including the personal date when calendar synchronization is disabled.
+            RestoreOnlineClock();
+            ToggleGameClock(false);
+        }
+        m_sleepState = IsSleepMenuOpen() ? SleepState::kRefused : SleepState::kIdle;
+        Utils::ShowHudMessage("urSovngarde: sleep session expired, reopen the sleep/wait menu to try again");
         return;
     case Event::kRefusedDisabled:
     case Event::kRefusedNotAllowed:
@@ -258,10 +292,16 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
 
 void CalendarService::StopWatching(float aHours) noexcept
 {
-    if (aHours > m_watchHours)
+    // Progress is provisional until the finish. Undo it on cancellation/disconnect/timeout, including
+    // midnight and GameDaysPassed; a final packet can also supply a last step not sent as progress.
+    const float cCorrection = aHours - m_watchHours;
+    m_onlineTime.AdvanceHours(cCorrection);
+    m_fadeTimer = kTransitionSpeed;
+    if (s_gameClockLocked)
     {
-        m_onlineTime.AdvanceHours(aHours - m_watchHours);
-        m_fadeTimer = kTransitionSpeed;
+        TimeData::Get()->GameDaysPassed->f += cCorrection / 24.f;
+        // A resync can arrive in the same transport poll. It must see the corrected personal date.
+        WriteGameClock(m_onlineTime.m_timeModel);
     }
 
     if (aHours >= kMinSleepHours)
@@ -359,10 +399,19 @@ void CalendarService::UpdateSleep(double aDelta) noexcept
         if (!cMenuOpen)
             m_sleepState = SleepState::kIdle;
         return;
+    case SleepState::kFinishing: return;
     case SleepState::kSleeping: break;
     }
 
     m_sleepRealSeconds += aDelta;
+    m_sleepHeartbeatTimer -= aDelta;
+    if (m_sleepHeartbeatTimer <= 0.0)
+    {
+        RequestSleep heartbeat{};
+        heartbeat.SleepStep = RequestSleep::Step::kHeartbeat;
+        m_transport.Send(heartbeat);
+        m_sleepHeartbeatTimer = kSleepHeartbeatInterval;
+    }
     const float cHours = SleptHours(ReadGameClock());
 
     // The game's fade to black comes about 2 s before the clock moves, so the party is told at once.
@@ -403,25 +452,27 @@ void CalendarService::UpdateSleep(double aDelta) noexcept
 float CalendarService::SleptHours(const TimeModel& acNow) const noexcept
 {
     // The server's clock ran on in real time meanwhile, so only the game time beyond that was slept.
-    const float cGameHours = (DateTime(acNow).GetTimeInDays() - DateTime(m_sleepStart).GetTimeInDays()) * 24.f;
-    const float cRealHours = static_cast<float>(m_sleepRealSeconds) * m_sleepStart.TimeScale / 3600.f;
-    return std::max(0.f, cGameHours - cRealHours);
+    const double cGameHours = (DateTime(acNow).GetTimeInDays() - DateTime(m_sleepStart).GetTimeInDays()) * 24.0;
+    const double cRealHours = m_sleepRealSeconds * m_sleepStart.TimeScale / 3600.0;
+    return static_cast<float>(std::max(0.0, cGameHours - cRealHours));
+}
+
+void CalendarService::RestoreOnlineClock() noexcept
+{
+    const double cCorrectionDays = m_onlineTime.GetTimeInDays() - DateTime(ReadGameClock()).GetTimeInDays();
+    TimeData::Get()->GameDaysPassed->f += static_cast<float>(cCorrectionDays);
+    WriteGameClock(m_onlineTime.m_timeModel);
 }
 
 void CalendarService::FinishSleep() noexcept
 {
-    m_sleepState = SleepState::kIdle;
+    const float cHours = SleptHours(ReadGameClock());
+    m_sleepState = SleepState::kFinishing;
+    if (cHours < kMinSleepHours)
+        RestoreOnlineClock();
 
-    const TimeModel cAfter = ReadGameClock();
-    const float cHours = SleptHours(cAfter);
-
-    // Keep what the game arrived at, so locking the clock again does not snap back to bedtime.
-    m_onlineTime.m_timeModel.Time = cAfter.Time;
-    m_onlineTime.m_timeModel.Day = cAfter.Day;
-    m_onlineTime.m_timeModel.Month = cAfter.Month;
-    m_onlineTime.m_timeModel.Year = cAfter.Year;
-    m_lastTick = m_world.GetTick();
-    ToggleGameClock(false);
+    // Leave the displayed clock with the game until the final resync so it does not jump back during
+    // the round trip. Keep m_onlineTime as the baseline in case the server revokes this grant instead.
 
     RequestSleep done{};
     done.SleepStep = cHours >= kMinSleepHours ? RequestSleep::Step::kFinish : RequestSleep::Step::kCancel;
@@ -488,7 +539,7 @@ void CalendarService::HandleUpdate(const UpdateEvent& aEvent) noexcept
         UpdateFade(aEvent.Delta);
     }
 
-    if (s_gameClockLocked)
+    if (m_transport.IsOnline() || s_gameClockLocked)
     {
         const auto updateDelta = static_cast<float>(aEvent.Delta);
         auto* pGameTime = TimeData::Get();
@@ -506,6 +557,9 @@ void CalendarService::HandleUpdate(const UpdateEvent& aEvent) noexcept
         m_lastTick = now;
 
         m_onlineTime.Update(delta);
+        // Maintain the authoritative baseline even while a granted sleeper owns the native clock.
+        if (!s_gameClockLocked)
+            return;
         pGameTime->TimeScale->f = m_onlineTime.m_timeModel.TimeScale;
         pGameTime->GameDay->f = m_onlineTime.m_timeModel.Day;
         pGameTime->GameMonth->f = m_onlineTime.m_timeModel.Month;
