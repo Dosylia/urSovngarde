@@ -4,6 +4,9 @@
 #include <TiltedOnlinePCH.h>
 #include "immersive_launcher/stubs/DllBlocklist.h"
 
+#ifdef SKYRIMVR
+#include <Games/Skyrim/Interface/DeferredSleepWait.h>
+#endif
 #include <World.h>
 
 static bool g_RequestUnpauseAll{false};
@@ -120,6 +123,15 @@ bool UnpausedMenusOnline() noexcept
     return world.GetTransport().IsConnected() && world.GetServerSettings().UnpausedMenus;
 }
 
+bool IsMenuOpenUnpaused(const BSFixedString& acName) noexcept
+{
+    UI* pUI = UI::Get();
+    if (!pUI || !pUI->GetMenuOpen(acName))
+        return false;
+    const IMenu* pMenu = pUI->FindMenuByName(acName);
+    return pMenu && !pMenu->PausesGame();
+}
+
 // The menus Gameplay:bUnpausedMenus decides about; the rest of kAllowList is unpaused either way.
 static constexpr const char* kOptionalUnpausedMenus[] = {"StatsMenu", "MapMenu", "Sleep/Wait Menu"};
 
@@ -131,7 +143,7 @@ static bool IsOptionalUnpausedMenu(const char* acpName)
     return false;
 }
 
-bool IsOptionalUnpausedMenuOpen() noexcept
+bool IsOptionalMenuOpenUnpaused() noexcept
 {
     // Built on first use: the game's string table does not exist yet when static initializers run.
     static const auto* s_names = []()
@@ -142,17 +154,14 @@ bool IsOptionalUnpausedMenuOpen() noexcept
         return pNames;
     }();
 
-    const UI* pUI = UI::Get();
-    if (!pUI)
-        return false;
     for (const auto& name : *s_names)
-        if (pUI->GetMenuOpen(name))
+        if (IsMenuOpenUnpaused(name))
             return true;
     return false;
 }
 
 // Built on first use: the game's string table does not exist yet when static initializers run.
-static bool IsAllowListMenuOpen(const UI* apUI)
+static bool IsAllowListMenuOpenUnpaused()
 {
     static const auto* s_names = []()
     {
@@ -164,7 +173,7 @@ static bool IsAllowListMenuOpen(const UI* apUI)
 
     for (const auto& name : *s_names)
     {
-        if (apUI->GetMenuOpen(name))
+        if (IsMenuOpenUnpaused(name))
             return true;
     }
     return false;
@@ -180,7 +189,7 @@ static TIsMenuOpen* RealMeleeSwingMenuCheck;
 
 static bool HookMeleeSwingMenuCheck(const UI* apUI, const BSFixedString& acName)
 {
-    return RealMeleeSwingMenuCheck(apUI, acName) || (UnpausedMenusOnline() && IsAllowListMenuOpen(apUI));
+    return RealMeleeSwingMenuCheck(apUI, acName) || IsAllowListMenuOpenUnpaused();
 }
 
 // PlayerControls' can-process check (0x14072DB00) fails while the game is paused, which is how a paused menu stops
@@ -202,7 +211,7 @@ constexpr uint8_t kSleepWaitMainThreadJump[]{0x0F, 0x85, 0xD4, 0x02, 0x00, 0x00}
 // taken off the worker and run at the next main loop. Pausing the game under the open menu by hand hung it.
 constexpr uintptr_t kSleepWaitOkCallback = 0x8EACA0; // registered as "OK" in SleepWaitMenu::Accept (0x1408EAB90)
 constexpr uintptr_t kMainSingleton = 0x2FEB7A0;      // what the menu's own check reads; main thread id at +0x20
-constexpr uint32_t kSleepWaitStartFrames = 300;      // give up after about four seconds
+constexpr uintptr_t kSleepWaitProcessMessage = 0x8EA840;
 
 // SleepWaitMenu::ProcessMessage paces the native sleep step (0x6C2C00) using its timer at +0x40.
 // The two regular player updates also call that step, normally stopped by the paused menu. Unpaused, they
@@ -217,13 +226,9 @@ static TSleepWaitStep* RealPlayerSleepWaitStep;
 
 static void HookPlayerSleepWaitStep(void* apPlayer)
 {
-    if (UnpausedMenusOnline())
-    {
-        static const BSFixedString s_menuName("Sleep/Wait Menu");
-        const UI* pUI = UI::Get();
-        if (pUI && pUI->GetMenuOpen(s_menuName))
-            return;
-    }
+    static const BSFixedString s_menuName("Sleep/Wait Menu");
+    if (IsMenuOpenUnpaused(s_menuName))
+        return;
 
     RealPlayerSleepWaitStep(apPlayer);
 }
@@ -231,9 +236,21 @@ static void HookPlayerSleepWaitStep(void* apPlayer)
 using TSleepWaitOk = void(void* apArgs);
 static TSleepWaitOk* RealSleepWaitOk;
 
-static std::atomic<bool> s_sleepWaitOkPending{false};
-static double s_sleepWaitHours = 0.0;
-static uint32_t s_sleepWaitFrames = 0;
+static DeferredSleepWait s_sleepWaitAccept;
+TP_THIS_FUNCTION(TSleepWaitProcessMessage, uint32_t, IMenu, UIMessage&);
+static TSleepWaitProcessMessage* RealSleepWaitProcessMessage;
+
+static uint32_t HookSleepWaitProcessMessage(IMenu* apMenu, UIMessage& aMessage)
+{
+    // Invalidate before the native close can destroy the menu. A show starts a fresh session even
+    // when the allocator reuses the previous menu's address.
+    if (aMessage.eType == UIMessage::kShow)
+        s_sleepWaitAccept.Open(apMenu);
+    else if (aMessage.eType == UIMessage::kHide || aMessage.eType == UIMessage::kForceHide)
+        s_sleepWaitAccept.Close(apMenu);
+
+    return TiltedPhoques::ThisCall(RealSleepWaitProcessMessage, apMenu, aMessage);
+}
 
 static bool OnMainThread()
 {
@@ -246,54 +263,45 @@ static void HookSleepWaitOk(void* apArgs)
 {
     if (OnMainThread())
     {
+        s_sleepWaitAccept.Take(*reinterpret_cast<void**>(static_cast<uint8_t*>(apArgs) + 0x18));
         RealSleepWaitOk(apArgs);
         return;
     }
 
     auto* pArgs = static_cast<uint8_t*>(apArgs);
-    if (s_sleepWaitOkPending || !*reinterpret_cast<void**>(pArgs + 0x18))
-        return;
-
-    s_sleepWaitHours = *reinterpret_cast<const double*>(*reinterpret_cast<uint8_t**>(pArgs + 0x28) + 0x10);
-    s_sleepWaitFrames = 0;
-    s_sleepWaitOkPending = true;
+    const void* pMenu = *reinterpret_cast<void**>(pArgs + 0x18);
+    if (pMenu)
+        s_sleepWaitAccept.Queue(pMenu, *reinterpret_cast<const double*>(*reinterpret_cast<uint8_t**>(pArgs + 0x28) + 0x10));
 }
 
 // Called from the start of Main::Update (SkyrimVM64.cpp).
 void RunDeferredSleepWaitAccept()
 {
-    if (!s_sleepWaitOkPending)
+    if (!s_sleepWaitAccept.HasPending())
         return;
 
     static const BSFixedString s_menuName("Sleep/Wait Menu");
     UI* pUI = UI::Get();
     IMenu* pMenu = pUI && pUI->GetMenuOpen(s_menuName) ? pUI->FindMenuByName(s_menuName) : nullptr;
-    if (!pMenu)
-    {
-        if (++s_sleepWaitFrames > kSleepWaitStartFrames)
-        {
-            spdlog::warn("Sleep/Wait menu: closed before its sleep or wait could start");
-            s_sleepWaitOkPending = false;
-        }
+    const auto cHours = s_sleepWaitAccept.Take(pMenu);
+    if (!cHours)
         return;
-    }
 
     // A GFxValue holding the hours as a number, and the FxDelegateArgs fields the callback reads.
     alignas(16) uint8_t value[0x18]{};
     *reinterpret_cast<uint32_t*>(value + 0x08) = 3; // GFxValue::kNumber
-    *reinterpret_cast<double*>(value + 0x10) = s_sleepWaitHours;
+    *reinterpret_cast<double*>(value + 0x10) = *cHours;
     alignas(16) uint8_t args[0x40]{};
     *reinterpret_cast<IMenu**>(args + 0x18) = pMenu;
     *reinterpret_cast<uint8_t**>(args + 0x28) = value;
     *reinterpret_cast<uint32_t*>(args + 0x30) = 1;
 
-    s_sleepWaitOkPending = false;
     RealSleepWaitOk(args);
 }
 
 static bool HookPlayerControlsCanProcess(void* apControls)
 {
-    if (UnpausedMenusOnline() && IsAllowListMenuOpen(UI::Get()))
+    if (IsAllowListMenuOpenUnpaused())
         return false;
 
     return TiltedPhoques::ThisCall(RealPlayerControlsCanProcess, apControls);
@@ -509,6 +517,8 @@ static TiltedPhoques::Initializer s_s(
                 spdlog::error("Sleep/Wait menu: {} is not the main thread check, leaving it alone; the menu ignores input while unpaused", fmt::ptr(pSleepWaitCheck));
             RealSleepWaitOk = reinterpret_cast<TSleepWaitOk*>(exe + kSleepWaitOkCallback);
             TP_HOOK(&RealSleepWaitOk, HookSleepWaitOk);
+            RealSleepWaitProcessMessage = reinterpret_cast<TSleepWaitProcessMessage*>(exe + kSleepWaitProcessMessage);
+            TP_HOOK(&RealSleepWaitProcessMessage, HookSleepWaitProcessMessage);
 
             for (const uintptr_t cCall : kPlayerSleepWaitCalls)
             {

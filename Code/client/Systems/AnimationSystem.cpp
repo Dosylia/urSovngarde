@@ -318,7 +318,7 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
         // when the menu closes. The heading is held; UI.cpp blocks turning while one of these menus is open.
         static float s_heldHeading = 0.f;
         static bool s_hasHeldHeading = false;
-        if (UnpausedMenusOnline() && (IsOptionalUnpausedMenuOpen() || VRBodySync::IsRigParked(pPlayer)))
+        if (IsOptionalMenuOpenUnpaused() || (UnpausedMenusOnline() && VRBodySync::IsRigParked(pPlayer)))
         {
             if (s_hasHeldHeading)
                 movement.Rotation.y = s_heldHeading;

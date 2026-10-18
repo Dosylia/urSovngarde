@@ -94,7 +94,7 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
     // Set while open, cleared on the way out, so the cached model does not stay exempt from the fade that removes it.
     if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kMenuModel))
     {
-        if (s_mapOpen && UnpausedMenusOnline())
+        if (s_mapOpen && !apThis->PausesGame())
         {
             *reinterpret_cast<float*>(pModel + kFadeNodeCurrentFade) = 1.f;
             *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) |= kIgnoreFade;
@@ -110,7 +110,8 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
 
 static void HookMainUpdateSky(void* apMain)
 {
-    if (s_mapOpen && UnpausedMenusOnline())
+    static const BSFixedString s_mapName("MapMenu");
+    if (s_mapOpen && IsMenuOpenUnpaused(s_mapName))
         return;
 
     TiltedPhoques::ThisCall(RealMainUpdateSky, apMain);

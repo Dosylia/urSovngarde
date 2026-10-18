@@ -87,7 +87,8 @@ void PlayerService::RunMapCloseUpdates() noexcept
 
     const float cHealth = pPlayer->GetActorValue(ActorValueInfo::kHealth);
 
-    if (m_lastHealth >= 0.f && cHealth < m_lastHealth && UnpausedMenusOnline())
+    static const BSFixedString s_mapName("MapMenu");
+    if (m_lastHealth >= 0.f && cHealth < m_lastHealth && IsMenuOpenUnpaused(s_mapName))
         CloseMapMenu();
 
     m_lastHealth = cHealth;

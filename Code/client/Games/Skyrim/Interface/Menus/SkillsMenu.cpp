@@ -41,7 +41,8 @@ static bool IsMainThread()
 
 static void HookTreeModelUpdate(void* apModel, NiUpdateData* apData)
 {
-    if (IsMainThread() || !UnpausedMenusOnline())
+    static const BSFixedString s_statsName("StatsMenu");
+    if (IsMainThread() || !IsMenuOpenUnpaused(s_statsName))
     {
         RealTreeModelUpdate(apModel, apData);
         return;
