@@ -246,6 +246,24 @@ Both players need it.
 
 ## Waiting on a test or action
 
+- [!] **Papyrus natives never called while missing** (a public player on v1.9.4, 2026-10-18 16:40-17:13 their time,
+      on the Synergy VR ENB list: four crashes out of four, each 12 ms after a save finished loading). The first door
+      an NPC used after the load crashed the game: `HookActivate` asked `ObjectReference.GetOpenState` for the door's
+      state, and the pointer looked up for it was null (execute at 0x0, return address `HookActivate+0xab` in the
+      v1.9.4 pdb). The same code ran on their v1.9.3 session without a crash, so on that setup the function was
+      missing from what we recorded; why is not in the log. 63fc8efe guarded `GetOpenState` alone. All 18
+      `PAPYRUS_FUNCTION` calls (Delete, Enable, SetMotionType, StartCombat, Kill, PlayAnimation, SetCurrentStageID and
+      the rest) had the same flaw: looked up once, called even when null. Now each wrapper looks its function up until
+      it is found, never calls a missing one (the call does nothing and returns a default value) and logs the first
+      miss (`Papyrus: X.Y not found among the N functions recorded; not called until it is`); the record is locked
+      against the worker threads that read it. Each log now says `Papyrus: N native functions recorded at the first
+      call` (2938 in the rig). Build 36cf307 (client and server deployed, no protocol change). Rig: `live-door-echo`
+      6/6 (doors, no function missing), `live-copy-removed` 4/4 (Delete after the wait). Release gate for v1.9.5 on
+      36cf307: bot pairs 14/14, rig `live-load` 9/9, `live-revive` 10/10, `live-death` 9/9, `live-teleport-far` 5/5,
+      no crash in the runs. No red run: the rig records
+      every function, and a missing one cannot be made there. To see: a public log with the count line, and no crash
+      at the first door after a load. Their Root Builder and game-folder damage came from the crashes (Root Builder
+      puts its files back when the game exits normally): Root Builder's Clear, then Steam's file check.
 - [!] **Healing perks on another player** (protocol bb9f5d95; every player and the server need the build): a heal or
       buff cast on another player carries the caster's own perks. Before, the healed player's game applied it with its
       copy of the caster, which has no perks, and only a flat 1.5 for perk 581F8 came through; in FUS that record is
