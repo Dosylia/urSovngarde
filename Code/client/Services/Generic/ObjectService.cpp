@@ -259,9 +259,11 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     if (!m_transport.IsConnected())
         return;
 
+    // A locked object opens the lockpicking menu, not itself, so its activation is not sent.
+    // Only the locked bit counts: a leveled lock keeps its flag once unlocked, and that door's openings were never sent.
     if (Lock* pLock = acEvent.pObject->GetLock())
     {
-        if (pLock->flags & 0xFF)
+        if (pLock->IsLocked())
             return;
     }
 
@@ -310,6 +312,10 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     request.PreActivationOpenState = acEvent.PreActivationOpenState;
 
     m_transport.Send(request);
+
+    if (acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Door)
+        spdlog::info("Door {:X} ({:X}:{:X}) activated by {:X} from state {}; sent to the players in cell {:X}:{:X}", acEvent.pObject->formID, request.Id.ModId, request.Id.BaseId,
+                     acEvent.pActivator->formID, static_cast<int>(acEvent.PreActivationOpenState), request.CellId.ModId, request.CellId.BaseId);
 }
 
 void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
@@ -333,7 +339,8 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
     TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
     if (!pObject)
     {
-        spdlog::error("Failed to retrieve object to activate.");
+        spdlog::error("Failed to retrieve object to activate: {:X}:{:X} (form {:X} here), activated by {:X}", acMessage.Id.ModId, acMessage.Id.BaseId, cObjectId,
+                      pActor->formID);
         return;
     }
 
@@ -341,13 +348,21 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
     {
         auto remotePreActivationState = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
         TESObjectREFR::OpenState localState = pObject->GetOpenState();
+        const Lock* pLock = pObject->GetLock();
+        const bool cLockedHere = pLock && pLock->IsLocked();
 
         if (remotePreActivationState != localState)
         {
             // The doors are unsynced at this point. If we'll Activate the one on our side
             // it'll just continue to be unsynced (open remotely, closed locally and vice versa)
+            spdlog::info("Door {:X}: {:X} activated it in another game from state {}, here it is in state {}{}; left as it is", pObject->formID, pActor->formID,
+                         static_cast<int>(remotePreActivationState), static_cast<int>(localState), cLockedHere ? " and locked" : "");
             return;
         }
+
+        // Activated by the other player's copy, which has no key: a door locked here stays shut.
+        spdlog::info("Door {:X}: {:X} activated it in another game from state {}; done here too{}", pObject->formID, pActor->formID,
+                     static_cast<int>(remotePreActivationState), cLockedHere ? ", but it is locked here and will not open" : "");
     }
 
     // unsure if these flags are the best, but these are passed with the papyrus Activate fn

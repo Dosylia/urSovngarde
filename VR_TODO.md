@@ -258,6 +258,13 @@ Both players need it.
         uncalibrated after the update (`calibration state was 201`). Not yet seen whether that stops a run.
       - Waiting on it: the red and green runs of `live-teleport-far-loaded`, and `live-equip` for the inventory
         change.
+      - Also waiting: `Tools/VR/light-compare.py`, for the players' report that the game is darker with the mod.
+        Same place, noon, clear weather, a fixed free camera and the HUD hidden; the game's screenshots measured by
+        mean luminance, three ways: without the mod (`up -Shortcut SKSE`), with it offline (`up -NoConnect`), with it
+        connected (`up`, `--connected`). Code read so far: our plugin has no weather, image space, lighting or
+        exterior cell records, and the client only reads game settings. While connected, a game keeps the
+        server's clock, and a party member gets the leader's weather. The VR death fade passes its first argument
+        inverted, which only matters after a death.
 - [!] **The connect request of a large mod list was cut short** (both players on MGO 4.0 RC4.1, 1992 plugins,
       2026-10-20 evening). `TransportService::Send` wrote every message into a 64 KB buffer from a 256 KB scratch
       area. The connect request carries every plugin's name (about 78 KB for MGO's list), so it was cut after the
@@ -539,6 +546,26 @@ Both players need it.
 
 ## Open work
 
+- [ ] **Third MGO session, 2026-10-21 22:01-22:21** (both players on d7e7105, after tweaks to the list): a lot more
+      playable. It ended when player 2's game crashed.
+      - The crash, while player 2 put on the Imperial Captain's armor taken off her body: a call to address 0
+        (`SkyrimVR+0x11D28E`, our handler: `in no module`). On the stack: HDT-SMP sending its armor-attach event,
+        The New Gentleman's genital cover, an `Underwear.dll` plugin and Engine Fixes' allocator; nothing of ours.
+        HDT-SMP also crashed twice on that PC in sessions without our mod (crash triage, 2026-10-21). Not ours as far
+        as the stack shows.
+      - Doors did not open for both. Neither log names the door: the receiver logged `Failed to retrieve object
+        to activate` without an id (3 times on player 1's side, twice on player 2's), and skipped silently when the
+        two games disagreed on a door's state. Player 2's game could not send one lock change
+        (`FE0DC090`: light-plugin slot 0xDC is not in its table).
+      - Fixed in build ac5cace (client, FUS and MGO folders, no protocol change): the sender skipped every object
+        whose lock had any flag (`flags & 0xFF`). A leveled lock keeps its flag once unlocked, so such a door's
+        openings were never sent. Now only the locked bit counts.
+      - Logged now: each door activation sent (`Door X ... sent to the players in cell`), each one received (done,
+        or left as it is when the states differ, and `locked here` when the copy's activation cannot open it), and
+        the id of an object not found. Not rig-tested: the rig is down (SteamVR item above).
+      - Still open, the owner's call: the server relays an activation only to players in the door's exact cell
+        (one cell over outdoors, it never arrives), and a door locked here by this game's quest stays shut when the
+        other player opened theirs.
 - [ ] **Second MGO session, 2026-10-21 20:20-20:41** (both players on cdec699, 1992 mods each, names right: the
       connect fix works). AP's intro, then Helgen. Painful for both players.
       - Lag is the list in VR, not our code. Player 1 ran 24-32 fps before connecting (our update idle at 0.08 ms) and
