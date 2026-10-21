@@ -9,6 +9,7 @@
 
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
+#include <PatchCheck.h>
 #endif
 
 // shared resource by launcher
@@ -115,7 +116,12 @@ static TiltedPhoques::Initializer s_viewportHooks(
         // Only the frame end call on VR, for VRBodySync: SE 75461 is the renderer's frame end, and +0x15 is its StopTimer(1) call.
         // Another plugin already swaps this call on VR, so ours chains to it.
         const VersionDbPtr<void> timerLoc(75461);
-        TiltedPhoques::SwapCall(mem::pointer(timerLoc.GetPtr()) + 0x15, StopTimer, &Hook_StopTimer);
+        uint8_t* pStopTimer = PatchCheck::At(timerLoc.GetPtr(), 0x15);
+        if (PatchCheck::IsCall(pStopTimer))
+            TiltedPhoques::SwapCall(pStopTimer, StopTimer, &Hook_StopTimer);
+        else
+            spdlog::error("Renderer: {} is not the frame end's call to StopTimer ({}), leaving it alone; VR body sync does not run",
+                          fmt::ptr(pStopTimer), PatchCheck::Bytes(pStopTimer, 5));
 #endif
     });
 } // namespace BSGraphics

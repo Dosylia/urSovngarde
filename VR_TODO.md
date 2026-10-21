@@ -271,6 +271,67 @@ Both players need it.
         server's mod and base.
       - To see in play on MGO: no `Failed to find mod` lines at connect, the right names in the server log, Ingrid
         and the AP guards the same in both games.
+- [!] **Every game patch checks the bytes it replaces** (from comparing with the Cydaphex port, 2026-10-21). Six
+      patches wrote over game code without looking at it first: the call that lets menus run unpaused
+      (AddToActiveQueue), the intro movie branch, the favorites branch, the jump that replaces SetThreadName, the VR
+      frame end's StopTimer call (VR body sync runs from it) and the projectile handle read. Written over other
+      bytes, any of them would corrupt the game's code. That happens when another mod has already patched the same
+      place, or when an address id doesn't resolve: the old code then wrote at a small address and crashed.
+      - Now each one checks first (`Code/client/PatchCheck.h`): a call whose target is executable code, a two-byte
+        conditional jump (or the same patch already made), or the exact instruction. When the check fails, the patch
+        stays off and the log says `... leaving it alone` with the bytes it found. That turns one feature off
+        instead of crashing.
+      - `TPTests [patchcheck]`: calls into data or reserved memory, a near jump and other bytes are all refused. 61
+        test cases pass.
+      - Build c6524b0, deployed to the tools folder.
+      - Rig, 2026-10-21: no `leaving it alone` line at startup. `live-menu-hold` 3/3: the inventory "runs unpaused",
+        pause counter 0. `live-hands` 3/3: 16 hands posed from the frame end, median 66.1 units against the
+        script's reference of 65.
+      - Nothing to see in play. To watch for: a `leaving it alone` line in a player's log names another mod that
+        patches the same place.
+- [!] **A copy whose owner goes quiet walked on the spot** (from comparing with the Cydaphex port, 2026-10-21). A copy
+      is drawn from its owner's newest report until the next one comes. When none came (a crash, a frozen game, a
+      stalled connection), the newest report's walk played on the spot every frame, until the server removed the
+      player about ten seconds after a crash.
+      - Now, after 1.5 s without a report, a walking copy on its feet (not sitting, riding, sleeping or flying) gets
+        the graph's own `moveStop`, and its speed is held at zero.
+      - When reports say it moves again, it gets `moveStart`; it would slide otherwise, since its owner's own start is
+        long gone. The first reports back can say it stands and then speed up, so it is watched until it moves. One
+        that stands through 2 s of reports is left to them.
+      - The log says `QuietStop: copy X had no report for N s while moving` and `... moves again, N ms after its
+        reports came back`.
+      - New rig test `live-copy-quiet`: a bot walks a real player's recording, sends nothing for 7 s, then walks on
+        without the recording's actions. The copy's feet are read against its pelvis.
+      - Red on c6524b0: the feet swung 56 units while the bot was quiet. Red again on cfb43c9 for the restart: the
+        first reports back said speed 0, so no `moveStart` went out, and the copy slid (feet 20 units).
+      - Build 587f7d8, deployed to the tools folder. Green: walking 57 units, quiet 0, walking on 77 (started 85 ms
+        after reports came back). `live-walk` 8/8. `live-creatures`: 6 pass, 1 skipped, because the game's own
+        lurker never moved.
+      - Not seen in play yet. To see: when the other player's game crashes or freezes mid-walk, their character stands
+        instead of walking on the spot.
+      - Not tested: an owner in a menu that pauses the game (the journal) keeps sending reports, so this stop never
+        applies there. If they opened it mid-step, their copy may still walk on the spot.
+- [!] **Loot taken by hand off a body the other game runs stayed on that game's body** (from comparing with the
+      Cydaphex port, 2026-10-21). A hand takes loot off a body through the game's own drop (HIGGS does): the item
+      comes out into the world, with no container in between. For a body another game runs, only a container
+      transfer to the player was sent, so the owner's body kept the item and its owner could still take it there.
+      One item became two.
+      - Now a drop out of a dead body (dead, not dying: a dying body's drop is the death drop each game makes for
+        itself) of a non-player that another game runs, within 400 units of this player, is sent with the owner's
+        token (`Utils::GetBodyTakeToken`, both drop paths: `RemoveItem` and `Actor::DropObject`). The server already
+        takes such a change from a nearby player, as for looting, and passes it on to the owner.
+      - The log says `BodyTake: X xN taken off Y, a body another game runs`.
+      - New rig test `live-body-take`: the bot owns a dead NPC carrying an iron dagger (`additem ... npc`), and the
+        game drops the dagger off its copy next to the player.
+      - Red on 587f7d8: the bot, still the owner, got no change for the dagger. Build cdec699, deployed to the tools
+        folder. Green: the bot got the dagger's -1. `live-game-drops` 2/2.
+      - Also fixed in live-check: `DO pickup own` called `Activate` with one argument, which DevBench now refuses
+        (HTTP 400, nothing run), so `live-game-drops` failed without testing anything.
+      - Not seen in play. To see: one player takes a weapon off a body with their hand, and the other player no
+        longer finds it on that body.
+      - Not tested: that the game's own death drop happens while the body is dying (it is left out on that
+        assumption, as the Cydaphex port does). Not covered: the item taken exists only in this player's world. If
+        they let it fall instead of keeping it, the other player never sees it lying there.
 - [!] **Papyrus natives never called while missing** (a public player on v1.9.4, 2026-10-18 16:40-17:13 their time,
       on the Synergy VR ENB list: four crashes out of four, each 12 ms after a save finished loading). The first door
       an NPC used after the load crashed the game: `HookActivate` asked `ObjectReference.GetOpenState` for the door's
@@ -498,6 +559,10 @@ Both players need it.
       cast to `Actor` read it. Likely the same cause as player 2's 21:34 crash: Engine Fixes VR's form cache keeps
       freed forms (`FormCaching = true` on his side). Defensive option, not done: keep each known form's ref handle
       and validate removals through the handle table instead of `GetById`. Not reproduced in the rig.
+      - Lead from crash triage (2026-10-21): in that same second (15:35:30 UTC), the other machine crashed at
+        `+0x714EB2`, our temporary actor disabled after its disposal (fixed since). Both games crashing at once
+        points at one synced event, a temporary actor removed while still referenced, rather than at Engine Fixes'
+        cache alone.
 - [ ] **An NPC that follows its owner indoors stays frozen outside** for the player left outside (Lydia in front of
       Windhelm's palace, 2026-10-18 21:15, until player 2 went in 44 s later). The server relays an NPC's movement only
       to players in range of its new cell and never removes it for the ones it left; `RemoveWhatLeftRange` runs only
@@ -650,6 +715,17 @@ Both players need it.
 - [ ] **Less delay for hands and weapons:** after the playback delay is measured (checklist).
 - [ ] **Movable objects too broad:** `IsMovableObject` takes form type 36, MovableStatic (waterfalls, banners, large
       animated scenery), not only loose objects.
+- [ ] **Interesting things to add**
+      - Corpses: they read a ragdoll's bodies directly and pull the body towards the owner's spot instead of
+        teleporting it. Aims at our slow corpse placement (20-47 ms a move) and flung corpses. 1-2 days.
+      - Held objects: drawn from the carrier's hand, and the server gives the object one owner. Aims at "held objects
+        flicker". 2-3 days, protocol change.
+      - NPC "hand claim": reach a living NPC and your game takes it over, to grab and shove it. Another route to the
+        NPC pull and the grab buzz above; it replaces the design decided on 10-10, so it is the owner's choice.
+        Protocol change, risky around ownership changes.
+      - Holsters shown on the other player: we have none. 3-5 days, protocol change.
+      - Cheap: mouth movement from the voice audio we already receive; skin colour on player copies, which we never
+        set (maybe the "white skin" half of the orc report).
 
 ## Parked and later
 

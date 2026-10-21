@@ -1,6 +1,7 @@
 
 #include <Games/Skyrim/BSSystem/BSThread.h>
 #include <base/threading/ThreadUtils.h>
+#include <PatchCheck.h>
 
 namespace
 {
@@ -82,9 +83,18 @@ static TiltedPhoques::Initializer s_BSThreadInit(
         TP_HOOK_IMMEDIATE(&BSThread_Initialize, &Hook_BSThread_Initialize);
         #endif // No VR address for BSThread::Initialize; it only names threads for debugging.
 
+        // The jump replaces the whole function from its first instruction, sub rsp, 0x48 on VR.
         const VersionDbPtr<uint8_t> setThreadName(69066);
-        if (setThreadName.Get())
+#ifdef SKYRIMVR
+        const bool cIsFunctionStart = PatchCheck::Is(setThreadName.Get(), {0x48, 0x83, 0xEC, 0x48, 0xC7});
+#else
+        const bool cIsFunctionStart = setThreadName.Get() != nullptr;
+#endif
+        if (cIsFunctionStart)
             TiltedPhoques::Jump(setThreadName.Get(), &Hook_SetThreadName);
+        else
+            spdlog::error("Thread names: {} is not the start of SetThreadName ({}), leaving it alone",
+                          fmt::ptr(setThreadName.Get()), PatchCheck::Bytes(setThreadName.Get(), 5));
 
 #if 0
     const VersionDbPtr<uint8_t> createHavokThread(57704);

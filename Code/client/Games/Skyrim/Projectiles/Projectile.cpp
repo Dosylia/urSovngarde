@@ -8,6 +8,7 @@
 #include <Events/ProjectileLaunchedEvent.h>
 #include <Games/Skyrim/Forms/TESObjectCELL.h>
 #include <Forms/SpellItem.h>
+#include <PatchCheck.h>
 
 TP_THIS_FUNCTION(TLaunch, BSPointerHandle<Projectile>*, BSPointerHandle<Projectile>, Projectile::LaunchData& arData);
 static TLaunch* RealLaunch = nullptr;
@@ -186,6 +187,15 @@ static TiltedPhoques::Initializer s_projectileHooks(
         constexpr uint32_t cHandleSlot = 0x50;
         constexpr uint32_t cFrameSize = 0x138;
 #endif
+
+        // mov rbx, [rsp+slot], which the stub replicates.
+        uint8_t* pHandleRead = PatchCheck::At(hookLoc.Get(), cHandleRead);
+        if (!PatchCheck::Is(pHandleRead, {0x48, 0x8B, 0x5C, 0x24, static_cast<uint8_t>(cHandleSlot)}))
+        {
+            spdlog::error("Projectile: {} is not the handle read ({}), leaving it alone; a null projectile handle crashes the game",
+                          fmt::ptr(pHandleRead), PatchCheck::Bytes(pHandleRead, 5));
+            return;
+        }
 
         struct C : TiltedPhoques::CodeGenerator
         {

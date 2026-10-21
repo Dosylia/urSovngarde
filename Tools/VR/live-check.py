@@ -37,6 +37,9 @@ Checks:
     copy gait walking <s> | copy gait sliding <s>                         watches the copy for that many seconds: when
                                                                           it moves, does its own animation graph have
                                                                           a speed (walking) or none (sliding)
+    copy feet still <s> | copy feet moving <s>                            watches the copy's feet against its pelvis:
+                                                                          planted (it stands) or swinging (its legs
+                                                                          walk, on the spot or not)
 
 A line `log DO console <command>` runs that console command in the game at that point of the script, and
 `log DO key <name> <ms>` holds a key down in the game for that long (DevBench's keyboard input; `w` walks the player
@@ -103,7 +106,7 @@ CAPTURES = os.path.join(FUS_ROOT, 'overwrite', 'SKSE', 'Plugins', 'devbench', 'c
 # Order matters: the "away" scripts travel by cell (`cow Tamriel 34 8` and back to 34 -9, Mistwatch) and leave the
 # player at the centre of the Mistwatch cell. Not "go to Lydia": she follows the player back, and the next "go to
 # Lydia" is then two paces that unload nothing (found 2026-10-02, a session that passed for that reason alone).
-ALL = ['live-copy', 'live-npc', 'live-dropmove', 'live-look', 'live-walk', 'live-creatures', 'live-npc-away', 'live-away-seeker',
+ALL = ['live-copy', 'live-npc', 'live-dropmove', 'live-look', 'live-walk', 'live-copy-quiet', 'live-creatures', 'live-npc-away', 'live-away-seeker',
        'live-temp-remove', 'live-temp-reuse', 'live-copy-abandon', 'live-temp-reconnect', 'live-crime', 'live-netch',
        'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead']
 # Not in the list, run by name: live-seeker-copy-remote and live-seeker-copy-local (the two halves that showed the
@@ -135,6 +138,12 @@ def papyrus_global(script, function, args=None):
         return tool('papyrus', body).get('returned')
     except Exception as e:
         return 'ERR ' + type(e).__name__
+
+
+def node_xy(form, name):
+    """Where a node of an actor's skeleton is drawn, seen from above (world x and y), or None."""
+    at = [papyrus_global('NetImmerse', 'GetNodeWorldPosition' + axis, [{'form': '0x' + form}, name, False]) for axis in 'XY']
+    return at if all(isinstance(v, (int, float)) for v in at) and any(at) else None
 
 
 def body_pose(form):
@@ -765,6 +774,28 @@ class Run:
                         # 300 ms, so even a healthy one is in the 70s. The broken cases measured 0 and 17.
                         ok = share >= 50.0 if words[2] == 'walking' else share <= 20.0
                         detail = 'actor %s moved in %d samples, %d of them with a speed in its animation graph (%.0f%%, top %.0f)' % (form, moving, legs, share, top)
+                elif what == 'feet':
+                    # "copy feet still <s>" | "copy feet moving <s>": each foot against the pelvis, sideways only, sampled that
+                    # long. Feet that swing are legs that walk, whether or not the body travels; a body walking on the spot
+                    # has them swinging while it stands. Not the graph's speed: the client writes that itself.
+                    seconds = float(words[3]) if len(words) > 3 else 3.0
+                    end = time.time() + seconds
+                    offsets = {'NPC L Foot [Lft ]': [], 'NPC R Foot [Rft ]': []}
+                    while time.time() < end:
+                        pelvis = node_xy(form, 'NPC Pelvis [Pelv]')
+                        for name, got in offsets.items():
+                            foot = node_xy(form, name)
+                            if pelvis and foot:
+                                got.append((foot[0] - pelvis[0], foot[1] - pelvis[1]))
+                    spans = [max(math.dist(a, b) for a in got for b in got) for got in offsets.values() if len(got) >= 5]
+                    if not spans:
+                        ok, detail = False, 'actor %s: its feet could not be read' % form
+                    else:
+                        # Walking legs read 39-67 units, standing ones 3 (2026-10-21). A body sliding in its standing
+                        # state read 17: its feet shuffle under it, which is not walking.
+                        swing = max(spans)
+                        ok = swing <= 8.0 if words[2] == 'still' else swing >= 30.0
+                        detail = 'actor %s: a foot moved at most %.0f units against the pelvis in %d samples' % (form, swing, min(len(v) for v in offsets.values()))
                 elif what in ('infaction', 'notinfaction'):
                     # "npc infaction <hex>": the game's copy is in that faction (Actor.IsInFaction).
                     inside = papyrus('Actor', 'IsInFaction', form, [{'form': '0x' + words[2]}])
@@ -1105,7 +1136,8 @@ class Run:
                         print('   FAIL  pickup: this game has dropped nothing', flush=True)
                         self.results.append((False, text.strip(), 'nothing dropped'))
                     else:
-                        result = papyrus('ObjectReference', 'Activate', refs[-1], [{'form': '0x14'}])
+                        # Both arguments: DevBench refuses a call that leaves out one with no known default (abDefaultProcessingOnly).
+                        result = papyrus('ObjectReference', 'Activate', refs[-1], [{'form': '0x14'}, False])
                         print('   (picked up %s: %s)' % (refs[-1], result), flush=True)
                 elif text.startswith('DO drop ') and text.split()[3:4] == ['here']:
                     # "DO drop <base hex> here": the player drops one of that item where it stands (to be grabbed).

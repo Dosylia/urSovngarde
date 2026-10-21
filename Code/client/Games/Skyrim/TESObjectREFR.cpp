@@ -1144,7 +1144,19 @@ TP_MAKE_THISCALL(HookRemoveInventoryItem, TESObjectREFR, BSPointerHandle<TESObje
         item.Count = -aCount;
         dropped = item;
 
-        QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apMoveToRef);
+        // Out of a dead body another player's game runs, into the world next to this player: a hand took it.
+        // That game's body loses it too, or its owner could still take it there and one item would be two.
+        const auto cTaken = aReason == ITEM_REMOVE_REASON::kDropping && !apMoveToRef ? Utils::GetBodyTakeToken(Cast<Actor>(apThis), apDropLoc) : std::nullopt;
+        if (cTaken)
+        {
+            spdlog::info("BodyTake: {:X} x{} taken off {:X}, a body another game runs; its owner's body loses it too", apItem->formID, aCount, apThis->formID);
+            InventoryChangeEvent event(apThis->formID, std::move(item));
+            event.ServerId = cTaken->ServerId;
+            event.OwnershipEpoch = cTaken->OwnershipEpoch;
+            World::Get().GetRunner().Trigger(std::move(event));
+        }
+        else
+            QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apMoveToRef);
     }
 
     spdlog::debug("Removing inventory item {:X} from {:X}", apItem->formID, apThis->formID);

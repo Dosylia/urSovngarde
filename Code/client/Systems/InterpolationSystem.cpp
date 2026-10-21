@@ -42,6 +42,82 @@ struct Rising
     glm::vec3 Offset;
 };
 TiltedPhoques::Map<uint32_t, Rising> s_rising;
+
+// A copy whose owner went quiet (a crash, a frozen game, a lost connection) would play the newest report's walk on the spot.
+// After this long with no report, a copy that walks is stopped instead.
+constexpr double cQuietStopAfter = 1500.0;
+// Copies stopped that way, by form id: when, and when reports came back after (zero while none have).
+// Kept here, not in the component: it is made again when the actor changes hands, and the stop still has to be undone after.
+struct QuietStop
+{
+    std::chrono::steady_clock::time_point Since;
+    std::chrono::steady_clock::time_point Back;
+};
+TiltedPhoques::Map<uint32_t, QuietStop> s_quietStopped;
+
+// Not sitting, riding, sleeping or flying: the sit and sleep state (bits 14-17) and the fly state (bits 18-20) are clear.
+// Only then do the graph's own move events stop and start the legs.
+bool IsOnFoot(const Actor* apActor) noexcept
+{
+    const uint32_t cFlags = apActor->actorState.flags1;
+    return ((cFlags >> 14) & 0xF) == 0 && ((cFlags >> 18) & 0x7) == 0;
+}
+
+// The graph's own stop, then no speed for the legs, as when the owner's character stands still.
+void StopQuietCopy(Actor* apActor, const double aQuietFor) noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    if (const auto stopped = s_quietStopped.find(apActor->formID); stopped != s_quietStopped.end())
+        stopped.value().Back = {};
+    else
+    {
+        // Copies removed while stopped leave their entry behind.
+        for (auto it = s_quietStopped.begin(); it != s_quietStopped.end();)
+            it = cNow - it->second.Since > 10min ? s_quietStopped.erase(it) : std::next(it);
+
+        static BSFixedString s_moveStop("moveStop");
+        const float cSpeed = apActor->GetSpeed();
+        const bool cTaken = apActor->SendAnimationEvent(&s_moveStop);
+        s_quietStopped[apActor->formID] = QuietStop{cNow, {}};
+        spdlog::info("QuietStop: copy {:X} had no report for {:.1f} s while moving (speed {:.0f}); stopped ('moveStop' {})", apActor->formID, aQuietFor / 1000.0, cSpeed,
+                     cTaken ? "taken" : "not taken");
+    }
+
+    static BSFixedString s_speed("Speed");
+    apActor->animationGraphHolder.SetVariableFloat(&s_speed, 0.f);
+    apActor->SetSpeed(0.f);
+}
+
+// Reports came back, and their variables are on the copy.
+// It is started again once they say it moves, or it would slide in its standing state: its owner's own start is long gone.
+// The first reports back can say it stands, then speed up (live-copy-quiet), so it is watched until it moves.
+// One that stands through 2 s of reports is left to them.
+void WatchQuietCopy(Actor* apActor) noexcept
+{
+    const auto stopped = s_quietStopped.find(apActor->formID);
+    if (stopped == s_quietStopped.end())
+        return;
+
+    const auto cNow = std::chrono::steady_clock::now();
+    if (stopped->second.Back == std::chrono::steady_clock::time_point{})
+        stopped.value().Back = cNow;
+    const auto cBackFor = std::chrono::duration_cast<std::chrono::milliseconds>(cNow - stopped->second.Back).count();
+
+    const float cSpeed = apActor->GetSpeed();
+    if (cSpeed > 1.f)
+    {
+        static BSFixedString s_moveStart("moveStart");
+        const bool cTaken = apActor->SendAnimationEvent(&s_moveStart);
+        spdlog::info("QuietStop: copy {:X} moves again, {} ms after its reports came back (speed {:.0f}); started ('moveStart' {})", apActor->formID, cBackFor, cSpeed,
+                     cTaken ? "taken" : "not taken");
+        s_quietStopped.erase(stopped);
+    }
+    else if (cNow - stopped->second.Back > 2s)
+    {
+        spdlog::info("QuietStop: copy {:X} stood through {} ms of reports since they came back; left to them", apActor->formID, cBackFor);
+        s_quietStopped.erase(stopped);
+    }
+}
 } // namespace
 
 uint64_t InterpolationSystem::GetPlaybackTick(const InterpolationComponent& acInterpolationComponent) noexcept
@@ -513,7 +589,18 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     SpawnReveal::Placed(apActor);
     // A creature of another kind than the owner's (see MarkForeignGraph) keeps its own animation state.
     if (!aInterpolationComponent.ForeignGraph)
-        apActor->LoadAnimationVariables(second.Variables);
+    {
+        const double cQuietFor = cRenderTick - static_cast<double>(movements.back().Tick);
+        const bool cStopped = s_quietStopped.find(apActor->formID) != s_quietStopped.end();
+        if (cQuietFor > cQuietStopAfter && IsOnFoot(apActor) && (cStopped || apActor->GetSpeed() > 1.f))
+            StopQuietCopy(apActor, cQuietFor);
+        else
+        {
+            apActor->LoadAnimationVariables(second.Variables);
+            if (cStopped && cQuietFor <= cQuietStopAfter)
+                WatchQuietCopy(apActor);
+        }
+    }
 
     if (apActor->currentProcess && apActor->currentProcess->middleProcess)
     {

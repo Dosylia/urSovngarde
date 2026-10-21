@@ -24,6 +24,8 @@ target("TPTests")
         -- Windows minidumps: on Linux this file broke the server's CI build from 2026-10-07 (c5d3236e).
         remove_files("smalldump.cpp")
         remove_files("banner.cpp")
+        -- PatchCheck.h asks Windows what memory a call leads to.
+        remove_files("patch_check.cpp")
     end
     add_packages(
         "tiltedcore",

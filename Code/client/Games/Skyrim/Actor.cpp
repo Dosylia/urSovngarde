@@ -1415,7 +1415,17 @@ void* TP_MAKE_THISCALL(HookDropObject, Actor, void* apResult, TESBoundObject* ap
     const bool cOwnDrop = !ScopedInventoryOverride::IsOverriden() && apThis == PlayerCharacter::Get();
     Inventory::Entry dropped = item;
 
-    QueueActorInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item), true));
+    // Out of a dead body another player's game runs, next to this player: a hand took it, and that game's body loses it too.
+    if (const auto cTaken = !ScopedInventoryOverride::IsOverriden() ? Utils::GetBodyTakeToken(apThis, apLocation) : std::nullopt)
+    {
+        spdlog::info("BodyTake: {:X} x{} dropped off {:X}, a body another game runs; its owner's body loses it too", apObject->formID, aCount, apThis->formID);
+        InventoryChangeEvent event(apThis->formID, std::move(item), true);
+        event.ServerId = cTaken->ServerId;
+        event.OwnershipEpoch = cTaken->OwnershipEpoch;
+        World::Get().GetRunner().Trigger(std::move(event));
+    }
+    else
+        QueueActorInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item), true));
 
     ScopedInventoryOverride _;
 

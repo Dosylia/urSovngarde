@@ -443,7 +443,7 @@ void Bot::Tick() noexcept
                 SendCellEntry();
             }
         }
-        if (!m_replaying && now - m_lastMovement >= kMovementPeriod)
+        if (!m_replaying && !m_quiet && now - m_lastMovement >= kMovementPeriod)
             SendMovement();
         if (m_speechNext < m_speech.size())
             UpdateSpeech(now);
@@ -1740,12 +1740,14 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "replay [me|npc] [times]" sends the captured stream back as this bot's own character, or as the NPC it owns,
-    // at the pace it arrived and starting from where that body stands now.
+    // "replay [me|npc] [times] [noactions]" sends the captured stream back as this bot's own character, or as the NPC it
+    // owns, at the pace it arrived and starting from where that body stands now. With "noactions", only movement, variables
+    // and pose go out: the recording's own moveStart cannot start a copy that something else should have started.
     if (name == "replay")
     {
         const bool asNpc = !args.empty() && args[0] == "npc";
         const int times = std::max(1, static_cast<int>(arg(1, 1.f)));
+        const bool noActions = args.size() > 2 && args[2] == "noactions";
         if (aFirstTick)
         {
             m_replayTarget = kNoId;
@@ -1768,7 +1770,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             m_replayIndex = 0;
             m_replayRound = 0;
             m_replaying = !asNpc; // the bot's own heartbeat would drag its character back between two updates
-            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f})", m_capture.size(), m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z);
+            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f}){}", m_capture.size(), m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z,
+                         noActions ? ", without their actions" : "");
         }
         if (m_replayTarget == kNoId)
             return true;
@@ -1810,6 +1813,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             update.UpdatedMovement.Position = ToNet(place);
             update.UpdatedMovement.CellId = m_cell;
             update.UpdatedMovement.WorldSpaceId = m_worldSpace;
+            if (noActions)
+                update.ActionEvents.clear();
             for (auto& action : update.ActionEvents)
             {
                 action.ActorId = m_replayTarget;
@@ -1831,6 +1836,24 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
         m_replaying = false;
         spdlog::info("Replay finished at ({:.0f}, {:.0f}, {:.0f})", asNpc ? m_npcPosition.x : m_position.x, asNpc ? m_npcPosition.y : m_position.y, asNpc ? m_npcPosition.z : m_position.z);
+        return true;
+    }
+
+    // "quiet <seconds>": no movement is sent for that long, as when the owner's game freezes or its connection stalls.
+    // Right after a replay, the copy's newest report is then a walking one.
+    if (name == "quiet")
+    {
+        const float seconds = arg(0, 3.f);
+        if (aFirstTick)
+        {
+            m_quiet = true;
+            spdlog::info("[script] quiet for {:.1f} s: no movement sent", seconds);
+        }
+        if (Seconds(now - m_commandStart) < seconds)
+            return false;
+
+        m_quiet = false;
+        spdlog::info("[script] quiet over");
         return true;
     }
 
@@ -2310,6 +2333,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // Put an item in this bot's own inventory, the way a real client reports one it picked up or bought: the other
     // players' copies of this character then own it too. Without it an "equip" names an item the copy does not have,
     // and the game ignores it (live-equip, 2026-10-03: the copy never held the sword it was told to equip).
+    // "additem <base> <n> npc": into the NPC this bot owns instead, as its owner's game reports it.
     if (name == "additem")
     {
         uint32_t baseId = 0;
@@ -2321,11 +2345,25 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         RequestInventoryChanges request{};
         request.ServerId = m_serverId;
         request.OwnershipEpoch = m_ownershipEpoch;
+        if (args.size() > 2 && args[2] == "npc")
+        {
+            const KnownActor* pNpc = nullptr;
+            for (const auto& actor : m_actors)
+                if (actor.OwnedByUs && !actor.IsPlayer && actor.ServerId != m_serverId)
+                    pNpc = &actor;
+            if (!pNpc)
+            {
+                spdlog::warn("[script] additem: this bot owns no NPC");
+                return true;
+            }
+            request.ServerId = pNpc->ServerId;
+            request.OwnershipEpoch = pNpc->OwnershipEpoch;
+        }
         request.Item.BaseId = Skyrim(baseId);
         request.Item.Count = args.size() > 1 ? std::atoi(args[1].c_str()) : 1;
         request.UpdateClients = true;
         SendMsg(request);
-        spdlog::info("[script] {} of {:X} added to this bot's inventory", request.Item.Count, baseId);
+        spdlog::info("[script] {} of {:X} added to the inventory of server character {:X}", request.Item.Count, baseId, request.ServerId);
         return true;
     }
 

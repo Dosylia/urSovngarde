@@ -342,6 +342,8 @@ private:
     uint32_t m_replayTarget{};
     int m_replayRound{};
     bool m_replaying{false};
+    //! `quiet`: no movement goes out, not even the heartbeat, as when the owner's game freezes.
+    bool m_quiet{false};
     glm::vec3 m_replayBase{};
     //! `handtargets`: hand positions (root space, left then right) written into every replayed VR pose instead of the
     //! recorded ones -- the rig's headset has no real controllers, so a recorded pose has the hands on the floor.
