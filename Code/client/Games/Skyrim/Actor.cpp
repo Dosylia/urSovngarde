@@ -38,6 +38,7 @@
 #include <Games/Skyrim/Misc/InventoryEntry.h>
 #include <Games/Skyrim/ExtraData/ExtraCount.h>
 #include <Games/Misc/ActorKnowledge.h>
+#include <InventoryCompare.h>
 
 #include <ExtraData/ExtraDataList.h>
 #include <ExtraData/ExtraCharge.h>
@@ -842,11 +843,29 @@ void Actor::SetActorInventory(const Inventory& acInventory) noexcept
 
     Inventory currentInventory = GetActorInventory();
 
-    const ActorExtension* pSelfExtension = this->GetExtension();
-    if (pSelfExtension && !pSelfExtension->IsPlayer() && currentInventory.ContainsQuestItems())
-        SetInventoryRetainingQuestItems(currentInventory, acInventory);
-    else
-        SetInventory(acInventory);
+    // An NPC often carries here just what its owner's game has, a fixed outfit.
+    // Setting it means taking every item off and putting it back, about 17 ms a copy: 26 copies arriving after a load took 436 ms in one frame.
+    static uint32_t s_unchanged = 0;
+    static uint32_t s_applied = 0;
+    static std::chrono::steady_clock::time_point s_nextSaid{};
+    const bool cUnchanged = HoldsSameItems(currentInventory, acInventory);
+    ++(cUnchanged ? s_unchanged : s_applied);
+    if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextSaid)
+    {
+        s_nextSaid = cNow + std::chrono::seconds(30);
+        spdlog::info("InventoryApply: {} of {} copies' inventories already held their owner's items and were not set again", s_unchanged, s_unchanged + s_applied);
+        s_unchanged = 0;
+        s_applied = 0;
+    }
+
+    if (!cUnchanged)
+    {
+        const ActorExtension* pSelfExtension = this->GetExtension();
+        if (pSelfExtension && !pSelfExtension->IsPlayer() && currentInventory.ContainsQuestItems())
+            SetInventoryRetainingQuestItems(currentInventory, acInventory);
+        else
+            SetInventory(acInventory);
+    }
 
     SetMagicEquipment(acInventory.CurrentMagicEquipment);
 }

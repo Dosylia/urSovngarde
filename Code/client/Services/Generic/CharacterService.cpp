@@ -2252,17 +2252,21 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
 
     // A teleport this player cannot see is not made: an actor not loaded here, going to a place not loaded here.
     // Moving it there would load a far exterior cell, whose streaming can still run once the game has dropped the cell.
+    // Nor is one out to the exterior beyond the loaded area: the game reads that cell from disk at once, in this frame.
     // The server keeps where the actor is; an actor that comes into view here later is placed by its assignment.
-    if (!IsActorLoadedHere(pActor) && !IsPlaceLoadedHere(m_world, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position))
+    const bool cPlaceLoaded = IsPlaceLoadedHere(m_world, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position);
+    const bool cActorLoaded = IsActorLoadedHere(pActor);
+    if (!cPlaceLoaded && (!cActorLoaded || acMessage.WorldSpaceId))
     {
-        spdlog::info("Teleport of actor {:X} not made: it is not loaded here, nor is the place it goes to (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))",
-                     pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+        spdlog::info("Teleport of actor {:X} not made: {} (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))", pActor->formID,
+                     cActorLoaded ? "it goes out beyond the loaded area here" : "it is not loaded here, nor is the place it goes to", acMessage.WorldSpaceId.BaseId,
+                     acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
         return;
     }
 
-    MoveActor(pActor, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position);
-
-    spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+    if (MoveActor(pActor, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position))
+        spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId,
+                     acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
 void CharacterService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
@@ -2278,7 +2282,7 @@ void CharacterService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexc
     }
 }
 
-void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept
+bool CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept
 {
     TESObjectCELL* pCell = nullptr;
     if (!acWorldSpaceId)
@@ -2301,12 +2305,13 @@ void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
     if (!pCell)
     {
         spdlog::error(__FUNCTION__ ": failed to fetch cell to teleport, actor: {:X}, worldspace: {:X}, cell: {:X}, position: {}, {}, {}", apActor->formID, acWorldSpaceId.BaseId, acCellId.BaseId, acPosition.x, acPosition.y, acPosition.z);
-        return;
+        return false;
     }
 
     // MoveTo drops the actor's 3D for a frame; this keeps discovery from taking that for a remote copy leaving.
     DiscoveryService::NoteMovedHere(apActor->formID);
     apActor->MoveTo(pCell, acPosition);
+    return true;
 }
 
 void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept

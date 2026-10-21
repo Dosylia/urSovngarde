@@ -27,8 +27,8 @@ Checks:
                                                                           them (median of the game's measurements)
     player in <worldspace>                                                outdoors in that worldspace (Tamriel), not
                                                                           in an interior
-    ref <hex> near <x> <y> <z> <units>                                    a reference of the game's own is that close
-                                                                          to that place
+    ref <hex> near <x> <y> <z> <units> | ref <hex> near player <units>    a reference of the game's own is that close
+                                                                          to that place, or to the player
     game alive | game inworld                                             the game still answers | and is in the
                                                                           world with a save loaded, not at a menu
     slide mark | slide below <pct> | slide above <pct>                    the game's own SlideDiag since the mark: the
@@ -530,8 +530,11 @@ class Run:
                 detail = 'reference %s, levelled base %s (%s)' % (form, got, base.get('editorId', '') if isinstance(base, dict) else '')
             elif who == 'ref' and words[2] == 'near':
                 # "ref <hex> near <x> <y> <z> <units>": a reference of the game's own is that close to that place.
+                # "ref <hex> near player <units>": that close to where the player stands now.
                 form = words[1]
                 at = [papyrus('ObjectReference', 'GetPosition' + axis, form) for axis in 'XYZ']
+                if words[3] == 'player':
+                    words = words[:3] + [str(v) for v in (position('14') or (0.0, 0.0, 0.0))] + words[4:]
                 wanted = [float(v) for v in words[3:6]]
                 known = all(isinstance(v, (int, float)) for v in at)
                 ok = known and math.dist(at, wanted) <= float(words[6])

@@ -246,6 +246,18 @@ Both players need it.
 
 ## Waiting on a test or action
 
+- [!] **The rig needs its null driver copied back after the SteamVR 2.18.4 update** (2026-10-21 20:42). The update
+      put Valve's stock `driver_null.dll` (no controllers) back into
+      `SteamVR\drivers\null\bin\win64`. `headless.ps1 up` now stops at `the null driver did not add its
+      controllers`. The rig's build of it is copied there by hand, as on 2026-10-01; Valve's original stays as
+      `driver_null.dll.valve`.
+      - With 2.18.4 and `activateMultipleDrivers`, the PlayStation VR2 add-on is also loaded a second time once the
+        null headset is active, and that second cleanup never returns. `headless.ps1` now switches it off for the
+        run when `steamvr.vrsettings` has no setting of its own for it, and takes it out again at `down`.
+      - After that, SteamVR started (monitor and compositor up) but launched Room Setup: the null headset's room was
+        uncalibrated after the update (`calibration state was 201`). Not yet seen whether that stops a run.
+      - Waiting on it: the red and green runs of `live-teleport-far-loaded`, and `live-equip` for the inventory
+        change.
 - [!] **The connect request of a large mod list was cut short** (both players on MGO 4.0 RC4.1, 1992 plugins,
       2026-10-20 evening). `TransportService::Send` wrote every message into a 64 KB buffer from a 256 KB scratch
       area. The connect request carries every plugin's name (about 78 KB for MGO's list), so it was cut after the
@@ -527,6 +539,41 @@ Both players need it.
 
 ## Open work
 
+- [ ] **Second MGO session, 2026-10-21 20:20-20:41** (both players on cdec699, 1992 mods each, names right: the
+      connect fix works). AP's intro, then Helgen. Painful for both players.
+      - Lag is the list in VR, not our code. Player 1 ran 24-32 fps before connecting (our update idle at 0.08 ms) and
+        16-26 fps in the Helgen fight; player 2 17-33 fps. Our update cost 0.1-0.6 ms of a 35-64 ms frame. Private
+        memory went from 22 GB in the inn to 29-31 GB once Helgen's exterior loaded.
+      - Ours, two stalls, both fixed in build d7e7105 (deployed to the FUS and MGO folders, client and server):
+        - 622 ms at 20:28:54: player 2's game let go of a wisp 17000 units away. The teleport moved player 1's
+          copy, which stood loaded next to them, into that cell, and `TESWorldSpace::LoadCell` read the cell from
+          disk in that frame. Now a teleport out to the exterior beyond the loaded area is not made: `Teleport of
+          actor X not made: it goes out beyond the loaded area here`. Into an interior, it is made as before.
+          `Successfully teleported` is no longer logged after a cell was not found.
+        - 612 ms at 20:27:03: 26 copies arrived after the load, and setting their inventories took 436 ms
+          (`inventory apply 1.15 ms/frame (26 calls)`). Setting one takes every item off and puts it back. Now
+          an inventory that already holds the owner's items, worn the same way, is not set again
+          (`InventoryCompare.h`). `InventoryApply: N of M copies' inventories already held their owner's items`
+          says how often, every 30 s.
+        - Tests: `TPTests [inventorycompare]` 2 cases, 63 pass. The new rig test `live-teleport-far-loaded` (Lydia
+          next to the player, let go far away) is not run yet; see the SteamVR item below.
+        - To see in play: no `Mod update took` over 100 ms when a lot of NPCs arrive or leave, and the
+          `InventoryApply` counts.
+      - Ours, a claim burst: right after a 25 s load out of the inn (20:26:21-20:26:46, main thread waiting in
+        ntdll), player 1's game took 16 NPCs from player 2's at once (`party leader assignment`). It gave back
+        those not loaded yet (`Declined ownership ... the actor is not ready`), and a minute of transfers back and
+        forth followed. The server hands NPCs to the party leader on purpose, so quest NPCs follow the leader's
+        game. A grace period after the leader's load would stop the jumps, but the leader's scene would run
+        without its NPCs for those seconds. Not changed: the owner's call.
+      - Ours, scripted scenes: each game ran AP's Thalmor ambush, so each spawned its own Thalmor and also got the
+        other's as copies (twice the enemies). Their bodies were pulled 1000-2400 units to where the other game had
+        them (CorpseDiag). Player 2 found no loot on them; the log does not show why.
+      - Ours, NPCs popping in: the spawn path re-enables an NPC the other game has active and moves it to the
+        player's cell (`Disabled actor is being re-enabled`, five AP Helgen guards at 20:36:28).
+      - Ours, Alduin: player 2's game ran him. Player 1's copy refused the replayed `roarStart`, while his Thu'um
+        voice lines were synced, so he roared without attacking.
+      - Not synced: the Helgen keep door stayed locked for player 1 and opened for player 2. Each game runs its own
+        scene, and neither log has a stage change for it.
 - [ ] **Freeze at a load: the game's allocator purging cells waits for good** (player 1, 2026-10-18 21:29, fast
       travel near Whiterun's battle; the same main-thread stack as a public player's freeze at 08:52 and player 2's of
       2026-10-11 21:36). From the bottom: a model copied for a load (`NiObject::Clone`), our pass-through

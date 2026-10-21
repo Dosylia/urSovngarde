@@ -98,18 +98,37 @@ function Get-Health {
     try { return Invoke-RestMethod -Uri "$devbench/api/health" -TimeoutSec 3 } catch { return $null }
 }
 
-# The settings file is JSON that SteamVR writes itself; it is read and written whole, and only one key is touched.
+# Drivers that hang SteamVR's start next to the null driver, switched off for the run where the owner has no setting of their own.
+# With activateMultipleDrivers, SteamVR 2.18.4 loads the PlayStation VR2 add-on again once the null headset is active, and that second cleanup never returns.
+$driversOffForRun = @('driver_playstation_vr2')
+# Which of them 'up' switched off, so that 'down' takes out those blocks and no others.
+$driversOffMarker = Join-Path $env:TEMP 'urSovngarde-headless-drivers-off.txt'
+
+# The settings file is JSON that SteamVR writes itself; it is read and written whole, and only the rig's keys are touched.
 function Set-NullDriver([bool]$on) {
     if (Test-Running '^(vrserver|vrmonitor|vrcompositor)$') { throw 'SteamVR is running; its settings cannot be changed until it is closed.' }
     $text = [System.IO.File]::ReadAllText($settingsPath)
     $settings = $text | ConvertFrom-Json
-    $has = [bool]($settings.PSObject.Properties.Name -contains 'driver_null')
+    $names = @($settings.PSObject.Properties.Name)
+    $changed = $false
     if ($on) {
         $block = [pscustomobject]@{ enable = $true; windowWidth = 1280; windowHeight = 720; renderWidth = 1024; renderHeight = 1024; displayFrequency = 90.0 }
-        if ($has) { $settings.driver_null = $block } else { $settings | Add-Member -NotePropertyName 'driver_null' -NotePropertyValue $block }
+        if ($names -contains 'driver_null') { $settings.driver_null = $block } else { $settings | Add-Member -NotePropertyName 'driver_null' -NotePropertyValue $block }
+        $changed = $true
+        $added = @($driversOffForRun | Where-Object { $names -notcontains $_ })
+        foreach ($name in $added) { $settings | Add-Member -NotePropertyName $name -NotePropertyValue ([pscustomobject]@{ enable = $false }) }
+        if ($added.Count) { Set-Content -LiteralPath $driversOffMarker -Value $added }
     }
-    elseif ($has) { $settings.PSObject.Properties.Remove('driver_null') }
-    else { return }
+    else {
+        if ($names -contains 'driver_null') { $settings.PSObject.Properties.Remove('driver_null'); $changed = $true }
+        if (Test-Path -LiteralPath $driversOffMarker) {
+            foreach ($name in @(Get-Content -LiteralPath $driversOffMarker)) {
+                if ($names -contains $name) { $settings.PSObject.Properties.Remove($name); $changed = $true }
+            }
+            Remove-Item -LiteralPath $driversOffMarker
+        }
+    }
+    if (-not $changed) { return }
     $out = $settings | ConvertTo-Json -Depth 20
     [System.IO.File]::WriteAllText($settingsPath, $out + "`n", (New-Object System.Text.UTF8Encoding($false)))
 }
