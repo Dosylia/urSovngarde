@@ -194,7 +194,7 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
         TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
         if (!pObject)
         {
-            spdlog::error("Object not found for form id {:X}", objectData.Id);
+            spdlog::error("Object not found for form id {:X} (server mod {:X}, base {:X})", cObjectId, objectData.Id.ModId, objectData.Id.BaseId);
             continue;
         }
 

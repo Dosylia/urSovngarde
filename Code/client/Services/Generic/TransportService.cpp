@@ -18,6 +18,7 @@
 #include <TiltedOnlinePCH.h>
 #include <World.h>
 
+#include <Services/SendBuffer.h>
 #include <Messages/AuthenticationRequest.h>
 #include <Messages/ServerMessageFactory.h>
 #include <Messages/NotifySettingsChange.h>
@@ -85,7 +86,7 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
 
 bool TransportService::Send(const ClientMessage& acMessage, TiltedPhoques::EPacketFlags aFlags) const noexcept
 {
-    static thread_local ScratchAllocator s_allocator(1 << 18);
+    static thread_local ScratchAllocator s_allocator(SendBuffer::kScratchBytes);
 
     struct ScopedReset
     {
@@ -96,11 +97,14 @@ bool TransportService::Send(const ClientMessage& acMessage, TiltedPhoques::EPack
     {
         ScopedAllocator _{s_allocator};
 
-        Buffer buffer(1 << 16);
+        Buffer buffer(SendBuffer::kBufferBytes);
         Buffer::Writer writer(&buffer);
-        writer.WriteBits(0, 8); // Write first byte as packet needs it
+        if (!SendBuffer::Write(acMessage, buffer, writer))
+        {
+            spdlog::error("TransportService: message {} did not fit in {} bytes; not sent", acMessage.GetOpcode(), buffer.GetSize());
+            return false;
+        }
 
-        acMessage.Serialize(writer);
         TiltedPhoques::PacketView packet(reinterpret_cast<char*>(buffer.GetWriteData()), writer.Size());
 
         Client::Send(&packet, aFlags);

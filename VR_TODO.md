@@ -246,6 +246,31 @@ Both players need it.
 
 ## Waiting on a test or action
 
+- [!] **The connect request of a large mod list was cut short** (both players on MGO 4.0 RC4.1, 1992 plugins,
+      2026-10-20 evening). `TransportService::Send` wrote every message into a 64 KB buffer from a 256 KB scratch
+      area. The connect request carries every plugin's name (about 78 KB for MGO's list), so it was cut after the
+      1792nd name without any error. Everything written after the list was lost too: username, worldspace, cell,
+      level, player time, and the hide-from-public-page flag. That's why the server called both players `'Player'`.
+      Neither game could map the last 200 plugins, among them AlternatePerspective.esp, DynDOLOD.esp and
+      SkyrimTogether.esp. So their forms travelled as Skyrim.esm's (AP's inn C6005900 became `0:5900`), and
+      `Failed to find mod , is lite?` was logged 200 times at connect.
+      - Effects: Ingrid in the inn for one player and in the street for the other; stand-ins made for AP guards
+        under the wrong id, so each guard had two bodies; AP items and actors not found.
+      - Now `SendBuffer` (`Code/client/Services/SendBuffer.h`) gives each message a 1 MB buffer from a 4 MB
+        scratch area. A message that still doesn't fit is not sent and is logged.
+      - No protocol change: `Code/encoding` is untouched.
+      - `TPTests [sendbuffer]`, a 1992-plugin connect request written the way the client does: red with the old
+        sizes (last name, username, cell, level and the hide flag all empty), green with the new ones. 58 test cases
+        pass.
+      - Build bb793e2, deployed to the tools folder.
+      - Rig, 2026-10-21: `live-door-echo` 6/6. The server logged `New player 'Queen Emma' ... connected with 300
+        mods`, and the client logged no `Failed to find mod`. The rig plays FUS, so it can't show the 1992-plugin
+        case; the unit test covers that.
+      - Each client sends its own list, so both players need the build.
+      - Also: `Object not found for form id` printed true or false instead of the id; it now prints the id and the
+        server's mod and base.
+      - To see in play on MGO: no `Failed to find mod` lines at connect, the right names in the server log, Ingrid
+        and the AP guards the same in both games.
 - [!] **Papyrus natives never called while missing** (a public player on v1.9.4, 2026-10-18 16:40-17:13 their time,
       on the Synergy VR ENB list: four crashes out of four, each 12 ms after a save finished loading). The first door
       an NPC used after the load crashed the game: `HookActivate` asked `ObjectReference.GetOpenState` for the door's
@@ -411,6 +436,33 @@ Both players need it.
       their own server): every player copy in their log has an empty name and level 1, and their two mod lists differ.
       Needs the server owner's log and both `plugins.txt`; the `Player copy appearance` line (next release) then says
       which part of the appearance did not load.
+      An empty name and level 1 on every copy is also what a cut connect request produces (see "The connect request
+      of a large mod list was cut short"). Check that server's `connected with N mods` line: from about 1800 plugins
+      up, it was this.
+- [ ] **Our browser helper outlives a crashed game and freezes Mod Organizer** (2026-10-20 evening). After the MGO
+      game crashed at 21:18, one `TPProcess.exe` (Chromium's "on-device model" utility, started 21:04, parent the
+      dead game) kept running. It still held MGO's usvfs (0.5.6.1) loaded. FUS's Mod Organizer, started at 22:21, then
+      waited for good inside its own usvfs (0.5.5.1) at startup: no window, log stopped after "checking for blocked
+      files". A PC restart cleared it.
+      - Likely what the Synergy players reported as Root Builder broken after crashes.
+      - The helper's entry is `Libraries/TiltedUI/Code/ui_process/src/OverlayProc.cpp`.
+      - Two options: the helper exits when the game process ends (wait on the parent), or the on-device model
+        service is switched off in CEF's command line (we never use it). The first covers every helper.
+      - Not reproduced yet: a rig crash test, then a check that no TPProcess is left.
+- [ ] **Smaller items from the first MGO session** (2026-10-20 evening):
+      - The Helgen prisoner carriage crashes HIGGS when grabbed (`SkyrimVR+0xADF694`, both games). HIGGS walks the
+        carriage's links and reads its anti-tip action (`bhkTiltPreventAction`) as one. Not our code; don't grab it.
+        Unproven without our mod.
+      - A copy the server removes in a cell the receiving game can't reach left the loaded real reference
+        unannounced (Ingrid on player 2's side: `OnRemoveCharacter` strips the components and nothing announces it
+        again).
+      - `Successfully teleported actor` is logged even after `MoveActor: failed to fetch cell` (`CharacterService.cpp`
+        about 2263).
+      - Lokir lay dead in player 2's copy while alive in player 1's game; it was corrected at 21:18:43 ("came back
+        alive").
+      - An ice wolf (33482) bounced owners and its body jumped about 8000 units into Helgen at 21:08; the cause is
+        unknown.
+      - VR players connect with F6 and never see the connect page's "don't connect during the Helgen intro" warning.
 
 ## Open work
 
@@ -439,6 +491,13 @@ Both players need it.
       persistent NPCs the bot owns let go far away (the server sends no teleport for temporary ones). The fifth
       jump hit the known Community Shaders crash at a load (`+0x1208c8`). Other options: DynDOLOD DLL NG Alpha-33
       exists (a mod list change), and the freeze dump could go to DynDOLOD's author.
+- [ ] **A freed form cast in `DiscoveryService::VisitForms`** (player 2, 2026-10-18 17:35 local, on the v1.9.4
+      release; hub report 20261018-195126). `VCRUNTIME140+0x4AE1` < `+0x50E5` (`__RTDynamicCast` in 14.51)
+      < `VisitForms+0x4c1` < `OnUpdate` < `World::Update` < `HookVMUpdate`, with a `BSMultiBoundNode*` where a form
+      was expected and two `type_info*` in the registers. `TESForm::GetById(formId)` handed back a freed form, and the
+      cast to `Actor` read it. Likely the same cause as player 2's 21:34 crash: Engine Fixes VR's form cache keeps
+      freed forms (`FormCaching = true` on his side). Defensive option, not done: keep each known form's ref handle
+      and validate removals through the handle table instead of `GetById`. Not reproduced in the rig.
 - [ ] **An NPC that follows its owner indoors stays frozen outside** for the player left outside (Lydia in front of
       Windhelm's palace, 2026-10-18 21:15, until player 2 went in 44 s later). The server relays an NPC's movement only
       to players in range of its new cell and never removes it for the ones it left; `RemoveWhatLeftRange` runs only
