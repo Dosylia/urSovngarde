@@ -673,9 +673,12 @@ ExtraDataList* TESObjectREFR::GetExtraDataFromItem(const Inventory::Entry& arEnt
             pEnchantment = Cast<EnchantmentItem>(TESForm::GetById(enchantId));
         }
 
-        TP_ASSERT(pEnchantment, "No Enchantment created or found.");
-
-        pExtraDataList->SetEnchantmentData(pEnchantment, arEntry.ExtraEnchantCharge, arEntry.ExtraEnchantRemoveUnequip);
+        // An enchantment this game cannot find or make is left out: an item enchanted with nothing breaks the game's inventory code.
+        if (pEnchantment)
+            pExtraDataList->SetEnchantmentData(pEnchantment, arEntry.ExtraEnchantCharge, arEntry.ExtraEnchantRemoveUnequip);
+        else
+            spdlog::error("Item {:X}:{:X}: its enchantment {:X}:{:X} was not found or made here; the item is given without it", arEntry.BaseId.ModId, arEntry.BaseId.BaseId,
+                          arEntry.ExtraEnchantId.ModId, arEntry.ExtraEnchantId.BaseId);
     }
 
     if (arEntry.ExtraPoisonId != 0)

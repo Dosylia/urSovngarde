@@ -246,6 +246,24 @@ Both players need it.
 
 ## Waiting on a test or action
 
+- [!] **Two crashes of ours in a public player's report** (v1.9.5 release; hub report 20261021-231708-78ce801d, named
+      with the release pdb).
+      - `+0x5785B91`, 9 minutes in, as the game connected: `CharacterService::RequestServerAssignment` read
+        `pActor->parentCell->formID` for an actor held outside any cell (`mov edx, [rdx+14h]` after loading the cell at
+        +0x60). Called from `OnConnected` > `ProcessNewEntity`. Now such an actor is not announced (`Actor X has no
+        cell`).
+      - `+0x117C20`, a read at 9 a second after a load: inside the game's `InventoryChanges::RemoveItem`, called by
+        `DroppedItemService::OnNotifyDroppedItem` placing another player's dropped item. The placement gives the
+        item to the player, then drops it again with the same extra data list. If the game merged that list into an
+        equal stack, the drop handed it a list it no longer held; not proven from the dump. Now the drop uses the list
+        while the inventory still holds it, else an equal one, else none (`the game did not keep the item's extra
+        data as given`).
+      - Also: an item whose enchantment this game cannot find was given an empty enchantment (`TP_ASSERT` only
+        logs); it is now given without it.
+      - Build 0567985 (client, FUS and MGO folders). Not reproduced in the rig, which is down (item below). To see:
+        no more crashes in these two places in the hub.
+      - Release gate for v1.9.6 on 0567985: bot pairs `run-all-pairs` 14/14. The game half waits on the rig.
+
 - [!] **The rig needs its null driver copied back after the SteamVR 2.18.4 update** (2026-10-21 20:42). The update
       put Valve's stock `driver_null.dll` (no controllers) back into
       `SteamVR\drivers\null\bin\win64`. `headless.ps1 up` now stops at `the null driver did not add its

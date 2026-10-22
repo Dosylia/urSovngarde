@@ -2406,6 +2406,13 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
         return;
     }
 
+    // An actor the game holds outside any cell (taken out of the world, or not placed yet) is not announced.
+    if (!pActor->parentCell)
+    {
+        spdlog::info("Actor {:X} has no cell; not announced to the server", pActor->formID);
+        return;
+    }
+
     if (!m_world.GetModSystem().GetServerModId(pActor->parentCell->formID, message.CellId))
     {
         spdlog::error("Server cell id not found for cell id {:X}", pActor->parentCell->formID);
