@@ -17,9 +17,12 @@ waitfor known other 40
 ownership accept
 wait 5
 
-log -- Lydia next to the player, waiting there
+log -- Lydia next to the player, waiting there, and no longer the player's teammate
+# A teammate next to the player is asked back by the player's game at once (RunFollowerReclaims), so the bot would not
+# keep her. live-teleport-far does not meet this: the player travels away before the bot lets her go.
 log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
 log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
 waitfor known ref:A2C94 40
 wait 3
 claim ref:A2C94 follower

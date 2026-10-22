@@ -262,7 +262,11 @@ Both players need it.
         logs); it is now given without it.
       - Build 0567985 (client, FUS and MGO folders). Not reproduced in the rig, which is down (item below). To see:
         no more crashes in these two places in the hub.
-      - Release gate for v1.9.6 on 0567985: bot pairs `run-all-pairs` 14/14. The game half waits on the rig.
+      - Release gate for v1.9.6 on 0567985: bot pairs `run-all-pairs` 14/14; rig `live-door-echo` 6/6, `live-equip`
+        9/9, `live-copy-removed` 4/4, `live-revive` 10/10, `live-death` 9/9, `live-load` 9/9, `live-teleport-far` 5/5,
+        `live-teleport-far-loaded` 5/5. A first `live-load` froze in the rig's own VR plugins
+        (`skyrimvrtools.dll`, PapyrusVR, with Crash Logger hung on it), nothing of ours on the stack; it passed on a
+        fresh rig.
 
 - [!] **The rig needs its null driver copied back after the SteamVR 2.18.4 update** (2026-10-21 20:42). The update
       put Valve's stock `driver_null.dll` (no controllers) back into
