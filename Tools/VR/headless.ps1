@@ -22,6 +22,8 @@ param(
     [switch]$NoConnect,                 # no server and no waiting for a connection: the game alone, mod loaded
     [switch]$AutoConnect,               # the launcher's "connect automatically" setting on: the game connects by itself, F6 is not pressed
     [int]$LoadTimeout = 180,
+    # Seconds the game has to reach the main menu: MGO takes about five and a half minutes, FUS under three.
+    [int]$MenuTimeout = 600,
     # Where the player is put once the save has loaded: the tests start outside Mistwatch (Tamriel, cell 34 -9).
     # The most recent save is wherever the player last played. Empty leaves the player where the save has them.
     [string]$StartCell = 'Tamriel 34 -9',
@@ -70,7 +72,11 @@ function Get-ModEntryTitle([string]$ini) {
 $mo2Shortcut = if ($Shortcut) { $Shortcut } else { Get-ModEntryTitle $mo2Ini }
 if (-not $mo2Shortcut) { $mo2Shortcut = 'SkyrimTogetherVR' }
 $release = (Resolve-Path (Join-Path $PSScriptRoot '..\..\build\windows\x64\release')).Path
-$clientLog = Join-Path $fusRoot 'tools\Skyrim Together VR\logs\tp_client.log'
+# The client's folder among MO2's tools: 'Skyrim Together VR' on the host's PC, 'urSovngarde' on another player's.
+$clientDir = @('Skyrim Together VR', 'urSovngarde') | ForEach-Object { Join-Path $fusRoot "tools\$_" } |
+    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'urSovngarde.exe') } | Select-Object -First 1
+if (-not $clientDir) { $clientDir = Join-Path $fusRoot 'tools\Skyrim Together VR' }
+$clientLog = Join-Path $clientDir 'logs\tp_client.log'
 $stateFile = Join-Path $env:TEMP 'st-headless-state.json'
 # The game plays in the player's own MO2 profile, so whatever it saves lands among the player's saves.
 # A test autosave (going through a door) becomes the newest save, and the player's next "Continue" would load it.
@@ -78,7 +84,13 @@ $stateFile = Join-Path $env:TEMP 'st-headless-state.json'
 # So the saves folder is copied aside before the game starts and put back exactly as it was once the game has gone.
 # Whatever the test game wrote or changed is moved to saves-made-by-rig\<time>; whatever it overwrote comes back from the copy.
 # A run that died before putting it back is put right by the next "up" or "down".
-$profileDir = Join-Path $fusRoot 'profiles\FUS RO DAH (Basic + Appearance + Gameplay)'
+# The game starts in the profile MO2 has selected, so that is the one whose saves are protected.
+$profileName = 'FUS RO DAH (Basic + Appearance + Gameplay)'
+if (Test-Path -LiteralPath $mo2Ini) {
+    $selected = Select-String -LiteralPath $mo2Ini -Pattern '^selected_profile=(@ByteArray\()?(.+?)\)?$' | Select-Object -First 1
+    if ($selected) { $profileName = $selected.Matches[0].Groups[2].Value }
+}
+$profileDir = Join-Path $fusRoot "profiles\$profileName"
 $savesDir = Join-Path $profileDir 'saves'
 $savesCopy = Join-Path $profileDir 'saves-before-rig'
 $savesCopyDone = Join-Path $profileDir 'saves-before-rig.complete'
@@ -216,7 +228,7 @@ function Copy-SavesAside {
     if ($copied.Count -ne $files.Count) { throw "Only $($copied.Count) of $($files.Count) saves were copied aside; not starting the game." }
     # Only a complete copy may ever be used to decide what the test game wrote.
     Set-Content -LiteralPath $savesCopyDone -Value $files.Count
-    Write-Host "Saves copied aside ($($files.Count) files); they are put back when the game is closed."
+    Write-Host "Saves of profile '$profileName' copied aside ($($files.Count) files); they are put back when the game is closed."
 }
 
 function Restore-Saves {
@@ -375,7 +387,7 @@ try {
 
     Start-Process -FilePath $mo2 -ArgumentList "`"moshortcut://:$mo2Shortcut`""
     Wait-Until { Get-Health } 180 'DevBench to answer (the game to start)'
-    Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } 180 'the main menu' -NeedsGame
+    Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } $MenuTimeout 'the main menu' -NeedsGame
 
     if ($Save) { Invoke-Tool 'game' @{ action = 'load'; name = $Save } | Out-Null }
     else { Invoke-Tool 'game' @{ action = 'loadLast' } | Out-Null }
