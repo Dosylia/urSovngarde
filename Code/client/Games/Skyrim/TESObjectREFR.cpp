@@ -507,6 +507,16 @@ TESObjectREFR::OpenState TESObjectREFR::GetOpenState() noexcept
     return s_pGetOpenState(this);
 }
 
+void TESObjectREFR::SetOpen(bool aOpen) noexcept
+{
+    using ObjectReference = TESObjectREFR;
+
+    // Papyrus SetOpen: the door opens or closes by itself, with no actor using it.
+    PAPYRUS_FUNCTION(void, ObjectReference, SetOpen, bool);
+
+    s_pSetOpen(this, aOpen);
+}
+
 ExtraContainerChanges::Data* TESObjectREFR::GetContainerChanges() const noexcept
 {
     TP_THIS_FUNCTION(TGetContainterChanges, ExtraContainerChanges::Data*, const TESObjectREFR);

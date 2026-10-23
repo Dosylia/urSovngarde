@@ -29,7 +29,11 @@ Checks:
                                                                           in an interior
     ref <hex> near <x> <y> <z> <units> | ref <hex> near player <units>    a reference of the game's own is that close
                                                                           to that place, or to the player
-    game alive | game inworld                                             the game still answers | and is in the
+    ref <hex> open | ref <hex> closed                                     a door of the game's own is open (or
+                                                                          opening), or closed (or closing)
+    ref <hex> locked | ref <hex> unlocked                                 a door or container of the game's own is
+                                                                          locked, or not
+    game alive | game inworld                                            the game still answers | and is in the
                                                                           world with a save loaded, not at a menu
     slide mark | slide below <pct> | slide above <pct>                    the game's own SlideDiag since the mark: the
                                                                           share of a remote body's moves that came
@@ -108,7 +112,7 @@ CAPTURES = os.path.join(FUS_ROOT, 'overwrite', 'SKSE', 'Plugins', 'devbench', 'c
 # Lydia" is then two paces that unload nothing (found 2026-10-02, a session that passed for that reason alone).
 ALL = ['live-copy', 'live-npc', 'live-dropmove', 'live-look', 'live-walk', 'live-copy-quiet', 'live-creatures', 'live-npc-away', 'live-away-seeker',
        'live-temp-remove', 'live-temp-reuse', 'live-copy-abandon', 'live-temp-reconnect', 'live-crime', 'live-netch',
-       'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead']
+       'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-echo', 'live-door-state', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead']
 # Not in the list, run by name: live-seeker-copy-remote and live-seeker-copy-local (the two halves that showed the
 # crash of live-copy-abandon needs a copy and its original together).
 
@@ -540,6 +544,16 @@ class Run:
                 ok = known and math.dist(at, wanted) <= float(words[6])
                 detail = 'reference %s at %s, %s units from (%s)' % (form, [round(v) for v in at] if known else at,
                                                                    round(math.dist(at, wanted)) if known else '?', ', '.join(words[3:6]))
+            elif who == 'ref' and words[2] in ('open', 'closed'):
+                # "ref <hex> open|closed": a door of the game's own is open (or opening), or closed (or closing).
+                state = papyrus('ObjectReference', 'GetOpenState', words[1])
+                ok = state in ((1, 2) if words[2] == 'open' else (3, 4))
+                detail = 'door %s, GetOpenState %s (1 open, 2 opening, 3 closed, 4 closing)' % (words[1], state)
+            elif who == 'ref' and words[2] in ('locked', 'unlocked'):
+                # "ref <hex> locked|unlocked": a door or container of the game's own is locked, or not.
+                locked = papyrus('ObjectReference', 'IsLocked', words[1])
+                ok = isinstance(locked, bool) and locked is (words[2] == 'locked')
+                detail = 'reference %s, IsLocked %s' % (words[1], locked)
             elif who == 'ref':
                 # "ref <hex> alive|dead": a reference of the game's own, asked directly.
                 form, state = words[1], words[2]

@@ -1225,6 +1225,9 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
     if (opcode == NotifyActivate::Opcode)
     {
         const auto& message = static_cast<const NotifyActivate&>(acMessage);
+        ++m_activations;
+        spdlog::info("Activation of {:X}:{:X} relayed here, by server id {:X}, from state {}", message.Id.ModId, message.Id.BaseId, message.ActivatorId,
+                     message.PreActivationOpenState);
         if (message.ActivatorId == m_serverId)
         {
             ++m_activationsBack;
@@ -2246,19 +2249,21 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "activate <hex reference> by other|me [door state]": an activation of that reference of Skyrim.esm, in this bot's cell.
+    // "activate <hex reference> by other|me|nobody [door state]": an activation of that reference of Skyrim.esm, in this bot's cell.
     // "by other" sends it in the name of the other player's character, as a game does when it sends on a door replayed on that player's copy.
     // "by me" sends it in this bot's own name; the game replays it on this bot's copy, and a game that sends the replay on sends it back here (see activationsback).
+    // "by nobody" sends it in the name of an actor no game has, as a door opened by an NPC the receiving game has no copy of.
     // The server relays it to the players in that cell, the game among them.
     if (name == "activate")
     {
         uint32_t refId = 0;
-        if (args.size() < 3 || !ParseHex(args[0], refId) || args[1] != "by" || (args[2] != "other" && args[2] != "me"))
+        if (args.size() < 3 || !ParseHex(args[0], refId) || args[1] != "by" || (args[2] != "other" && args[2] != "me" && args[2] != "nobody"))
         {
-            spdlog::error("[script] activate needs a hex reference and 'by other' or 'by me'");
+            spdlog::error("[script] activate needs a hex reference and 'by other', 'by me' or 'by nobody'");
             return true;
         }
-        uint32_t otherId = args[2] == "me" ? m_serverId : kNoId;
+        constexpr uint32_t cNobody = 0x7FFFFF0;
+        uint32_t otherId = args[2] == "me" ? m_serverId : args[2] == "nobody" ? cNobody : kNoId;
         for (const auto& player : m_players)
             if (otherId == kNoId && player.ServerId != m_serverId)
             {
@@ -3304,6 +3309,23 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         // mydrop: the server has sent this bot's own drop back.
         aOutWhy = m_drops.count(m_ownDrop) ? fmt::format("item {} is this bot's drop", m_ownDrop) : fmt::format("{} item(s) known, none of them this bot's", m_drops.size());
         return m_drops.count(m_ownDrop) != 0;
+    }
+
+    if (what == "activations")
+    {
+        // activations <op> <n>: every activation relayed to this bot, whoever did it.
+        float wanted = 0.f;
+        if (acArgs.size() < 3 || !ParseFloat(acArgs[2], wanted))
+            return std::nullopt;
+        const float value = static_cast<float>(m_activations);
+        aOutWhy = fmt::format("{} activation(s) relayed here", m_activations);
+        const std::string& op = acArgs[1];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
     }
 
     if (what == "activationsback")

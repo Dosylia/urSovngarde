@@ -568,6 +568,69 @@ Both players need it.
 
 ## Open work
 
+- [ ] **Fourth MGO session, 2026-10-22 20:03-20:31** (both players on v1.9.6, host's server; player 1 hosted). Helgen
+      from the cart to outside the cave, with Ralof. Smooth for most of it, no crash. Logs read; nothing changed yet.
+      - Stutter outside is memory, not our code. Inside: 31-41 fps. From the cave exit at 20:26: private memory
+        23 to 31 GB on player 1's PC (31 GB of RAM), 28 to 31 GB on player 2's. There, 22-29 fps, 35-71 frames over
+        50 ms per 30 s, p99 up to 233 ms, and a 25 s load at the exit. Our update stayed at 0.34-0.63 ms.
+      - Ours, bodies flying: three NPC copies lay dead in player 2's game while their owner (player 1's game) still
+        had them alive. No death ever came from the owner: no `Death sync` line for them. The corpse placement pulls a
+        dead copy to its owner's position, and here that position belonged to a living NPC on the move. Bandit 977F7,
+        outside the cave, was pulled 125 times in 3.5 minutes, from 67 units off up to 8505
+        (`CorpseDiag: ... moved there`). B1694, in the keep, went on firing at its owner's while lying dead here.
+        977F6 was the third. Each new owner position starts new tries, so the "left there" stop (two moves that did
+        not bring it nearer) never holds.
+        - Not known: how the copies died here. No `health broadcast killed` line for them; `NPC 977F7 health
+          corrected from 35 to its owner's 10` four seconds before.
+        - Candidate fix (not made): the corpse is placed only once the owner's game has said the NPC is dead (a death
+          sync, a spawn that came dead, or the health broadcast). Without that word, the copy lies where it fell.
+          Bringing it back to life instead would be closer to the truth, but `Respawn` re-rolls a leveled NPC. Red
+          first in the rig: a copy killed here with papyrus while the bot walks it alive.
+      - Ours, a body changing hands: 5CEEE (Imperial soldier) died in player 1's game. Player 2's copy was pulled 343,
+        195, 343 and 175 units (`CorpseDiag`), then kept moving. Player 2's game then took it with a hand within
+        40 units (`Body 5CEEE ... is being moved here; asking for it`). The server logged it as a `party leader
+        claim` at 20:15:03. Player 1's copy was then pulled 300-564 units. Possible fix: ignore motion for 1.5 s
+        after our own corpse placement, as is done for the owner's moves. Better: require a real HIGGS hold on the
+        body (`HiggsBodyHolding`), but that reads Havok outside its step.
+      - Ours, Ralof flickering in player 2's game. Player 2's game ran its own AI on its copy of Ralof (player 1's).
+        That AI walked the copy through load doors: 909D2 into the keep (20:11:49-20:12:04) and 91608 out of the cave
+        (20:25:53-20:26:22). Each time the copy went to the other side, was removed and was spawned back: 15 removals
+        in 3 s cycles (`Activation of 909D2 by 2BF9E, another game's actor, not sent` / `Actor removed, form id:
+        2BF9E`). Candidate fix: a remote copy never goes through a load door in this game (blocked in the activation
+        hook); the owner reports where it went. The owner's own activation, replayed through `OnActivateNotify`, would
+        stay allowed.
+      - Ours, a door activation dropped: 938F3 opened in player 1's game by a Stormcloak soldier player 1 owned
+        (FF001B35, server id 100086). Player 2's game had no copy of that soldier: `OnActivateNotify: could not find
+        actor server id 100086`. The door stayed shut there.
+        - Fixed in build a547eb5 (client only, no protocol change; FUS tools folder): a door that does not lead
+          elsewhere is set to the state it ended in at the sender (`ObjectReference.SetOpen`; the message already
+          carries the state before the activation). It is no longer used again with the actor's copy. No actor is
+          needed, and setting it is not an activation, so nothing is sent back: two games cannot pass a door to and
+          fro. Opening a door that is locked here also unlocks it (the game's SetOpen does that). It was unlocked at
+          the sender, since a locked door's use is never sent. Load doors keep the old way (the copy uses the door).
+          Logged: `Door X: opened|closed in another game (by ...); set open|closed here from state N[, and unlocked:
+          it was locked here]` or `already N here`.
+        - Rig, `live-door-state` (new): red on f39baec6 (`could not find actor server id 7FFFFF0`, the door stayed
+          shut), green on a547eb5, 14 checks. The test covers: opened by an actor the game lacks; the same opening
+          again (nothing done); closed by the bot's copy; the game's own player still sends its use; a door locked
+          here opens and unlocks. After each door the game sends nothing back (the bot counts activations). The
+          regression test `live-door-echo` (load doors) passes, 6 checks. Not seen in play yet: both players need
+          this client, since each game applies the doors it receives.
+        - Still not made: the sender sends a door's use even when a script blocks it (BlockActivation), so the
+          receiver can open a door the sender's game kept shut. That is harmless for getting through, and not seen
+          in the logs.
+      - Not ours, a scene limit: player 2 stayed tied. MQ101's stages did sync both ways (250-800, `Remote quest
+        updated`). Freeing the player is a scene in each game: Ralof walks up to that game's player. In player 2's
+        game Ralof is player 1's copy, so that scene never finishes. The same holds for the keep doors Ralof opens in
+        his scene. With a party, the vanilla intro needs a console command for player 2, or an alternate start.
+      - "Doors synced the moment a player joins": the server keeps no door open state, only locks and container
+        contents per cell (`AssignObjectsRequest`). It would need the open state kept per door and sent on cell entry.
+        That is a protocol change: the owner's call.
+      - "NPCs not following" (about 20:21): nothing in the logs. No ownership changes then, no quiet stops. Quest NPCs
+        follow the game that runs them (player 1's), not player 2.
+      - Player 1 rejoined once (player 1, then player 2 on the server); player 2 was player 3. Player 2's clock runs
+        about 6 s ahead of the server's.
+
 - [ ] **Third MGO session, 2026-10-21 22:01-22:21** (both players on d7e7105, after tweaks to the list): a lot more
       playable. It ended when player 2's game crashed.
       - The crash, while player 2 put on the Imperial Captain's armor taken off her body: a call to address 0

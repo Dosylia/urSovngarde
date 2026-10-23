@@ -318,6 +318,7 @@ private:
     uint64_t m_firstClashTick{}; //!< and the first
     uint32_t m_objectMoves{}; //!< world-object moves relayed to this bot
     uint32_t m_activationsBack{}; //!< activations relayed to this bot in its own name: its own, sent back by a game
+    uint32_t m_activations{}; //!< every activation relayed to this bot, whoever did it
     std::vector<std::pair<uint32_t, std::string>> m_names; // player id -> username
 
     size_t m_pc = 0;

@@ -215,6 +215,7 @@ struct TESObjectREFR : TESForm
     const float GetHeight() noexcept;
     void EnableImpl() noexcept;
     OpenState GetOpenState() noexcept;
+    void SetOpen(bool aOpen) noexcept;
 
     Inventory GetInventory() const noexcept;
     Inventory GetInventory(std::function<bool(TESForm&)> aFilter) const noexcept;
