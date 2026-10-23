@@ -8,6 +8,7 @@
 # First done by hand on 2026-10-01; this is those steps, in the order that worked. What it relies on:
 #   - SteamVR's 'null' driver with two virtual controllers (the SkyrimVR Devkit's source, built and copied in by hand).
 #     Valve's stock null driver has no controllers, and skyrimvrtools.dll crashes six seconds after a load without them.
+#     Controllers SteamVR turned off for being idle count as none, so 'up' also keeps them on for the run.
 #     The driver is only active while a 'driver_null' block is in steamvr.vrsettings, which 'up' adds and 'down' removes.
 #     SteamVR must be closed for either, because it rewrites that file when it exits.
 #   - DevBench (an SKSE plugin, http://127.0.0.1:8921) to load the save and to quit.
@@ -115,6 +116,11 @@ function Get-Health {
 $driversOffForRun = @('driver_playstation_vr2')
 # Which of them 'up' switched off, so that 'down' takes out those blocks and no others.
 $driversOffMarker = Join-Path $env:TEMP 'urSovngarde-headless-drivers-off.txt'
+# SteamVR turns controllers off after five minutes without a move (power.turnOffControllersTimeout, 300 s), and the rig's only move when a test moves them.
+# A controller turned off has no hand role, and at the next save load PapyrusVR reads the pose of "no device" and crashes (skyrimvrtools.dll+0x71B5).
+# So for the run the timeout is a day; the marker keeps the player's own setting ('none' when there was none) for 'down' to put back.
+$controllersOffAfterForRun = 86400.0
+$controllersOffMarker = Join-Path $env:TEMP 'urSovngarde-headless-controllers-timeout.txt'
 
 # The settings file is JSON that SteamVR writes itself; it is read and written whole, and only the rig's keys are touched.
 function Set-NullDriver([bool]$on) {
@@ -130,6 +136,12 @@ function Set-NullDriver([bool]$on) {
         $added = @($driversOffForRun | Where-Object { $names -notcontains $_ })
         foreach ($name in $added) { $settings | Add-Member -NotePropertyName $name -NotePropertyValue ([pscustomobject]@{ enable = $false }) }
         if ($added.Count) { Set-Content -LiteralPath $driversOffMarker -Value $added }
+        # A marker left by a run that died is kept: it still holds the player's setting, not the rig's.
+        if ($names -notcontains 'power') { $settings | Add-Member -NotePropertyName 'power' -NotePropertyValue ([pscustomobject]@{}) }
+        $own = $settings.power.PSObject.Properties['turnOffControllersTimeout']
+        if (-not (Test-Path -LiteralPath $controllersOffMarker)) { Set-Content -LiteralPath $controllersOffMarker -Value $(if ($own) { $own.Value } else { 'none' }) }
+        if ($own) { $settings.power.turnOffControllersTimeout = $controllersOffAfterForRun }
+        else { $settings.power | Add-Member -NotePropertyName 'turnOffControllersTimeout' -NotePropertyValue $controllersOffAfterForRun }
     }
     else {
         if ($names -contains 'driver_null') { $settings.PSObject.Properties.Remove('driver_null'); $changed = $true }
@@ -138,6 +150,18 @@ function Set-NullDriver([bool]$on) {
                 if ($names -contains $name) { $settings.PSObject.Properties.Remove($name); $changed = $true }
             }
             Remove-Item -LiteralPath $driversOffMarker
+        }
+        if (Test-Path -LiteralPath $controllersOffMarker) {
+            $was = (Get-Content -LiteralPath $controllersOffMarker -TotalCount 1).Trim()
+            $power = $settings.PSObject.Properties['power']
+            if ($power -and $was -eq 'none') {
+                $power.Value.PSObject.Properties.Remove('turnOffControllersTimeout')
+                # A power block that only held the rig's timeout goes with it.
+                if (-not @($power.Value.PSObject.Properties).Count) { $settings.PSObject.Properties.Remove('power') }
+            }
+            elseif ($power) { $power.Value.turnOffControllersTimeout = [double]$was }
+            $changed = $true
+            Remove-Item -LiteralPath $controllersOffMarker
         }
     }
     if (-not $changed) { return }
