@@ -202,8 +202,11 @@ Both players need it.
       2026-10-11 21:12; in a dungeon, the respawn at its own spot (`RespawnPlayer: in cell ... at its override
       position`). With the revive build, a respawn goes to the last safe point instead (`RespawnPlayer: at the safe
       point in cell ...`), and the override only applies without one.
-- [ ] **A load within a minute of a death:** it crashes the rig every time (`skyrimvrtools.dll+0x71B5`); no real session
-      has done it yet.
+- [ ] **A load within a minute of a death:** no real session has done it yet.
+      - The rig's crash at such loads (`skyrimvrtools.dll+0x71B5`) was not the death: SteamVR turned the rig's idle controllers
+        off after 5 minutes, and PapyrusVR then read the pose of "no device" at the next save load (2026-10-23, MGO, also
+        without any death). `headless.ps1` now keeps them on for the run; `live-load-dead` 5/5 and three loads past the
+        5 minutes without a crash on b62ca9aa.
 - [ ] **A real dragon flying** in one game: the other game never takes it over until it lands.
 - [ ] **Playback delay:** the `InterpDiag players` lines say how much of the 225 ms the network really needs; then decide
       whether the delay follows the connection. Upstream (23901108, a4a33744, 0a6784b8) gets about 65 ms at 20 ms
