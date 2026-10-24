@@ -19,5 +19,5 @@ target("STBot")
         "snappy")
     add_defines("STEAMNETWORKINGSOCKETS_STATIC_LINK", "NOMINMAX")
     if is_plat("windows") then
-        add_syslinks("ws2_32", "iphlpapi", "crypt32", "bcrypt", "userenv", "psapi")
+        add_syslinks("ws2_32", "iphlpapi", "crypt32", "bcrypt", "userenv", "psapi", "winmm")
     end

@@ -1,10 +1,41 @@
 <app-popup *ngIf="error$ | async as error">
   <div class="error-content">
-    <p [innerHTML]="error"></p>
+    <h2 class="error-title">
+      <span class="error-mark"><fa-icon [icon]="faXmark"></fa-icon></span>
+      {{ error.title }}
+    </h2>
+    <p class="error-message" [innerHTML]="error.message"></p>
+
+    <div *ngIf="error.install.length || error.remove.length" class="error-mods">
+      <div *ngIf="error.install.length" class="error-mods-list install">
+        <h4>
+          {{ 'COMPONENT.ERROR.INSTALL' | transloco: { count: error.install.length } }}
+        </h4>
+        <p *ngFor="let mod of error.install">{{ mod }}</p>
+      </div>
+      <div *ngIf="error.remove.length" class="error-mods-list remove">
+        <h4>
+          {{ 'COMPONENT.ERROR.REMOVE' | transloco: { count: error.remove.length } }}
+        </h4>
+        <p *ngFor="let mod of error.remove">{{ mod }}</p>
+      </div>
+    </div>
+
     <app-action-buttons>
-      <button (click)="removeError()" data-style-ornament="simple">
-        {{ 'COMPONENT.ERROR.OK' | transloco }}
-      </button>
+      <ng-container *ngIf="windowBehind; else onlyOk">
+        <button class="menu-button compact primary" (click)="back()">
+          <fa-icon class="menu-button-icon" [icon]="faArrowLeft"></fa-icon>
+          {{ 'COMPONENT.ERROR.BACK' | transloco }}
+        </button>
+        <button class="menu-button compact" (click)="close()">
+          {{ 'COMPONENT.ERROR.CLOSE' | transloco }}
+        </button>
+      </ng-container>
+      <ng-template #onlyOk>
+        <button class="menu-button compact primary" (click)="back()">
+          {{ 'COMPONENT.ERROR.OK' | transloco }}
+        </button>
+      </ng-template>
     </app-action-buttons>
   </div>
 </app-popup>

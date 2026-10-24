@@ -20,6 +20,8 @@ struct NotifyDownedState final : ServerMessage
         kStoodUp,       //!< Up again without a revive or a respawn: a save was loaded while down.
         kReviveRefused, //!< ReviverId's revive of PlayerId was refused, for Refusal.
         kLeft,          //!< Left the party or the server while down: sent to the members told it was down, who can no longer revive it.
+        kReviveHeld,    //!< To the downed player only: ReviverId has a hand on them and is reviving them.
+        kReviveLetGo,   //!< To the downed player only: ReviverId's hand came off before the revive.
     };
 
     NotifyDownedState()

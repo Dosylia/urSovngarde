@@ -17,8 +17,9 @@
 namespace CopyRemovalPolicy
 {
 //! Never hold back more than this many copies.
-//! Kept small on purpose, because the bound is what keeps the wait from piling up.
-constexpr size_t kMaxWaiting = 24;
+//! A player leaving can remove over a hundred copies at once, and each one forced out at the limit is freed while held.
+//! A waiting copy is disabled and costs a list slot; kMaxWaitMs is what keeps the list from growing without end.
+constexpr size_t kMaxWaiting = 256;
 
 //! Give up waiting after this long and free the copy anyway.
 //! A holder that has not let go in a minute will not let go while the cell is loaded.

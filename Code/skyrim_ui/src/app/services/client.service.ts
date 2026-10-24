@@ -201,6 +201,11 @@ export class ClientService implements OnDestroy {
     this._password = password;
   }
 
+  /** The address of the last connection this menu started. */
+  public get host(): string {
+    return this._host;
+  }
+
   /**
    * Disconnect from the server or cancel connection.
    */
@@ -404,10 +409,6 @@ export class ClientService implements OnDestroy {
     this.zone.run(() => {
       this.versionSet.next(version);
     });
-  }
-
-  getVersion(): string {
-    return this.versionSet.value;
   }
 
   /**

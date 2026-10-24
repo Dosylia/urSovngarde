@@ -9,9 +9,13 @@ namespace VRBanner
 {
 //! @param acText UTF-8.
 //! @param aRgb The text's colour, 0xRRGGBB.
-//! @param aTextHeight How tall the letters are, in the overlay's 1024 pixels across.
+//! @param aTextHeight How tall the letters are, in 1024ths of the overlay's width.
 //! @param aHoldSeconds How long it stays fully shown, between the fades.
 void Show(const std::string& acText, uint32_t aRgb, int aTextHeight, float aHoldSeconds) noexcept;
+
+//! The death card: the title in large letters between thin rules under an emblem, and a smaller line below it.
+//! @param acSubtitle UTF-8; empty for none.
+void ShowDeath(const std::string& acTitle, const std::string& acSubtitle, uint32_t aRgb, float aHoldSeconds) noexcept;
 
 //! Fades out the one showing, if any.
 void Hide() noexcept;

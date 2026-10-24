@@ -8,7 +8,7 @@ void NotifyAddTarget::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const
     EffectId.Serialize(aWriter);
     Serialization::WriteFloat(aWriter, Magnitude);
     Serialization::WriteBool(aWriter, IsDualCasting);
-    Serialization::WriteBool(aWriter, ApplyHealPerkBonus);
+    Serialization::WriteFloat(aWriter, CasterPerkFactor);
     Serialization::WriteBool(aWriter, ApplyStaminaPerkBonus);
 }
 
@@ -22,6 +22,6 @@ void NotifyAddTarget::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noe
     EffectId.Deserialize(aReader);
     Magnitude = Serialization::ReadFloat(aReader);
     IsDualCasting = Serialization::ReadBool(aReader);
-    ApplyHealPerkBonus = Serialization::ReadBool(aReader);
+    CasterPerkFactor = Serialization::ReadFloat(aReader);
     ApplyStaminaPerkBonus = Serialization::ReadBool(aReader);
 }

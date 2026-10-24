@@ -1,0 +1,47 @@
+# An NPC that goes indoors with its owner leaves the screen of a player who stays outside.
+#
+#   python Tools\VR\live-check.py live-npc-indoors
+#   python Tools\VR\live-check.py --expect-fail live-npc-indoors     on a build without the change: must be RED
+#
+# The server passed an NPC's moves only to the players in range of its new cell, and never took it away from those it
+# left. A follower that went into a house with its owner stood frozen outside for the other player.
+# Now an NPC that goes through a door, out of a player's range, is removed for that player, and a move that brings it
+# back sends it to them again.
+# Here: the bot brings a bear next to the player outdoors, goes into Helgen's keep with it, and comes back out.
+log live npc indoors
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- the bot's bear next to the player
+npc temp 23A8A
+waitfor owned == 1 20
+wait 8
+log CHECK npc exists
+wait 3
+
+log -- the bot goes into Helgen's keep, and its bear with it
+stay
+cell 5DE24
+wait 2
+npcmove 0 0 0
+wait 6
+log CHECK npc gone
+wait 3
+
+log -- they come back out
+cell out
+wait 2
+npcmove 0 0 0
+wait 10
+log CHECK npc exists
+
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

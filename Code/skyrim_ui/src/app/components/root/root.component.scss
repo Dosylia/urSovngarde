@@ -74,38 +74,75 @@
 }
 
 ::ng-deep {
-  .app-root-popups {
-    > app-popup > app-window {
-      max-width: 32vw;
-      min-width: 20vw;
-    }
+  .app-root-views > app-popup > app-window {
+    max-width: 50vw;
+    min-width: 30vw;
+  }
 
-    > app-popup[data-popup='server'] > app-window {
-      max-width: 75vw;
-      min-width: 40vw;
-    }
+  .app-root-views > app-popup[data-popup='server'] > app-window {
+    max-width: 75vw;
+    min-width: 40vw;
+  }
 
-    > app-popup[data-popup='playerManager'] > app-window {
-      max-width: 30vw;
-      min-width: 25vw;
-    }
+  .app-root-views > app-popup[data-popup='playerManager'] > app-window {
+    width: 62vw;
+    max-width: 62vw;
   }
 }
 
-.app-root-controls {
-  @include gapped-vertical($-size-gap);
-
-  position: absolute;
-  left: $-size-gap;
-  display: flex;
-  flex-direction: column;
-  width: 32vw;
-  bottom: $-size-gap;
+// The window behind an error stays open, out of sight, so the error's Back button returns to it.
+.app-root-views-hidden {
+  visibility: hidden;
 }
 
-.app-root-menu,
-.app-root-chat {
+// The whole panel: the brand and the status chip on top, the buttons on the left, the chat on the right.
+.app-root-controls {
+  position: absolute;
+  inset: 0;
+  padding: 1.2rem 1.8rem 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+}
+
+.app-root-top {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-root-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 1.8rem;
+}
+
+.app-root-menu {
+  flex: 0 0 40%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  overflow-y: auto;
+}
+
+// Apart from the rest, so a press meant for another button does not land on it.
+.app-root-disconnect {
+  margin-top: auto;
+  width: 65%;
+}
+
+.app-root-invites {
+  color: var(--ur-gold-hi);
+}
+
+.app-root-version {
+  position: absolute;
+  right: 1.8rem;
+  bottom: 0.3rem;
+  font-size: 0.65rem;
+  color: rgba(240, 232, 214, 0.35);
 }
 
 // urSovngarde's mark above the menu, as the launcher's header has it: the sigil, the name with "ur" in gold, the
@@ -150,57 +187,15 @@
   color: #c0982c;
 }
 
-.app-root-menu {
-  display: flex;
-  height: 4rem;
-  margin: 0 auto;
-
-  > button {
-    flex: 1 1 auto;
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-}
-
 .app-root-chat {
-  width: 100%;
-  height: 30vh;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 
   > app-chat {
     margin: 0.1rem;
     flex: 1 1 auto;
-  }
-}
-
-// Note: due to how `-webkit-background-clip` renders clipped text (that's needed for 
-// the cooldown effect), we need to apply a few workarounds to make it look just right. I'm sorry!
-
-.cooldown-supporting-text-normal {
-  color: mod($-color-background, 0.8);
-  transition: color 0.3s linear;
-}
-
-.cooldown-supporting-text-animating {
-  color: mod($-color-background, 0.3);
-}
-
-.text-cooldown-effect {
-  --cooldown-duration: 10s;
-  background: linear-gradient(
-    to left, 
-    mod($-color-background, 0.3) 50%, 
-    mod($-color-background, 1) 50%
-  );
-  background-clip: text;
-  -webkit-background-clip: text;
-  transition: background-position var(--cooldown-duration) linear;
-  color: transparent;
-  background-size: 200%;
-  background-position: 0%;
-
-  &.cooldown-active {
-    background-position: 100%;
+    min-height: 0;
   }
 }

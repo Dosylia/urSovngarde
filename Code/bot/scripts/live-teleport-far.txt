@@ -1,0 +1,43 @@
+# A teleport this player cannot see loads nothing.
+#
+#   python Tools\VR\live-check.py live-teleport-far
+#   python Tools\VR\live-check.py --expect-fail live-teleport-far     on a build without the fix: must be RED
+#
+# When a game lets go of an actor it unloaded, the server tells every other player to move that actor to where it was
+# last seen (NotifyActorTeleport). A game that moved it there loaded that far exterior cell, and the game's streaming of
+# such cells crashed four times on the thread that promotes large references, 3 to 47 ms after bursts of these moves.
+# Here: Lydia (A2C94, the follower in the test save) is put next to the player and told to wait; the bot takes her as
+# its follower; the player travels far away; the bot lets her go as last seen in a third place, far from both.
+# The game must leave her where she is: neither she nor that place is loaded here.
+log live teleport far
+waitfor connected 45
+collect ownership party
+expect known me
+waitfor known other 40
+ownership accept
+wait 5
+
+log -- Lydia next to the player, waiting there
+log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+waitfor known ref:A2C94 40
+wait 3
+claim ref:A2C94 follower
+waitfor owned == 1 15
+expect owned == 1
+stay
+
+log -- the player travels far away; Lydia stays behind, unloaded here
+log DO console cow Tamriel 0 0
+wait 30
+
+log -- the bot lets her go as last seen far from both
+release ref:A2C94 at 90000 40000 0
+wait 5
+log REQUIRE logged (Successfully teleported actor, form id: A2C94|Teleport of actor A2C94 not made)
+log CHECK absent Successfully teleported actor, form id: A2C94,
+log CHECK logged Teleport of actor A2C94 not made: it is not loaded here, nor is the place it goes to
+log CHECK game alive
+log CHECK game inworld
+log done
+stop

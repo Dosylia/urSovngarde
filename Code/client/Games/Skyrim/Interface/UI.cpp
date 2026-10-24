@@ -8,6 +8,7 @@
 #include <Games/Skyrim/Interface/DeferredSleepWait.h>
 #endif
 #include <World.h>
+#include <PatchCheck.h>
 
 static bool g_RequestUnpauseAll{false};
 
@@ -385,6 +386,11 @@ static std::chrono::steady_clock::time_point s_lastGameEnemyMeterTargetAt{};
 
 void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI_MESSAGE_TYPE a3, void* a4)
 {
+    // The other half of "Menu queued": a menu asked to close, so a report shows which menu was left open.
+    // The VR HUD widgets (WS*) are left out, as there.
+    if ((a3 == UIMessage::kHide || a3 == UIMessage::kForceHide) && a2 && a2->AsAscii() && strncmp(a2->AsAscii(), "WS", 2) != 0)
+        spdlog::info("Menu closing: {}{}", a2->AsAscii(), a3 == UIMessage::kForceHide ? " (forced)" : "");
+
     // An empty message box opens at the main menu and after every save load, pausing the world; that show is dropped.
     if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "MessageBoxMenu") == 0)
     {
@@ -499,19 +505,38 @@ static TiltedPhoques::Initializer s_s(
         constexpr size_t cStartupMovieBranch = 0xFE;
 #endif
 
+        // Each patch checks the instruction it replaces first, and leaves the game alone when another one is there.
+
         // Menus that don't pause the game while connected (see kAllowList).
         VersionDbPtr<uint8_t> ProcessHook(82082);
-        TiltedPhoques::SwapCall(ProcessHook.Get() + cAddToActiveQueueCall, UI_AddToActiveQueue, &UI_AddToActiveQueue_Hook);
+        uint8_t* pAddToActiveQueue = PatchCheck::At(ProcessHook.Get(), cAddToActiveQueueCall);
+        if (PatchCheck::IsCall(pAddToActiveQueue))
+            TiltedPhoques::SwapCall(pAddToActiveQueue, UI_AddToActiveQueue, &UI_AddToActiveQueue_Hook);
+        else
+            spdlog::error("UI: {} is not the call to AddToActiveQueue ({}), leaving it alone; menus pause the game while connected",
+                          fmt::ptr(pAddToActiveQueue), PatchCheck::Bytes(pAddToActiveQueue, 5));
 
         // Ignore startup movie
         // TODO: Move me later.
+        // A conditional jump made unconditional; it already is when another plugin skips the movie too.
         VersionDbPtr<uint8_t> MainInit(36548);
-        TiltedPhoques::Put<uint8_t>(MainInit.Get() + cStartupMovieBranch, 0xEB);
+        uint8_t* pStartupMovie = PatchCheck::At(MainInit.Get(), cStartupMovieBranch);
+        if (PatchCheck::IsShortConditionalJump(pStartupMovie) || PatchCheck::Is(pStartupMovie, {0xEB}))
+            TiltedPhoques::Put<uint8_t>(pStartupMovie, 0xEB);
+        else
+            spdlog::error("UI: {} is not the intro movie's branch ({}), leaving it alone; the intro movie plays",
+                          fmt::ptr(pStartupMovie), PatchCheck::Bytes(pStartupMovie, 2));
 
         // Credits to Skyrim Souls RE for this fix.
         // Allows the favorites menu to be numbered during connect.
+        // A two-byte conditional jump removed; it already is when another plugin makes the same fix.
         VersionDbPtr<uint8_t> FavoritesCanProcess(51538);
-        TiltedPhoques::Put<uint16_t>(FavoritesCanProcess.Get() + 0x15, 0x9090);
+        uint8_t* pFavorites = PatchCheck::At(FavoritesCanProcess.Get(), 0x15);
+        if (PatchCheck::IsShortConditionalJump(pFavorites) || PatchCheck::Is(pFavorites, {0x90, 0x90}))
+            TiltedPhoques::Put<uint16_t>(pFavorites, 0x9090);
+        else
+            spdlog::error("UI: {} is not the favorites menu's branch ({}), leaving it alone; favorites cannot be numbered while connected",
+                          fmt::ptr(pFavorites), PatchCheck::Bytes(pFavorites, 2));
 
 #ifdef SKYRIMVR
         {

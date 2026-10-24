@@ -15,6 +15,7 @@ struct ActionEvent;
 struct AssignCharacterResponse;
 struct CharacterSpawnRequest;
 struct ServerReferencesMoveRequest;
+struct NotifyActionEvents;
 struct NotifyInventoryChanges;
 struct NotifyFactionsChanges;
 struct NotifyRemoveCharacter;
@@ -70,6 +71,7 @@ struct CharacterService
     void OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept;
     void OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept;
     void OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept;
+    void OnNotifyActionEvents(const NotifyActionEvents& acMessage) const noexcept;
     void OnActionEvent(const ActionEvent& acActionEvent) const noexcept;
     void OnFactionsChanges(const NotifyFactionsChanges& acEvent) const noexcept;
     void OnOwnershipTransfer(const NotifyOwnershipTransfer& acMessage) noexcept;
@@ -95,10 +97,11 @@ struct CharacterService
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
 
 private:
-    void MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept;
+    //! False when the cell to move to could not be found.
+    bool MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept;
 
     void RequestServerAssignment(entt::entity aEntity) const noexcept;
-    void CancelServerAssignment(entt::entity aEntity, uint32_t aFormId) const noexcept;
+    void CancelServerAssignment(entt::entity aEntity, uint32_t aFormId, Actor* apActor) const noexcept;
     void DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept;
     void ClaimCopyId(entt::entity aEntity, uint32_t aFormId) const noexcept;
     void DeclineOwnership(uint32_t aServerId, uint32_t aOwnershipEpoch) const noexcept;
@@ -148,10 +151,24 @@ private:
 
     Map<uint32_t, WeaponDrawData> m_weaponDrawUpdates{};
 
-    // Actor form ID -> a full inventory that came while the actor had no loaded AI process here (ReconcileActorData).
+    // A full inventory that came while the actor had no loaded AI process here (ReconcileActorData).
     // The game's equip code reads that process, so the inventory waits until the actor has one (ApplyPendingInventories).
-    Map<uint32_t, Inventory> m_pendingInventories{};
+    // It is kept for the copy it came for: the same actor under the same server id and ownership epoch.
+    struct PendingInventory
+    {
+        Inventory Content;
+        const Actor* pActor = nullptr;
+        uint32_t ServerId = 0;
+        uint32_t OwnershipEpoch = 0;
+    };
+    // Actor form ID -> its waiting inventory.
+    Map<uint32_t, PendingInventory> m_pendingInventories{};
     void ApplyPendingInventories() noexcept;
+    // Whether the entity on this form id is still the copy a waiting inventory came for.
+    bool IsSameCopy(uint32_t aFormId, const PendingInventory& acPending) const noexcept;
+    // Changes the owner sends while an inventory waits are applied to it too, or applying it would undo them.
+    void OnNotifyInventoryChanges(const NotifyInventoryChanges& acMessage) noexcept;
+    entt::scoped_connection m_inventoryChangesConnection;
 
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
@@ -176,6 +193,7 @@ private:
     entt::scoped_connection m_assignCharacterConnection;
     entt::scoped_connection m_characterSpawnConnection;
     entt::scoped_connection m_referenceMovementSnapshotConnection;
+    entt::scoped_connection m_actionEventsConnection;
     entt::scoped_connection m_mountConnection;
     entt::scoped_connection m_notifyMountConnection;
     entt::scoped_connection m_initPackageConnection;

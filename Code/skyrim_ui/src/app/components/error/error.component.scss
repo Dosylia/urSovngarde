@@ -1,5 +1,70 @@
 .error-content {
   display: flex;
   flex-direction: column;
+  gap: 1rem;
+  max-width: 44rem;
+  min-width: 26rem;
+  padding: 0.3rem 0.8rem;
+}
+
+.error-title {
+  display: flex;
   align-items: center;
+  gap: 0.8rem;
+  margin: 0;
+  font-weight: normal;
+  font-size: 1.5rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #f3c3bf;
+}
+
+.error-mark {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid var(--ur-bad);
+  color: var(--ur-bad);
+}
+
+.error-message {
+  margin: 0;
+  line-height: 1.35;
+  color: var(--ur-dim);
+}
+
+.error-mods {
+  display: flex;
+  gap: 1rem;
+}
+
+.error-mods-list {
+  flex: 1 1 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0.6rem 0.9rem;
+  border: 2px solid rgba(240, 232, 214, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+
+  h4 {
+    margin: 0 0 0.5rem;
+    font-weight: normal;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  p {
+    margin: 0.3rem 0;
+  }
+
+  &.install h4 {
+    color: var(--ur-ok);
+  }
+
+  &.remove h4 {
+    color: var(--ur-bad);
+  }
 }

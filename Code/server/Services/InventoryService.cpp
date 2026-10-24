@@ -83,6 +83,7 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     notify.ServerId = message.ServerId;
     notify.OwnershipEpoch = message.OwnershipEpoch;
     notify.Item = message.Item;
+    notify.PickedUp = message.PickedUp;
 
     // Never forwarded as a drop: DroppedItemService places the item, and the flag would drop a second one.
     notify.Drop = false;

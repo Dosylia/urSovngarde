@@ -5,15 +5,40 @@
 #include <Games/Events.h>
 
 struct NotifyQuestUpdate;
+struct DisconnectedEvent;
+struct PartyLeftEvent;
+struct UpdateEvent;
 
 struct TESQuest;
 
 /**
- * @brief Handles quest sync
+ * @brief Syncs quest starts, stops and stages across the party
  *
- * This service is currently not in use.
+ * Every client runs the party's quests itself (scripts, scenes, dialogue), and only starts, stops and stages are
+ * shared. Anything else a quest holds (aliases, script properties) only matches when the stage fragments produce it.
+ *
+ * Sending: TESQuestStartStopEvent and TESQuestStageEvent go out as RequestQuestUpdate, only in a party. Quests without
+ * stages or in kNonSyncableQuestIds are never sent, and the server drops None/Miscellaneous ones unless
+ * bEnableMiscQuestSync is set.
+ *
+ * Relaying: the server sends updates to the rest of the party as NotifyQuestUpdate. Members' scripts often reach the
+ * same stage on their own, so it relays each once, from whoever reaches it first, until the quest next starts or stops.
+ *
+ * Applying: stages go through ScriptSetStage so their fragments run (and a stopped quest restarts), skipping those
+ * already reached. Stops skip scripts. ScopedQuestOverride keeps the events this fires from being sent back.
+ *
+ * Scenes: setting a stage a playing scene waits on can end its phase early, skipping its lines and scripts and leaving
+ * the quest stuck. So the leader, whose world the party follows, holds member stages that the running or next phase checks and
+ * queues later ones behind them. Members apply every stage right away.
  */
-class QuestService final : public BSTEventSink<TESQuestStartStopEvent>, BSTEventSink<TESQuestStageEvent>
+class QuestService final : public BSTEventSink<TESQuestStartStopEvent>,
+                           BSTEventSink<TESQuestStageEvent>,
+                           BSTEventSink<TESQuestStageItemDoneEvent>,
+                           BSTEventSink<TESSceneEvent>,
+                           BSTEventSink<TESSceneActionEvent>,
+                           BSTEventSink<TESScenePhaseEvent>,
+                           BSTEventSink<TESTopicInfoEvent>,
+                           BSTEventSink<TESLoadGameEvent>
 {
 public:
     QuestService(World&, entt::dispatcher&);
@@ -23,19 +48,54 @@ public:
     static void DebugDumpQuests();
     static bool StopQuest(uint32_t aformId);
 
-private:
-    friend struct QuestEventHandler;
+    struct HeldStages
+    {
+        // Member stages not applied yet, sorted
+        Vector<uint16_t> Stages{};
+        struct AppliedStage
+        {
+            uint16_t Stage;
+            std::chrono::steady_clock::time_point At;
+        };
 
+        // Applied stages none of whose fragments has reported done yet, with when each was applied
+        Vector<AppliedStage> Applied{};
+        // When a stage was last held, applied or done waiting for.
+        // After a long time without, the rest are applied (see FlushHeldStages).
+        std::chrono::steady_clock::time_point LastProgress{};
+    };
+
+private:
     void OnConnected(const ConnectedEvent&) noexcept;
+    void OnUpdate(const UpdateEvent&) noexcept;
+    void OnDisconnected(const DisconnectedEvent&) noexcept;
+    void OnPartyLeft(const PartyLeftEvent&) noexcept;
 
     BSTEventResult OnEvent(const TESQuestStartStopEvent*, const EventDispatcher<TESQuestStartStopEvent>*) override;
     BSTEventResult OnEvent(const TESQuestStageEvent*, const EventDispatcher<TESQuestStageEvent>*) override;
+    BSTEventResult OnEvent(const TESQuestStageItemDoneEvent*, const EventDispatcher<TESQuestStageItemDoneEvent>*) override;
+    BSTEventResult OnEvent(const TESSceneEvent*, const EventDispatcher<TESSceneEvent>*) override;
+    BSTEventResult OnEvent(const TESSceneActionEvent*, const EventDispatcher<TESSceneActionEvent>*) override;
+    BSTEventResult OnEvent(const TESScenePhaseEvent*, const EventDispatcher<TESScenePhaseEvent>*) override;
+    BSTEventResult OnEvent(const TESTopicInfoEvent*, const EventDispatcher<TESTopicInfoEvent>*) override;
+    BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
     void OnQuestUpdate(const NotifyQuestUpdate&) noexcept;
+    // aSceneId and aPhase: the playing scene and phase that check the stage, 0 when it waits behind stages held before it.
+    void HoldStage(TESQuest* apQuest, uint16_t aStage, uint32_t aSceneId, uint32_t aPhase) noexcept;
+    // Applies every quest's held stages in order, without waiting for scenes: the server relays a stage only once, so dropping them would lose them.
+    void FlushHeldStages(const char* acpReason) noexcept;
+    // The quest's held stages, while it has stages to apply or fragments to wait for. Drops the stages that can't be
+    // applied anymore.
+    HeldStages* GetHeldStages(uint32_t aQuestFormId, TESQuest* apQuest) noexcept;
 
     World& m_world;
+    // Keyed by quest form ID
+    Map<uint32_t, HeldStages> m_heldStages{};
 
     entt::scoped_connection m_joinedConnection;
+    entt::scoped_connection m_updateConnection;
+    entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_leftConnection;
     entt::scoped_connection m_questUpdateConnection;
 };

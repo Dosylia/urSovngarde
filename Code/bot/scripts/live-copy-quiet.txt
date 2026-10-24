@@ -1,0 +1,49 @@
+# A player whose game freezes, crashes or loses its connection mid-step: does their copy walk on the spot?
+#
+#   python Tools\VR\live-check.py live-copy-quiet
+#
+# A copy is drawn from its owner's newest report until the next one arrives. With no next one, the newest report's
+# walk played on the spot, every frame, until the server removed the player (about ten seconds after a crash).
+# This bot walks a real player's recorded stream, sends nothing for seven seconds, then walks on. The copy's feet are
+# read against its pelvis: swinging while it walks, planted while its owner is quiet, swinging again once it walks on.
+# The walk on goes out without the recording's actions, so its own moveStart cannot restart the copy's legs.
+log live copy quiet
+waitfor connected 45
+collect spawn
+expect known me
+waitfor known other 40
+wait 6
+log CHECK copy exists
+wait 2
+
+# God mode: the player is walked forward blind, and Mistwatch has edges to walk off.
+log DO god on
+wait 3
+log -- the real player walks for eight seconds while this bot records six of them, so the recording ends mid-step
+log DO key w 8000
+capture other 6
+log REQUIRE bot logged Captured action names of \w+: .*\bmoveStart\b
+wait 3
+# Beside the copy, facing the way the recording walks: the copy walks off in front of the headset.
+log DO papyrus ObjectReference MoveTo 14 copy f:50 f:0 f:0 b:false
+wait 3
+
+log -- the recording, as this bot's own character
+log DO sleep 2
+log REQUIRE copy feet moving 3
+replay me 1
+log -- nothing sent for seven seconds, right after a step
+log DO sleep 3
+log CHECK copy feet still 3
+quiet 7
+# The recording starts from standing, so the first reports back say the copy stands; then it speeds up.
+log -- walking on, without the recording's actions
+log DO sleep 2
+log CHECK copy feet moving 3
+replay me 1 noactions
+wait 3
+
+log DO god off
+wait 3
+log done
+stop

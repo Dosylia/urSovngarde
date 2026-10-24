@@ -27,6 +27,11 @@
 #include <fstream>
 #include <sstream>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <timeapi.h>
+#endif
+
 namespace
 {
 // Every bot used to open "logs/bot.log" and truncate it, while other bots had the same file open: a two-sided
@@ -202,6 +207,18 @@ int main(int argc, char** argv)
 
     spdlog::info("STBot {} : '{}' with {} commands, server {}, name '{}'", BUILD_COMMIT, scriptPath, script.size(), options.Server, options.Name);
 
+#ifdef _WIN32
+    // The run loop sleeps 10 ms between steps, and that sleep paces every send.
+    // Windows wakes a sleeper on its timer, every 15.6 ms unless some program on the PC asks for 1 ms.
+    // Asked here, the bot's pace no longer depends on what else runs.
+    timeBeginPeriod(1);
+#endif
+
     Bot bot(std::move(options), std::move(script));
-    return bot.Run();
+    const int cResult = bot.Run();
+
+#ifdef _WIN32
+    timeEndPeriod(1);
+#endif
+    return cResult;
 }

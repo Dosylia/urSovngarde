@@ -85,8 +85,9 @@ if (-not (Get-ChildItem $staging)) {
 # A heap corruption (0xc0000374) ends the game without our crash report; only Windows records it.
 # Nothing here is required, so a missing log or a denied folder is skipped.
 $since = (Get-Date).AddDays(-1)
-# Hides the Windows user name in paths such as C:\Users\<name>\...
-function Hide-UserName([string]$Text) { $Text -replace '(?i)([\/]Users[\/])[^\/\r\n]+', '$1<user>' }
+# Hides the Windows user name in paths such as C:\Users\<name>\... and C:/Users/<name>/...
+# The backslash is doubled: a single one in a character class only escapes the slash after it.
+function Hide-UserName([string]$Text) { $Text -replace '([\\/]Users[\\/])[^\\/\r\n]+', '$1<user>' }
 
 $events = @()
 try {
@@ -120,6 +121,42 @@ $reports | Where-Object { $_ -and $_.LastWriteTime -gt $since } | Sort-Object La
         Set-Content (Join-Path $staging $name) (Hide-UserName (Get-Content $_.FullName -Raw -ErrorAction Stop)) -Encoding UTF8
         Write-Host "  + $name"
     } catch { }
+}
+
+# SteamVR's own logs, from the last day: when the game cannot start VR, they say why.
+# vrclient_SkyrimVR is the game's side (VR_Init errors), vrserver the headset and its drivers, vrmonitor and vrcompositor SteamVR itself.
+# Each is cut to its last 2 MB, with the Windows user name and the PC's identifiers hidden; SteamVR keeps them open, so they are read shared.
+# vrserver lists the network adapters with their addresses, every device has a GUID, and a headset's serial number names it.
+function Hide-DeviceIds([string]$Text) {
+    # A MAC first: the IPv6 rule would take it for an address.
+    $Text = $Text -replace '\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b', '<mac>'
+    $Text = $Text -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b', '<ip>'
+    $Text = $Text -replace '\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b', '<ip>'
+    $Text = $Text -replace '\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*::[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*\b', '<ip>'
+    $Text = $Text -replace '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '<guid>'
+    # "tracked device with serial number '...'", "Active HMD set to lighthouse.LHR-...", "Using existing HMD lighthouse.LHR-...".
+    $Text = $Text -replace "(serial number ')[^']*", '$1<serial>'
+    $Text = $Text -replace '(HMD (?:set to )?[\w-]+\.)[^\r\n]+', '$1<serial>'
+    $Text = $Text -replace '(SerialNumber\w*\s*[=:]\s*)[^\s,]+', '$1<serial>'
+    $Text -replace '\bLHR-[0-9a-f]{8}\b', '<serial>'
+}
+$steamPath = $null
+try { $steamPath = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction Stop).SteamPath } catch { }
+if (-not $steamPath) { $steamPath = Join-Path ${env:ProgramFiles(x86)} 'Steam' }
+$vrLogs = Join-Path $steamPath 'logs'
+$vrTail = 2MB
+foreach ($pattern in 'vrclient_SkyrimVR*.txt', 'vrclient_urSovngarde*.txt', 'vrserver*.txt', 'vrmonitor*.txt', 'vrcompositor*.txt') {
+    Get-ChildItem $vrLogs -Filter $pattern -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $since } | ForEach-Object {
+        try {
+            $in = [IO.File]::Open($_.FullName, 'Open', 'Read', 'ReadWrite')
+            try {
+                if ($in.Length -gt $vrTail) { $in.Seek(-$vrTail, 'End') | Out-Null }
+                $text = (New-Object IO.StreamReader($in)).ReadToEnd()
+            } finally { $in.Close() }
+            Set-Content (Join-Path $staging "SteamVR-$($_.Name)") (Hide-DeviceIds (Hide-UserName $text)) -Encoding UTF8
+            Write-Host "  + SteamVR-$($_.Name)"
+        } catch { }
+    }
 }
 
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip -Force

@@ -61,7 +61,7 @@ void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMes
     notify.EffectId = message.EffectId;
     notify.Magnitude = message.Magnitude;
     notify.IsDualCasting = message.IsDualCasting;
-    notify.ApplyHealPerkBonus = message.ApplyHealPerkBonus;
+    notify.CasterPerkFactor = message.CasterPerkFactor;
     notify.ApplyStaminaPerkBonus = message.ApplyStaminaPerkBonus;
 
     const auto entity = static_cast<entt::entity>(message.TargetId);

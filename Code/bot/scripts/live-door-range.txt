@@ -1,0 +1,40 @@
+# A door's use reaches every player who has the door's cell loaded, not only those standing in that very cell.
+#
+#   python Tools\VR\live-check.py live-door-range
+#   python Tools\VR\live-check.py --expect-fail live-door-range     on a build without the change: must be RED
+#
+# The server passed a door's activation only to the players in the door's own cell, so a door used one cell over
+# never moved for the others.
+# Here the player stands in the rig's start cell (Tamriel 34,-9, BAE9). Mistwatch's door 3F558 is one cell west
+# (33,-9, BAEA). The bot sends that door used, in its own cell, by an actor no game has. The game must get it: a load
+# door is replayed only on its user's copy, so the game logs that it has no such actor.
+log live door range
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log REQUIRE player cell BAE9
+wait 3
+
+log -- the door one cell over, used in another game
+activate 3F558 by nobody 3 cell BAEA
+wait 5
+log CHECK logged could not find actor server id 7FFFFF0 \(object 3F558\)
+log CHECK player cell BAE9
+wait 3
+
+log -- a door far away, used in another game in the player's cell: not loaded here, so left alone
+# 93BDB is a door inside Riverwood's inn; it is persistent, so this game holds it though the inn is not loaded.
+activate 93BDB by nobody 3 cell BAE9
+wait 4
+log CHECK absent Door 93BDB: opened in another game
+log CHECK logged Activation of 93BDB, activated by server id 7FFFFF0: its cell is not loaded here; not done
+
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

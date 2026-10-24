@@ -37,4 +37,6 @@ struct InventoryChangeEvent
     Inventory::Entry Item{};
     bool Drop = false;
     bool UpdateClients = true;
+    //! From a reference this player picked up in the world (PlayerCharacter::PickUpObject).
+    bool PickedUp = false;
 };

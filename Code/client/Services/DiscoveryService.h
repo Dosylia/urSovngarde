@@ -107,6 +107,9 @@ private:
     struct KnownForm
     {
         TESObjectREFR* pReference = nullptr;
+        // The game's handle for the reference: it stops resolving once the reference is freed.
+        // A form id lookup can still hand back the freed object, and a cast on it crashes.
+        uint32_t Handle = 0;
         uint64_t LastSeenVisit = 0;
         std::chrono::steady_clock::time_point MissingSince{};
     };

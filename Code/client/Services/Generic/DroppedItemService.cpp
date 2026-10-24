@@ -153,6 +153,39 @@ struct DroppedItemListView
     void* NextExtra;
     DroppedItemNode Head;
 };
+
+// The extra data of the player's stack the placed item is dropped out of again: the list handed to the game, while the inventory still holds it.
+// Otherwise an equal list the item went into, or none; a list the game no longer holds is never handed back to it.
+ExtraDataList* StackListOf(TESObjectREFR* apHolder, const TESForm* apObject, ExtraDataList* apGiven, const Inventory::Entry& acEntry) noexcept
+{
+    const ExtraContainerChanges::Data* pChanges = apHolder->GetContainerChanges();
+    if (!apGiven || !pChanges || !pChanges->entries)
+        return nullptr;
+
+    ExtraDataList* pEqual = nullptr;
+    for (ExtraContainerChanges::Entry* pEntry : *pChanges->entries)
+    {
+        if (!pEntry || pEntry->form != apObject || !pEntry->dataList)
+            continue;
+        for (ExtraDataList* pList : *pEntry->dataList)
+        {
+            if (!pList)
+                continue;
+            if (pList == apGiven)
+                return apGiven;
+            if (!pEqual)
+            {
+                Inventory::Entry held{};
+                held.BaseId = acEntry.BaseId;
+                held.Count = 1;
+                TESObjectREFR::GetItemFromExtraData(held, pList);
+                if (held.IsExtraDataEquals(acEntry))
+                    pEqual = pList;
+            }
+        }
+    }
+    return pEqual;
+}
 } // namespace
 
 DroppedItemService::DroppedItemService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport)
@@ -420,7 +453,11 @@ void DroppedItemService::OnNotifyDroppedItem(const NotifyDroppedItem& acMessage)
         NiPoint3 location(cPosition);
         NiPoint3 rotation(acMessage.Rotation);
         pPlayer->AddObjectToContainer(pObject, pExtra, cCount, nullptr);
-        handle = pPlayer->RemoveItem(pObject, cCount, ITEM_REMOVE_REASON::kDropping, pExtra, nullptr, &location, &rotation);
+        ExtraDataList* pStack = StackListOf(pPlayer, pObject, pExtra, entry);
+        if (pExtra && pStack != pExtra)
+            spdlog::warn("DroppedItem: {} ({:X}): the game did not keep the item's extra data as given; dropped from {}", acMessage.Id, pObject->formID,
+                         pStack ? "an equal stack" : "a plain stack");
+        handle = pPlayer->RemoveItem(pObject, cCount, ITEM_REMOVE_REASON::kDropping, pStack, nullptr, &location, &rotation);
     }
 
     if (TESObjectREFR* pPlaced = TESObjectREFR::GetByHandle(handle.handle.iBits))

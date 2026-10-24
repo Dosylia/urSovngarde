@@ -1,0 +1,49 @@
+# Load after load, each followed by a door the player opens: the game must survive every one.
+#
+#   python Tools\VR\live-check.py live-load-soak
+#
+# A public v1.9.4 setup crashed at the first door used after four loads in five, about ten seconds in (Papyrus GetOpenState missing).
+# One load proves little, so this does two rounds of a save load, a teleport to Mistwatch's upper door (3F558) and the player opening it, which loads its interior.
+# Two rounds and the way back out are three loads in about 250 s: a third round would pass the bot's 300 s for a script on MGO, where a load takes up to 45 s.
+# Opening a door is an actor's activation of a door, the path that crashed.
+# The way back out is the next save load, never console travel out of Mistwatch, which sometimes crashes the rig in Community Shaders.
+log live load soak
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO god on
+
+log -- round 1: the last save loaded, then the door opened
+log DO load last
+wait 45
+log CHECK game inworld
+log DO console player.moveto 3F558
+wait 20
+log CHECK game inworld
+log DO papyrus ObjectReference Activate 3F558 14 b:false
+wait 30
+log CHECK game inworld
+wait 3
+
+log -- round 2
+log DO load last
+wait 45
+log CHECK game inworld
+log DO console player.moveto 3F558
+wait 20
+log CHECK game inworld
+log DO papyrus ObjectReference Activate 3F558 14 b:false
+wait 30
+log CHECK game inworld
+wait 3
+
+log -- back out by the save, so the next script starts outside
+log DO load last
+wait 45
+log CHECK game inworld
+log DO god off
+wait 3
+log CHECK game alive
+log done
+stop

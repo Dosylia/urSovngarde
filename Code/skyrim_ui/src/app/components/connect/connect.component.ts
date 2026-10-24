@@ -29,6 +29,7 @@ export class ConnectComponent implements OnDestroy, AfterViewInit {
   public hidePassword = true;
 
   public connecting = false;
+  private rejoining = false;
 
   @Output() public done = new EventEmitter<void>();
 
@@ -47,6 +48,7 @@ export class ConnectComponent implements OnDestroy, AfterViewInit {
 
           if (state) {
             this.sound.play(Sound.Success);
+            this.storeService.set('last_joined_address', this.address);
             this.done.next();
           } else if (this.errorService.getError() === '') {
             // show connection error when there is no more specific error
@@ -55,7 +57,7 @@ export class ConnectComponent implements OnDestroy, AfterViewInit {
                 'COMPONENT.CONNECT.ERROR.CONNECTION',
               ),
             );
-            await this.errorService.setError(message);
+            await this.errorService.setError(message, 'SERVICE.ERROR.TITLES.CONNECT');
           }
         }
       },
@@ -70,18 +72,30 @@ export class ConnectComponent implements OnDestroy, AfterViewInit {
               'COMPONENT.CONNECT.ERROR.VERSION_MISMATCH',
             ),
           );
-          await this.errorService.setError(message);
+          await this.errorService.setError(message, 'SERVICE.ERROR.TITLES.CONNECT');
         }
       });
 
     this.address = this.storeService.get('last_connected_address', '');
     this.password = this.storeService.get('last_connected_password', '');
     this.savePassword = this.password !== '';
+
+    // Opened by Rejoin: straight to the connecting card, with the saved password.
+    const rejoin = this.uiRepository.takeConnectNow();
+    if (typeof rejoin === 'string' && rejoin.trim()) {
+      this.address = rejoin;
+      this.rejoining = true;
+    }
   }
 
   public ngAfterViewInit(): void {
+    if (this.rejoining) {
+      setTimeout(() => this.connect());
+      return;
+    }
+
     setTimeout(() => {
-      this.inputRef.nativeElement.focus();
+      this.inputRef?.nativeElement.focus();
     }, 100);
   }
 
@@ -100,7 +114,7 @@ export class ConnectComponent implements OnDestroy, AfterViewInit {
           'COMPONENT.CONNECT.ERROR.INVALID_ADDRESS',
         ),
       );
-      await this.errorService.setError(message);
+      await this.errorService.setError(message, 'SERVICE.ERROR.TITLES.CONNECT');
       return;
     }
 
@@ -126,6 +140,14 @@ export class ConnectComponent implements OnDestroy, AfterViewInit {
     this.done.next();
   }
 
+  /** Stops the attempt and goes back to the form; set before disconnecting, so the disconnection reads as no failure. */
+  public cancelConnecting(): void {
+    this.connecting = false;
+    this.client.disconnect();
+    this.client.isConnectionInProgressChange.next(false);
+    this.sound.play(Sound.Cancel);
+  }
+
   public openServerList(): void {
     this.uiRepository.openView(View.SERVER_LIST);
   }
@@ -142,6 +164,8 @@ export class ConnectComponent implements OnDestroy, AfterViewInit {
   private activate(event: KeyboardEvent): void {
     if (this.errorService.getError()) {
       this.errorService.removeError();
+    } else if (this.connecting) {
+      this.cancelConnecting();
     } else {
       this.done.next();
     }

@@ -1,0 +1,43 @@
+# A lost packet costs only itself: under loss and lag the game's copy of this bot never starves for long.
+#
+#   $env:STBOT_FAKE_LAG_MS = '40'; $env:STBOT_FAKE_LOSS_PCT = '2'; python Tools\VR\live-check.py live-loss-playback
+#   ...the same with $env:STBOT_RELIABLE_MOVEMENT = '1' and --expect-fail: movement sent reliably, as before playback session B; must be RED
+#   then Remove-Item Env:STBOT_RELIABLE_MOVEMENT (live-check calls any other run with it INVALID)
+#
+# Sent reliably, one lost movement packet holds back every later one until it is sent again, and the copy's stream stalls meanwhile.
+# Sent unreliably, a loss leaves one gap.
+# The bot sends with 40 ms of lag and loses 2 % (GameNetworkingSockets' fake network, from STBOT_FAKE_*).
+# It records the player's stream (movement and VR pose) and plays it back as its own character for about 40 s.
+# A short gap is never seen: past its newest point a copy keeps moving for up to 150 ms (cMaxExtrapolation).
+# The game counts, every 10 s, how far a player copy's newest point fell behind playback ("InterpDiag players: ... lowest -N").
+# It also logs, every 10 s, how unevenly the copy's updates arrive ("PlaybackDiag: ... jitter N ms").
+# Checked: never more than 150 ms behind, and never 30 ms of jitter (unreliable stays near 10 ms; held-back packets reach 50-110 ms).
+# This is about the stream reaching the copy, not about how its hands move: the replayed hands are held at fixed targets.
+# The checks count only lines written from the replay on, and come 11 s after it, so the last 10 s window is in.
+# A run counts only when (REQUIRE): the bot really had lag and loss, and the replay's windows were counted.
+log live loss playback
+waitfor connected 45
+expect known me
+waitfor known other 40
+log REQUIRE bot logged Fake network on what this bot sends: ([4-9]\d|\d{3,}) ms lag, [1-9][\d.]*% lost
+wait 5
+
+# A copy outside the headset's view is not posed: the player is put 50 units from it, as live-hands does.
+log DO papyrus ObjectReference MoveTo 14 copy f:50 f:0 f:0 b:false
+wait 3
+log -- recording the player's stream for 10 s
+capture other 10
+wait 1
+log -- this bot plays it back as its own character, about 40 s, with lag and loss on what it sends
+log DO logmark
+handtargets -15 15 70 15 20 80
+replay me 4
+wait 11
+log REQUIRE atleast 4 InterpDiag players: \d+ updates
+log REQUIRE atleast 4 PlaybackDiag: player copy
+log CHECK absent InterpDiag players: \d+ updates, newest point ahead of playback: lowest -(1[5-9]\d|[2-9]\d\d|\d{4,}),
+log CHECK absent PlaybackDiag: player copy \w+ shown .*jitter ([3-9]\d|\d{3,}) ms
+wait 3
+log CHECK game alive
+log done
+stop

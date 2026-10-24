@@ -1,0 +1,68 @@
+.connecting {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 26rem;
+  padding: 0.5rem 1rem;
+
+  h2 {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    margin: 0;
+    font-weight: normal;
+    font-size: 1.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .connecting-time {
+    margin-left: auto;
+    font-size: 1.1rem;
+    color: var(--ur-dim);
+  }
+
+  .connecting-address {
+    margin: 0;
+    font-size: 1.05rem;
+    color: var(--ur-dim);
+  }
+
+  .connecting-hint {
+    margin: 0;
+    color: var(--ur-dim);
+  }
+
+  .menu-button {
+    align-self: center;
+    width: 60%;
+    margin-top: 0.6rem;
+  }
+}
+
+// A light that runs along the bar while the game waits.
+.connecting-bar {
+  position: relative;
+  height: 0.35rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+
+  i {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 30%;
+    background: linear-gradient(90deg, transparent, var(--ur-busy), transparent);
+    animation: connecting-run 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes connecting-run {
+  from {
+    left: -30%;
+  }
+
+  to {
+    left: 100%;
+  }
+}

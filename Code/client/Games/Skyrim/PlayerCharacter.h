@@ -122,6 +122,16 @@ struct PlayerCharacter : Actor
     void SetWaypoint(NiPoint3* apPosition, TESWorldSpace* apWorldSpace) noexcept;
     void RemoveWaypoint() noexcept;
 
+#ifdef SKYRIMVR
+    //! Whether the game's lock on the world map's marker list is known; without it the list is never touched.
+    static bool CanEditMapMarkers() noexcept;
+    //! Puts a reference's handle on the world map's marker list, or takes it off.
+    //! AddMapMarker is true only when it added the handle: false when it was there already or could not be added.
+    bool AddMapMarker(uint32_t aHandle) noexcept;
+    bool RemoveMapMarker(uint32_t aHandle) noexcept;
+    bool HasMapMarker(uint32_t aHandle) noexcept;
+#endif
+
     struct Objective
     {
         BSFixedString name;
@@ -150,7 +160,10 @@ struct PlayerCharacter : Actor
     uint8_t padPlayerEnd[0xBE0 - 0xB30];
 #else
     // VR layout (offsets from CommonLibVR-NG).
-    uint8_t pad1[0xB70 - sizeof(Actor)];
+    uint8_t pad1[0xAE8 - sizeof(Actor)];
+    // Handles of the markers the world map shows, guarded by the game's lock (see AddMapMarker).
+    GameArray<uint32_t> currentMapMarkers;
+    uint8_t padB00[0xB70 - 0xB00];
     GameArray<ObjectiveInstance> objectives;
     uint8_t padB88[0x10B0 - 0xB88];
     Skills** pSkills;
@@ -174,6 +187,7 @@ static_assert(offsetof(PlayerCharacter, baseTints) == 0xB20);
 static_assert(offsetof(PlayerCharacter, overlayTints) == 0xB38);
 static_assert(sizeof(PlayerCharacter) == 0xBF0);
 #else
+static_assert(offsetof(PlayerCharacter, currentMapMarkers) == 0xAE8);
 static_assert(offsetof(PlayerCharacter, objectives) == 0xB70);
 static_assert(offsetof(PlayerCharacter, pSkills) == 0x10B0);
 static_assert(offsetof(PlayerCharacter, locationForm) == 0x11C8);

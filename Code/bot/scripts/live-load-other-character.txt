@@ -1,0 +1,25 @@
+# Loading another character's save while connected connects again as that character.
+#
+#   python Tools\VR\live-check.py live-load-other-character
+#
+# The server keeps the name and body a game gave it when connecting, so another character loaded in play must
+# connect again (VRConnectService). The name is compared once, 5 s after each loading screen, and that check is armed
+# when an update sees the player out of the game. Review question (2026-10-24): if no update runs between the old
+# save's 3D going and the new one's coming, the check is never armed and the old name stays online.
+# Here: the profile's one save of another character ("Prisoner", 2024, the intro), loaded while connected.
+log live load other character
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 6
+
+log -- another character's save, loaded while connected
+log DO load save Save1_E3BA76AB_0_507269736F6E6572_Tamriel_000010_20241221110546_1_1
+wait 25
+# An old save may first ask about content no longer present; E confirms it (and does nothing in the world).
+log DO key e 200
+wait 40
+log CHECK logged VRConnectService: the character is now 'Prisoner', was '.+' when connecting; connecting again
+log CHECK game alive
+log done
+stop

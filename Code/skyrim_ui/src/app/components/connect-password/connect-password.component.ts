@@ -53,6 +53,7 @@ export class ConnectPasswordComponent implements AfterViewInit {
 
           if (state) {
             this.sound.play(Sound.Success);
+            this.storeService.set('last_joined_address', `${this.address}:${this.port}`);
             this.done.next();
           } else if (this.errorService.getError() === '') {
             // show connection error when there is no more specific error
@@ -61,7 +62,7 @@ export class ConnectPasswordComponent implements AfterViewInit {
                 'COMPONENT.CONNECT.ERROR.CONNECTION',
               ),
             );
-            await this.errorService.setError(message);
+            await this.errorService.setError(message, 'SERVICE.ERROR.TITLES.CONNECT');
           }
         }
       });
@@ -76,7 +77,7 @@ export class ConnectPasswordComponent implements AfterViewInit {
               'COMPONENT.CONNECT.ERROR.VERSION_MISMATCH',
             ),
           );
-          await this.errorService.setError(message);
+          await this.errorService.setError(message, 'SERVICE.ERROR.TITLES.CONNECT');
         }
       });
 
@@ -88,8 +89,14 @@ export class ConnectPasswordComponent implements AfterViewInit {
   }
 
   public ngAfterViewInit(): void {
+    // A public server without a password goes straight to the connecting card.
+    if (this.uiRepository.takeConnectNow()) {
+      setTimeout(() => this.connect());
+      return;
+    }
+
     setTimeout(() => {
-      this.inputRef.nativeElement.focus();
+      this.inputRef?.nativeElement.focus();
     }, 100);
   }
 
@@ -101,7 +108,7 @@ export class ConnectPasswordComponent implements AfterViewInit {
           'COMPONENT.CONNECT.ERROR.INVALID_ADDRESS',
         ),
       );
-      await this.errorService.setError(message);
+      await this.errorService.setError(message, 'SERVICE.ERROR.TITLES.CONNECT');
       return;
     }
 
@@ -117,6 +124,15 @@ export class ConnectPasswordComponent implements AfterViewInit {
 
   public cancel(): void {
     this.uiRepository.openView(View.SERVER_LIST);
+  }
+
+  /** Stops the attempt and goes back to the list; set before disconnecting, so the disconnection reads as no failure. */
+  public cancelConnecting(): void {
+    this.connecting = false;
+    this.client.disconnect();
+    this.client.isConnectionInProgressChange.next(false);
+    this.sound.play(Sound.Cancel);
+    this.cancel();
   }
 
   private getStoredPasswordForAddress(ip: string, port: number): string {

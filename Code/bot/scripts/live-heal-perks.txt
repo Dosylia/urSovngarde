@@ -1,0 +1,60 @@
+# The caster's perks reach the player it heals, and the healed player's game adds none of its own copy's.
+#
+#   python Tools\VR\live-check.py live-heal-perks
+#
+# The healed player's game applies a heal with its copy of the caster, which has no perks, and with the spell's own magnitude
+# whatever the message says; so the caster's game sends how much its perks multiplied it, and that is applied in
+# AdjustForPerks (MagicTarget.cpp).
+# The rig's character has Adamant's Recovery 20 (healing spells 1.5 times as strong); the script adds Adamant's Healer 50
+# (C44C8, Restoration spells 1.3 times as strong), and the two multiply.
+# Heal Other (12FD2, fire and forget) restores 40 with effect 1CEA7; Healing Hands (4D3F2, concentration) 20 with 1CEA5.
+log live heal perks
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log REQUIRE copy 3d
+wait 1
+
+log -- Heal Other with the character's own perks
+log DO papyrus Spell Cast 12FD2 14 copy
+wait 3
+log CHECK logged Magic: spell 12FD2 on remote player [0-9A-F]+: the caster's perks make it 1\.50 times as strong
+expect addtarget 12FD2 1CEA7 1 1.5
+wait 1
+
+log -- Healing Hands with the character's own perks
+log DO papyrus Spell Cast 4D3F2 14 copy
+wait 3
+log CHECK logged Magic: spell 4D3F2 on remote player [0-9A-F]+: the caster's perks make it 1\.50 times as strong
+expect addtarget 4D3F2 1CEA5 1 1.5
+wait 1
+
+log -- Heal Other with Healer 50 added
+log DO console player.addperk C44C8
+wait 1
+log DO papyrus Spell Cast 12FD2 14 copy
+wait 3
+log CHECK logged Magic: spell 12FD2 on remote player [0-9A-F]+: the caster's perks make it 1\.95 times as strong
+expect addtarget 12FD2 1CEA7 2 1.95
+log DO console player.removeperk C44C8
+wait 2
+
+log -- the bot heals the game's player with Heal Other: 40 without perks, 60 with its caster's 1.5 ("dropped -40" is a rise)
+log DO console player.damageav health 150
+wait 2
+log CHECK player mark
+wait 1
+effect other 12FD2 1CEA7 40
+wait 4
+log CHECK player dropped -40
+wait 1
+log CHECK player mark
+wait 1
+effect other 12FD2 1CEA7 40 1.5
+wait 4
+log CHECK player dropped -60
+wait 1
+log CHECK game alive
+log done
+stop

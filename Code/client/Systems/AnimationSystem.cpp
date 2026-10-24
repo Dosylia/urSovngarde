@@ -13,13 +13,15 @@
 #include <AI/AIProcess.h>
 #include <Misc/MiddleProcess.h>
 
-#include <Messages/ClientReferencesMoveRequest.h>
+#include <Messages/RequestActionEvents.h>
+#include <Structs/ReferenceUpdate.h>
 
 #include <Components.h>
 #include <World.h>
 
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
+#include <NetImmerse/NiTransform.h>
 
 #ifdef SKYRIMVR
 #include <PlayerCharacter.h>
@@ -274,51 +276,56 @@ static int PlayerDirectionSlot(Actor* apPlayer) noexcept
 }
 #endif
 
-void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMovementSnapshot, LocalComponent& localComponent, LocalAnimationComponent& animationComponent, FormIdComponent& formIdComponent)
+void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, ReferenceUpdate& aUpdate) noexcept
 {
-    const auto pForm = TESForm::GetById(formIdComponent.Id);
-    const auto pActor = Cast<Actor>(pForm);
-    if (!pActor)
-        return;
+    auto& movement = aUpdate.UpdatedMovement;
 
-    auto& update = aMovementSnapshot.Updates[localComponent.Id];
-    auto& movement = update.UpdatedMovement;
+    if (const auto pCell = apActor->parentCell)
+        aWorld.GetModSystem().GetServerModId(pCell->formID, movement.CellId.ModId, movement.CellId.BaseId);
 
-    if (const auto pCell = pActor->parentCell)
-        World::Get().GetModSystem().GetServerModId(pCell->formID, movement.CellId.ModId, movement.CellId.BaseId);
+    if (const auto pWorldSpace = apActor->GetWorldSpace())
+        aWorld.GetModSystem().GetServerModId(pWorldSpace->formID, movement.WorldSpaceId.ModId, movement.WorldSpaceId.BaseId);
 
-    if (const auto pWorldSpace = pActor->GetWorldSpace())
-        World::Get().GetModSystem().GetServerModId(pWorldSpace->formID, movement.WorldSpaceId.ModId, movement.WorldSpaceId.BaseId);
-
-    movement.Position = pActor->position;
-
-    movement.Rotation.x = pActor->rotation.x;
-    movement.Rotation.y = pActor->rotation.z;
-
-    pActor->SaveAnimationVariables(movement.Variables);
-
-    if (pActor->currentProcess && pActor->currentProcess->middleProcess)
+    movement.Position = apActor->position;
+    // A dead body lies where its ragdoll is, and dragging or throwing it leaves its reference where it died.
+    // The others put their copy where this says (VRBodySync::PlaceCorpse), so the 3D root's world position is sent instead.
+    if (apActor != PlayerCharacter::Get() && apActor->actorState.IsDead())
     {
-        movement.Direction = pActor->currentProcess->middleProcess->direction;
+        if (const NiNode* pRoot = apActor->GetNiNode())
+        {
+            // NiAVObject::world is at 0x7C, as VRBodySync and DroppedItemService read it.
+            const auto& world = *reinterpret_cast<const NiTransform*>(reinterpret_cast<const uint8_t*>(pRoot) + 0x7C);
+            movement.Position = glm::vec3(world.translate.x, world.translate.y, world.translate.z);
+        }
+    }
+
+    movement.Rotation.x = apActor->rotation.x;
+    movement.Rotation.y = apActor->rotation.z;
+
+    apActor->SaveAnimationVariables(movement.Variables);
+
+    if (apActor->currentProcess && apActor->currentProcess->middleProcess)
+    {
+        movement.Direction = apActor->currentProcess->middleProcess->direction;
     }
 
     // A dragon in the air here is not taken over by another player's game (CharacterService::CanClaimOwnership on the server).
     // Taken over in flight, a dragon falls and dies.
-    movement.Flying = pActor->IsDragon() && pActor->actorState.IsFlying();
+    movement.Flying = apActor->IsDragon() && apActor->actorState.IsFlying();
 
 #ifdef SKYRIMVR
-    if (pActor == PlayerCharacter::Get())
+    if (apActor == PlayerCharacter::Get())
     {
-        auto* pPlayer = static_cast<PlayerCharacter*>(pActor);
+        auto* pPlayer = static_cast<PlayerCharacter*>(apActor);
 
         VRPose pose{};
-        float heading = pActor->rotation.z;
+        float heading = apActor->rotation.z;
         // In the skills, map and sleep/wait menus (unpaused online) the others see the body's standing animation, not the
         // hands moving in the menu: no pose is sent. The map also parks the rig at its camera, and it is not home yet
         // when the menu closes. The heading is held; UI.cpp blocks turning while one of these menus is open.
         static float s_heldHeading = 0.f;
         static bool s_hasHeldHeading = false;
-        if (IsOptionalMenuOpenUnpaused() || (UnpausedMenusOnline() && VRBodySync::IsRigParked(pPlayer)))
+        if (IsOptionalMenuOpenUnpaused() || (UnpausedMenusOnline() && VRBodySync::IsRigParked(apActor)))
         {
             if (s_hasHeldHeading)
                 movement.Rotation.y = s_heldHeading;
@@ -339,14 +346,14 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
         {
             // The body's facing is sent as the heading, so a head turn alone does not turn the copy's hips and legs.
             // The game's walk direction is relative to its own heading, which follows the headset, so it is re-based on the body.
-            float turn = std::fmod(heading - pActor->rotation.z, glm::two_pi<float>());
+            float turn = std::fmod(heading - apActor->rotation.z, glm::two_pi<float>());
             if (turn > glm::pi<float>())
                 turn -= glm::two_pi<float>();
             else if (turn < -glm::pi<float>())
                 turn += glm::two_pi<float>();
             movement.Rotation.y = heading;
             // The process direction is in radians from -pi to pi: 0 forward, pi/2 right.
-            if (pActor->currentProcess && pActor->currentProcess->middleProcess)
+            if (apActor->currentProcess && apActor->currentProcess->middleProcess)
             {
                 float direction = std::fmod(movement.Direction - turn, glm::two_pi<float>());
                 if (direction > glm::pi<float>())
@@ -356,7 +363,7 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
                 movement.Direction = direction;
             }
             // The graph's Direction is a fraction of a turn clockwise from the heading: 0 forward, 0.25 right.
-            if (const int cSlot = PlayerDirectionSlot(pActor); cSlot >= 0 && static_cast<size_t>(cSlot) < movement.Variables.Floats.size())
+            if (const int cSlot = PlayerDirectionSlot(apActor); cSlot >= 0 && static_cast<size_t>(cSlot) < movement.Variables.Floats.size())
             {
                 float& direction = movement.Variables.Floats[cSlot];
                 direction -= turn / glm::two_pi<float>();
@@ -365,37 +372,40 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
             s_heldHeading = heading;
             s_hasHeldHeading = true;
         }
-        update.UpdatedVRPose = pose;
+        aUpdate.UpdatedVRPose = pose;
     }
-    else if (pActor->actorState.IsDead())
+    else if (apActor->actorState.IsDead())
     {
         // A body this machine owns, within reach of this player: its bones let the others see it dragged, thrown or shoved.
         // It is only sent while the body is moving (CaptureBodyPose returns false otherwise), and far bodies are never read.
+        // Measured from where the body lies (movement.Position above), not where it died: a body dragged far away is still in reach.
         constexpr float cReachSquared = 600.f * 600.f;
         const auto* pPlayer = PlayerCharacter::Get();
         if (pPlayer)
         {
-            const glm::vec3 toPlayer = static_cast<glm::vec3>(pActor->position) - static_cast<glm::vec3>(pPlayer->position);
+            const glm::vec3 toPlayer = static_cast<const glm::vec3&>(movement.Position) - static_cast<glm::vec3>(pPlayer->position);
             if (glm::dot(toPlayer, toPlayer) <= cReachSquared)
             {
                 VRPose pose{};
-                if (VRBodySync::CaptureBodyPose(pActor, pose))
-                    update.UpdatedVRPose = pose;
+                if (VRBodySync::CaptureBodyPose(apActor, pose))
+                    aUpdate.UpdatedVRPose = pose;
             }
         }
     }
 #endif
+}
 
-    for (auto& entry : animationComponent.Actions)
-    {
-        update.ActionEvents.push_back(entry);
-    }
+void AnimationSystem::SerializeActions(RequestActionEvents& aMessage, LocalComponent& localComponent, LocalAnimationComponent& animationComponent) noexcept
+{
+    if (animationComponent.Actions.empty())
+        return;
 
     auto latestAction = animationComponent.GetLatestAction();
 
     if (latestAction)
         localComponent.CurrentAction = latestAction.MoveResult();
 
+    aMessage.Actions[localComponent.Id] = std::move(animationComponent.Actions);
     animationComponent.Actions.clear();
 }
 

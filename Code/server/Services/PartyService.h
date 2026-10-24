@@ -24,6 +24,8 @@ struct PartyService
         uint32_t LeaderPlayerId;
         Vector<Player*> Members;
         GameId CachedWeather{};
+        // Stages each quest reached since it started, as relayed to the party, with when each was first relayed
+        Map<GameId, Map<uint16_t, std::chrono::steady_clock::time_point>> QuestStages{};
     };
 
     PartyService(World& aWorld, entt::dispatcher& aDispatcher) noexcept;

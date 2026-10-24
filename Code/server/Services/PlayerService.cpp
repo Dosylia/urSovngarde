@@ -42,6 +42,15 @@ PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher) noexc
 {
 }
 
+// An arrival (a load, a door, a fast travel) comes from nowhere yet, from indoors, another worldspace or further than one cell.
+// A walk into the next cell is none.
+// CharacterService holds back handing the party leader NPCs for a while after an arrival.
+bool IsArrival(const CellIdComponent& acPrevious, const GameId& acWorldSpaceId, const GridCellCoords& acCoords) noexcept
+{
+    return !acPrevious || acPrevious.IsInInteriorCell() || acPrevious.WorldSpaceId != acWorldSpaceId || std::abs(acPrevious.CenterCoords.X - acCoords.X) > 1 ||
+           std::abs(acPrevious.CenterCoords.Y - acCoords.Y) > 1;
+}
+
 void SendPlayerCellChanged(const Player* apPlayer) noexcept
 {
     auto& cellComponent = apPlayer->GetCellComponent();
@@ -64,6 +73,9 @@ void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>&
     // Where the viewer was, to remove what has just left its range.
     const CellIdComponent previous = pPlayer->GetCellComponent();
 
+    // A game sends its grid shift before its exterior cell entry, so an arrival outdoors is seen here first.
+    if (IsArrival(previous, message.WorldSpaceId, message.CenterCoords))
+        pPlayer->MarkCellEnter();
     CellIdComponent cell = CellIdComponent{message.PlayerCell, message.WorldSpaceId, message.CenterCoords};
     pPlayer->SetCellComponent(cell);
 
@@ -136,10 +148,12 @@ void PlayerService::HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellR
 
         if (pPlayer->GetCellComponent())
         {
-            m_world.GetDispatcher().trigger(CharacterExteriorCellChangeEvent{pPlayer, entity, message.WorldSpaceId, message.CurrentCoords});
+            m_world.GetDispatcher().trigger(CharacterExteriorCellChangeEvent{pPlayer, entity, message.CellId, message.WorldSpaceId, message.CurrentCoords});
         }
 
         const CellIdComponent previous = pPlayer->GetCellComponent();
+        if (IsArrival(previous, message.WorldSpaceId, message.CurrentCoords))
+            pPlayer->MarkCellEnter();
         pPlayer->SetCellComponent(cell);
         RemoveWhatLeftRange(pPlayer, previous);
 
@@ -178,6 +192,8 @@ void PlayerService::HandleInteriorCellEnter(const PacketEvent<EnterInteriorCellR
 
     const auto oldCell = pPlayer->GetCellComponent().Cell;
 
+    // Into an interior is always an arrival (see HandleExteriorCellEnter).
+    pPlayer->MarkCellEnter();
     auto cell = CellIdComponent{message.CellId, {}, {}};
     pPlayer->SetCellComponent(cell);
 

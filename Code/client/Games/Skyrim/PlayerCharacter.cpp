@@ -25,6 +25,7 @@
 #include <Games/Skyrim/CellRespawnOverrides.h>
 
 #include <ModCompat/BehaviorVar.h>
+#include <BSSpinLock.h>
 
 int32_t PlayerCharacter::LastUsedCombatSkill = -1;
 
@@ -218,6 +219,70 @@ void PlayerCharacter::RemoveWaypoint() noexcept
     return TiltedPhoques::ThisCall(RealRemoveWaypoint, this);
 }
 
+#ifdef SKYRIMVR
+namespace
+{
+// The game's lock on currentMapMarkers; the game empties the list under it at every load (see VRAddressOverrides.h).
+BSSpinLock* MapMarkersLock() noexcept
+{
+    POINTER_SKYRIMSE(BSSpinLock, s_lock, 404255, 9000013);
+    return s_lock.Get();
+}
+} // namespace
+
+bool PlayerCharacter::CanEditMapMarkers() noexcept
+{
+    return MapMarkersLock() != nullptr;
+}
+
+bool PlayerCharacter::HasMapMarker(uint32_t aHandle) noexcept
+{
+    BSSpinLock* pLock = MapMarkersLock();
+    if (!pLock)
+        return false;
+
+    BSScopedSpinLock _(*pLock);
+    for (const uint32_t cHandle : currentMapMarkers)
+        if (cHandle == aHandle)
+            return true;
+    return false;
+}
+
+bool PlayerCharacter::AddMapMarker(uint32_t aHandle) noexcept
+{
+    BSSpinLock* pLock = MapMarkersLock();
+    if (!pLock || !aHandle)
+        return false;
+
+    BSScopedSpinLock _(*pLock);
+    for (const uint32_t cHandle : currentMapMarkers)
+        if (cHandle == aHandle)
+            return false;
+
+    currentMapMarkers.Resize(currentMapMarkers.length + 1);
+    currentMapMarkers[currentMapMarkers.length - 1] = aHandle;
+    return true;
+}
+
+bool PlayerCharacter::RemoveMapMarker(uint32_t aHandle) noexcept
+{
+    BSSpinLock* pLock = MapMarkersLock();
+    if (!pLock)
+        return false;
+
+    BSScopedSpinLock _(*pLock);
+    for (uint32_t i = 0; i < currentMapMarkers.length; ++i)
+    {
+        if (currentMapMarkers[i] != aHandle)
+            continue;
+        std::copy(currentMapMarkers.data + i + 1, currentMapMarkers.data + currentMapMarkers.length, currentMapMarkers.data + i);
+        --currentMapMarkers.length;
+        return true;
+    }
+    return false;
+}
+#endif
+
 char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject, int32_t aCount, bool aUnk1, bool aUnk2)
 {
     auto& modSystem = World::Get().GetModSystem();
@@ -234,12 +299,17 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
 
     // This is here so that objects that are picked up on both clients, aka non temps, are synced through activation sync.
     // The inventory change event should always be sent to the server, otherwise the server inventory won't be updated.
-    bool shouldUpdateClients = apObject->IsTemporary() && !ScopedActivateOverride::IsOverriden();
+    // A quest object goes to the others as well: replayed there, the pick-up gives it to this player's copy, and their quest needs one of their own.
+    // Their game hands it to its player as it does a looted one (TESObjectREFR::AddOrRemoveItem).
+    bool shouldUpdateClients = (apObject->IsTemporary() || item.IsQuestItem) && !ScopedActivateOverride::IsOverriden();
+    if (item.IsQuestItem && shouldUpdateClients)
+        spdlog::info("QuestItem: picked up quest object {:X} (reference {:X}); sent to the other players", apObject->baseForm->formID, apObject->formID);
 
     // The player still needs its server entity and ownership epoch so stale inventory events can be rejected.
     if (const auto ownershipToken = Utils::GetLocalOwnershipToken(apThis->formID))
     {
         InventoryChangeEvent event(apThis->formID, std::move(item), false, shouldUpdateClients);
+        event.PickedUp = true;
         event.ServerId = ownershipToken->ServerId;
         event.OwnershipEpoch = ownershipToken->OwnershipEpoch;
         World::Get().GetRunner().Trigger(std::move(event));

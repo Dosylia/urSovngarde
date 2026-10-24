@@ -7,12 +7,15 @@
 #include <Messages/AuthenticationRequest.h>
 #include <Messages/AuthenticationResponse.h>
 #include <Messages/ClientReferencesMoveRequest.h>
+#include <Messages/RequestActionEvents.h>
+#include <Messages/NotifyActionEvents.h>
 #include <Messages/EnterExteriorCellRequest.h>
 #include <Messages/EnterInteriorCellRequest.h>
 #include <Messages/NotifyPlayerCellChanged.h>
 #include <Messages/Message.h>
 #include <Messages/NotifyActorValueChanges.h>
 #include <Messages/NotifyDeathStateChange.h>
+#include <Messages/NotifyInventoryChanges.h>
 #include <Messages/NotifyHealthChangeBroadcast.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/NotifyDroppedItem.h>
@@ -46,8 +49,12 @@
 #include <Messages/PlayerRespawnRequest.h>
 #include <Messages/PlayerDownedRequest.h>
 #include <Messages/ReviveRequest.h>
+#include <Messages/AddTargetRequest.h>
+#include <Messages/NotifyAddTarget.h>
 #include <Messages/SafePointRequest.h>
 #include <Messages/NotifyDownedState.h>
+#include <Messages/RequestQuestUpdate.h>
+#include <Messages/NotifyQuestUpdate.h>
 #include <Messages/RequestActorValueChanges.h>
 #include <Messages/RequestDeathStateChange.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
@@ -99,6 +106,24 @@ constexpr uint32_t kSlotBoth = 0x13F45;
 
 constexpr auto kMovementPeriod = 50ms; // 20 Hz, like the client's full snapshots
 constexpr float kPi = 3.14159265f;
+
+// Movement goes unreliably, as the game's client sends it.
+// STBOT_RELIABLE_MOVEMENT=1 sends it reliably, as before playback session B, for a test's run on the old behaviour.
+bool MovementUnreliable() noexcept
+{
+    static const bool s_reliable = []
+    {
+        const char* pValue = std::getenv("STBOT_RELIABLE_MOVEMENT");
+        return pValue && pValue[0] == '1';
+    }();
+    return !s_reliable;
+}
+
+// Each movement goes out at once, as the game's client sends the last movement message of its frame (no Nagle delay).
+TiltedPhoques::EPacketFlags MovementFlags() noexcept
+{
+    return MovementUnreliable() ? TiltedPhoques::kUnreliableNoNagle : TiltedPhoques::kReliable;
+}
 
 const char* ReasonName(TiltedPhoques::Client::EDisconnectReason aReason) noexcept
 {
@@ -244,7 +269,7 @@ int Bot::Run() noexcept
     return 0;
 }
 
-template <class T> bool Bot::SendMsg(const T& acMessage, bool aUnreliable) noexcept
+template <class T> bool Bot::SendMsg(const T& acMessage, TiltedPhoques::EPacketFlags aFlags) noexcept
 {
     if (!IsConnected())
         return false;
@@ -256,7 +281,7 @@ template <class T> bool Bot::SendMsg(const T& acMessage, bool aUnreliable) noexc
     acMessage.Serialize(writer);
     TiltedPhoques::PacketView packet(reinterpret_cast<char*>(buffer.GetWriteData()), static_cast<uint32_t>(writer.Size()));
 
-    Client::Send(&packet, aUnreliable ? TiltedPhoques::kUnreliable : TiltedPhoques::kReliable);
+    Client::Send(&packet, aFlags);
     return true;
 }
 
@@ -268,7 +293,7 @@ void Bot::UpdateSpeech(Clock::time_point aNow) noexcept
         VoiceDataRequest request{};
         request.Sequence = m_voiceSequence++;
         request.Data.assign(m_speech[m_speechNext].Bytes.begin(), m_speech[m_speechNext].Bytes.end());
-        SendMsg(request, true);
+        SendMsg(request, TiltedPhoques::kUnreliable);
         if (++m_speechNext == m_speech.size())
             spdlog::info("[script] speak: all {} pieces sent", m_speech.size());
     }
@@ -314,6 +339,7 @@ void Bot::OnDisconnected(EDisconnectReason aReason)
     m_downStates.clear();
     m_respawnPoints.clear();
     m_lastRefusal = "none";
+    m_addTargets.clear();
     m_names.clear();
     m_drops.clear();
     m_dropPlaces.clear();
@@ -336,6 +362,8 @@ void Bot::ApplyFakeNetwork() noexcept
     if (s_applied)
         return;
     s_applied = true;
+    if (!MovementUnreliable())
+        spdlog::info("Movement sent reliably (STBOT_RELIABLE_MOVEMENT), as before playback session B");
 
     const auto number = [](const char* acpName) -> float
     {
@@ -439,7 +467,7 @@ void Bot::Tick() noexcept
                 SendCellEntry();
             }
         }
-        if (!m_replaying && now - m_lastMovement >= kMovementPeriod)
+        if (!m_replaying && !m_quiet && now - m_lastMovement >= kMovementPeriod)
             SendMovement();
         if (m_speechNext < m_speech.size())
             UpdateSpeech(now);
@@ -712,8 +740,36 @@ void Bot::SendMovement() noexcept
     if (m_holdPose && m_lastReplayedPose.HasData)
         update.UpdatedVRPose = m_lastReplayedPose;
 
-    SendMsg(message);
+    // Unreliable, as the game's client sends movement: the next one, 50 ms later, makes good a lost one.
+    SendMsg(message, MovementFlags());
     m_lastMovement = Clock::now();
+}
+
+void Bot::KeepReplayedPose(const VRPose& acPose) noexcept
+{
+    // Fingers, scale and weapons come only on change or now and then, and the receiver keeps the last of each.
+    // The held pose keeps them the same way, so it carries each one even when the last update that had it was lost.
+    VRPose kept = acPose;
+    if (!kept.HasFingers && m_lastReplayedPose.HasFingers)
+    {
+        kept.HasFingers = true;
+        kept.Fingers = m_lastReplayedPose.Fingers;
+    }
+    if (!kept.HasScale && m_lastReplayedPose.HasScale)
+    {
+        kept.HasScale = true;
+        kept.RootScale = m_lastReplayedPose.RootScale;
+    }
+    if (!kept.HasWeapons && m_lastReplayedPose.HasWeapons)
+    {
+        kept.HasWeapons = true;
+        kept.WeaponHeld = m_lastReplayedPose.WeaponHeld;
+        kept.WeaponRotation = m_lastReplayedPose.WeaponRotation;
+        for (int side = 0; side < 2; ++side)
+            for (int i = 0; i < 3; ++i)
+                kept.WeaponOffset[side][i] = m_lastReplayedPose.WeaponOffset[side][i];
+    }
+    m_lastReplayedPose = kept;
 }
 
 void Bot::SendHealth(const float aHealth) noexcept
@@ -990,6 +1046,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             npc.OwnedByUs = message.Owner;
             npc.OwnershipEpoch = message.OwnershipEpoch;
             npc.Ref = pending->second; // so that "claim ref:<hex>" finds this bot's own NPC too
+            m_lastNpcId = message.ServerId;
             m_npcCookies.erase(pending);
             npc.LastChange = Clock::now();
             spdlog::info("NPC registered as actor {:X} (owner {}) at epoch {}", message.ServerId, message.Owner ? "yes" : "no", message.OwnershipEpoch);
@@ -1029,14 +1086,34 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         for (const auto& entry : message.Updates)
         {
             if (m_capturing && entry.first == m_captureId)
-                m_capture.push_back({static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count()), entry.second});
+                m_capture.push_back({static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count()), true, entry.second, {}});
+
+            if (KnownActor* pActor = FindActor(entry.first))
+            {
+                pActor->Position = FromNet(entry.second.UpdatedMovement.Position);
+                pActor->PositionKnown = true;
+                if (entry.second.UpdatedVRPose.HasData)
+                    pActor->BonesAt = Clock::now();
+            }
 
             if (KnownPlayer* pPlayer = FindPlayerCharacter(entry.first))
             {
                 pPlayer->Position = FromNet(entry.second.UpdatedMovement.Position);
                 pPlayer->Rotation = glm::vec2(entry.second.UpdatedMovement.Rotation.x, entry.second.UpdatedMovement.Rotation.y);
+                pPlayer->MovedInCell = entry.second.UpdatedMovement.CellId;
+                pPlayer->MovedInWorldSpace = entry.second.UpdatedMovement.WorldSpaceId;
             }
         }
+        return;
+    }
+
+    // Actions travel on their own, reliably, while movement may be lost; captured, they are an entry of their own, at the time they came.
+    if (opcode == NotifyActionEvents::Opcode)
+    {
+        const auto& message = static_cast<const NotifyActionEvents&>(acMessage);
+        if (m_capturing)
+            if (const auto it = message.Actions.find(m_captureId); it != message.Actions.end() && !it->second.empty())
+                m_capture.push_back({static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count()), false, {}, it->second});
         return;
     }
 
@@ -1072,6 +1149,9 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         actor.HealthKnown = true;
         actor.LastChange = Clock::now();
         Record(Collect::Health, fmt::format("health {:X} delta {:+.1f} -> {:.1f} (from player {})", message.Id, message.DeltaHealth, actor.Health, message.AttackerPlayerId));
+        // What this bot, as the owner, would have to apply.
+        if (actor.OwnedByUs || message.Id == m_serverId)
+            spdlog::info("Health change of our {:X} by player {}: {:+.1f}", message.Id, message.AttackerPlayerId, message.DeltaHealth);
         return;
     }
 
@@ -1218,6 +1298,9 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
     if (opcode == NotifyActivate::Opcode)
     {
         const auto& message = static_cast<const NotifyActivate&>(acMessage);
+        ++m_activations;
+        spdlog::info("Activation of {:X}:{:X} relayed here, by server id {:X}, from state {}", message.Id.ModId, message.Id.BaseId, message.ActivatorId,
+                     message.PreActivationOpenState);
         if (message.ActivatorId == m_serverId)
         {
             ++m_activationsBack;
@@ -1350,6 +1433,25 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         return;
     }
 
+    // An item another player's character took or gave, as the server passes it on: what `invchanges` asserts.
+    if (opcode == NotifyInventoryChanges::Opcode)
+    {
+        const auto& message = static_cast<const NotifyInventoryChanges&>(acMessage);
+        ++m_inventoryChanges[message.Item.BaseId.BaseId];
+        spdlog::info("Inventory change of server character {:X}: item {:X}:{:X}, count {}, quest item {}", message.ServerId, message.Item.BaseId.ModId,
+                     message.Item.BaseId.BaseId, message.Item.Count, message.Item.IsQuestItem);
+        return;
+    }
+
+    // A quest update the server relayed from another party member: what `questupdates` counts.
+    if (opcode == NotifyQuestUpdate::Opcode)
+    {
+        const auto& message = static_cast<const NotifyQuestUpdate&>(acMessage);
+        ++m_questUpdates[message.Id.BaseId];
+        spdlog::info("Quest update relayed to this bot: quest {:X}:{:X}, stage {}, status {}", message.Id.ModId, message.Id.BaseId, message.Stage, message.Status);
+        return;
+    }
+
     // A player's downed state, as the server tells the party: what `downstate`, `respawnpoint` and `refused` assert.
     if (opcode == NotifyDownedState::Opcode)
     {
@@ -1362,6 +1464,14 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             spdlog::info("Our revive of player {} was refused: {}", message.PlayerId, m_lastRefusal);
             return;
         }
+        // To this bot only, while down: a hand is on it, or came off. Counted, but the downed state stays.
+        if (message.Change == NotifyDownedState::kReviveHeld || message.Change == NotifyDownedState::kReviveLetGo)
+        {
+            const char* pHold = message.Change == NotifyDownedState::kReviveHeld ? "held" : "letgo";
+            ++m_downCounts[message.PlayerId][pHold];
+            spdlog::info("Player {} is {} by player {}", message.PlayerId, pHold, message.ReviverId);
+            return;
+        }
         static constexpr std::array<const char*, 8> cNames{"down", "revived", "respawned", "fallen", "died", "up", "refused", "left"};
         const char* pName = message.Change < cNames.size() ? cNames[message.Change] : "unknown";
         m_downStates[message.PlayerId] = pName;
@@ -1370,6 +1480,16 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             m_respawnPoints[message.PlayerId] = message.HasRespawnPoint ? std::optional<glm::vec3>(message.RespawnPosition) : std::nullopt;
         spdlog::info("Player {} is {} (revived by {}, {} s left, respawn point {})", message.PlayerId, pName, message.ReviverId, message.SecondsLeft,
                      message.HasRespawnPoint ? fmt::format("({:.0f}, {:.0f}, {:.0f})", message.RespawnPosition.x, message.RespawnPosition.y, message.RespawnPosition.z) : "none");
+        return;
+    }
+
+    // A magic effect another game applied: what `addtarget` asserts.
+    if (opcode == NotifyAddTarget::Opcode)
+    {
+        const auto& message = static_cast<const NotifyAddTarget&>(acMessage);
+        m_addTargets[message.SpellId.BaseId][message.EffectId.BaseId].push_back(message.CasterPerkFactor);
+        spdlog::info("Effect {:X} of spell {:X} applied to {:X} by {:X}, magnitude {:.2f}, caster's perks {:.2f}", message.EffectId.BaseId, message.SpellId.BaseId, message.TargetId,
+                     message.CasterId, message.Magnitude, message.CasterPerkFactor);
         return;
     }
 
@@ -1513,6 +1633,28 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
+    // "markpos <who>": notes where that actor's owner last reported it, for "movedfrommark" (other, base:<hex>, ref:<hex> or a server id).
+    if (name == "markpos")
+    {
+        const std::string cWho = args.empty() ? std::string("other") : args[0];
+        const KnownActor* pActor = cWho.starts_with("ref:") ? ActorOfRef(cWho) : nullptr;
+        if (!pActor)
+        {
+            const uint32_t cId = TargetId(cWho);
+            for (const auto& actor : m_actors)
+                if (actor.ServerId == cId)
+                    pActor = &actor;
+        }
+        if (!pActor || !pActor->PositionKnown)
+        {
+            spdlog::warn("[script] markpos {}: {}", cWho, pActor ? "no position reported for it yet" : "no such actor known");
+            return true;
+        }
+        m_positionMarks[pActor->ServerId] = pActor->Position;
+        spdlog::info("[script] marked {:X} at ({:.0f}, {:.0f}, {:.0f})", pActor->ServerId, pActor->Position.x, pActor->Position.y, pActor->Position.z);
+        return true;
+    }
+
     if (name == "equip" || name == "unequip")
     {
         uint32_t baseId = 0;
@@ -1632,10 +1774,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             else if (!args.empty() && args[0].rfind("ref:", 0) == 0)
             {
                 // "capture ref:<hex> <seconds>": the actor of that placed reference, as "claim ref:" finds it.
-                const uint32_t wanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
-                for (const auto& actor : m_actors)
-                    if ((actor.Ref.BaseId & 0x00FFFFFF) == wanted && actor.Ref != GameId{})
-                        m_captureId = actor.ServerId;
+                if (const KnownActor* pActor = ActorOfRef(args[0]))
+                    m_captureId = pActor->ServerId;
             }
             else if (!args.empty())
                 m_captureId = static_cast<uint32_t>(std::strtoul(args[0].c_str(), nullptr, 16));
@@ -1659,26 +1799,31 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             return false;
 
         m_capturing = false;
-        size_t withVariables = 0, actions = 0, withPose = 0, withHands = 0, withBones = 0;
+        size_t updates = 0, withVariables = 0, actions = 0, withPose = 0, withHands = 0, withBones = 0;
         float travelled = 0.f;
-        for (size_t i = 0; i < m_capture.size(); ++i)
+        const ReferenceUpdate* pPrevious = nullptr;
+        for (const auto& captured : m_capture)
         {
-            const auto& update = m_capture[i].Update;
+            actions += captured.Actions.size();
+            if (!captured.HasUpdate)
+                continue;
+            ++updates;
+            const auto& update = captured.Update;
             const auto& variables = update.UpdatedMovement.Variables;
             if (!variables.Booleans.empty() || !variables.Integers.empty() || !variables.Floats.empty())
                 ++withVariables;
-            actions += update.ActionEvents.size();
             if (update.UpdatedVRPose != VRPose{})
                 ++withPose;
             if (update.UpdatedVRPose.HasHandCheck)
                 ++withHands;
             if (update.UpdatedVRPose.HasData && !update.UpdatedVRPose.NoBones)
                 ++withBones;
-            if (i > 0)
-                travelled += glm::distance(FromNet(update.UpdatedMovement.Position), FromNet(m_capture[i - 1].Update.UpdatedMovement.Position));
+            if (pPrevious)
+                travelled += glm::distance(FromNet(update.UpdatedMovement.Position), FromNet(pPrevious->UpdatedMovement.Position));
+            pPrevious = &update;
         }
         spdlog::info("Captured {} updates of {:X}: {} with animation variables, {} actions, {} with a VR pose ({} with bones, {} with hand positions), {:.0f} units travelled",
-                     m_capture.size(), m_captureId, withVariables, actions, withPose, withBones, withHands, travelled);
+                     updates, m_captureId, withVariables, actions, withPose, withBones, withHands, travelled);
 
         // Which actions, by name. One actor repeating one event hundreds of times is what fills a stream and starves
         // everything behind it (the "Unequip loop" of 2026-09-24); a Netch sent 1521 actions in twelve seconds on
@@ -1687,7 +1832,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         {
             std::map<std::string, size_t> byName;
             for (const auto& captured : m_capture)
-                for (const auto& action : captured.Update.ActionEvents)
+                for (const auto& action : captured.Actions)
                     ++byName[action.EventName.empty() ? fmt::format("(no name, action {:X}, idle {:X})", action.ActionId, action.IdleId) : std::string(action.EventName.c_str())];
             std::vector<std::pair<std::string, size_t>> sorted(byName.begin(), byName.end());
             std::sort(sorted.begin(), sorted.end(), [](const auto& acLeft, const auto& acRight) { return acLeft.second > acRight.second; });
@@ -1705,12 +1850,14 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "replay [me|npc] [times]" sends the captured stream back as this bot's own character, or as the NPC it owns,
-    // at the pace it arrived and starting from where that body stands now.
+    // "replay [me|npc] [times] [noactions]" sends the captured stream back as this bot's own character, or as the NPC it
+    // owns, at the pace it arrived and starting from where that body stands now. With "noactions", only movement, variables
+    // and pose go out: the recording's own moveStart cannot start a copy that something else should have started.
     if (name == "replay")
     {
         const bool asNpc = !args.empty() && args[0] == "npc";
         const int times = std::max(1, static_cast<int>(arg(1, 1.f)));
+        const bool noActions = args.size() > 2 && args[2] == "noactions";
         if (aFirstTick)
         {
             m_replayTarget = kNoId;
@@ -1733,12 +1880,20 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             m_replayIndex = 0;
             m_replayRound = 0;
             m_replaying = !asNpc; // the bot's own heartbeat would drag its character back between two updates
-            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f})", m_capture.size(), m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z);
+            if (!asNpc)
+                m_lastReplayedPose = {};
+            const auto updates = std::count_if(m_capture.begin(), m_capture.end(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
+            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f}){}", updates, m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z,
+                         noActions ? ", without their actions" : "");
         }
         if (m_replayTarget == kNoId)
             return true;
 
-        const glm::vec3 origin = FromNet(m_capture.front().Update.UpdatedMovement.Position);
+        // Where the recording starts and ends: its first and last movement update (a batch of actions has no place).
+        const auto cFirst = std::find_if(m_capture.begin(), m_capture.end(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
+        const auto cLast = std::find_if(m_capture.rbegin(), m_capture.rend(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
+        const glm::vec3 origin = cFirst != m_capture.end() ? FromNet(cFirst->Update.UpdatedMovement.Position) : glm::vec3{};
+        const glm::vec3 end = cLast != m_capture.rend() ? FromNet(cLast->Update.UpdatedMovement.Position) : glm::vec3{};
         const uint32_t length = m_capture.back().AtMs + 100;
         const auto elapsed = static_cast<uint32_t>(Seconds(now - m_commandStart) * 1000.f);
         while (m_replayRound < times)
@@ -1747,7 +1902,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (m_replayIndex >= m_capture.size())
             {
                 // Each round carries on from where the last one ended, so a walk repeated is a longer walk.
-                m_replayBase += FromNet(m_capture.back().Update.UpdatedMovement.Position) - origin;
+                m_replayBase += end - origin;
                 m_replayIndex = 0;
                 ++m_replayRound;
                 continue;
@@ -1756,39 +1911,56 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (roundStart + captured.AtMs > elapsed)
                 break;
 
-            ClientReferencesMoveRequest message{};
-            message.Tick = GetClock().GetCurrentTick();
-            ReferenceUpdate& update = message.Updates[m_replayTarget];
-            update = captured.Update;
-            if (m_hasHandTargets && update.UpdatedVRPose.HasData)
-            {
-                update.UpdatedVRPose.HasHandCheck = true;
-                for (int i = 0; i < 3; ++i)
-                {
-                    update.UpdatedVRPose.LeftHandOffset[i] = m_handTargets[0][i];
-                    update.UpdatedVRPose.RightHandOffset[i] = m_handTargets[1][i];
-                }
-            }
-            if (!asNpc && update.UpdatedVRPose.HasData)
-                m_lastReplayedPose = update.UpdatedVRPose;
-            const glm::vec3 place = m_replayBase + (FromNet(captured.Update.UpdatedMovement.Position) - origin);
-            update.UpdatedMovement.Position = ToNet(place);
-            update.UpdatedMovement.CellId = m_cell;
-            update.UpdatedMovement.WorldSpaceId = m_worldSpace;
-            for (auto& action : update.ActionEvents)
-            {
-                action.ActorId = m_replayTarget;
-                action.Tick = message.Tick;
-            }
-            SendMsg(message);
+            // Each message a later tick than the one before, as the game's client sends them, even when a hitch sends several at once.
+            const uint64_t cTick = std::max(GetClock().GetCurrentTick(), m_lastReplayTick + 1);
+            m_lastReplayTick = cTick;
 
-            if (!asNpc)
+            // As the game's client sends them: the actions on their own, reliably, at the time they came.
+            if (!noActions && !captured.Actions.empty())
             {
-                m_position = place;
-                m_lastMovement = now;
+                RequestActionEvents actions{};
+                auto& performed = actions.Actions[m_replayTarget];
+                performed = captured.Actions;
+                for (auto& action : performed)
+                {
+                    action.ActorId = m_replayTarget;
+                    action.Tick = cTick;
+                }
+                SendMsg(actions);
             }
-            else
-                m_npcPosition = place;
+
+            if (captured.HasUpdate)
+            {
+                ClientReferencesMoveRequest message{};
+                message.Tick = cTick;
+                ReferenceUpdate& update = message.Updates[m_replayTarget];
+                update = captured.Update;
+                if (m_hasHandTargets && update.UpdatedVRPose.HasData)
+                {
+                    update.UpdatedVRPose.HasHandCheck = true;
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        update.UpdatedVRPose.LeftHandOffset[i] = m_handTargets[0][i];
+                        update.UpdatedVRPose.RightHandOffset[i] = m_handTargets[1][i];
+                    }
+                }
+                if (!asNpc && update.UpdatedVRPose.HasData)
+                    KeepReplayedPose(update.UpdatedVRPose);
+                const glm::vec3 place = m_replayBase + (FromNet(captured.Update.UpdatedMovement.Position) - origin);
+                update.UpdatedMovement.Position = ToNet(place);
+                update.UpdatedMovement.CellId = m_cell;
+                update.UpdatedMovement.WorldSpaceId = m_worldSpace;
+                // The movement goes unreliably, so a lost one costs only itself.
+                SendMsg(message, MovementFlags());
+
+                if (!asNpc)
+                {
+                    m_position = place;
+                    m_lastMovement = now;
+                }
+                else
+                    m_npcPosition = place;
+            }
             ++m_replayIndex;
         }
         if (m_replayRound < times)
@@ -1796,6 +1968,24 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
         m_replaying = false;
         spdlog::info("Replay finished at ({:.0f}, {:.0f}, {:.0f})", asNpc ? m_npcPosition.x : m_position.x, asNpc ? m_npcPosition.y : m_position.y, asNpc ? m_npcPosition.z : m_position.z);
+        return true;
+    }
+
+    // "quiet <seconds>": no movement is sent for that long, as when the owner's game freezes or its connection stalls.
+    // Right after a replay, the copy's newest report is then a walking one.
+    if (name == "quiet")
+    {
+        const float seconds = arg(0, 3.f);
+        if (aFirstTick)
+        {
+            m_quiet = true;
+            spdlog::info("[script] quiet for {:.1f} s: no movement sent", seconds);
+        }
+        if (Seconds(now - m_commandStart) < seconds)
+            return false;
+
+        m_quiet = false;
+        spdlog::info("[script] quiet over");
         return true;
     }
 
@@ -1850,18 +2040,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // actually sends and the direction the server got wrong until 2026-09-24.
     if (name == "hit")
     {
-        uint32_t target = kNoId;
-        if (!args.empty() && args[0] == "other")
-        {
-            for (const auto& player : m_players)
-                if (player.ServerId != m_serverId)
-                {
-                    target = player.ServerId;
-                    break;
-                }
-        }
-        else if (!args.empty())
-            target = static_cast<uint32_t>(std::strtoul(args[0].c_str(), nullptr, 16));
+        const uint32_t target = args.empty() ? kNoId : TargetId(args[0]);
 
         if (target == kNoId)
         {
@@ -1943,7 +2122,35 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "revive other|<player id>": this bot held a hand on that downed player long enough, as a client asks then.
+    // "effect <who> <spell hex> <effect hex> <magnitude> [caster's perk factor]": this bot's character applies that effect of a Skyrim.esm spell to someone
+    // (other, base:<hex> or a server id), as a caster's game sends it.
+    if (name == "effect")
+    {
+        uint32_t spell = 0;
+        uint32_t effect = 0;
+        float magnitude = 0.f;
+        float perkFactor = 1.f;
+        const uint32_t target = args.empty() ? kNoId : TargetId(args[0]);
+        if (args.size() < 4 || !ParseHex(args[1], spell) || !ParseHex(args[2], effect) || !ParseFloat(args[3], magnitude) ||
+            (args.size() > 4 && !ParseFloat(args[4], perkFactor)) || target == kNoId)
+        {
+            spdlog::error("[script] effect needs a target that is here, a spell, an effect and a magnitude");
+            return true;
+        }
+        AddTargetRequest request{};
+        request.TargetId = target;
+        request.CasterId = m_serverId;
+        request.SpellId = GameId(m_skyrimModId, spell);
+        request.EffectId = GameId(m_skyrimModId, effect);
+        request.Magnitude = magnitude;
+        request.CasterPerkFactor = perkFactor;
+        SendMsg(request);
+        spdlog::info("[script] effect {:X} of spell {:X} sent to {:X}, magnitude {:.1f}, caster's perks {:.2f}", effect, spell, target, magnitude, perkFactor);
+        return true;
+    }
+
+    // "revive other|<player id> [hold|letgo]": this bot held a hand on that downed player long enough, as a client asks then.
+    // With hold or letgo, only that its hand went on or came off, as a client says while holding.
     if (name == "revive")
     {
         uint32_t target = 0;
@@ -1956,8 +2163,12 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
         ReviveRequest request{};
         request.TargetPlayerId = target;
+        if (args.size() > 1 && args[1] == "hold")
+            request.HoldStage = ReviveRequest::kHoldStart;
+        else if (args.size() > 1 && args[1] == "letgo")
+            request.HoldStage = ReviveRequest::kHoldStop;
         SendMsg(request);
-        spdlog::info("[script] revive of player {} sent", target);
+        spdlog::info("[script] revive of player {} sent (stage {})", target, static_cast<int>(request.HoldStage));
         return true;
     }
 
@@ -2162,24 +2373,27 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         update.UpdatedMovement.Flying = m_npcFlying;
         update.UpdatedMovement.CellId = m_cell;
         update.UpdatedMovement.WorldSpaceId = m_worldSpace;
+        // Reliable, unlike a stream of movement: this one step is all the test sends, and no later one would make it good.
         SendMsg(message);
         spdlog::info("[script] NPC {:X} moved to ({:.0f}, {:.0f}, {:.0f})", npcId, m_npcPosition.x, m_npcPosition.y, m_npcPosition.z);
         return true;
     }
 
-    // "activate <hex reference> by other|me [door state]": an activation of that reference of Skyrim.esm, in this bot's cell.
+    // "activate <hex reference> by other|me|nobody [door state]": an activation of that reference of Skyrim.esm, in this bot's cell.
     // "by other" sends it in the name of the other player's character, as a game does when it sends on a door replayed on that player's copy.
     // "by me" sends it in this bot's own name; the game replays it on this bot's copy, and a game that sends the replay on sends it back here (see activationsback).
+    // "by nobody" sends it in the name of an actor no game has, as a door opened by an NPC the receiving game has no copy of.
     // The server relays it to the players in that cell, the game among them.
     if (name == "activate")
     {
         uint32_t refId = 0;
-        if (args.size() < 3 || !ParseHex(args[0], refId) || args[1] != "by" || (args[2] != "other" && args[2] != "me"))
+        if (args.size() < 3 || !ParseHex(args[0], refId) || args[1] != "by" || (args[2] != "other" && args[2] != "me" && args[2] != "nobody"))
         {
-            spdlog::error("[script] activate needs a hex reference and 'by other' or 'by me'");
+            spdlog::error("[script] activate needs a hex reference and 'by other', 'by me' or 'by nobody'");
             return true;
         }
-        uint32_t otherId = args[2] == "me" ? m_serverId : kNoId;
+        constexpr uint32_t cNobody = 0x7FFFFF0;
+        uint32_t otherId = args[2] == "me" ? m_serverId : args[2] == "nobody" ? cNobody : kNoId;
         for (const auto& player : m_players)
             if (otherId == kNoId && player.ServerId != m_serverId)
             {
@@ -2194,6 +2408,13 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         ActivateRequest request{};
         request.Id = Skyrim(refId);
         request.CellId = m_cell;
+        // "... cell <hex>": the door's cell given outright, e.g. the next cell over from where the players stand.
+        for (size_t i = 3; i + 1 < args.size(); ++i)
+        {
+            uint32_t cellId = 0;
+            if (args[i] == "cell" && ParseHex(args[i + 1], cellId))
+                request.CellId = Skyrim(cellId);
+        }
         request.ActivatorId = otherId;
         // The state the door had before it was used, as the sender saw it: a game replays a door's activation only when
         // its own door is in that state too. 3 is "closed", what a load door reports (TESObjectREFR::OpenState).
@@ -2254,6 +2475,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // Put an item in this bot's own inventory, the way a real client reports one it picked up or bought: the other
     // players' copies of this character then own it too. Without it an "equip" names an item the copy does not have,
     // and the game ignores it (live-equip, 2026-10-03: the copy never held the sword it was told to equip).
+    // "additem <base> <n> npc": into the NPC this bot owns instead, as its owner's game reports it.
     if (name == "additem")
     {
         uint32_t baseId = 0;
@@ -2265,11 +2487,29 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         RequestInventoryChanges request{};
         request.ServerId = m_serverId;
         request.OwnershipEpoch = m_ownershipEpoch;
+        if (args.size() > 2 && args[2] == "npc")
+        {
+            const KnownActor* pNpc = nullptr;
+            for (const auto& actor : m_actors)
+                if (actor.OwnedByUs && !actor.IsPlayer && actor.ServerId != m_serverId)
+                    pNpc = &actor;
+            if (!pNpc)
+            {
+                spdlog::warn("[script] additem: this bot owns no NPC");
+                return true;
+            }
+            request.ServerId = pNpc->ServerId;
+            request.OwnershipEpoch = pNpc->OwnershipEpoch;
+        }
         request.Item.BaseId = Skyrim(baseId);
         request.Item.Count = args.size() > 1 ? std::atoi(args[1].c_str()) : 1;
+        // "additem <base> <n> quest": a quest object, as a game sends one taken from a container or given by a script.
+        // "additem <base> <n> quest pickup": the same, as the echo of a pick-up from the world.
+        request.Item.IsQuestItem = args.size() > 2 && args[2] == "quest";
+        request.PickedUp = request.Item.IsQuestItem && args.size() > 3 && args[3] == "pickup";
         request.UpdateClients = true;
         SendMsg(request);
-        spdlog::info("[script] {} of {:X} added to this bot's inventory", request.Item.Count, baseId);
+        spdlog::info("[script] {} of {:X} added to the inventory of server character {:X}{}", request.Item.Count, baseId, request.ServerId, request.PickedUp ? " (picked up)" : "");
         return true;
     }
 
@@ -2537,14 +2777,10 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
     if (name == "claim" && !args.empty() && args[0].rfind("ref:", 0) == 0)
     {
-        const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
-        const KnownActor* pFound = nullptr;
-        for (const auto& actor : m_actors)
-            if ((actor.Ref.BaseId & 0x00FFFFFF) == cWanted && actor.Ref != GameId{})
-                pFound = &actor;
+        const KnownActor* pFound = ActorOfRef(args[0]);
         if (!pFound)
         {
-            spdlog::error("[script] claim: no actor of reference {:X} known", cWanted);
+            spdlog::error("[script] claim: no actor of reference {} known", args[0].substr(4));
             return true;
         }
         RequestOwnershipClaim request{};
@@ -2552,7 +2788,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.ExpectedOwnershipEpoch = pFound->OwnershipEpoch;
         request.Follower = args.size() > 1 && args[1] == "follower";
         SendMsg(request);
-        spdlog::info("[script] claimed actor {:X} (reference {:X}) at epoch {}{}", request.ServerId, cWanted, request.ExpectedOwnershipEpoch,
+        spdlog::info("[script] claimed actor {:X} (reference {:X}) at epoch {}{}", request.ServerId, pFound->Ref.BaseId & 0x00FFFFFF, request.ExpectedOwnershipEpoch,
                      request.Follower ? " as our follower" : "");
         return true;
     }
@@ -2572,6 +2808,40 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         m_leftParty = true;
         SendMsg(PartyLeaveRequest{});
         spdlog::info("[script] leaving the party");
+        return true;
+    }
+
+    // "quest <base hex> start|stage|stop <stage>": this player's quest change, as a game in a party sends it.
+    // The quest is a main quest of Skyrim.esm as the server numbers mods; the server checks nothing else about it.
+    if (name == "quest")
+    {
+        // A line it cannot read is logged and skipped like any other command's: false would run it again forever.
+        uint32_t base = 0;
+        float stage = 0.f;
+        if (args.size() < 3 || !ParseHex(args[0], base) || !ParseFloat(args[2], stage))
+        {
+            spdlog::error("[script] quest needs a hex quest id, start|stage|stop and a stage number, e.g. 'quest 3372B stage 10'");
+            return true;
+        }
+
+        RequestQuestUpdate request{};
+        request.Id = GameId(0, base);
+        request.Stage = static_cast<uint16_t>(stage);
+        request.ClientQuestType = 1;
+        if (args[1] == "start")
+            request.Status = RequestQuestUpdate::Started;
+        else if (args[1] == "stage")
+            request.Status = RequestQuestUpdate::StageUpdate;
+        else if (args[1] == "stop")
+            request.Status = RequestQuestUpdate::Stopped;
+        else
+        {
+            spdlog::error("[script] quest: '{}' is not start, stage or stop", args[1]);
+            return true;
+        }
+
+        SendMsg(request);
+        spdlog::info("[script] quest {:X}: {} {}", base, args[1], request.Stage);
         return true;
     }
 
@@ -2632,6 +2902,9 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.IsDragon = !args.empty() && args.back() == "dragon";
         // "npc temp <base> mount": registered as a horse one can ride (CharacterComponent::IsMount on the server).
         request.IsMount = !args.empty() && args.back() == "mount";
+        // "npc temp <base> summon": registered as this player's summon, which the server removes for everyone once it is
+        // let go of ("release"), as when a summon's time runs out.
+        request.IsPlayerSummon = !args.empty() && args.back() == "summon";
         request.ReferenceId = temporary ? GameId(std::numeric_limits<uint32_t>::max(), 0xFF000000u | (cookie & 0x00FFFFFFu)) : GameId(m_skyrimModId, baseId);
         m_npcReference = request.ReferenceId;
         m_npcCookies[cookie] = request.ReferenceId;
@@ -2714,10 +2987,18 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     }
 
     // Hand an owned actor back, which starts the server's search for the next owner.
+    // "release <server id|ref:<hex>|any> [at <x> <y> <z>]": with "at", the actor was last seen at that place in Skyrim's
+    // worldspace, as a game says when it lets go of an actor it unloaded; the server then tells the other players to
+    // move it there (NotifyActorTeleport).
     if (name == "release")
     {
         KnownActor* pActor = nullptr;
-        if (!args.empty() && args[0] != "any")
+        if (!args.empty() && args[0].rfind("ref:", 0) == 0)
+        {
+            if (const KnownActor* pFound = ActorOfRef(args[0]))
+                pActor = &Actor(pFound->ServerId);
+        }
+        else if (!args.empty() && args[0] != "any")
         {
             const uint32_t wanted = static_cast<uint32_t>(std::strtoul(args[0].c_str(), nullptr, 16));
             for (auto& actor : m_actors)
@@ -2745,6 +3026,16 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         // server's, and drops it silently.
         request.OwnershipEpoch = pActor->OwnershipEpoch;
         request.Reason = OwnershipReleaseReason::Relinquish;
+        float x = 0.f, y = 0.f, z = 0.f;
+        if (args.size() > 4 && args[1] == "at" && ParseFloat(args[2], x) && ParseFloat(args[3], y) && ParseFloat(args[4], z))
+        {
+            // Tamriel, Skyrim.esm's exterior worldspace.
+            request.WorldSpaceId = GameId{m_skyrimModId, 0x3C};
+            request.Position.x = x;
+            request.Position.y = y;
+            request.Position.z = z;
+            spdlog::info("[script] actor {:X} handed back as last seen at ({:.0f}, {:.0f}, {:.0f}) in Tamriel", pActor->ServerId, x, y, z);
+        }
         SendMsg(request);
 
         pActor->OwnedByUs = false;
@@ -2981,14 +3272,22 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         // game's own NPCs: "dead ref:45A63" is the Mistwatch bandit the game killed (2026-10-03, live-sender).
         if (acArgs[aIndex].rfind("ref:", 0) == 0)
         {
-            const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(acArgs[aIndex].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
-            aOut = kNoId;
-            for (const auto& actor : m_actors)
-                if (!actor.IsPlayer && (actor.Ref.BaseId & 0x00FFFFFF) == cWanted && actor.Ref != GameId{})
-                {
-                    aOut = actor.ServerId;
-                    break;
-                }
+            const KnownActor* pActor = ActorOfRef(acArgs[aIndex]);
+            aOut = pActor ? pActor->ServerId : kNoId;
+            return true;
+        }
+
+        // "base:<hex>" is the newest NPC copy of that base, one the game made (DO place) and this bot only sees.
+        if (acArgs[aIndex].starts_with("base:"))
+        {
+            aOut = TargetId(acArgs[aIndex]);
+            return true;
+        }
+
+        // "mynpc" is the NPC this bot registered last, whichever game runs it now.
+        if (acArgs[aIndex] == "mynpc")
+        {
+            aOut = m_lastNpcId;
             return true;
         }
 
@@ -3175,11 +3474,101 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         return same;
     }
 
+    if (what == "nearby")
+    {
+        // nearby <who>: that player is outdoors in this bot's worldspace, within one grid square of this bot's own.
+        // An exterior cell id carries no coordinates, so the square is the player's latest position.
+        // That position counts only when it was sent from the cell the player announced last: one from before a trip away does not.
+        uint32_t id = 0;
+        if (!parseId(1, id))
+            return std::nullopt;
+        const auto player = std::find_if(m_players.begin(), m_players.end(), [id](const KnownPlayer& acPlayer) { return acPlayer.ServerId == id; });
+        if (id == kNoId || player == m_players.end())
+        {
+            aOutWhy = "nobody else is here yet";
+            return false;
+        }
+
+        const auto mine = GridCellCoords::CalculateGridCellCoords(m_position.x, m_position.y);
+        const auto theirs = GridCellCoords::CalculateGridCellCoords(player->Position.x, player->Position.y);
+        const bool outdoorsHere = m_worldSpace != GameId{} && player->WorldSpaceId == m_worldSpace && player->MovedInWorldSpace == m_worldSpace;
+        const bool fresh = player->MovedInCell != GameId{} && player->MovedInCell == player->CellId;
+        const bool close = std::abs(theirs.X - mine.X) <= 1 && std::abs(theirs.Y - mine.Y) <= 1;
+        aOutWhy = fmt::format("{:X} announced cell {:X} of worldspace {:X}, last moved in cell {:X} at grid ({}, {}); this bot is at grid ({}, {}) of {:X}", id,
+                              player->CellId.BaseId, player->WorldSpaceId.BaseId, player->MovedInCell.BaseId, theirs.X, theirs.Y, mine.X, mine.Y, m_worldSpace.BaseId);
+        return outdoorsHere && fresh && close;
+    }
+
+    if (what == "movedfrommark")
+    {
+        // movedfrommark <who> <op> <units>: how far the actor's reported position is from where "markpos" noted it.
+        uint32_t id = 0;
+        float wanted = 0.f;
+        if (!parseId(1, id) || acArgs.size() < 4 || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const KnownActor* pActor = id != kNoId ? findActor(id) : nullptr;
+        const auto cMark = m_positionMarks.find(id);
+        if (!pActor || cMark == m_positionMarks.end())
+        {
+            aOutWhy = pActor ? fmt::format("{:X} was never marked", id) : std::string("no such actor known");
+            return false;
+        }
+        const float cMoved = glm::distance(pActor->Position, cMark->second);
+        aOutWhy = fmt::format("{:X} moved {:.0f} units from its mark ({:.0f}, {:.0f}, {:.0f}), now reported at ({:.0f}, {:.0f}, {:.0f})", id, cMoved, cMark->second.x, cMark->second.y,
+                              cMark->second.z, pActor->Position.x, pActor->Position.y, pActor->Position.z);
+        const std::string& op = acArgs[2];
+        if (op == ">=") return cMoved >= wanted;
+        if (op == "<=") return cMoved <= wanted;
+        if (op == ">") return cMoved > wanted;
+        if (op == "<") return cMoved < wanted;
+        return std::nullopt;
+    }
+
+    if (what == "bonesago")
+    {
+        // bonesago <who> <op> <ms>: how long ago the actor's owner last sent its bones.
+        uint32_t id = 0;
+        float wanted = 0.f;
+        if (!parseId(1, id) || acArgs.size() < 4 || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const KnownActor* pActor = id != kNoId ? findActor(id) : nullptr;
+        if (!pActor || pActor->BonesAt == Clock::time_point{})
+        {
+            aOutWhy = pActor ? fmt::format("{:X}: no bones ever came", id) : std::string("no such actor known");
+            return false;
+        }
+        const float cAgo = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - pActor->BonesAt).count());
+        aOutWhy = fmt::format("{:X}: bones last came {:.0f} ms ago", id, cAgo);
+        const std::string& op = acArgs[2];
+        if (op == ">=") return cAgo >= wanted;
+        if (op == "<=") return cAgo <= wanted;
+        if (op == ">") return cAgo > wanted;
+        if (op == "<") return cAgo < wanted;
+        return std::nullopt;
+    }
+
     if (what == "mydrop")
     {
         // mydrop: the server has sent this bot's own drop back.
         aOutWhy = m_drops.count(m_ownDrop) ? fmt::format("item {} is this bot's drop", m_ownDrop) : fmt::format("{} item(s) known, none of them this bot's", m_drops.size());
         return m_drops.count(m_ownDrop) != 0;
+    }
+
+    if (what == "activations")
+    {
+        // activations <op> <n>: every activation relayed to this bot, whoever did it.
+        float wanted = 0.f;
+        if (acArgs.size() < 3 || !ParseFloat(acArgs[2], wanted))
+            return std::nullopt;
+        const float value = static_cast<float>(m_activations);
+        aOutWhy = fmt::format("{} activation(s) relayed here", m_activations);
+        const std::string& op = acArgs[1];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
     }
 
     if (what == "activationsback")
@@ -3271,9 +3660,29 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         return std::abs(cPoint->second->x - wantedX) <= 50.f && std::abs(cPoint->second->y - wantedY) <= 50.f;
     }
 
+    if (what == "questupdates")
+    {
+        // questupdates <quest base hex> <op> <n>: how many of that quest's updates the server relayed to this bot.
+        uint32_t base = 0;
+        float wanted = 0.f;
+        if (acArgs.size() < 4 || !ParseHex(acArgs[1], base) || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const auto cFound = m_questUpdates.find(base);
+        const int cCount = cFound != m_questUpdates.end() ? cFound->second : 0;
+        const float value = static_cast<float>(cCount);
+        aOutWhy = fmt::format("{} update(s) of quest {:X} relayed to this bot", cCount, base);
+        const std::string& op = acArgs[2];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
+    }
+
     if (what == "downcount")
     {
-        // downcount me|other <state> <op> <n>: how many times the server sent that downed state for that player (down, revived, respawned, fallen, died, up, left).
+        // downcount me|other <state> <op> <n>: how many times the server sent that downed state for that player (down, revived, respawned, fallen, died, up, left, held, letgo).
         float wanted = 0.f;
         if (acArgs.size() < 5 || !ParseFloat(acArgs[4], wanted))
             return std::nullopt;
@@ -3289,6 +3698,30 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         if (op == ">") return value > wanted;
         if (op == "<") return value < wanted;
         return std::nullopt;
+    }
+
+    if (what == "addtarget")
+    {
+        // addtarget <spell hex> <effect hex> <n> <factor>: the n-th caster's perk factor another game sent for that effect of that spell, within 1 %.
+        uint32_t spell = 0;
+        uint32_t effect = 0;
+        float wanted = 0.f;
+        if (acArgs.size() < 5 || !ParseHex(acArgs[1], spell) || !ParseHex(acArgs[2], effect) || !ParseFloat(acArgs[4], wanted))
+            return std::nullopt;
+        const size_t cIndex = std::strtoul(acArgs[3].c_str(), nullptr, 10);
+        const auto cSpell = m_addTargets.find(spell);
+        const std::vector<float>* pFactors = nullptr;
+        if (cSpell != m_addTargets.end())
+            if (const auto cEffect = cSpell->second.find(effect); cEffect != cSpell->second.end())
+                pFactors = &cEffect->second;
+        if (!pFactors || cIndex == 0 || cIndex > pFactors->size())
+        {
+            aOutWhy = fmt::format("{} factor(s) received for effect {:X} of spell {:X}", pFactors ? pFactors->size() : 0, effect, spell);
+            return false;
+        }
+        const float cValue = (*pFactors)[cIndex - 1];
+        aOutWhy = fmt::format("caster's perks {:.2f}", cValue);
+        return std::abs(cValue - wanted) <= std::abs(wanted) * 0.01f;
     }
 
     if (what == "refused")
@@ -3309,6 +3742,26 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         const float value = static_cast<float>(m_voicesHeard);
         aOutWhy = fmt::format("{} voice piece(s) relayed from {} player(s)", m_voicesHeard, m_voicesHeardFrom.size());
         const std::string& op = acArgs[1];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
+    }
+
+    if (what == "invchanges")
+    {
+        // invchanges <hex base id> <op> <n>: changes of that item the server passed on for other players' characters.
+        uint32_t baseId = 0;
+        float wanted = 0.f;
+        if (acArgs.size() < 4 || !ParseHex(acArgs[1], baseId) || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const auto cFound = m_inventoryChanges.find(baseId);
+        const int cCount = cFound != m_inventoryChanges.end() ? cFound->second : 0;
+        const float value = static_cast<float>(cCount);
+        aOutWhy = fmt::format("{} change(s) of item {:X} passed on", cCount, baseId);
+        const std::string& op = acArgs[2];
         if (op == "==") return value == wanted;
         if (op == ">=") return value >= wanted;
         if (op == "<=") return value <= wanted;
@@ -3382,6 +3835,23 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         if (op == ">") return value > wanted;
         if (op == "<") return value < wanted;
         return std::nullopt;
+    }
+
+    if (what == "ownedby")
+    {
+        // ownedby <who> me|other: whether that actor is this bot's now, as the server last said.
+        // "owned" counts every actor, and a bot that accepts hand-overs is given all the actors a player leaves behind.
+        uint32_t id = 0;
+        if (acArgs.size() < 3 || !parseId(1, id) || (acArgs[2] != "me" && acArgs[2] != "other"))
+            return std::nullopt;
+        const KnownActor* pActor = id != kNoId ? findActor(id) : nullptr;
+        if (!pActor)
+        {
+            aOutWhy = id != kNoId ? fmt::format("nothing known about {:X}", id) : std::string("no such actor known");
+            return false;
+        }
+        aOutWhy = fmt::format("{:X} is {}this bot's, epoch {}", id, pActor->OwnedByUs ? "" : "not ", pActor->OwnershipEpoch);
+        return pActor->OwnedByUs == (acArgs[2] == "me");
     }
 
     if (what == "owned")
@@ -3592,6 +4062,41 @@ uint32_t Bot::OtherPlayerIdOrLast() const noexcept
     if (const uint32_t cOther = OtherPlayerId())
         m_lastOtherPlayerId = cOther;
     return m_lastOtherPlayerId;
+}
+
+uint32_t Bot::TargetId(const std::string& acWho) const noexcept
+{
+    if (acWho == "other")
+    {
+        for (const auto& player : m_players)
+            if (player.ServerId != m_serverId)
+                return player.ServerId;
+        return kNoId;
+    }
+    if (acWho.starts_with("base:"))
+    {
+        const uint32_t cBase = static_cast<uint32_t>(std::strtoul(acWho.c_str() + 5, nullptr, 16));
+        uint32_t found = kNoId;
+        for (const auto& actor : m_actors)
+            if (!actor.IsPlayer && !actor.OwnedByUs && actor.Base.BaseId == cBase)
+                found = actor.ServerId;
+        return found;
+    }
+    char* pEnd = nullptr;
+    const unsigned long cId = std::strtoul(acWho.c_str(), &pEnd, 16);
+    return pEnd != acWho.c_str() ? static_cast<uint32_t>(cId) : kNoId;
+}
+
+const KnownActor* Bot::ActorOfRef(const std::string& acWord) const noexcept
+{
+    if (acWord.rfind("ref:", 0) != 0)
+        return nullptr;
+    const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(acWord.c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
+    const KnownActor* pFound = nullptr;
+    for (const auto& actor : m_actors)
+        if (actor.Ref != GameId{} && (actor.Ref.BaseId & 0x00FFFFFF) == cWanted)
+            pFound = &actor;
+    return pFound;
 }
 
 KnownPlayer* Bot::FindPlayerCharacter(const uint32_t aServerId) noexcept

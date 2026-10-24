@@ -49,16 +49,20 @@ uintptr_t TP_MAKE_THISCALL(HookVMDestructor, void)
 static TiltedPhoques::Initializer s_mainHooks(
     []()
     {
-        POINTER_SKYRIMSE(TMainLoop, cMainLoop, 36564, 36564);
         POINTER_SKYRIMSE(TVMUpdate, cVMUpdate, 53926, 53926);
+        VMUpdate = cVMUpdate.Get();
+        TP_HOOK(&VMUpdate, HookVMUpdate);
+
+#ifndef SKYRIMVR
+        // Both are empty placeholders, and neither address exists on VR.
+        POINTER_SKYRIMSE(TMainLoop, cMainLoop, 36564, 36564);
         POINTER_SKYRIMSE(TVMDestructor, cVMDestructor, 40412, 40412);
 
-        VMUpdate = cVMUpdate.Get();
         MainLoop = cMainLoop.Get();
         VMDestructor = cVMDestructor.Get();
 
-        TP_HOOK(&VMUpdate, HookVMUpdate);
         TP_HOOK(&MainLoop, HookMainLoop);
         TP_HOOK(&VMDestructor, HookVMDestructor);
+#endif
     });
 

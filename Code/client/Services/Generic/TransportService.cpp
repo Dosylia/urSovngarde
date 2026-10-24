@@ -1,5 +1,6 @@
 
 #include <Services/TransportService.h>
+#include <steam/isteamnetworkingutils.h>
 #include <PerfScope.h>
 
 #include <Events/ConnectedEvent.h>
@@ -18,6 +19,7 @@
 #include <TiltedOnlinePCH.h>
 #include <World.h>
 
+#include <Services/SendBuffer.h>
 #include <Messages/AuthenticationRequest.h>
 #include <Messages/ServerMessageFactory.h>
 #include <Messages/NotifySettingsChange.h>
@@ -53,6 +55,14 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
 {
+    // The networking library fixes each connection's send rate at connect, 128 KiB/s for any ping over about 33 ms.
+    // Movement at 30 Hz with VR poses and NPCs in a fight passes that, and a full queue then refuses every send, reliable ones too.
+    if (ISteamNetworkingUtils* pUtils = SteamNetworkingUtils())
+    {
+        pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMin, 512 * 1024);
+        pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMax, 2 * 1024 * 1024);
+    }
+
     m_updateConnection = m_dispatcher.sink<UpdateEvent>().connect<&TransportService::HandleUpdate>(this);
     m_settingsChangeConnection = m_dispatcher.sink<NotifySettingsChange>().connect<&TransportService::HandleNotifySettingsChange>(this);
     m_connectedConnection = m_dispatcher.sink<ConnectedEvent>().connect<&TransportService::HandleConnected>(this);
@@ -85,7 +95,7 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
 
 bool TransportService::Send(const ClientMessage& acMessage, TiltedPhoques::EPacketFlags aFlags) const noexcept
 {
-    static thread_local ScratchAllocator s_allocator(1 << 18);
+    static thread_local ScratchAllocator s_allocator(SendBuffer::kScratchBytes);
 
     struct ScopedReset
     {
@@ -96,11 +106,14 @@ bool TransportService::Send(const ClientMessage& acMessage, TiltedPhoques::EPack
     {
         ScopedAllocator _{s_allocator};
 
-        Buffer buffer(1 << 16);
+        Buffer buffer(SendBuffer::kBufferBytes);
         Buffer::Writer writer(&buffer);
-        writer.WriteBits(0, 8); // Write first byte as packet needs it
+        if (!SendBuffer::Write(acMessage, buffer, writer))
+        {
+            spdlog::error("TransportService: message {} did not fit in {} bytes; not sent", acMessage.GetOpcode(), buffer.GetSize());
+            return false;
+        }
 
-        acMessage.Serialize(writer);
         TiltedPhoques::PacketView packet(reinterpret_cast<char*>(buffer.GetWriteData()), writer.Size());
 
         Client::Send(&packet, aFlags);
@@ -186,7 +199,9 @@ void TransportService::OnConnected()
     if (pPlayer->GetWorldSpace())
         modSystem.GetServerModId(pPlayer->GetWorldSpace()->formID, request.WorldSpaceId);
 
-    modSystem.GetServerModId(pPlayer->parentCell->formID, request.CellId);
+    // A connect can complete after the player left for the main menu, where the player has no cell.
+    if (pPlayer->parentCell)
+        modSystem.GetServerModId(pPlayer->parentCell->formID, request.CellId);
 
     request.Level = pPlayer->GetLevel();
 

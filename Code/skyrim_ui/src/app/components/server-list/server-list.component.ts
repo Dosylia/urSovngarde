@@ -310,9 +310,7 @@ export class ServerListComponent {
   // }
 
   public connect(server: Server) {
-    this.clientService.connect(server.ip, server.port ? server.port : 10578);
-    this.soundService.play(Sound.Ok);
-    this.close();
+    this.uiRepository.openConnectWithPasswordView(server.ip, server.port ? server.port : 10578, server.name, true);
   }
 
   public connectWithPassword(server: Server) {

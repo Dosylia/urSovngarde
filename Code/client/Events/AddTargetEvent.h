@@ -13,6 +13,6 @@ struct AddTargetEvent
     uint32_t EffectID{};
     float Magnitude{};
     bool IsDualCasting{false};
-    bool ApplyHealPerkBonus{false};
+    float CasterPerkFactor{1.f};
     bool ApplyStaminaPerkBonus{false};
 };

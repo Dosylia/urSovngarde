@@ -54,13 +54,11 @@ void TESQuest::SetActive(bool toggle)
 
 bool TESQuest::IsStageDone(uint16_t stageIndex)
 {
-    for (Stage* it : stages)
-    {
-        if (it->stageIndex == stageIndex)
-            return it->IsDone();
-    }
-
-    return false;
+    // The game's own answer: no stage flag here is known to mean "done" (CommonLibVR names none at bit 0).
+    using Quest = TESQuest;
+    // Papyrus calls it IsStageDone; GetStageDone is the condition function's name.
+    PAPYRUS_FUNCTION(bool, Quest, IsStageDone, int);
+    return s_pIsStageDone(this, stageIndex);
 }
 
 bool TESQuest::Kill()
@@ -97,14 +95,22 @@ bool TESQuest::SetStage(uint16_t newStage)
     return SetStage(this, newStage);
 }
 
-void TESQuest::ScriptSetStage(uint16_t stageIndex)
+bool TESQuest::ScriptSetStage(uint16_t stageIndex)
 {
-    if (currentStage == stageIndex || IsStageDone(stageIndex))
-        return;
+    if (IsStageReached(stageIndex))
+        return false;
 
     using Quest = TESQuest;
     PAPYRUS_FUNCTION(void, Quest, SetCurrentStageID, int);
     s_pSetCurrentStageID(this, stageIndex);
+    return IsStageReached(stageIndex);
+}
+
+bool TESQuest::IsStageReached(uint16_t aStage) noexcept
+{
+    // A stopped quest reads stage 0 before it ever ran, so its current stage counts only while it runs.
+    // Otherwise a remote start, always at stage 0, would be taken as reached and never start it here.
+    return (currentStage == aStage && !IsStopped()) || IsStageDone(aStage);
 }
 
 void TESQuest::SetStopped()

@@ -15,117 +15,204 @@
     class="app-root-controls"
     [class.background-element]="view$ | async"
   >
-    <!-- urSovngarde's mark, as on the website and in the launcher. -->
-    <div class="app-root-brand">
-      <span class="app-root-brand-sigil" aria-hidden="true"></span>
-      <div>
-        <p class="app-root-brand-name"><span>ur</span>Sovngarde</p>
-        <p class="app-root-brand-tagline">Co-op for Skyrim VR</p>
+    <div class="app-root-top">
+      <!-- urSovngarde's mark, as on the website and in the launcher. -->
+      <div class="app-root-brand">
+        <span class="app-root-brand-sigil" aria-hidden="true"></span>
+        <div>
+          <p class="app-root-brand-name"><span>ur</span>Sovngarde</p>
+          <p class="app-root-brand-tagline">Co-op for Skyrim VR</p>
+        </div>
+      </div>
+
+      <div
+        class="status-chip"
+        [class.ok]="connected$ | async"
+        [class.busy]="connectionInProgress$ | async"
+      >
+        <span class="status-chip-dot"></span>
+        <ng-container *ngIf="connected$ | async; else notConnected">
+          {{ 'COMPONENT.ROOT.STATUS.CONNECTED' | transloco }}
+          <span class="status-chip-detail">{{ connectionDetail$ | async }}</span>
+        </ng-container>
+        <ng-template #notConnected>
+          <ng-container *ngIf="connectionInProgress$ | async; else idle">
+            {{ 'COMPONENT.ROOT.STATUS.CONNECTING' | transloco }}
+            <span class="status-chip-detail">{{ client.host }}</span>
+          </ng-container>
+        </ng-template>
+        <ng-template #idle>
+          {{ 'COMPONENT.ROOT.STATUS.NOT_CONNECTED' | transloco }}
+        </ng-template>
       </div>
     </div>
-    <app-window border="strip" class="app-root-menu">
-      <button
-        *ngIf="!(connected$ | async) && !(connectionInProgress$ | async)"
-        data-style-ornament="inverted"
-        [attr.data-style-active]="(view$ | async) === RootView.CONNECT"
-        (click)="setView(RootView.CONNECT)"
-      >
-        {{ 'COMPONENT.ROOT.CONNECT' | transloco }}
-      </button>
-      <ng-container *ngIf="connected$ | async">
+
+    <div class="app-root-main">
+      <nav class="app-root-menu">
+        <ng-container *ngIf="!(connected$ | async)">
+          <button
+            *ngIf="lastServer"
+            class="menu-button primary"
+            [disabled]="connectionInProgress$ | async"
+            (click)="rejoin()"
+          >
+            <fa-icon class="menu-button-icon" [icon]="icons.rejoin"></fa-icon>
+            <span class="menu-button-text">
+              {{ 'COMPONENT.ROOT.REJOIN' | transloco }}
+              <span class="menu-button-sub">{{ lastServer }}</span>
+            </span>
+          </button>
+          <button
+            class="menu-button"
+            [disabled]="connectionInProgress$ | async"
+            (click)="setView(RootView.CONNECT)"
+          >
+            <fa-icon class="menu-button-icon" [icon]="icons.connect"></fa-icon>
+            <span class="menu-button-text">
+              {{ 'COMPONENT.ROOT.CONNECT_TO_SERVER' | transloco }}
+              <span class="menu-button-sub">{{
+                'COMPONENT.ROOT.CONNECT_TO_SERVER_INFO' | transloco
+              }}</span>
+            </span>
+          </button>
+          <button
+            class="menu-button"
+            [disabled]="connectionInProgress$ | async"
+            (click)="setView(RootView.SERVER_LIST)"
+          >
+            <fa-icon class="menu-button-icon" [icon]="icons.servers"></fa-icon>
+            <span class="menu-button-text">
+              {{ 'COMPONENT.ROOT.PUBLIC_SERVERS' | transloco }}
+              <span class="menu-button-sub">{{
+                'COMPONENT.ROOT.PUBLIC_SERVERS_INFO' | transloco
+              }}</span>
+            </span>
+          </button>
+        </ng-container>
+
+        <ng-container *ngIf="connected$ | async">
+          <button
+            class="menu-button"
+            (click)="openPlayerManager(PlayerManagerTab.PLAYER_LIST)"
+          >
+            <fa-icon class="menu-button-icon" [icon]="icons.players"></fa-icon>
+            <span class="menu-button-text">
+              {{ 'COMPONENT.ROOT.PLAYERS' | transloco }}
+              <span class="menu-button-sub">{{
+                playersInfo$ | async | transloco: { count: (playerCount$ | async) }
+              }}</span>
+            </span>
+            <span class="menu-button-end">{{ playerCount$ | async }}</span>
+          </button>
+          <button
+            class="menu-button"
+            (click)="openPlayerManager(PlayerManagerTab.PARTY_MENU)"
+          >
+            <fa-icon class="menu-button-icon" [icon]="icons.party"></fa-icon>
+            <span class="menu-button-text">
+              {{ 'COMPONENT.ROOT.PARTY' | transloco }}
+              <span class="menu-button-sub">{{
+                partyInfo$ | async | transloco: { count: (partySize$ | async) }
+              }}</span>
+            </span>
+            <span
+              *ngIf="inviteCount$ | async as invites"
+              class="menu-button-end app-root-invites"
+              >{{
+                'COMPONENT.ROOT.INVITES' | transloco: { count: invites }
+              }}</span
+            >
+          </button>
+          <button
+            class="menu-button"
+            [class.done]="revealing"
+            (click)="revealPlayers()"
+          >
+            <fa-icon
+              class="menu-button-icon"
+              [icon]="revealing ? icons.done : icons.reveal"
+            ></fa-icon>
+            <span class="menu-button-text">
+              {{ 'COMPONENT.ROOT.REVEAL_PLAYERS' | transloco }}
+              <span class="menu-button-sub">{{
+                (revealing
+                  ? 'COMPONENT.ROOT.REVEAL_PLAYERS_STARTED'
+                  : 'COMPONENT.ROOT.REVEAL_PLAYERS_INFO'
+                ) | transloco
+              }}</span>
+            </span>
+          </button>
+        </ng-container>
+
+        <button class="menu-button" (click)="setView(RootView.SETTINGS)">
+          <fa-icon class="menu-button-icon" [icon]="icons.settings"></fa-icon>
+          <span class="menu-button-text">
+            {{ 'COMPONENT.ROOT.SETTINGS' | transloco }}
+            <span class="menu-button-sub">{{
+              'COMPONENT.ROOT.SETTINGS_INFO' | transloco
+            }}</span>
+          </span>
+        </button>
+
         <button
-          data-style-ornament="inverted"
-          [attr.data-style-active]="(view$ | async) === RootView.DISCONNECT"
+          *ngIf="connected$ | async"
+          class="menu-button danger app-root-disconnect"
           (click)="setView(RootView.DISCONNECT)"
         >
-          {{ 'COMPONENT.ROOT.DISCONNECT' | transloco }}
+          <fa-icon class="menu-button-icon" [icon]="icons.disconnect"></fa-icon>
+          <span class="menu-button-text">
+            {{ 'COMPONENT.ROOT.DISCONNECT' | transloco }}
+            <span class="menu-button-sub">{{
+              'COMPONENT.ROOT.DISCONNECT_INFO' | transloco
+            }}</span>
+          </span>
         </button>
-        <!--
-        <button
-          data-style-ornament="inverted"
-          [attr.data-style-active]="(view | async) === RootView.RECONNECT"
-          (click)="reconnect()"
-        >
-          {{ 'COMPONENT.ROOT.RECONNECT' | transloco }}
-        </button>
-        -->
-        <button
-          data-style-ornament="inverted"
-          [attr.data-style-active]="(view$ | async) === RootView.PLAYER_MANAGER"
-          (click)="setView(RootView.PLAYER_MANAGER)"
-        >
-          {{ 'COMPONENT.ROOT.PLAYER_MANAGER' | transloco }}
-        </button>
-        <button data-style-ornament="inverted" (click)="revealPlayers()">
-          <!-- See note in 'root.component.scss' for explanation -->
-          <div style="position: relative;">
-            <span
-              class="cooldown-supporting-text-normal"
-              [class.cooldown-supporting-text-animating]="revealingInProgress$"
-            >
-              {{ 'COMPONENT.ROOT.REVEAL_PLAYERS' | transloco }}
-            </span>
-            <span 
-              style="position: absolute; left: 0; top: 0;"
-              class="text-cooldown-effect" 
-              [class.cooldown-active]="revealingInProgress$"
-              [style.--cooldown-duration]="revealingInProgress$ ? '10s' : '0.3s'"
-            >
-              {{ 'COMPONENT.ROOT.REVEAL_PLAYERS' | transloco }}
-            </span>
-          </div>
-        </button>
-      </ng-container>
-      <button
-        data-style-ornament="inverted"
-        [attr.data-style-active]="(view$ | async) === RootView.SETTINGS"
-        (click)="setView(RootView.SETTINGS)"
-      >
-        {{ 'COMPONENT.ROOT.SETTINGS' | transloco }}
-      </button>
-      <button
-        *ngIf="connectionInProgress$ | async"
-        data-style-ornament="inverted"
-        [attr.data-style-active]="(view$ | async) === RootView.DISCONNECT"
-        (click)="setView(RootView.DISCONNECT)"
-      >
-        {{ 'COMPONENT.ROOT.CONNECTION_IN_PROGRESS' | transloco }}
-      </button>
-    </app-window>
-    <app-window class="app-root-chat">
-      <app-chat #chat></app-chat>
-    </app-window>
+      </nav>
+
+      <app-window class="app-root-chat">
+        <app-chat #chat></app-chat>
+      </app-window>
+    </div>
+
+    <div class="app-root-version">{{ version$ | async }}</div>
   </div>
   <div [@fadeInOutActive]="active$ | async" class="app-root-popups">
     <app-loading></app-loading>
 
-    <ng-container [ngSwitch]="view$ | async">
-      <app-popup *ngSwitchCase="RootView.CONNECT">
-        <app-connect (done)="closeView()"></app-connect>
-      </app-popup>
-      <app-popup *ngSwitchCase="RootView.CONNECT_PASSWORD">
-        <app-connect-password (done)="closeView()"></app-connect-password>
-      </app-popup>
-      <app-popup *ngSwitchCase="RootView.DISCONNECT">
-        <app-disconnect (done)="closeView()"></app-disconnect>
-      </app-popup>
-      <app-popup *ngSwitchCase="RootView.SERVER_LIST" data-popup="server">
-        <app-server-list (done)="closeView()"></app-server-list>
-      </app-popup>
-      <app-popup *ngSwitchCase="RootView.SETTINGS" data-popup="settings">
-        <app-settings
-          (done)="closeView()"
-          (settingsUpdated)="updateGroupPosition()"
-        ></app-settings>
-      </app-popup>
-      <app-popup
-        *ngSwitchCase="RootView.PLAYER_MANAGER"
-        data-popup="playerManager"
-      >
-        <app-player-manager (done)="closeView()"></app-player-manager>
-      </app-popup>
+    <!-- Hidden, not closed, while an error shows: the error's Back button returns to it as it was. -->
+    <ng-container
+      *ngIf="{ hidden: hasError$ | async } as error"
+    >
+      <div class="app-root-views" [class.app-root-views-hidden]="error.hidden">
+        <ng-container [ngSwitch]="view$ | async">
+          <app-popup *ngSwitchCase="RootView.CONNECT">
+            <app-connect (done)="closeView()"></app-connect>
+          </app-popup>
+          <app-popup *ngSwitchCase="RootView.CONNECT_PASSWORD">
+            <app-connect-password (done)="closeView()"></app-connect-password>
+          </app-popup>
+          <app-popup *ngSwitchCase="RootView.DISCONNECT">
+            <app-disconnect (done)="closeView()"></app-disconnect>
+          </app-popup>
+          <app-popup *ngSwitchCase="RootView.SERVER_LIST" data-popup="server">
+            <app-server-list (done)="closeView()"></app-server-list>
+          </app-popup>
+          <app-popup *ngSwitchCase="RootView.SETTINGS" data-popup="settings">
+            <app-settings
+              (done)="closeView()"
+              (settingsUpdated)="updateGroupPosition()"
+            ></app-settings>
+          </app-popup>
+          <app-popup
+            *ngSwitchCase="RootView.PLAYER_MANAGER"
+            data-popup="playerManager"
+          >
+            <app-player-manager (done)="closeView()"></app-player-manager>
+          </app-popup>
+        </ng-container>
+      </div>
     </ng-container>
 
-    <app-error></app-error>
+    <app-error (closeAll)="closeView()"></app-error>
   </div>
 </ng-container>

@@ -2,6 +2,8 @@
 
 #include <Events/PacketEvent.h>
 #include <Structs/ActorData.h>
+#include <Structs/ActionEvent.h>
+#include <Messages/ServerReferencesMoveRequest.h>
 
 struct UpdateEvent;
 struct CharacterInteriorCellChangeEvent;
@@ -27,6 +29,10 @@ struct SyncExperienceRequest;
 struct DialogueRequest;
 struct SubtitleRequest;
 struct Player;
+struct CellIdComponent;
+struct RequestActionEvents;
+struct ReferenceUpdate;
+struct AnimationComponent;
 
 /**
  * @brief Manages player and actor state.
@@ -60,6 +66,9 @@ protected:
     void OnCharacterRemoveEvent(const CharacterRemoveEvent& acEvent) const noexcept;
     void OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) const noexcept;
     void OnReferencesMoveRequest(const PacketEvent<ClientReferencesMoveRequest>& acMessage) const noexcept;
+    void OnActionEventsRequest(const PacketEvent<RequestActionEvents>& acMessage) const noexcept;
+    //! The actions a script does not cancel, made the actor's current one and kept for players who come into range later.
+    Vector<ActionEvent> KeepActions(entt::entity aEntity, AnimationComponent& aAnimationComponent, const Vector<ActionEvent>& acActions) const noexcept;
     void OnFactionsChanges(const PacketEvent<RequestFactionsChanges>& acMessage) const noexcept;
     void OnMountRequest(const PacketEvent<MountRequest>& acMessage) const noexcept;
     void OnNewPackageRequest(const PacketEvent<NewPackageRequest>& acMessage) const noexcept;
@@ -81,9 +90,26 @@ protected:
     ActorData BuildActorData(const entt::entity acEntity) const noexcept;
 
     void ProcessFactionsChanges() const noexcept;
+    //! Hands the party leader the NPCs its game announced right after an arrival, once the grace period is over.
+    void ProcessPendingLeaderAssignments() const noexcept;
+    //! Queues a party leader's assignment or claim made within 10 s of its arrival; false when it can go at once.
+    bool HoldUntilSettled(Player* apLeader, entt::entity aEntity, uint32_t aOwnershipEpoch, OwnershipTransferReason aReason) const noexcept;
+    //! Removes an NPC from the views of players its move took it out of range of, and sends it to those it came into range of.
+    void UpdateViewsAfterMove(const Player* apOwner, entt::entity aEntity, const CellIdComponent& acBefore, const CellIdComponent& acNow, bool aIsDragon) const noexcept;
 
 private:
     World& m_world;
+
+    // A party leader's assignment held back after their arrival (a load): who, which actor, at which epoch, and when.
+    struct PendingLeaderAssignment
+    {
+        uint32_t PlayerId;
+        entt::entity Entity;
+        uint32_t OwnershipEpoch;
+        std::chrono::steady_clock::time_point ReadyAt;
+        OwnershipTransferReason Reason;
+    };
+    mutable Vector<PendingLeaderAssignment> m_pendingLeaderAssignments;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_exteriorCellChangeEventConnection;
@@ -104,4 +130,5 @@ private:
     entt::scoped_connection m_syncExperienceConnection;
     entt::scoped_connection m_dialogueConnection;
     entt::scoped_connection m_subtitleConnection;
+    entt::scoped_connection m_actionEventsConnection;
 };

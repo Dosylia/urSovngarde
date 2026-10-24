@@ -28,6 +28,7 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   private playerName = 'Local Player';
   private showEvents = true;
   private localPlayerId: number;
+  private pendingConnect: ReturnType<typeof setTimeout> | undefined;
   public readonly players$ = playerStore.pipe(selectAllEntities());
 
   connect(host: string, port: number, password: string): void {
@@ -72,7 +73,10 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
           };
           break;
       }
-      setTimeout(() => {
+      // 't-slow' answers after 8 s, long enough to see the connecting card.
+      clearTimeout(this.pendingConnect);
+      this.pendingConnect = setTimeout(() => {
+        this.pendingConnect = undefined;
         this.emit(!!error ? 'disconnect' : 'connect');
         this.connected = !error;
         if (error && typeof error !== 'boolean') {
@@ -90,11 +94,16 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
           );
           this.emit('setPlayer3dLoaded', player.id, player.health);
         }
-      }, 250);
+      }, host === 't-slow' ? 8000 : 250);
     }
   }
 
   disconnect(): void {
+    if (this.pendingConnect) {
+      clearTimeout(this.pendingConnect);
+      this.pendingConnect = undefined;
+      this.emit('disconnect');
+    }
     if (this.connected) {
       this.emit('disconnect');
       this.connected = false;

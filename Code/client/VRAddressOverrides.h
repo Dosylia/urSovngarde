@@ -3026,4 +3026,12 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 9000010u, 0x0a02b10u }, // hkRealTohkUFloat8 (PLANCK's offsets.cpp)
     { 9000011u, 0x0b266abu }, // the call to hkbRagdollDriver::driveToPose (PLANCK's driveToPoseHookLoc)
     { 9000012u, 0x0b268dcu }, // the call to hkbRagdollDriver::postPhysics (PLANCK's postPhysicsHookLoc)
+
+    // The lock on PlayerCharacter's world map marker list (SE 517728, AE 404255), with no VR id in the library.
+    // Read from the running game: its player reset (0x1406cb6b3) takes this lock with BSSpinLock::Lock (SE 12210), then empties the list at +0xAE8.
+    { 9000013u, 0x2fffe50u },
+
+    // BSOpenVRControllerDevice's vtable, which tells the game's VR controller devices apart (VRHaptics::GripsHeld).
+    // CommonLibVR's Offsets_VTABLE.h: VTABLE_BSOpenVRControllerDevice.
+    { 9000014u, 0x17e87c0u },
 };

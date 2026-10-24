@@ -13,9 +13,6 @@ struct MagicItem : TESBoundObject
     bool IsInvisibilitySpell() const noexcept;
     bool IsHealingSpell() const noexcept;
     bool IsBuffSpell() const noexcept;
-    //! True if the spell or one of its effects has the vanilla MagicDamageHealth keyword.
-    //! Decides whether a spell hit on another player is sent as damage.
-    bool IsDamageHealthSpell() const noexcept;
     bool IsBoundWeaponSpell() noexcept;
     bool HasSummonEffect() const noexcept;
 

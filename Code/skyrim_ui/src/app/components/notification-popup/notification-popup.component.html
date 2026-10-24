@@ -1,6 +1,8 @@
 <div
   *transloco="let t"
   class="notification-popup"
+  [class.ok]="notification.kind === 'ok'"
+  [class.bad]="notification.kind === 'bad'"
   (click)="clickNotification()"
   (mouseenter)="onEnter()"
   (mouseleave)="onLeave()"

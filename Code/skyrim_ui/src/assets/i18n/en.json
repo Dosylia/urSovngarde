@@ -27,11 +27,15 @@
     },
     "DISCONNECT": {
       "PROMPT": "Are you sure you want to disconnect?",
-      "PROCEED": "Proceed",
-      "CANCEL": "Cancel"
+      "PROCEED": "Disconnect",
+      "CANCEL": "Stay connected"
     },
     "ERROR": {
-      "OK": "Ok"
+      "OK": "Ok",
+      "BACK": "Back",
+      "CLOSE": "Close",
+      "INSTALL": "Install ({{count}})",
+      "REMOVE": "Remove ({{count}})"
     },
     "NOTIFICATIONS": {
       "MESSAGE_FROM": "Message from",
@@ -62,7 +66,13 @@
         "TELEPORT": "Teleport",
         "MAKE_LEADER": "Make leader"
       },
-      "LEAVE_PARTY": "Leave party"
+      "LEAVE_PARTY": "Leave party",
+      "YOUR_PARTY": "Your party",
+      "NOT_IN_PARTY": "You are not in a party.",
+      "LAUNCH_PARTY_INFO": "You become the leader: you talk to quest NPCs and loot quest items",
+      "INVITED_BY": "{{name}} invited you",
+      "ACCEPT": "Accept",
+      "HOW_PARTIES_WORK": "How parties work"
     },
     "PARTY_LIST": {
       "NO_OTHER_PLAYERS": "Nobody here but us chickens",
@@ -76,8 +86,8 @@
       "UNMUTE": "Unmute"
     },
     "PLAYER_MANAGER": {
-      "PLAYER_LIST": "Player List",
-      "PARTY_MENU": "Party Menu",
+      "PLAYER_LIST": "Players",
+      "PARTY_MENU": "Party",
       "BACK": "Back"
     },
     "ROOT": {
@@ -87,7 +97,37 @@
       "RECONNECT": "Reconnect",
       "PLAYER_MANAGER": "Player Manager",
       "SETTINGS": "Settings",
-      "CONNECTION_IN_PROGRESS": "Connection in progress..."
+      "CONNECTION_IN_PROGRESS": "Connection in progress...",
+      "CONNECT_TO_SERVER": "Connect to a server",
+      "CONNECT_TO_SERVER_INFO": "Type an address and password",
+      "PUBLIC_SERVERS": "Public servers",
+      "PUBLIC_SERVERS_INFO": "Pick one from the list",
+      "REJOIN": "Rejoin last server",
+      "PLAYERS": "Players",
+      "PLAYERS_NONE": "Nobody else is here yet",
+      "PLAYERS_ONE": "1 other player",
+      "PLAYERS_MANY": "{{count}} other players",
+      "PARTY": "Party",
+      "PARTY_NONE": "Not in a party",
+      "PARTY_LEADER": "You lead it · {{count}} in the party",
+      "PARTY_MEMBER": "{{count}} in the party",
+      "INVITES": "{{count}} new",
+      "REVEAL_PLAYERS_INFO": "Players near you glow for 10 s",
+      "REVEAL_PLAYERS_STARTED": "Close the menu to see them glow",
+      "SETTINGS_INFO": "Sound, voice, party frame",
+      "DISCONNECT_INFO": "Asks first",
+      "STATUS": {
+        "NOT_CONNECTED": "Not connected",
+        "CONNECTING": "Connecting",
+        "CONNECTED": "Connected",
+        "PLAYERS": "players"
+      },
+      "TOAST": {
+        "CONNECTED": "Connected",
+        "CONNECTED_TO": "Connected to {{address}}",
+        "DISCONNECTED": "Disconnected",
+        "REVEALING": "Players near you glow for 10 s once the menu is closed"
+      }
     },
     "SERVER_LIST": {
       "SEARCH": "Search...",
@@ -148,6 +188,12 @@
         "XL": "Extra Large"
       },
       "BACK": "Back"
+    },
+    "CONNECTING": {
+      "TITLE": "Connecting…",
+      "WAITING": "Waiting for the server to answer",
+      "CANCEL": "Cancel",
+      "CANCEL_INFO": "Stop trying and go back"
     }
   },
   "SERVICE": {
@@ -178,7 +224,14 @@
         "NO_REASON": "The server refused connection without reason.",
         "SERVER_FULL": "This server is full.",
         "BAD_UGRIDSTOLOAD": "It seems that your Skyrim.ini file has a non-default value for 'uGridsToLoad'. THIS IS A VERY BAD IDEA, and will most likely break the mod. Please set this setting back to its default (5), or remove the Skyrim.ini file and launch Skyrim vanilla once to generate a new file. The settings 'uExterior Cell Buffer' and 'uInterior Cell Buffer' should also be left at the default setting. If you do not know how to do this, please refer to our wiki or ask on our Discord server/Reddit sub for help.",
-        "NON_DEFAULT_INSTALL": "It seems that your installation is not purely vanilla, i.e. it has Creation Club content (Anniversary Update or otherwise) or other mods.\nWe do NOT recommend playing with mods.\nWe recommend that you uninstall and disable these mods (instructions can be found on the wiki).\n\nFor the best experience, you should have the following mod list:<strong>\nSkyrim.esm\nUpdate.esm\nDawnguard.esm\nHearthFires.esm\nDragonborn.esm\n_ResourcePack.esl\nSkyrimTogether.esp\nSkyrimTogetherQuestPatches.esp</strong>"
+        "NON_DEFAULT_INSTALL": "It seems that your installation is not purely vanilla, i.e. it has Creation Club content (Anniversary Update or otherwise) or other mods.\nWe do NOT recommend playing with mods.\nWe recommend that you uninstall and disable these mods (instructions can be found on the wiki).\n\nFor the best experience, you should have the following mod list:<strong>\nSkyrim.esm\nUpdate.esm\nDawnguard.esm\nHearthFires.esm\nDragonborn.esm\n_ResourcePack.esl\nSkyrimTogether.esp\nSkyrimTogetherQuestPatches.esp</strong>",
+        "MODS_MISMATCH_HELP": "Change these in Mod Organizer, then start the game again."
+      },
+      "TITLES": {
+        "DEFAULT": "That did not work",
+        "CONNECT": "Could not join the server",
+        "MODS_MISMATCH": "Your mods differ from the server's",
+        "SETUP": "Check your game setup"
       }
     },
     "PLAYER_LIST": {

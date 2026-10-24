@@ -5,26 +5,35 @@
 
 :host {
   display: block;
-  margin-right: 2em;
-  margin-bottom: 0.5em;
   color: white;
-  background-color: $-color-background;
-  font-size: 1.3rem;
-
-  &:last-child {
-    margin-bottom: 1em;
-  }
+  font-size: 1.1rem;
 }
 
 .notification-popup {
   display: flex;
   align-items: center;
-  background-color: rgba($color: #000000, $alpha: 0.7);
-  padding: 0.5em;
-}
+  padding: 0.5em 0.9em;
+  background-color: rgba(0, 0, 0, 0.92);
+  border: 2px solid var(--ur-gold);
+  box-shadow: 0 0.3rem 1.2rem rgba(0, 0, 0, 0.6);
 
-.notification-popup:first-child {
-  margin-left: 1em;
+  &.ok {
+    background-color: rgba(10, 22, 12, 0.94);
+    border-color: rgba(124, 207, 134, 0.75);
+
+    .icon {
+      color: var(--ur-ok);
+    }
+  }
+
+  &.bad {
+    background-color: rgba(30, 10, 10, 0.94);
+    border-color: rgba(226, 103, 94, 0.8);
+
+    .icon {
+      color: var(--ur-bad);
+    }
+  }
 }
 
 .notification-popup > * {
@@ -33,8 +42,8 @@
 
 img,
 .icon {
-  width: 2em;
-  height: 2em;
+  width: 1.5em;
+  height: 1.5em;
   background-size: contain;
 }
 
@@ -49,9 +58,13 @@ img,
 }
 
 p {
-  max-width: 25em;
+  flex: 1 1 auto;
+  margin: 0;
+  line-height: 1.2;
 }
 
 button {
   font-size: 1em;
+  border: 2px solid rgba(240, 232, 214, 0.45);
+  padding: 0.3em 0.8em;
 }
