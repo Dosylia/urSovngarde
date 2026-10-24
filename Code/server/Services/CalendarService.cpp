@@ -20,7 +20,7 @@ extern Console::Setting<bool> bAnnounceServer;
 
 namespace
 {
-Console::Setting bEnableSleep{"Gameplay:bEnableSleep", "Lets a party member's sleep or wait move the clock forward for everybody, with their party waiting in place while it runs. Private servers only", true};
+Console::Setting bEnableSleep{"Gameplay:bEnableSleep", "Lets a party member's sleep or wait move the clock forward for everybody, with their party waiting in place while it runs. Private servers only", false};
 
 // A server strangers join: listed upstream or on the public server page. Nobody, admins included,
 // may move the hour for strangers there.

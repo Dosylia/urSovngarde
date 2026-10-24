@@ -17,6 +17,23 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Waiting on a test or action
 
+- [!] **Party sleep (contributed, merged as cc8c5ccf), hardened** (build b335f22, FUS folder, client and server; a
+      protocol change: both players and the server need it). On a private server with `bEnableSleep=true`, a party
+      member's sleep or wait moves everyone's clock and date; the rest of the party watches with their controls locked.
+      - Hardening: the setting is off by default (server code and `STServer.default.ini`); the FUS server's own
+        `config\STServer.ini` has it on, to try. The VR Sleep/Wait menu runs unpaused only while connected to a server
+        that allows it; otherwise it pauses as in the game, and the game's main-thread check in its ProcessMessage is
+        left as the game has it (switched in one aligned 2-byte write, only while no Sleep/Wait menu exists:
+        `Sleep/Wait: this server lets a sleep pass time, so the menu will not pause` / `... the menu pauses as in the
+        game`). The menu's ProcessMessage address is now checked against the VR address library at start-up.
+      - Why the switch: with the check removed for good, as merged, a paused menu's show and refresh messages ran
+        on the menu thread instead of the main thread (2 of each opening, measured in the rig).
+      - Rig (DevBench opens the menu): sleep off: pause counter 1, the server refuses; sleep on: pause counter 0,
+        no refusal; after a disconnect the check comes back in 17 ms and the menu pauses again. TPTests 94 cases.
+        Not seen yet: a real sleep (choosing hours and OK need the headset), the party watching, the clocks after.
+        To see in play: sleep 8 hours with the other player near; both clocks and dates move, the other player's
+        controls come back at the end, and nobody's game crashes or hangs in the menu.
+
 - [!] **The menu redesign** (the in-headset menu, UI only, no protocol change; 2026-10-24). Deployed to both tools
       folders on player 2's PC (`UI`; the old menu is in `UI.old-20261024-105922`) and runs with the v1.9.6 client.
       Framed buttons that light up under the laser and answer a press; a status chip (not connected, connecting, or

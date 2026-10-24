@@ -26,6 +26,27 @@ constexpr uintptr_t kMainUpdate = 0x5BAB10;
 DeferredSleepWait s_accept;
 bool s_hooksReady = false;
 
+// ProcessMessage's main-thread check: the unpaused menu needs it skipped, so its input is handled on the UI worker.
+// It is skipped only while the server lets a sleep pass time; elsewhere the menu runs exactly as in the game.
+// The jne's first two bytes are swapped for a short jump over it in one aligned write, so a thread running it sees either form whole.
+constexpr uint16_t kCheckKept = 0x850F;    // 0F 85: the game's jne
+constexpr uint16_t kCheckSkipped = 0x04EB; // EB 04: a jump over the jne's other four bytes
+uint8_t* s_pMainThreadCheck = nullptr;
+// Read by the menu queue on another thread.
+std::atomic<bool> s_checkSkipped{false};
+
+void SetMainThreadCheckSkipped(bool aSkipped) noexcept
+{
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(s_pMainThreadCheck, sizeof(uint16_t), PAGE_EXECUTE_READWRITE, &oldProtect))
+        return;
+    InterlockedExchange16(reinterpret_cast<volatile SHORT*>(s_pMainThreadCheck), static_cast<SHORT>(aSkipped ? kCheckSkipped : kCheckKept));
+    VirtualProtect(s_pMainThreadCheck, sizeof(uint16_t), oldProtect, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), s_pMainThreadCheck, sizeof(uint16_t));
+    s_checkSkipped = aSkipped;
+    spdlog::info("Sleep/Wait: {}", aSkipped ? "this server lets a sleep pass time, so the menu will not pause" : "the menu pauses as in the game");
+}
+
 using TOk = void(void*);
 using TSleepStep = void(void*);
 using TCanProcess = bool(void*);
@@ -96,9 +117,9 @@ bool HookMeleeMenuCheck(const UI* apUI, const BSFixedString& acName)
 }
 }
 
-bool SleepWaitHooksReady() noexcept
+bool SleepWaitCanRunUnpaused() noexcept
 {
-    return s_hooksReady;
+    return s_hooksReady && s_checkSkipped;
 }
 
 uint64_t SleepWaitMenuGeneration()
@@ -113,6 +134,16 @@ void ResolveDeferredSleepWait(bool aAllowed)
 
 void UpdateSleepWatchControls()
 {
+    // Changed only while no Sleep/Wait menu exists, not even one queued, so its code is not rewritten under a message.
+    const bool cSleepPassesTime = World::Get().GetTransport().IsConnected() && World::Get().GetServerSettings().SleepEnabled;
+    if (s_hooksReady && cSleepPassesTime != s_checkSkipped.load())
+    {
+        static const BSFixedString s_name("Sleep/Wait Menu");
+        UI* pUI = UI::Get();
+        if (pUI && !pUI->FindMenuByName(s_name))
+            SetMainThreadCheckSkipped(cSleepPassesTime);
+    }
+
     // Run on Main before its input/update jobs. Do not pause the world or touch VR pose tracking.
     static bool s_wasLocked = false;
     const bool cLocked = CalendarService::AreSleepControlsLocked();
@@ -166,10 +197,13 @@ static TiltedPhoques::Initializer s_sleepWaitHooks(
     {
         const auto cExe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
         auto* pCheck = reinterpret_cast<uint8_t*>(cExe + kMainThreadCheck);
+        // The VR address library confirms the menu's ProcessMessage (SE 51614).
+        // It has no entry for the OK callback or CanProcess, which are trusted once these checks confirm the executable.
         if (std::memcmp(pCheck, kMainThreadJump, sizeof(kMainThreadJump)) != 0 ||
-            VersionDb::Get().FindAddressById(36564) != reinterpret_cast<void*>(cExe + kMainUpdate))
+            VersionDb::Get().FindAddressById(36564) != reinterpret_cast<void*>(cExe + kMainUpdate) ||
+            VersionDb::Get().FindAddressById(51614) != reinterpret_cast<void*>(cExe + kProcessMessage))
         {
-            spdlog::error("Sleep/Wait: unsupported main-thread check or Main::Update; leaving the menu paused");
+            spdlog::error("Sleep/Wait: unsupported main-thread check, Main::Update or ProcessMessage; leaving the menu paused");
             return;
         }
         for (const uintptr_t cCall : kPlayerSleepWaitCalls)
@@ -193,8 +227,8 @@ static TiltedPhoques::Initializer s_sleepWaitHooks(
         for (const uintptr_t cCall : kPlayerSleepWaitCalls)
             TiltedPhoques::SwapCall(reinterpret_cast<uint8_t*>(cExe + cCall), RealSleepStep, &HookSleepStep);
         TiltedPhoques::SwapCall(reinterpret_cast<uint8_t*>(cExe + kMeleeSwingMenuCheck), RealMeleeMenuCheck, &HookMeleeMenuCheck);
-        // Let ProcessMessage dispatch input on its UI worker. Only the OK callback is moved to Main.
-        TiltedPhoques::Nop(pCheck, sizeof(kMainThreadJump));
+        // The main-thread check is left as the game has it; UpdateSleepWatchControls skips it only where a sleep passes time.
+        s_pMainThreadCheck = pCheck;
         s_hooksReady = true;
         spdlog::info("Sleep/Wait: unpaused menu hooks installed, confirmation deferred to Main::Update");
     });

@@ -148,7 +148,8 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
 
 #ifdef SKYRIMVR
     static const BSFixedString s_sleepWaitMenu("Sleep/Wait Menu");
-    if (SleepWaitHooksReady() && apSelf->FindMenuByName(s_sleepWaitMenu) == apMenu)
+    // Only where the server lets a sleep pass time: elsewhere the menu pauses as in the game, and the sleep hooks stay idle.
+    if (SleepWaitCanRunUnpaused() && apSelf->FindMenuByName(s_sleepWaitMenu) == apMenu)
     {
         UnfreezeMenu(apMenu);
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
