@@ -96,13 +96,20 @@ void QuestService::OnQuestChanges(const PacketEvent<RequestQuestUpdate>& acMessa
         return;
 
     // Party members' scripts often reach the same stage on their own, only relay it once
+    // Only shortly after the first relay: a reload or a reconnect brings the stages back, and no start comes to reset them.
+    // A later one is relayed again, and a game that has already reached it skips it.
     if (message.Status == RequestQuestUpdate::StageUpdate)
     {
-        if (!pParty->QuestStages[message.Id].insert(message.Stage).second)
+        constexpr auto cDuplicateWindow = std::chrono::seconds(30);
+        const auto cNow = std::chrono::steady_clock::now();
+        auto& stages = pParty->QuestStages[message.Id];
+        const auto cRelayed = stages.find(message.Stage);
+        if (cRelayed != stages.end() && cNow - cRelayed->second < cDuplicateWindow)
         {
             spdlog::debug("Dropped duplicate quest stage from player {}, quest: {:X}, stage: {}", pPlayer->GetId(), message.Id.LogFormat(), message.Stage);
             return;
         }
+        stages[message.Stage] = cNow;
     }
     else
     {

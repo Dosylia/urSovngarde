@@ -29,7 +29,9 @@ wait 8
 log CHECK logged Player copy \w+ came with its weapon drawn
 
 # In view of the headset, then the copy posed by the player's own stream, held after the replay.
-log DO papyrus ObjectReference MoveTo 14 copy f:50 f:0 f:0 b:false
+# The bot stands its character in front of the player, at the player's height: moving the player onto the copy
+# can put the copy under the ground there, where its weapon never becomes a body.
+infront 70
 wait 3
 capture other 12
 wait 1

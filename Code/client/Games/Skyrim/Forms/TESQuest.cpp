@@ -107,27 +107,9 @@ bool TESQuest::ScriptSetStage(uint16_t stageIndex)
 
 bool TESQuest::IsStageReached(uint16_t aStage) noexcept
 {
-    return currentStage == aStage || IsStageDone(aStage);
-}
-
-uint32_t TESQuest::GetStageItemCount(uint16_t aStage) noexcept
-{
-    for (Stage* pStage : stages)
-    {
-        if (!pStage || pStage->stageIndex != aStage)
-            continue;
-
-        uint32_t count = 0;
-        for (void* pItem : pStage->items)
-        {
-            if (pItem)
-                ++count;
-        }
-
-        return count;
-    }
-
-    return 0;
+    // A stopped quest reads stage 0 before it ever ran, so its current stage counts only while it runs.
+    // Otherwise a remote start, always at stage 0, would be taken as reached and never start it here.
+    return (currentStage == aStage && !IsStopped()) || IsStageDone(aStage);
 }
 
 void TESQuest::SetStopped()

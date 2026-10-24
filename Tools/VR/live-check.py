@@ -20,6 +20,7 @@ Checks:
     copy exists | copy 3d | copy alive | copy dead | copy health <n>      the game's copy of the bot's character
     npc exists  | npc alive | npc dead | npc health <n|full>             its copy of an NPC the bot owns
     npc gone | copy gone                                                  that copy is no longer in this game (deleted or disabled)
+                                                                          (exists: in this game and enabled; a DevBench timeout makes either INVALID)
     player cell <hex>                                                     the cell the player stands in, by form id
     player mark | player dropped <n>                                      the local player's health, before and after
     drop exists | drop gone | drop mark | drop moved <dx> <dy> <dz>       the item the game placed for the bot's drop
@@ -31,6 +32,8 @@ Checks:
                                                                           in an interior
     ref <hex> near <x> <y> <z> <units> | ref <hex> near player <units>    a reference of the game's own is that close
                                                                           to that place, or to the player
+    ref <hex> cell same | ref <hex> cell other                            a reference of the game's own is in the
+                                                                          player's cell, or in another one
     ref <hex> open | ref <hex> closed                                     a door of the game's own is open (or
                                                                           opening), or closed (or closing)
     ref <hex> locked | ref <hex> unlocked                                 a door or container of the game's own is
@@ -74,6 +77,7 @@ at most that many different values of the group since the script began.
 `log CHECK spot mark` notes where the player stands; `spot back <units>` passes when the player is within that many
 units of it in the same worldspace or interior, `spot away <units>` when farther or elsewhere.
 `log CHECK logged <regular expression>` passes when the client has written a matching line since the script began.
+`log DO logmark` makes `logged`, `absent`, `atleast`, `fewer` and `distinct` count only the client lines written after it: a run's first lines can still describe the script before.
 `log CHECK ids reused <name>` passes when the game gave an actor of that name a form id under which this client had
 deleted a copy earlier in the session (what live-temp-reuse needs to have happened to mean anything).
 `log CHECK ref <hex> 3d` asks whether a reference's 3D is loaded; `ref <hex> 3d steady <seconds>` samples it the whole
@@ -131,9 +135,9 @@ CAPTURES = os.path.join(FUS_ROOT, 'overwrite', 'SKSE', 'Plugins', 'devbench', 'c
 # Lydia" is then two paces that unload nothing (found 2026-10-02, a session that passed for that reason alone).
 ALL = ['live-copy', 'live-npc', 'live-dropmove', 'live-look', 'live-walk', 'live-copy-quiet', 'live-creatures', 'live-npc-away', 'live-away-seeker',
        'live-temp-remove', 'live-temp-reuse', 'live-copy-abandon', 'live-temp-reconnect', 'live-crime', 'live-netch',
-       'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-range', 'live-npc-indoors', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead', 'live-load-soak', 'live-door-state']
+       'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-range', 'live-npc-indoors', 'live-npc-grace-outdoors', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead', 'live-load-soak', 'live-door-state']
 # live-door-state is last: it leaves the player in Helgen's keep, where the bot of any later script finds nobody.
-# live-npc-grace and live-door-join leave the player there too, so they are not in the list: run each by name after a fresh `headless.ps1 up`.
+# live-npc-grace, live-door-join and live-door-join-locked leave the player there too, so they are not in the list: run each by name after a fresh `headless.ps1 up`.
 # Not in the list, run by name: live-seeker-copy-remote and live-seeker-copy-local (the two halves that showed the
 # crash of live-copy-abandon needs a copy and its original together).
 
@@ -144,13 +148,30 @@ def tool(name, body, timeout=6):
         return json.loads(r.read().decode())
 
 
+# What papyrus() answers for a reference the game does not have (DevBench: "self form '...' not found").
+NOT_FOUND = 'ERR not found'
+# What it answers when DevBench gave up waiting for the game (HTTP 504): the game is up but did not answer in time.
+TIMED_OUT = 'ERR timed out (504)'
+# A check that met TIMED_OUT proves nothing: its run is INVALID rather than failed, passed or red.
+UNASKED = 'could not ask the game: DevBench timed out (504)'
+
+
 def papyrus(script, function, form, args=None):
     body = {'action': 'call', 'script': script, 'function': function, 'self': {'form': '0x' + form}}
     if args is not None:
         body['args'] = args
     try:
         return tool('papyrus', body).get('returned')
-    except Exception as e:  # a deleted reference answers with an HTTP error
+    except urllib.error.HTTPError as e:
+        # A deleted reference is refused with "self form ... not found"; any other refusal says nothing about it.
+        if e.code == 504:
+            return TIMED_OUT
+        try:
+            text = e.read().decode(errors='replace')
+        except Exception:
+            text = ''
+        return NOT_FOUND if re.search(r"self form '[^']*' not found", text) else 'ERR HTTPError %d' % e.code
+    except Exception as e:
         return 'ERR ' + type(e).__name__
 
 
@@ -625,7 +646,7 @@ class Run:
                 # logged since the script began -- "Spawn Actor: (\w+), and NPC Seeker" counts the Seekers it has seen.
                 most = int(words[1])
                 rx = re.compile(' '.join(words[2:]))
-                found = sorted({m.group(1) for m in (rx.search(l) for l in session_lines()[self.log_start:]) if m})
+                found = sorted({m.group(1) for m in (rx.search(l) for l in session_lines()[self.log_from:]) if m})
                 ok = 0 < len(found) <= most
                 detail = '%d: %s' % (len(found), ', '.join(found))
             elif who == 'ref' and words[2] == '3d' and words[3:4] == ['steady']:
@@ -667,6 +688,16 @@ class Run:
                 ok = known and apart <= float(words[6])
                 detail = 'reference %s at %s, %s units from (%s)%s' % (form, [round(v) for v in at] if known else at,
                                                                      round(apart) if known else '?', ', '.join(words[3:6]), ', seen from above' if flat else '')
+            elif who == 'ref' and words[2] == 'cell':
+                # "ref <hex> cell same|other": in the cell the player stands in, or in another one.
+                # Positions alone cannot tell: an interior's coordinates are as good as any outside.
+                def cell_of(form):
+                    cell = papyrus('ObjectReference', 'GetParentCell', form)
+                    return cell.get('formId') if isinstance(cell, dict) else None
+                mine, players = cell_of(words[1]), cell_of('14')
+                known = mine is not None and players is not None
+                ok = known and (mine == players) == (words[3] == 'same')
+                detail = 'reference %s in cell %s, the player in %s' % (words[1], mine, players)
             elif who == 'ref' and words[2] in ('open', 'closed'):
                 # "ref <hex> open|closed": a door of the game's own is open (or opening), or closed (or closing).
                 state = papyrus('ObjectReference', 'GetOpenState', words[1])
@@ -736,27 +767,27 @@ class Run:
             elif who == 'fewer':
                 # "fewer <n> <regular expression>": the client has written fewer than n such lines since the script began.
                 rx = re.compile(' '.join(words[2:]))
-                hits = [l for l in session_lines()[self.log_start:] if rx.search(l)]
+                hits = [l for l in session_lines()[self.log_from:] if rx.search(l)]
                 ok = len(hits) < int(words[1])
                 detail = '%d lines' % len(hits)
             elif who == 'absent':
                 # "absent <regular expression>": the client has written no such line since the script began.
                 rx = re.compile(' '.join(words[1:]))
-                hits = [l for l in session_lines()[self.log_start:] if rx.search(l)]
+                hits = [l for l in session_lines()[self.log_from:] if rx.search(l)]
                 ok = not hits
                 detail = 'none' if ok else '%d lines, e.g. %s' % (len(hits), hits[0][35:140].strip())
             elif who == 'atleast':
                 # "atleast <n> <regular expression>": the client wrote at least n such lines since this script began.
                 wanted = int(words[1])
                 rx = re.compile(' '.join(words[2:]))
-                hits = [l for l in session_lines()[self.log_start:] if rx.search(l)]
+                hits = [l for l in session_lines()[self.log_from:] if rx.search(l)]
                 ok = len(hits) >= wanted
                 detail = '%d lines (wanted %d)%s' % (len(hits), wanted, ', the last ' + hits[-1][35:140].strip() if hits else '')
             elif who == 'logged':
                 # "logged <regular expression>": the client wrote such a line since this script began. For a test
                 # whose point is that a certain path was taken, not only that the game survived it.
                 rx = re.compile(' '.join(words[1:]))
-                hits = [l for l in session_lines()[self.log_start:] if rx.search(l)]
+                hits = [l for l in session_lines()[self.log_from:] if rx.search(l)]
                 ok = bool(hits)
                 detail = ('%d lines, e.g. %s' % (len(hits), hits[0][35:140].strip())) if ok else 'no such line since the script began'
             elif who == 'bot' and what == 'logged':
@@ -907,16 +938,19 @@ class Run:
                 form, why = self.subject(who)
                 if not form:
                     ok, detail = False, why
-                elif what == 'exists':
-                    x = papyrus('ObjectReference', 'GetPositionX', form)
-                    ok = isinstance(x, (int, float))
-                    detail = 'actor %s, x %s' % (form, x)
-                elif what == 'gone':
-                    # "copy gone" / "npc gone": the copy the game made is no longer in this game, or no longer drawn.
+                elif what in ('exists', 'gone'):
+                    # "copy exists" / "npc exists": the copy the game made is in this game and drawn.
+                    # A copy taken away can stay disabled for a while before it is deleted, so it is not one that exists.
+                    # "copy gone" / "npc gone": the game no longer has it, or no longer draws it.
                     x = papyrus('ObjectReference', 'GetPositionX', form)
                     enabled = papyrus('ObjectReference', 'IsEnabled', form) if isinstance(x, (int, float)) else None
-                    ok = not isinstance(x, (int, float)) or enabled is False
-                    detail = 'actor %s, x %s, enabled %s' % (form, x, enabled)
+                    if TIMED_OUT in (x, enabled):
+                        detail = UNASKED
+                    else:
+                        drawn = isinstance(x, (int, float)) and enabled is True
+                        missing = x == NOT_FOUND or enabled is False
+                        ok = drawn if what == 'exists' else missing
+                        detail = 'actor %s, x %s, enabled %s' % (form, x, enabled)
                 elif what == 'turned' and words[2] == 'below':
                     # "copy turned below <degrees> <seconds>": the copy's heading, sampled five times a second, stays
                     # within that many degrees over that time (a head turn of its player must not turn its body).
@@ -1045,30 +1079,35 @@ class Run:
                 elif what == 'went' and words[2:3] == ['down']:
                     # "npc went down": two "DO watch npc" samples in a row with the body under 25 units high.
                     # The precondition of a downed-copy test: a copy that never lay down proves nothing about getting up.
-                    heights = [h for _, _, h in self.watch]
+                    heights = [h for _, _, h, _ in self.watch]
                     lying = [i for i, h in enumerate(heights) if h < 25.0]
                     ok = any(i + 1 in lying for i in lying)
                     detail = ('actor %s, %d samples, %d of them lying; body height lowest %.0f, highest %.0f' % (form, len(heights), len(lying), min(heights), max(heights))
                               if heights else 'no "DO watch npc" samples to judge')
                 elif what == 'slide':
-                    # "npc slide below <units>": how far the lying body was carried along the floor, from the "DO watch npc" samples.
-                    # Horizontal pelvis travel while the body is under 25 units high, counted once it has lain there 1.5 s.
-                    # The fall itself moves the body; a slide behind the owner goes on for as long as the copy lies.
+                    # "npc slide below <units>": how far the lying copy was carried along the floor, from the "DO watch npc" samples.
+                    # Horizontal travel of its reference while the body is under 25 units high, counted once it has lain there 1.5 s.
+                    # Carrying a copy moves its reference, and the ragdoll with it; a slide behind the owner goes on for as long as it lies.
+                    # The pelvis alone also counts the ragdoll rolling and settling on a slope (0 to 200 units on one spot), so it is only reported.
                     limit = float(words[3])
-                    travel, lying_since, previous = 0.0, None, None
-                    for t, pelvis, height in self.watch:
+                    travel, pelvis_travel, lying_since, previous = 0.0, 0.0, None, None
+                    for t, pelvis, height, ref in self.watch:
                         if height >= 25.0:
                             lying_since = None
                         elif lying_since is None:
                             lying_since = t
                         elif previous and t - lying_since >= 1.5:
-                            travel += math.dist(pelvis[:2], previous[:2])
-                        previous = pelvis
-                    if not any(h < 25.0 for _, _, h in self.watch):
+                            pelvis_travel += math.dist(pelvis[:2], previous[0][:2])
+                            if ref and previous[1]:
+                                travel += math.dist(ref[:2], previous[1][:2])
+                        previous = (pelvis, ref)
+                    if not any(h < 25.0 for _, _, h, _ in self.watch):
                         ok, detail = True, 'SKIPPED: actor %s never lay down in the samples, so there is no slide to judge' % form
+                    elif not all(ref for _, _, h, ref in self.watch if h < 25.0):
+                        detail = 'actor %s: its reference could not be read while it lay' % form
                     else:
                         ok = travel <= limit
-                        detail = 'actor %s: the lying body travelled %.0f units along the floor (limit %.0f)' % (form, travel, limit)
+                        detail = 'actor %s: the lying copy was carried %.0f units along the floor (limit %.0f); its ragdoll pelvis moved %.0f' % (form, travel, limit, pelvis_travel)
                 elif what == 'health':
                     value = papyrus('Actor', 'GetActorValue', form, ['Health'])
                     base = papyrus('Actor', 'GetBaseActorValue', form, ['Health'])
@@ -1086,7 +1125,14 @@ class Run:
                 else:
                     detail = 'unknown check'
         except Exception as e:
-            ok, detail = False, 'could not ask the game: %s %s' % (type(e).__name__, e)
+            timed_out = isinstance(e, urllib.error.HTTPError) and e.code == 504
+            ok, detail = False, UNASKED if timed_out else 'could not ask the game: %s %s' % (type(e).__name__, e)
+        if not ok and detail == UNASKED:
+            # The game is up but DevBench gave up waiting: the check proves nothing either way.
+            # A game that no longer answers at all still fails, so a crash is never hidden here.
+            self.invalid.append('%s (%s)' % (text, detail))
+            print('   %s  %-24s %s' % ('INVALID', text, detail), flush=True)
+            return
         skipped = bool(ok) and isinstance(detail, str) and detail.startswith('SKIPPED')
         if require:
             # A precondition: when it does not hold, what the script checks afterwards is not what it was written for.
@@ -1113,6 +1159,7 @@ class Run:
             pass
         print('== %s' % self.script, flush=True)
         self.log_start = len(session_lines())
+        self.log_from = self.log_start
         proc = subprocess.Popen(cmd, cwd=RELEASE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
         log = io.open(os.path.join(RELEASE, 'logs', self.script + '-bot.log'), 'w', encoding='utf-8')
         for line in proc.stdout:
@@ -1124,7 +1171,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO load save .*|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO load save .*|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO logmark|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -1348,6 +1395,10 @@ class Run:
                     except Exception as e:
                         print('   FAIL  menu %s: %s' % (words[3], e), flush=True)
                         self.results.append((False, text.strip(), str(e)))
+                elif text.strip() == 'DO logmark':
+                    # From here on, logged, absent, atleast, fewer and distinct count only the client lines written after this one.
+                    self.log_from = len(session_lines())
+                    print('   (log mark: the checks count client lines from line %d of this session)' % self.log_from, flush=True)
                 elif text.strip() == 'DO pickup own':
                     # The newest item this game dropped itself, picked up by the player through the game's own Activate.
                     refs = [m.group(1) for m in (re.search(r'DroppedItem: dropped \S+ x\d+ as ([0-9A-Fa-f]+)', l) for l in session_lines()) if m]
@@ -1477,9 +1528,18 @@ class Run:
                         self.results.append((False, text.strip(), 'blade %s, held %s, player %s' % (centre, held_at, player_at)))
                     else:
                         delta = [centre[i] - held_at[i] for i in range(3)]
-                        papyrus('ObjectReference', 'SetPosition', '14', [player_at[0] + delta[0], player_at[1] + delta[1], player_at[2] + delta[2]])
+                        wanted = [player_at[i] + delta[i] for i in range(3)]
+                        papyrus('ObjectReference', 'SetPosition', '14', wanted)
                         self.bring = (centre, ref)
                         print('   (player moved by (%.0f, %.0f, %.0f) so the held item meets the blade at (%.0f, %.0f, %.0f))' % (delta[0], delta[1], delta[2], centre[0], centre[1], centre[2]), flush=True)
+                        # Where the player and the held item stay: a player put in the air falls, and one put into rock is pushed out.
+                        t0 = time.time()
+                        for at_s in (0.3, 1.0, 2.0):
+                            time.sleep(max(0.0, t0 + at_s - time.time()))
+                            me, held = position('14'), position(ref)
+                            if me and held:
+                                print('   (%.1f s later: player off where it was put by (%.0f, %.0f, %.0f), held item %.0f from the blade centre)' % (
+                                    at_s, me[0] - wanted[0], me[1] - wanted[1], me[2] - wanted[2], math.dist(held, centre)), flush=True)
                 elif text.startswith('DO reach npc '):
                     # "DO reach npc right|left <up>": the player is stood 50 units from the bot's NPC, facing it; that
                     # controller goes to the NPC, <up> units above its feet (600 ms), presses grip (300 ms), pulls back
@@ -1570,7 +1630,7 @@ class Run:
                             print('   (npc at (%.0f, %.0f, %.0f), %.0f from the player)' % (at[0], at[1], at[2], math.dist(at, me)), flush=True)
                         time.sleep(0.5)
                 elif text.startswith('DO watch npc '):
-                    # "DO watch npc <seconds>": the copy's pelvis and body height (body_pose), sampled for that long and kept for
+                    # "DO watch npc <seconds>": the copy's pelvis, body height (body_pose) and reference, sampled for that long and kept for
                     # "npc went down" and "npc slide below". Put it before the bot's "replay npc", which goes on meanwhile.
                     seconds = float(text.split()[3])
                     form, why = self.subject('npc')
@@ -1579,9 +1639,9 @@ class Run:
                     while form and time.time() - t0 < seconds:
                         pose = body_pose(form)
                         if pose:
-                            self.watch.append((time.time() - t0, pose[0], pose[1]))
+                            self.watch.append((time.time() - t0, pose[0], pose[1], position(form)))
                         time.sleep(0.25)
-                    heights = [h for _, _, h in self.watch]
+                    heights = [h for _, _, h, _ in self.watch]
                     print('   (watched npc %s for %.0f s: %d samples, body height %s)' % (
                         form or '?', seconds, len(heights), ('lowest %.0f, highest %.0f' % (min(heights), max(heights))) if heights else 'never read: %s' % (why or 'no pose')), flush=True)
                 elif text.startswith('DO sample held '):
@@ -1742,7 +1802,11 @@ class Run:
 
 
 # Result rows that are not checks: what an action of the script reported when it could not be done.
-ACTION_ROWS = ('DO ', 'screenshot ', 'console ', 'server restart', 'load last')
+ACTION_ROWS = ('DO ', 'screenshot ', 'console ', 'server restart', 'load last', 'load save ')
+
+
+# Scripts whose red run is the bot behaving as before the fix, with the variable that makes it so.
+RED_ENV = {'live-loss-playback': 'STBOT_RELIABLE_MOVEMENT'}
 
 
 def verdict(run, results, expect_fail):
@@ -1756,6 +1820,13 @@ def verdict(run, results, expect_fail):
     skipped = [text for ok, text, _ in results if ok is None]
     if not results and not run.invalid:
         return 'not run', 'NOT RUN: no check was reached; see logs/%s-bot.log' % run.script
+    # The bot's old behaviour belongs only to the red run of a script that asks for it.
+    # The variable lasts as long as the shell, so a later run in the same shell would test the old behaviour unseen.
+    needed = RED_ENV.get(run.script)
+    if os.environ.get('STBOT_RELIABLE_MOVEMENT') == '1' and not (expect_fail and needed == 'STBOT_RELIABLE_MOVEMENT'):
+        return 'invalid', 'INVALID: the bot sent movement reliably (STBOT_RELIABLE_MOVEMENT=1), as before playback session B; remove it (Remove-Item Env:STBOT_RELIABLE_MOVEMENT) for this run'
+    if expect_fail and needed and os.environ.get(needed) != '1':
+        return 'invalid', 'INVALID: the red run of this script is the bot behaving as before the fix: set %s=1 for it' % needed
     if run.invalid:
         return 'invalid', 'INVALID: ' + '; '.join(run.invalid)
     if expect_fail:
@@ -1778,7 +1849,7 @@ def verdict(run, results, expect_fail):
 def run_conditions(lines):
     """The rig's frame rate and the bot's network during a run, kept with its result."""
     fps = sorted(int(m.group(1)) for m in (re.search(r'Perf last 30 s: .*\((\d+) fps\)', l) for l in lines) if m)
-    network = {k: os.environ[k] for k in ('STBOT_FAKE_LAG_MS', 'STBOT_FAKE_LOSS_PCT', 'STBOT_FAKE_REORDER_PCT') if os.environ.get(k)}
+    network = {k: os.environ[k] for k in ('STBOT_FAKE_LAG_MS', 'STBOT_FAKE_LOSS_PCT', 'STBOT_FAKE_REORDER_PCT', 'STBOT_RELIABLE_MOVEMENT') if os.environ.get(k)}
     return (fps[len(fps) // 2] if fps else None), network
 
 

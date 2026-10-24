@@ -28,10 +28,16 @@ wait 3
 log -- the bot picks up the quest object: its pick-up, then the item
 activate 44E13 by me
 wait 3
-additem 44E12 1 quest
+additem 44E12 1 quest pickup
 wait 4
 log CHECK copy count 44E12 1
 log CHECK player has 44E12
+wait 3
+
+log -- a second one from a container (no pick-up): the copy holds what its owner holds, two
+additem 44E12 1 quest
+wait 4
+log CHECK copy count 44E12 2
 wait 3
 log DO god off
 log CHECK game alive

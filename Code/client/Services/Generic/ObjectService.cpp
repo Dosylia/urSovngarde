@@ -17,6 +17,7 @@
 #include <Messages/NotifyLockChange.h>
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
+#include <Structs/DoorState.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESObjectCELL.h>
@@ -26,6 +27,10 @@
 #include <Games/TES.h>
 
 #include <inttypes.h>
+
+// The states travel as the game's own numbers.
+static_assert(DoorState::kOpen == TESObjectREFR::kOpen && DoorState::kOpening == TESObjectREFR::kOpening && DoorState::kClosed == TESObjectREFR::kClosed &&
+              DoorState::kClosing == TESObjectREFR::kClosing && DoorState::kNone == TESObjectREFR::kNone);
 
 ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport)
     : m_world(aWorld)
@@ -200,36 +205,34 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
 
         CreateObjectEntity(pObject->formID, objectData.ServerId);
 
-        if (objectData.IsSenderFirst)
-            continue;
-
-        if (objectData.CurrentLockData != LockData{})
+        if (!objectData.IsSenderFirst && objectData.CurrentLockData != LockData{})
         {
             Lock* pLock = pObject->GetLock();
-
             if (!pLock)
-            {
                 pLock = pObject->CreateLock();
-                if (!pLock)
-                    continue;
+            if (pLock)
+            {
+                pLock->lockLevel = objectData.CurrentLockData.LockLevel;
+                pLock->SetLock(objectData.CurrentLockData.IsLocked);
+                pObject->LockChange();
             }
-
-            pLock->lockLevel = objectData.CurrentLockData.LockLevel;
-            pLock->SetLock(objectData.CurrentLockData.IsLocked);
-            pObject->LockChange();
         }
 
         // A door used in another game while this one was away is set to the state the server last passed on.
+        // It comes even when this game is the first in the cell: the door may have been used from the next cell over.
         // Setting it is not an activation, so nothing is sent back.
         const auto cShared = static_cast<TESObjectREFR::OpenState>(objectData.DoorOpenState);
         if (cShared != TESObjectREFR::kNone && pObject->baseForm->formType == FormType::Door && !pObject->extraData.Contains(ExtraDataType::Teleport))
         {
             const bool cOpen = cShared == TESObjectREFR::kOpen;
             const TESObjectREFR::OpenState cLocal = pObject->GetOpenState();
-            if (cLocal == TESObjectREFR::kNone || cLocal == cShared || cLocal == (cOpen ? TESObjectREFR::kOpening : TESObjectREFR::kClosing))
+            const Lock* pLock = pObject->GetLock();
+            // A door locked here stays shut: opening it would unlock it, as the game's SetOpen does.
+            const bool cLockedHere = pLock && pLock->IsLocked();
+            if (cLocal == TESObjectREFR::kNone || cLocal == cShared || cLocal == (cOpen ? TESObjectREFR::kOpening : TESObjectREFR::kClosing) || (cOpen && cLockedHere))
             {
                 spdlog::info("Door {:X}: {} in the other games when this game came in; {} here (state {})", pObject->formID, cOpen ? "open" : "closed",
-                             cLocal == TESObjectREFR::kNone ? "no state known" : "already so", static_cast<int>(cLocal));
+                             cLocal == TESObjectREFR::kNone ? "no state known" : cOpen && cLockedHere ? "left shut, it is locked" : "already so", static_cast<int>(cLocal));
             }
             else
             {
@@ -238,6 +241,9 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
                              cOpen ? "open" : "closed", static_cast<int>(cLocal));
             }
         }
+
+        if (objectData.IsSenderFirst)
+            continue;
 
         if (pObject->baseForm->formType == FormType::Container)
         {
@@ -287,14 +293,6 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
             return;
     }
 
-    // A door whose activation a script blocks (BlockActivation) does not move here, so the other games must not open it either.
-    const bool cDoor = acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Door;
-    if (cDoor && acEvent.pObject->IsActivationBlocked())
-    {
-        spdlog::info("Door {:X} activated by {:X}, but a script blocks its activation; not sent", acEvent.pObject->formID, acEvent.pActivator->formID);
-        return;
-    }
-
     ActivateRequest request;
 
     if (!m_world.GetModSystem().GetServerModId(acEvent.pObject->formID, request.Id))
@@ -332,6 +330,23 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
         return;
     }
 
+    // A door whose activation a script blocks (BlockActivation) does not move here, so the other games must not open it either.
+    // The script's own Activate with default processing only does move it, block or not, so that one is sent.
+    const bool cDoor = acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Door;
+    if (cDoor && !acEvent.DefaultProcessing && acEvent.ActivationBlocked)
+    {
+        // A script can turn its door away again and again, so each door says so at most every 5 s.
+        static Map<uint32_t, std::chrono::steady_clock::time_point> s_lastBlockedLog;
+        const auto cNow = std::chrono::steady_clock::now();
+        auto& last = s_lastBlockedLog[acEvent.pObject->formID];
+        if (cNow - last >= std::chrono::seconds(5))
+        {
+            last = cNow;
+            spdlog::info("Door {:X} activated by {:X}, but a script blocks its activation; not sent", acEvent.pObject->formID, acEvent.pActivator->formID);
+        }
+        return;
+    }
+
     std::optional<uint32_t> serverIdRes = Utils::GetServerId(*pEntity);
     if (!serverIdRes.has_value())
         return;
@@ -345,23 +360,6 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
         spdlog::info("Door {:X} ({:X}:{:X}) activated by {:X} from state {}; sent to the players in cell {:X}:{:X}", acEvent.pObject->formID, request.Id.ModId, request.Id.BaseId,
                      acEvent.pActivator->formID, static_cast<int>(acEvent.PreActivationOpenState), request.CellId.ModId, request.CellId.BaseId);
 }
-
-namespace
-{
-// The state a door is left in by an activation from the given state: a closed or closing door opens, an open or opening one closes.
-// kNone when the state before is not known.
-TESObjectREFR::OpenState StateAfterActivation(TESObjectREFR::OpenState aBefore) noexcept
-{
-    switch (aBefore)
-    {
-    case TESObjectREFR::kClosed:
-    case TESObjectREFR::kClosing: return TESObjectREFR::kOpen;
-    case TESObjectREFR::kOpen:
-    case TESObjectREFR::kOpening: return TESObjectREFR::kClosed;
-    default: return TESObjectREFR::kNone;
-    }
-}
-} // namespace
 
 void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
 {
@@ -384,11 +382,20 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
         return;
     }
 
+    // Only an object in a cell this game has loaded is used here: a script's use of a far or indoor reference must not run its scripts here.
+    // A door's state still comes when this game enters its cell, with the cell's objects.
+    const TESObjectCELL* pCell = pObject->GetParentCellEx();
+    if (!pCell || !pCell->IsAttached())
+    {
+        spdlog::info("Activation of {:X}, activated by server id {:X}: its cell is not loaded here; not done", pObject->formID, acMessage.ActivatorId);
+        return;
+    }
+
     // A door that does not lead elsewhere is set to the state it was left in over there, not used again here.
     // It needs no actor, so a door opened by an NPC this game has no copy of opens too.
     // Setting it is not an activation here, so nothing is sent back and two games cannot pass it to and fro.
     const auto cRemoteBefore = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
-    const TESObjectREFR::OpenState cRemoteAfter = StateAfterActivation(cRemoteBefore);
+    const auto cRemoteAfter = static_cast<TESObjectREFR::OpenState>(DoorState::AfterActivation(cRemoteBefore));
     if (pObject->baseForm->formType == FormType::Door && !pObject->extraData.Contains(ExtraDataType::Teleport) && cRemoteAfter != TESObjectREFR::kNone)
     {
         const bool cOpen = cRemoteAfter == TESObjectREFR::kOpen;

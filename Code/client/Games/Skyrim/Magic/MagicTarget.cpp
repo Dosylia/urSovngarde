@@ -19,6 +19,7 @@
 
 #include <Effects/ActiveEffect.h>
 #include <Forms/SpellItem.h>
+#include <Forms/ActorValueInfo.h>
 
 TP_THIS_FUNCTION(TAddTarget, bool, MagicTarget, MagicTarget::AddTargetData& arData);
 TP_THIS_FUNCTION(TCheckAddEffectTargetData, bool, MagicTarget::AddTargetData, void* arArgs, float afResistance);
@@ -44,6 +45,23 @@ static thread_local bool s_measurePerks = false;
 static thread_local float s_perkFactor = 1.f;
 // A damaging spell on another player's copy is made only to measure its perks: the effect is left with no magnitude.
 static thread_local bool s_measureOnly = false;
+
+// The effect lowers health: a harmful value modifier whose first value is health.
+// Fire is a single value modifier; frost and shock are dual ones that also take stamina or magicka.
+// The damage keywords name the element (0x1CEAD is MagicDamageFire), so none of them marks health damage as a whole.
+// Judged per effect, not per spell: a spell's other effects (a burn, a script) are not damage to send.
+static bool DamagesHealth(EffectItem* apEffect) noexcept
+{
+    constexpr uint32_t cDetrimental = 0x4;
+
+    if (!apEffect || !apEffect->pEffectSetting)
+        return false;
+
+    const EffectSetting* pSetting = apEffect->pEffectSetting;
+    const bool cModifiesValue = pSetting->eArchetype == EffectArchetypes::ArchetypeID::kValueModifier ||
+                                pSetting->eArchetype == EffectArchetypes::ArchetypeID::kDualValueModifier;
+    return cModifiesValue && pSetting->primaryActorValue == ActorValueInfo::kHealth && (pSetting->flags & cDetrimental) != 0;
+}
 
 void MagicTarget::DispelAllSpells(bool aNow) noexcept
 {
@@ -148,9 +166,8 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
         {
             // A damaging spell on the other player is sent as a health change, like a sword hit (Actor::HookDamageActor).
             // Only the caster's game reliably knows it landed. It is not applied locally: the other side owns that body.
-            // Only instant damage-health effects: damage-over-time and concentration effects tick on their own.
-            if (World::Get().GetServerSettings().PvpEnabled && arData.pSpell->IsDamageHealthSpell() && arData.pEffectItem && arData.pEffectItem->data.iDuration == 0 &&
-                arData.fMagnitude > 0.f)
+            // Only an instant effect that damages health, not the spell's other effects: damage-over-time and concentration effects tick on their own.
+            if (World::Get().GetServerSettings().PvpEnabled && DamagesHealth(arData.pEffectItem) && arData.pEffectItem->data.iDuration == 0 && arData.fMagnitude > 0.f)
             {
                 // The caster's perks (Augmented Flames and the like) adjust an effect only as it is made (AdjustForPerks), as on an NPC.
                 // So the effect is made on the copy to take their factor, and left with no magnitude there (live-pvp-spell-perks).
@@ -158,9 +175,16 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
                 s_measurePerks = true;
                 s_measureOnly = true;
                 s_perkFactor = 1.f;
-                TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
+                const bool cMade = TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
                 s_measurePerks = false;
                 s_measureOnly = false;
+
+                // An effect the game would not put on the copy (resisted, absorbed) does no damage, as on an NPC.
+                if (!cMade)
+                {
+                    spdlog::info("PvP: spell {:X} on remote player {:X} was not taken here (resisted or absorbed); no damage sent", arData.pSpell->formID, pTargetActor->formID);
+                    return false;
+                }
 
                 const float cDamage = cBase * s_perkFactor;
                 spdlog::info("PvP: spell {:X} hit remote player {:X} for {:.0f} (base {:.0f}, the caster's perks {:.2f})", arData.pSpell->formID, pTargetActor->formID, cDamage,

@@ -227,7 +227,8 @@ struct TESObjectREFR : TESForm
 
     void SetInventory(const Inventory& acContainer) noexcept;
     void SetInventoryRetainingQuestItems(Inventory& aCurrentInventory, const Inventory& acSourceInventory) noexcept;
-    void AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSettingInventory = false) noexcept;
+    //! aPickedUp: the change came from its owner's pick-up of a reference in the world, which reached the copy already when replayed.
+    void AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSettingInventory = false, bool aPickedUp = false) noexcept;
     void UpdateItemList(TESForm* pUnkForm) noexcept;
 
     BSHandleRefObject handleRefObject;

@@ -257,7 +257,7 @@ bool PlayerCharacter::AddMapMarker(uint32_t aHandle) noexcept
     BSScopedSpinLock _(*pLock);
     for (const uint32_t cHandle : currentMapMarkers)
         if (cHandle == aHandle)
-            return true;
+            return false;
 
     currentMapMarkers.Resize(currentMapMarkers.length + 1);
     currentMapMarkers[currentMapMarkers.length - 1] = aHandle;
@@ -309,6 +309,7 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
     if (const auto ownershipToken = Utils::GetLocalOwnershipToken(apThis->formID))
     {
         InventoryChangeEvent event(apThis->formID, std::move(item), false, shouldUpdateClients);
+        event.PickedUp = true;
         event.ServerId = ownershipToken->ServerId;
         event.OwnershipEpoch = ownershipToken->OwnershipEpoch;
         World::Get().GetRunner().Trigger(std::move(event));

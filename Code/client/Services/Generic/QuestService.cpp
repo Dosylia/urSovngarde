@@ -12,6 +12,7 @@
 #include <Forms/TESQuest.h>
 #include <Games/TES.h>
 #include <Games/Overrides.h>
+#include <Games/Memory.h>
 
 #include <Events/EventDispatcher.h>
 
@@ -28,6 +29,7 @@ static TESQuest* FindQuestByNameId(const String& name)
 
 using HeldStages = QuestService::HeldStages;
 
+static void ApplyHeldStages(TESQuest* apQuest, HeldStages& aHeld, size_t aCount) noexcept;
 static void ReleaseStagesForWaitingPhases(TESQuest* apQuest, HeldStages& aHeld) noexcept;
 static void ReleaseUncheckedStages(TESQuest* apQuest, HeldStages& aHeld) noexcept;
 
@@ -43,8 +45,8 @@ QuestService::QuestService(World& aWorld, entt::dispatcher& aDispatcher)
     // Game events:
     // Starts, stops and stages are sent from TESQuestStartStopEvent and TESQuestStageEvent, which fire while the quest
     // changes. Outside a party nothing is sent.
-    // TESQuestStageItemDoneEvent fires once for each of a stage's log entries, after its fragment has run. That's too
-    // late to send on, but it tells when an applied held stage is done.
+    // TESQuestStageItemDoneEvent fires for a stage's log entries whose fragment ran, after it ran. That's too late to
+    // send on, but it tells when an applied held stage is done.
     // The scene, scene action, phase and dialogue line events are only logged, to follow scenes when debugging held
     // stages. OnUpdate explains why they can't trigger the release of held stages.
 
@@ -56,6 +58,7 @@ QuestService::QuestService(World& aWorld, entt::dispatcher& aDispatcher)
     pEventList->sceneActionEvent.RegisterSink(this);
     pEventList->scenePhaseEvent.RegisterSink(this);
     pEventList->topicInfoEvent.RegisterSink(this);
+    pEventList->loadGameEvent.RegisterSink(this);
 }
 
 void QuestService::OnConnected(const ConnectedEvent&) noexcept
@@ -77,6 +80,19 @@ void QuestService::OnUpdate(const UpdateEvent&) noexcept
     if (m_heldStages.empty())
         return;
 
+    // Only the leader holds member stages.
+    // A game that no longer leads applies what it held, before newer stages come in to apply at once.
+    if (!m_world.GetPartyService().IsLeader())
+    {
+        FlushHeldStages("this game no longer leads the party");
+        return;
+    }
+
+    // A playing scene can wait on what this game cannot make happen, a package another game runs for one.
+    // Its phase then never ends here, so after this long without progress the held stages are applied anyway.
+    constexpr auto cNoProgressFlush = 30s;
+    const auto cNow = std::chrono::steady_clock::now();
+
     // Checked every frame rather than on scene events: an action's done event fires before its fragment runs, and the
     // action only counts as complete afterwards, with no event of its own
     Vector<uint32_t> questFormIds;
@@ -90,18 +106,69 @@ void QuestService::OnUpdate(const UpdateEvent&) noexcept
         {
             ReleaseStagesForWaitingPhases(pQuest, *pHeld);
             ReleaseUncheckedStages(pQuest, *pHeld);
+
+            if (!pHeld->Stages.empty() && cNow - pHeld->LastProgress > cNoProgressFlush)
+            {
+                spdlog::info("QuestHold: no progress on the held member quest stages for {:X} in 30 s; applying the {} left in order", questFormId, pHeld->Stages.size());
+                ApplyHeldStages(pQuest, *pHeld, pHeld->Stages.size());
+            }
         }
     }
 }
 
 void QuestService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
-    m_heldStages.clear();
+    FlushHeldStages("disconnected");
 }
 
 void QuestService::OnPartyLeft(const PartyLeftEvent&) noexcept
 {
+    FlushHeldStages("this player left the party");
+}
+
+void QuestService::FlushHeldStages(const char* acpReason) noexcept
+{
+    // Quest scripts are not run while the game closes.
+    if (IsProcessExiting())
+    {
+        m_heldStages.clear();
+        return;
+    }
+
+    Vector<uint32_t> questFormIds;
+    for (const auto& [questFormId, _] : m_heldStages)
+        questFormIds.push_back(questFormId);
+
+    for (uint32_t questFormId : questFormIds)
+    {
+        TESQuest* pQuest = Cast<TESQuest>(TESForm::GetById(questFormId));
+        HeldStages* pHeld = GetHeldStages(questFormId, pQuest);
+        if (!pHeld || pHeld->Stages.empty())
+            continue;
+
+        spdlog::info("QuestHold: applying the {} held member quest stages for {:X} now, {}", pHeld->Stages.size(), questFormId, acpReason);
+        ApplyHeldStages(pQuest, *pHeld, pHeld->Stages.size());
+    }
+
     m_heldStages.clear();
+}
+
+BSTEventResult QuestService::OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*)
+{
+    // A load brings the save's quests back: fragments applied before it will not report, and its scenes start again.
+    // The held stages stay held, and their waits start over.
+    m_world.GetRunner().Queue(
+        [this]()
+        {
+            const auto cNow = std::chrono::steady_clock::now();
+            for (auto it = m_heldStages.begin(); it != m_heldStages.end(); ++it)
+            {
+                it.value().Applied.clear();
+                it.value().LastProgress = cNow;
+            }
+        });
+
+    return BSTEventResult::kOk;
 }
 
 BSTEventResult QuestService::OnEvent(const TESQuestStartStopEvent* apEvent, const EventDispatcher<TESQuestStartStopEvent>*)
@@ -218,13 +285,14 @@ BSTEventResult QuestService::OnEvent(const TESQuestStageItemDoneEvent* apEvent, 
             if (it == m_heldStages.end())
                 return;
 
-            Vector<uint16_t>& pendingItems = it.value().PendingItems;
-            auto itemIt = std::find(pendingItems.begin(), pendingItems.end(), stage);
-            if (itemIt == pendingItems.end())
+            Vector<HeldStages::AppliedStage>& applied = it.value().Applied;
+            auto appliedIt = std::find_if(applied.begin(), applied.end(), [stage](const HeldStages::AppliedStage& acApplied) { return acApplied.Stage == stage; });
+            if (appliedIt == applied.end())
                 return;
 
-            pendingItems.erase(itemIt);
-            spdlog::debug("Fragment of applied member quest stage {} for {:X} done, {} left", stage, questFormId, pendingItems.size());
+            applied.erase(appliedIt);
+            it.value().LastProgress = std::chrono::steady_clock::now();
+            spdlog::debug("Fragment of applied member quest stage {} for {:X} done, {} applied stages left", stage, questFormId, applied.size());
         });
 
     return BSTEventResult::kOk;
@@ -387,7 +455,12 @@ static bool IsCheckedByPlayingScene(TESQuest* apQuest, uint16_t aStage) noexcept
 
 void QuestService::HoldStage(TESQuest* apQuest, uint16_t aStage) noexcept
 {
-    Vector<uint16_t>& stages = m_heldStages[apQuest->formID].Stages;
+    HeldStages& held = m_heldStages[apQuest->formID];
+    // Holding more is no progress: the wait counts from the first stage held.
+    if (held.Stages.empty() && held.Applied.empty())
+        held.LastProgress = std::chrono::steady_clock::now();
+
+    Vector<uint16_t>& stages = held.Stages;
     auto it = std::lower_bound(stages.begin(), stages.end(), aStage);
     if (it == stages.end() || *it != aStage)
         stages.insert(it, aStage);
@@ -402,14 +475,15 @@ static void ApplyHeldStages(TESQuest* apQuest, HeldStages& aHeld, size_t aCount)
     // In order, a later stage's scripts can rely on the earlier ones
     for (size_t i = 0; i < aCount; ++i)
     {
-        // A scene the fragments start only plays once they've run, and the next stage may be what it waits on. Each log
-        // entry reports when its fragment is done.
+        // A scene the fragments start only plays once they've run, and the next stage may be what it waits on.
+        // The next held stage waits for this one's first done fragment, or for a while when none reports (see GetHeldStages).
         const uint16_t cStage = aHeld.Stages[i];
         if (apQuest->ScriptSetStage(cStage))
-            aHeld.PendingItems.insert(aHeld.PendingItems.end(), apQuest->GetStageItemCount(cStage), cStage);
+            aHeld.Applied.push_back({cStage, std::chrono::steady_clock::now()});
     }
 
     aHeld.Stages.erase(aHeld.Stages.begin(), aHeld.Stages.begin() + aCount);
+    aHeld.LastProgress = std::chrono::steady_clock::now();
 }
 
 static void ReleaseStagesForWaitingPhases(TESQuest* apQuest, HeldStages& aHeld) noexcept
@@ -443,10 +517,10 @@ static void ReleaseStagesForWaitingPhases(TESQuest* apQuest, HeldStages& aHeld) 
 }
 
 // Applies held stages in order while no playing scene checks the next one, e.g. once the scenes that did have ended.
-// Waits for the fragments of the stages it applied first.
+// Waits first for each stage it applied to report a done fragment, or for two seconds.
 static void ReleaseUncheckedStages(TESQuest* apQuest, HeldStages& aHeld) noexcept
 {
-    while (!aHeld.Stages.empty() && aHeld.PendingItems.empty() && !IsCheckedByPlayingScene(apQuest, aHeld.Stages.front()))
+    while (!aHeld.Stages.empty() && aHeld.Applied.empty() && !IsCheckedByPlayingScene(apQuest, aHeld.Stages.front()))
     {
         spdlog::info("Applying held member quest stage {} for {:X}, no playing scene checks it", aHeld.Stages.front(), apQuest->formID);
         ApplyHeldStages(apQuest, aHeld, 1);
@@ -482,7 +556,24 @@ HeldStages* QuestService::GetHeldStages(uint32_t aQuestFormId, TESQuest* apQuest
             return true;
         });
 
-    if (held.Stages.empty() && held.PendingItems.empty())
+    // A stage runs only the log entries whose conditions pass, and one without a fragment may report nothing.
+    // So the first done fragment ends a stage's wait, and a stage that reports none is waited on for two seconds.
+    constexpr auto cAppliedWait = 2s;
+    const auto cNow = std::chrono::steady_clock::now();
+    std::erase_if(
+        held.Applied,
+        [&](const HeldStages::AppliedStage& acApplied)
+        {
+            if (cNow - acApplied.At < cAppliedWait)
+                return false;
+
+            spdlog::info("QuestHold: applied member quest stage {} for {:X}, no fragment reported done within 2 s; the next held stage may go", acApplied.Stage,
+                         aQuestFormId);
+            held.LastProgress = cNow;
+            return true;
+        });
+
+    if (held.Stages.empty() && held.Applied.empty())
     {
         m_heldStages.erase(it);
         return nullptr;

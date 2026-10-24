@@ -251,6 +251,15 @@ function Show-Status {
         $(if (Test-Running '^(urSovngardeServer|SkyrimTogetherServer)$') { 'running' } else { 'stopped' }))
 }
 
+# The saves of a run that died are put back in the profile that run protected, before a new run protects the one MO2 has selected now.
+# Every script that starts the game calls this, then writes the state file and copies the saves aside (Copy-SavesAside).
+function Switch-ToSelectedProfile {
+    if ($profileDir -eq $selectedProfileDir) { return }
+    Restore-Saves
+    if (Test-Path -LiteralPath $savesCopy) { throw "The saves of profile '$profileName' from an earlier run could not be put back ($savesCopy); not starting the game." }
+    Set-ProfilePaths $selectedProfileDir
+}
+
 function Copy-SavesAside {
     if (Test-Path -LiteralPath $savesCopy) { Restore-Saves }
     if (Test-Path -LiteralPath $savesCopy) { throw "The saves from an earlier run could not be put back ($savesCopy); not starting the game." }
@@ -400,12 +409,7 @@ if ($Action -eq 'down') { Stop-Everything; Show-Status; if ($script:downFailed) 
 if (Test-Running '^(urSovngarde|SkyrimTogetherVR|SkyrimVR)$') { throw 'The game is already running. If that is a real session, leave it alone; otherwise run "down" first.' }
 if (Test-Running '^(vrserver|vrmonitor)$') { throw 'SteamVR is already running. If the headset is in use, leave it alone; otherwise close it first.' }
 
-# The saves of a run that died are put back in the profile that run protected, before this run protects the one MO2 has selected now.
-if ($profileDir -ne $selectedProfileDir) {
-    Restore-Saves
-    if (Test-Path -LiteralPath $savesCopy) { throw "The saves of profile '$profileName' from an earlier run could not be put back ($savesCopy); not starting the game." }
-    Set-ProfilePaths $selectedProfileDir
-}
+Switch-ToSelectedProfile
 
 $rates = @(Get-MonitorRates)
 $fastest = ($rates | Measure-Object -Property Hz -Maximum).Maximum

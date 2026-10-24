@@ -45,6 +45,8 @@ void PulseClashHaptics(uint8_t aSide) noexcept;
 //! Every rigid body moves by the same offset, when it lies more than 64 units away (at most twice a second).
 //! False when nothing was moved.
 bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept;
+//! Forgets what PlaceCorpse and the owner's posing knew of a copy, so a new copy under the same id starts afresh.
+void ForgetCorpse(uint32_t aFormId) noexcept;
 //! The names of the nodes in an actor's 3D whose name contains `acpPart` (any case), comma separated, at most `aMax`.
 //! How many there were in all goes to `aCount`. For checks that cannot look at the screen (the rig).
 std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, size_t& aCount) noexcept;

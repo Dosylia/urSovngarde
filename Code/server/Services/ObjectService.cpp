@@ -14,6 +14,20 @@
 #include <Messages/AssignObjectsResponse.h>
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
+#include <Structs/DoorState.h>
+
+namespace
+{
+// A door's state after the last activation the server passed on, kept apart from the per-cell object entities.
+// Those are made only from the opener's own cell and go when that cell empties, so a door opened from the next cell over was never kept.
+struct DoorRecord
+{
+    uint8_t State{};
+    //! Where its opener stood; the record goes once no player has that place in range.
+    CellIdComponent Where{};
+};
+Map<GameId, DoorRecord> s_doorStates;
+} // namespace
 
 ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
@@ -30,6 +44,15 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher)
 // Clients need a message saying the entity was destroyed.
 void ObjectService::OnPlayerLeaveCellEvent(const PlayerLeaveCellEvent& acEvent) noexcept
 {
+    // A door state nobody can see any more is forgotten: its cell may reset, or a script may move the door, before anyone comes back.
+    for (auto it = s_doorStates.begin(); it != s_doorStates.end();)
+    {
+        bool cSeen = false;
+        for (Player* pPlayer : m_world.GetPlayerManager())
+            cSeen = cSeen || it->second.Where.IsInRange(pPlayer->GetCellComponent(), false);
+        it = cSeen ? std::next(it) : s_doorStates.erase(it);
+    }
+
     for (Player* pPlayer : m_world.GetPlayerManager())
     {
         if (pPlayer->GetCellComponent().Cell == acEvent.OldCell)
@@ -83,12 +106,13 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
             auto& objectComponent = view.get<ObjectComponent>(*iter);
             objectData.CurrentLockData = objectComponent.CurrentLockData;
-            objectData.DoorOpenState = objectComponent.DoorOpenState;
 
             auto& inventoryComponent = view.get<InventoryComponent>(*iter);
             objectData.CurrentInventory = inventoryComponent.Content;
 
             objectData.IsSenderFirst = false;
+            if (const auto cRecord = s_doorStates.find(formIdComponent.Id); cRecord != s_doorStates.end())
+                objectData.DoorOpenState = cRecord->second.State;
 
             response.Objects.push_back(objectData);
         }
@@ -109,6 +133,8 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.Id = object.Id;
             objectData.ServerId = World::ToInteger(cEntity);
             objectData.IsSenderFirst = true;
+            if (const auto cRecord = s_doorStates.find(object.Id); cRecord != s_doorStates.end())
+                objectData.DoorOpenState = cRecord->second.State;
 
             response.Objects.push_back(objectData);
         }
@@ -118,36 +144,13 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
         acMessage.pPlayer->Send(response);
 }
 
-namespace
-{
-// The game's door states: 1 open, 2 opening, 3 closed, 4 closing.
-// An activation opens a closed or closing door and closes an open or opening one; 0 when the state before is not known.
-uint8_t DoorStateAfterActivation(const uint8_t aBefore) noexcept
-{
-    switch (aBefore)
-    {
-    case 3:
-    case 4: return 1;
-    case 1:
-    case 2: return 3;
-    default: return 0;
-    }
-}
-} // namespace
-
 void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) const noexcept
 {
-    // A door's state is kept with its object, so a player who enters the cell later gets the door as it was left.
-    if (const uint8_t cAfter = DoorStateAfterActivation(acMessage.Packet.PreActivationOpenState))
+    // A door's state is kept, so a player who enters its cell later gets the door as it was left.
+    if (const uint8_t cAfter = DoorState::AfterActivation(acMessage.Packet.PreActivationOpenState))
     {
-        auto objectView = m_world.view<FormIdComponent, ObjectComponent>();
-        const auto iter = std::find_if(std::begin(objectView), std::end(objectView),
-                                       [objectView, id = acMessage.Packet.Id](auto entity) { return objectView.get<FormIdComponent>(entity).Id == id; });
-        if (iter != std::end(objectView))
-        {
-            objectView.get<ObjectComponent>(*iter).DoorOpenState = cAfter;
-            spdlog::debug("Object {:X}:{:X} left in door state {} by an activation", acMessage.Packet.Id.ModId, acMessage.Packet.Id.BaseId, cAfter);
-        }
+        s_doorStates[acMessage.Packet.Id] = DoorRecord{cAfter, acMessage.pPlayer->GetCellComponent()};
+        spdlog::debug("Doors: {:X}:{:X} left in door state {} by an activation", acMessage.Packet.Id.ModId, acMessage.Packet.Id.BaseId, cAfter);
     }
 
     NotifyActivate notifyActivate;
@@ -194,6 +197,10 @@ void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage
         objectComponent.CurrentLockData.IsLocked = acMessage.Packet.IsLocked;
         objectComponent.CurrentLockData.LockLevel = acMessage.Packet.LockLevel;
     }
+
+    // A locked door is no longer open as an activation left it: a later arrival must not open it.
+    if (acMessage.Packet.IsLocked)
+        s_doorStates.erase(acMessage.Packet.Id);
 
     for (Player* pPlayer : m_world.GetPlayerManager())
     {

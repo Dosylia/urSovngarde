@@ -958,7 +958,7 @@ void TESObjectREFR::SetInventoryRetainingQuestItems(Inventory& aCurrentInventory
     }
 }
 
-void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSettingInventory) noexcept
+void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSettingInventory, bool aPickedUp) noexcept
 {
     ModSystem& modSystem = World::Get().GetModSystem();
 
@@ -973,9 +973,10 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
     ExtraDataList* pExtraDataList = GetExtraDataFromItem(arEntry);
 
     // A quest object another player picked up from the world already reached their copy here, through the replayed pick-up.
-    // Added again, the copy held one more than its owner (live-quest-item-copy); this game's player still gets theirs below.
+    // Only that pick-up's own change is skipped: a quest item taken from a container or given by a script is added as usual.
+    // This game's player still gets theirs below.
     Actor* pCopy = Cast<Actor>(this);
-    const bool cAlreadyOnCopy = arEntry.IsQuestItem && arEntry.Count > 0 && !aIsSettingInventory && pCopy && pCopy->GetExtension()->IsRemotePlayer() &&
+    const bool cAlreadyOnCopy = aPickedUp && arEntry.IsQuestItem && arEntry.Count > 0 && !aIsSettingInventory && pCopy && pCopy->GetExtension()->IsRemotePlayer() &&
                                 IsItemInInventory(objectId);
     if (cAlreadyOnCopy)
         spdlog::info("QuestItem: {:X} already reached copy {:X} through its owner's pick-up; not added again", objectId, formID);
@@ -1129,7 +1130,7 @@ bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, u
         const int64_t cNowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         int64_t lastMs = s_lastRefusalLogMs.load();
         if (cNowMs - lastMs >= 5000 && s_lastRefusalLogMs.compare_exchange_strong(lastMs, cNowMs))
-            spdlog::info("Load door {:X}: not used by {:X}, a copy of another game's actor; its owner's game reports where it goes", apThis->formID, pActivator->formID);
+            spdlog::info("DoorCopy: load door {:X} not used by {:X}, a copy of another game's actor; its owner's game reports where it goes", apThis->formID, pActivator->formID);
         return false;
     }
 
@@ -1138,11 +1139,16 @@ bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, u
     if (pActivator && apThis->baseForm->formType != FormType::Book)
     {
         auto openState = TESObjectREFR::kNone;
+        bool blocked = false;
         if (apThis->baseForm->formType == FormType::Door)
+        {
             openState = apThis->GetOpenState();
+            // Read now: a script can block the door in its own OnActivate, before the queued event is handled.
+            blocked = apThis->IsActivationBlocked();
+        }
 
         World::Get().GetRunner().Trigger(
-            ActivateEvent(apThis, pActivator, apObjectToGet, aCount, aDefaultProcessing, aUnk1, openState)
+            ActivateEvent(apThis, pActivator, apObjectToGet, aCount, aDefaultProcessing, aUnk1, openState, false, blocked)
         );
     }
 

@@ -1,9 +1,11 @@
 # The game started while SteamVR has no headset.
-# Without VRStart the game ran on without VR and crashed at its first loading screen (SkyrimVR.exe+0xC53E1B).
+# Without VRStart the game runs on without VR and crashes at its first loading screen (SkyrimVR.exe+0xC53E1B).
 # With it, the game waits in a dialog, and "Try again" starts VR once a headset is there.
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\vr-start-check.ps1              on a build with VRStart: must PASS
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\vr-start-check.ps1 -ExpectFail  on a build without it: must be RED
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\vr-start-check.ps1 -Close       presses "Close the game" instead: the game must end
+#                                                                                   with code 4, an "Exit:" line and no crash on the way out
 #
 # It starts the game the way players do (Mod Organizer's entry) with SteamVR closed and the rig's null headset off.
 # Then it switches the null headset on, as a player would connect theirs, and presses "Try again" in the dialog.
@@ -11,6 +13,7 @@
 
 param(
     [switch]$ExpectFail,
+    [switch]$Close,
     [int]$Timeout = 180
 )
 
@@ -19,14 +22,18 @@ $ErrorActionPreference = 'Stop'
 # headless.ps1 defines its paths and helpers before it acts; "status" only prints one line.
 . (Join-Path $PSScriptRoot 'headless.ps1') status
 
-if (Test-Running $gamePattern) { throw 'The game is running. If that is a real session, leave it alone.' }
-if (Test-Running '^(vrserver|vrmonitor|vrcompositor)$') { throw 'SteamVR is running: this check needs it closed, so that the game starts with no headset.' }
+# A refusal tests nothing: it ends as INVALID (2), never as a failure.
+if (Test-Running $gamePattern) { Write-Host 'INVALID: the game is running. If that is a real session, leave it alone.' -ForegroundColor Yellow; exit 2 }
+if (Test-Running '^(vrserver|vrmonitor|vrcompositor)$') { Write-Host 'INVALID: SteamVR is running: this check needs it closed, so that the game starts with no headset.' -ForegroundColor Yellow; exit 2 }
 if (([System.IO.File]::ReadAllText($settingsPath) | ConvertFrom-Json).PSObject.Properties.Name -contains 'driver_null') {
-    throw 'The rig null headset is still switched on (driver_null in steamvr.vrsettings); run "headless.ps1 down" first.'
+    Write-Host 'INVALID: the rig null headset is still switched on (driver_null in steamvr.vrsettings); run "headless.ps1 down" first.' -ForegroundColor Yellow; exit 2
 }
 
-# As "up" does: the saves go aside, and Stop-Everything puts them back however the run ends.
+# As "up" does: the profile MO2 starts the game in, written into the state file, then its saves aside.
+# Stop-Everything puts them back however the run ends.
 # Engine Fixes deletes co-saves that have no save at every start, so without this a run changes the saves folder.
+Switch-ToSelectedProfile
+@{ startedServer = $false; save = ''; profileDir = $profileDir } | ConvertTo-Json | Set-Content $stateFile
 Copy-SavesAside
 
 $results = New-Object System.Collections.Generic.List[string]
@@ -121,37 +128,71 @@ try {
     else {
         Check 'the game waits instead of starting without VR' $true ((Find-Line 'VRStart: OpenVR did not start') -replace '^.*VRStart: ', '')
 
-        # The dialog holds the game: no crash, no loading screen.
-        Start-Sleep -Seconds 20
-        Check 'no crash while it waits' (-not (Find-Line 'VectoredExceptionHandler: in ')) ''
-        Check 'no loading screen while it waits' (-not (Find-Line 'Menu queued: Loading Menu')) ''
-        $dialog = Find-StartDialog
+        # A handle taken before the game ends keeps its exit code readable afterwards.
+        $games = @(Get-Process $gameProcess -ErrorAction SilentlyContinue)
+        $games | ForEach-Object { $null = $_.Handle }
+
+        if ($Close) {
+            # Pressed as soon as the dialog shows: on this PC something cancelled it about 8 s in, before a later look found it.
+            $dialog = [IntPtr]::Zero
+            foreach ($look in 1..15) {
+                $dialog = Find-StartDialog
+                if ($dialog -ne [IntPtr]::Zero) { break }
+                Start-Sleep -Seconds 1
+            }
+        }
+        else {
+            # The dialog holds the game: no crash, no loading screen.
+            Start-Sleep -Seconds 20
+            Check 'no crash while it waits' (-not (Find-Line 'VectoredExceptionHandler: in ')) ''
+            Check 'no loading screen while it waits' (-not (Find-Line 'Menu queued: Loading Menu')) ''
+            $dialog = Find-StartDialog
+        }
         Check 'the dialog is open' ($dialog -ne [IntPtr]::Zero) ''
 
-        # The player connects a headset: SteamVR, which the failed start launched, is closed, then started with the null headset.
-        foreach ($attempt in 1..4) {
-            foreach ($name in 'vrmonitor', 'vrstartup', 'vrdashboard', 'vrwebhelper', 'vrcompositor', 'vrserver', 'steamvr_room_setup') {
-                Get-Process $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-            }
-            Start-Sleep -Seconds 3
-            if (-not (Test-Running '^(vrserver|vrmonitor|vrcompositor|vrdashboard|vrwebhelper|vrstartup)$')) { break }
+        if ($Close) {
+            # The player gives up: "Close the game" (id 102).
+            if ($dialog -ne [IntPtr]::Zero) { [VRStartCheck.Win32]::SendMessageW($dialog, 0x466, [IntPtr]102, [IntPtr]::Zero) | Out-Null }
+            $ended = $true
+            foreach ($game in $games) { if (-not $game.WaitForExit(30000)) { $ended = $false } }
+            Check 'Close the game ends the game' ($ended -and $games.Count -gt 0) ''
+            $codes = @($games | Where-Object { $_.HasExited } | ForEach-Object { '0x{0:X}' -f $_.ExitCode })
+            Check 'the game ends with code 4' ($codes.Count -gt 0 -and @($codes | Where-Object { $_ -ne '0x4' }).Count -eq 0) ($codes -join ', ')
+            Check 'an Exit: line marks a normal close' ([bool](Find-Line 'Exit: the game is closing')) ''
+            $crash = Find-Line 'VectoredExceptionHandler: in |crash occurred!|SevereException:'
+            Check 'no crash on the way out' (-not $crash) ($crash -replace '^.*\] ', '')
         }
-        Set-NullDriver $true
-        Start-Process 'steam://rungameid/250820'
-        Wait-Until { Test-Running '^vrserver$' } 90 'SteamVR to start'
-        Start-Sleep -Seconds 12
+        else {
+            # The player connects a headset: SteamVR, which the failed start launched, is closed, then started with the null headset.
+            foreach ($attempt in 1..4) {
+                foreach ($name in 'vrmonitor', 'vrstartup', 'vrdashboard', 'vrwebhelper', 'vrcompositor', 'vrserver', 'steamvr_room_setup') {
+                    Get-Process $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                }
+                Start-Sleep -Seconds 3
+                if (-not (Test-Running '^(vrserver|vrmonitor|vrcompositor|vrdashboard|vrwebhelper|vrstartup)$')) { break }
+            }
+            Set-NullDriver $true
+            Start-Process 'steam://rungameid/250820'
+            Wait-Until { Test-Running '^vrserver$' } 90 'SteamVR to start'
+            Start-Sleep -Seconds 12
 
-        # Try again (TDM_CLICK_BUTTON on the button's id).
-        $dialog = Find-StartDialog
-        if ($dialog -ne [IntPtr]::Zero) { [VRStartCheck.Win32]::SendMessageW($dialog, 0x466, [IntPtr]101, [IntPtr]::Zero) | Out-Null }
+            # Try again (TDM_CLICK_BUTTON on the button's id).
+            $dialog = Find-StartDialog
+            if ($dialog -ne [IntPtr]::Zero) { [VRStartCheck.Win32]::SendMessageW($dialog, 0x466, [IntPtr]101, [IntPtr]::Zero) | Out-Null }
 
-        try { Wait-Until { Find-Line 'VRStart: OpenVR started' } 60 'OpenVR to start' -NeedsGame } catch { }
-        Check 'Try again starts VR' ([bool](Find-Line 'VRStart: OpenVR started \(attempt [2-9]')) ((Find-Line 'VRStart: OpenVR started') -replace '^.*VRStart: ', '')
-        try { Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } 180 'the main menu' -NeedsGame } catch { }
-        $menus = try { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -join ', ' } catch { 'DevBench not answering' }
-        Check 'the game reaches its main menu' ($menus -match 'Main Menu') $menus
-        Check 'no crash after VR started' (-not (Find-Line 'VectoredExceptionHandler: in ')) ''
+            try { Wait-Until { Find-Line 'VRStart: OpenVR started' } 60 'OpenVR to start' -NeedsGame } catch { }
+            Check 'Try again starts VR' ([bool](Find-Line 'VRStart: OpenVR started \(attempt [2-9]')) ((Find-Line 'VRStart: OpenVR started') -replace '^.*VRStart: ', '')
+            try { Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } 180 'the main menu' -NeedsGame } catch { }
+            $menus = try { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -join ', ' } catch { 'DevBench not answering' }
+            Check 'the game reaches its main menu' ($menus -match 'Main Menu') $menus
+            Check 'no crash after VR started' (-not (Find-Line 'VectoredExceptionHandler: in ')) ''
+        }
     }
+}
+catch {
+    # The run broke off (SteamVR never started, a step threw): unless a check already failed, it proves nothing.
+    Write-Host "INVALID: the run broke off: $_" -ForegroundColor Yellow
+    if ($failed -eq 0) { $failed = -1 }
 }
 finally {
     Stop-Everything

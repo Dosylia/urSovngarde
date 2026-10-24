@@ -78,7 +78,7 @@ if (-not (Test-Path $Destination)) { Write-Host "No such folder: $Destination" -
 
 # Exactly one fallback is kept, so the folder never fills with old builds. The old name goes aside too: left live,
 # an MO2 executable still pointing at it would run the old build.
-Get-ChildItem -Path $Destination -Filter '*.old-*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(urSovngarde|SkyrimTogetherVR)\.' } | Remove-Item -Force
+Get-ChildItem -Path $Destination -Filter '*.old-*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(urSovngarde|SkyrimTogetherVR)\.' } | Remove-Item -Force -ErrorAction SilentlyContinue
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 foreach ($name in @('urSovngarde.exe', 'urSovngarde.pdb', 'SkyrimTogetherVR.exe', 'SkyrimTogetherVR.pdb')) {
     $live = Join-Path $Destination $name
@@ -92,7 +92,11 @@ Copy-Item $pdb (Join-Path $Destination 'urSovngarde.pdb') -Force
 $helper = Join-Path $release 'TPProcess.exe'
 $liveHelper = Join-Path $Destination 'TPProcess.exe'
 if ((Test-Path $helper) -and (-not (Test-Path $liveHelper) -or (Get-FileHash $helper).Hash -ne (Get-FileHash $liveHelper).Hash)) {
-    Get-ChildItem -Path $Destination -Filter 'TPProcess.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force
+    # A fallback whose helper still runs (one a crashed game left behind) cannot be deleted: it stays, and the deploy goes on.
+    Get-ChildItem -Path $Destination -Filter 'TPProcess.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    if (Get-ChildItem -Path $Destination -Filter 'TPProcess.exe.old-*' -ErrorAction SilentlyContinue) {
+        Write-Host 'An older TPProcess.exe fallback is still running and was left in place.' -ForegroundColor Yellow
+    }
     if (Test-Path $liveHelper) { Move-Item $liveHelper "$liveHelper.old-$stamp" -Force }
     Copy-Item $helper $liveHelper -Force
     Write-Host 'TPProcess.exe (the menu''s browser helper) changed and was copied too.'

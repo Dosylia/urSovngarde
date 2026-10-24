@@ -28,7 +28,8 @@ wait 8
 log CHECK logged Player copy \w+ came with its weapon drawn
 
 # In view of the headset, then the copy posed by the player's own stream, held after the replay.
-log DO papyrus ObjectReference MoveTo 14 copy f:50 f:0 f:0 b:false
+# The bot stands its character in front of the player, at the player's height, as live-clash does.
+infront 70
 wait 3
 capture other 12
 wait 1

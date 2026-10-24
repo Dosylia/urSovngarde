@@ -10,7 +10,8 @@ struct InterpolationSystem
 {
     // aNow: the local network clock in ms (TransportService::GetLastPollTime), which advances the actor's playback clock.
     // aDeadAtOwner: the owner's game has said the actor is dead (RemoteComponent::DeadAtOwner).
-    static void Update(Actor* apActor, InterpolationComponent& aInterpolationComponent, double aNow, bool aDeadAtOwner) noexcept;
+    // aLastActionTick: the owner's tick of the last action played on the actor (RemoteAnimationComponent::LastRanAction), 0 for none.
+    static void Update(Actor* apActor, InterpolationComponent& aInterpolationComponent, double aNow, bool aDeadAtOwner, uint64_t aLastActionTick) noexcept;
     // aArrivalTime: when the update carrying the point arrived (TransportService::GetMessageReceiveTime).
     static void AddPoint(InterpolationComponent& aInterpolationComponent, const InterpolationComponent::TimePoint& acPoint, double aArrivalTime) noexcept;
     // The owner tick this actor is shown at, 0 until its first point arrived.

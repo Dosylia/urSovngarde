@@ -26,6 +26,7 @@ struct EffectSetting : TESForm
     void* unk5C;
     uint8_t unk60[0x18];
     EffectArchetypes::ArchetypeID eArchetype;
+    uint32_t primaryActorValue;
     void* unk80[2];
     uint32_t castType;
     uint32_t deliveryType;
@@ -33,3 +34,5 @@ struct EffectSetting : TESForm
 };
 
 static_assert(offsetof(EffectSetting, eArchetype) == 0xC0);
+static_assert(offsetof(EffectSetting, primaryActorValue) == 0xC4);
+static_assert(offsetof(EffectSetting, castType) == 0xD8);

@@ -125,7 +125,8 @@ struct PlayerCharacter : Actor
 #ifdef SKYRIMVR
     //! Whether the game's lock on the world map's marker list is known; without it the list is never touched.
     static bool CanEditMapMarkers() noexcept;
-    //! Puts a reference's handle on the world map's marker list (once), or takes it off; false when it could not.
+    //! Puts a reference's handle on the world map's marker list, or takes it off.
+    //! AddMapMarker is true only when it added the handle: false when it was there already or could not be added.
     bool AddMapMarker(uint32_t aHandle) noexcept;
     bool RemoveMapMarker(uint32_t aHandle) noexcept;
     bool HasMapMarker(uint32_t aHandle) noexcept;

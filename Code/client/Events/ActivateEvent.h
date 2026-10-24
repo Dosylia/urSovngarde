@@ -9,7 +9,7 @@ struct TESBoundObject;
  */
 struct ActivateEvent
 {
-    ActivateEvent(TESObjectREFR* apObject, Actor* apActivator, TESBoundObject* apObjectToGet, int32_t aCount, bool aDefaultProcessing, uint8_t aUnk1, TESObjectREFR::OpenState aPreActivationOpenState, bool aActivateFlag = false)
+    ActivateEvent(TESObjectREFR* apObject, Actor* apActivator, TESBoundObject* apObjectToGet, int32_t aCount, bool aDefaultProcessing, uint8_t aUnk1, TESObjectREFR::OpenState aPreActivationOpenState, bool aActivateFlag = false, bool aActivationBlocked = false)
         : pObject(apObject)
         , pActivator(apActivator)
         , pObjectToGet(apObjectToGet)
@@ -18,6 +18,7 @@ struct ActivateEvent
         , Unk1(aUnk1)
         , PreActivationOpenState(aPreActivationOpenState)
         , ActivateFlag(aActivateFlag)
+        , ActivationBlocked(aActivationBlocked)
     {
     }
 
@@ -29,4 +30,6 @@ struct ActivateEvent
     uint8_t Unk1;
     TESObjectREFR::OpenState PreActivationOpenState;
     bool ActivateFlag;
+    //! A script blocked the object's activation (BlockActivation) when it was activated, read then and not when the event is handled.
+    bool ActivationBlocked;
 };

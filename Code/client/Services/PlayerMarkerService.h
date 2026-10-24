@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Structs/GameId.h>
+#include <Events/EventDispatcher.h>
 
 struct World;
 struct ConnectedEvent;
@@ -18,7 +19,7 @@ struct Actor;
  * @brief Other players as world map icons ("<name>, near Whiterun") from NotifyPlayerWhereabouts, hidden when in sight.
  * Uses SkyrimTogether.esp's records (Tools/VR/player-markers.py).
  */
-struct PlayerMarkerService
+struct PlayerMarkerService final : BSTEventSink<TESLoadGameEvent>
 {
     PlayerMarkerService(World& aWorld, entt::dispatcher& aDispatcher);
     ~PlayerMarkerService() noexcept = default;
@@ -34,6 +35,7 @@ protected:
     void OnPlayerLeft(const NotifyPlayerLeft& acMessage) noexcept;
     void OnWhereabouts(const NotifyPlayerWhereabouts& acMessage) noexcept;
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
+    BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
 private:
     // One marker and the player it shows, if any.
@@ -77,5 +79,6 @@ private:
     TESObjectCELL* m_pHoldingCell{nullptr};
     std::array<Slot, kMapMarkers> m_mapSlots{};
     std::unordered_map<uint32_t, String> m_names;
-    std::chrono::steady_clock::time_point m_nextOfflineCheck{};
+    //! Set by a save load or a disconnect: our markers are taken off the map's list once the game is in the world again.
+    bool m_sweepDue{false};
 };

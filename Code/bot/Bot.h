@@ -118,6 +118,9 @@ struct KnownPlayer
     glm::vec2 Rotation{};
     GameId CellId{};
     GameId WorldSpaceId{};
+    //! Where the player's latest movement update was made; it tells a fresh position from one left over from before a cell change.
+    GameId MovedInCell{};
+    GameId MovedInWorldSpace{};
     TiltedPhoques::String AppearanceBuffer;
     uint32_t ChangeFlags{};
     Tints FaceTints{};
@@ -159,7 +162,7 @@ private:
 
     using Clock = std::chrono::steady_clock;
 
-    template <class T> bool SendMsg(const T& acMessage, bool aUnreliable = false) noexcept;
+    template <class T> bool SendMsg(const T& acMessage, TiltedPhoques::EPacketFlags aFlags = TiltedPhoques::kReliable) noexcept;
 
     void Tick() noexcept;
     void ApplyFakeNetwork() noexcept;
@@ -170,6 +173,8 @@ private:
     void Assign() noexcept;
     void SendCellEntry() noexcept;
     void SendMovement() noexcept;
+    //! Takes a replayed pose as the one `holdpose` sends, keeping the fields that come only now and then.
+    void KeepReplayedPose(const VRPose& acPose) noexcept;
     void SendHealth(float aHealth) noexcept;
     void SendDeath(bool aDead) noexcept;
     void SendHit(uint32_t aTargetId, float aDelta, uint64_t aTick = 0) noexcept;
@@ -335,16 +340,22 @@ private:
     //! variables, actions and VR pose, exactly as any client is given them -- and when each piece arrived. Replayed
     //! as this bot's own character (or an NPC it owns), it is a remote body that moves the way a real one does,
     //! which a bot walking in straight lines with no animation data never was.
+    //! A movement update and a batch of actions (NotifyActionEvents) are separate entries, each at the time it arrived.
+    //! The game's client sends a frame's early movement chunks before its actions, so an action is never tied to a movement update.
     struct CapturedUpdate
     {
         uint32_t AtMs{};
+        bool HasUpdate{false};
         ReferenceUpdate Update{};
+        TiltedPhoques::Vector<ActionEvent> Actions{};
     };
     std::vector<CapturedUpdate> m_capture;
     uint32_t m_captureId{};
     bool m_capturing{false};
     Clock::time_point m_captureStart{};
     size_t m_replayIndex{};
+    //! The tick of the last replayed message: each one gets a later tick, or the game drops the second of a pair as a duplicate.
+    uint64_t m_lastReplayTick{};
     uint32_t m_replayTarget{};
     int m_replayRound{};
     bool m_replaying{false};

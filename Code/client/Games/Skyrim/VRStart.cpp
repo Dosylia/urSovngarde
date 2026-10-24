@@ -4,6 +4,8 @@
 
 #include <openvr/openvr.h>
 
+#include <CrashHandler.h>
+
 #include <CommCtrl.h>
 
 #include <chrono>
@@ -93,7 +95,12 @@ uint32_t __cdecl HookVR_InitInternal2(vr::EVRInitError* apError, vr::EVRApplicat
         switch (AskToTryAgain(error))
         {
         case Choice::kTryAgain: spdlog::info("VRStart: trying again"); break;
-        case Choice::kCloseGame: spdlog::error("VRStart: the game closes instead of starting without VR"); exit(4);
+        case Choice::kCloseGame:
+            // Ended at once: this code's exit is not the game's hooked one, and the teardown it runs can crash on the way out.
+            // The "Exit:" line tells the crash triage this was a normal close.
+            CrashLog::Line("Exit: the game is closing, VR could not start and the player chose to close it", spdlog::level::info);
+            TerminateProcess(GetCurrentProcess(), 4);
+            return cToken;
         case Choice::kNoDialog:
             // Without the dialog the player cannot be asked, so the game goes on without VR as it would have.
             spdlog::error("VRStart: the dialog could not be shown; the game goes on without VR");

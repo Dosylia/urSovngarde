@@ -1,12 +1,13 @@
 #pragma once
 
 #include <Structs/Movement.h>
-#include <Structs/ActionEvent.h>
 #include <Structs/VRPose.h>
 
 using TiltedPhoques::Buffer;
 using TiltedPhoques::Vector;
 
+//! One actor's snapshot in a movement message, sent unreliably: a lost one costs only itself.
+//! Its actions travel on their own, reliably (RequestActionEvents, NotifyActionEvents).
 struct ReferenceUpdate
 {
     ReferenceUpdate() = default;
@@ -19,6 +20,5 @@ struct ReferenceUpdate
     void Deserialize(TiltedPhoques::Buffer::Reader& aReader);
 
     Movement UpdatedMovement{};
-    Vector<ActionEvent> ActionEvents{};
     VRPose UpdatedVRPose{};
 };

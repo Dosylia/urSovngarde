@@ -3,8 +3,8 @@
 #   python Tools\VR\live-check.py live-door-copy-load
 #   python Tools\VR\live-check.py --expect-fail live-door-copy-load     on a build without the fix: must be RED
 #
-# In play the receiving game ran its own AI on a quest NPC's copy, and that AI walked the copy through load doors.
-# The copy then stood in a cell its owner never entered; the game removed it there and the server spawned it again.
+# The receiving game can run its own AI on a copy, a quest NPC's for one, and that AI can walk the copy through a load door.
+# Without the fix the copy then stands in a cell its owner never entered; the game removes it there and the server spawns it again.
 # Here the game makes the bot's NPC copy use Mistwatch's upper door, the same game function the AI calls.
 # The copy must stay where it is, loaded; its owner (the bot) never used the door.
 # A run counts only when (REQUIRE): the copy was loaded next to the player before the door was used.
@@ -31,7 +31,7 @@ log DO papyrus ObjectReference Activate 3F558 npc b:false
 wait 2
 log CHECK npc 3d
 log CHECK moved start atmost 300
-log CHECK logged Load door 3F558: not used by [0-9A-F]+, a copy of another game's actor
+log CHECK logged DoorCopy: load door 3F558 not used by [0-9A-F]+, a copy of another game's actor
 
 log -- a while later the copy is still there, and was never removed and spawned again
 wait 8

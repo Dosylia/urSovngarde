@@ -7,6 +7,8 @@
 #include <Messages/AuthenticationRequest.h>
 #include <Messages/AuthenticationResponse.h>
 #include <Messages/ClientReferencesMoveRequest.h>
+#include <Messages/RequestActionEvents.h>
+#include <Messages/NotifyActionEvents.h>
 #include <Messages/EnterExteriorCellRequest.h>
 #include <Messages/EnterInteriorCellRequest.h>
 #include <Messages/NotifyPlayerCellChanged.h>
@@ -104,6 +106,24 @@ constexpr uint32_t kSlotBoth = 0x13F45;
 
 constexpr auto kMovementPeriod = 50ms; // 20 Hz, like the client's full snapshots
 constexpr float kPi = 3.14159265f;
+
+// Movement goes unreliably, as the game's client sends it.
+// STBOT_RELIABLE_MOVEMENT=1 sends it reliably, as before playback session B, for a test's run on the old behaviour.
+bool MovementUnreliable() noexcept
+{
+    static const bool s_reliable = []
+    {
+        const char* pValue = std::getenv("STBOT_RELIABLE_MOVEMENT");
+        return pValue && pValue[0] == '1';
+    }();
+    return !s_reliable;
+}
+
+// Each movement goes out at once, as the game's client sends the last movement message of its frame (no Nagle delay).
+TiltedPhoques::EPacketFlags MovementFlags() noexcept
+{
+    return MovementUnreliable() ? TiltedPhoques::kUnreliableNoNagle : TiltedPhoques::kReliable;
+}
 
 const char* ReasonName(TiltedPhoques::Client::EDisconnectReason aReason) noexcept
 {
@@ -249,7 +269,7 @@ int Bot::Run() noexcept
     return 0;
 }
 
-template <class T> bool Bot::SendMsg(const T& acMessage, bool aUnreliable) noexcept
+template <class T> bool Bot::SendMsg(const T& acMessage, TiltedPhoques::EPacketFlags aFlags) noexcept
 {
     if (!IsConnected())
         return false;
@@ -261,7 +281,7 @@ template <class T> bool Bot::SendMsg(const T& acMessage, bool aUnreliable) noexc
     acMessage.Serialize(writer);
     TiltedPhoques::PacketView packet(reinterpret_cast<char*>(buffer.GetWriteData()), static_cast<uint32_t>(writer.Size()));
 
-    Client::Send(&packet, aUnreliable ? TiltedPhoques::kUnreliable : TiltedPhoques::kReliable);
+    Client::Send(&packet, aFlags);
     return true;
 }
 
@@ -273,7 +293,7 @@ void Bot::UpdateSpeech(Clock::time_point aNow) noexcept
         VoiceDataRequest request{};
         request.Sequence = m_voiceSequence++;
         request.Data.assign(m_speech[m_speechNext].Bytes.begin(), m_speech[m_speechNext].Bytes.end());
-        SendMsg(request, true);
+        SendMsg(request, TiltedPhoques::kUnreliable);
         if (++m_speechNext == m_speech.size())
             spdlog::info("[script] speak: all {} pieces sent", m_speech.size());
     }
@@ -342,6 +362,8 @@ void Bot::ApplyFakeNetwork() noexcept
     if (s_applied)
         return;
     s_applied = true;
+    if (!MovementUnreliable())
+        spdlog::info("Movement sent reliably (STBOT_RELIABLE_MOVEMENT), as before playback session B");
 
     const auto number = [](const char* acpName) -> float
     {
@@ -718,8 +740,36 @@ void Bot::SendMovement() noexcept
     if (m_holdPose && m_lastReplayedPose.HasData)
         update.UpdatedVRPose = m_lastReplayedPose;
 
-    SendMsg(message);
+    // Unreliable, as the game's client sends movement: the next one, 50 ms later, makes good a lost one.
+    SendMsg(message, MovementFlags());
     m_lastMovement = Clock::now();
+}
+
+void Bot::KeepReplayedPose(const VRPose& acPose) noexcept
+{
+    // Fingers, scale and weapons come only on change or now and then, and the receiver keeps the last of each.
+    // The held pose keeps them the same way, so it carries each one even when the last update that had it was lost.
+    VRPose kept = acPose;
+    if (!kept.HasFingers && m_lastReplayedPose.HasFingers)
+    {
+        kept.HasFingers = true;
+        kept.Fingers = m_lastReplayedPose.Fingers;
+    }
+    if (!kept.HasScale && m_lastReplayedPose.HasScale)
+    {
+        kept.HasScale = true;
+        kept.RootScale = m_lastReplayedPose.RootScale;
+    }
+    if (!kept.HasWeapons && m_lastReplayedPose.HasWeapons)
+    {
+        kept.HasWeapons = true;
+        kept.WeaponHeld = m_lastReplayedPose.WeaponHeld;
+        kept.WeaponRotation = m_lastReplayedPose.WeaponRotation;
+        for (int side = 0; side < 2; ++side)
+            for (int i = 0; i < 3; ++i)
+                kept.WeaponOffset[side][i] = m_lastReplayedPose.WeaponOffset[side][i];
+    }
+    m_lastReplayedPose = kept;
 }
 
 void Bot::SendHealth(const float aHealth) noexcept
@@ -1035,14 +1085,26 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         for (const auto& entry : message.Updates)
         {
             if (m_capturing && entry.first == m_captureId)
-                m_capture.push_back({static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count()), entry.second});
+                m_capture.push_back({static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count()), true, entry.second, {}});
 
             if (KnownPlayer* pPlayer = FindPlayerCharacter(entry.first))
             {
                 pPlayer->Position = FromNet(entry.second.UpdatedMovement.Position);
                 pPlayer->Rotation = glm::vec2(entry.second.UpdatedMovement.Rotation.x, entry.second.UpdatedMovement.Rotation.y);
+                pPlayer->MovedInCell = entry.second.UpdatedMovement.CellId;
+                pPlayer->MovedInWorldSpace = entry.second.UpdatedMovement.WorldSpaceId;
             }
         }
+        return;
+    }
+
+    // Actions travel on their own, reliably, while movement may be lost; captured, they are an entry of their own, at the time they came.
+    if (opcode == NotifyActionEvents::Opcode)
+    {
+        const auto& message = static_cast<const NotifyActionEvents&>(acMessage);
+        if (m_capturing)
+            if (const auto it = message.Actions.find(m_captureId); it != message.Actions.end() && !it->second.empty())
+                m_capture.push_back({static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count()), false, {}, it->second});
         return;
     }
 
@@ -1706,26 +1768,31 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             return false;
 
         m_capturing = false;
-        size_t withVariables = 0, actions = 0, withPose = 0, withHands = 0, withBones = 0;
+        size_t updates = 0, withVariables = 0, actions = 0, withPose = 0, withHands = 0, withBones = 0;
         float travelled = 0.f;
-        for (size_t i = 0; i < m_capture.size(); ++i)
+        const ReferenceUpdate* pPrevious = nullptr;
+        for (const auto& captured : m_capture)
         {
-            const auto& update = m_capture[i].Update;
+            actions += captured.Actions.size();
+            if (!captured.HasUpdate)
+                continue;
+            ++updates;
+            const auto& update = captured.Update;
             const auto& variables = update.UpdatedMovement.Variables;
             if (!variables.Booleans.empty() || !variables.Integers.empty() || !variables.Floats.empty())
                 ++withVariables;
-            actions += update.ActionEvents.size();
             if (update.UpdatedVRPose != VRPose{})
                 ++withPose;
             if (update.UpdatedVRPose.HasHandCheck)
                 ++withHands;
             if (update.UpdatedVRPose.HasData && !update.UpdatedVRPose.NoBones)
                 ++withBones;
-            if (i > 0)
-                travelled += glm::distance(FromNet(update.UpdatedMovement.Position), FromNet(m_capture[i - 1].Update.UpdatedMovement.Position));
+            if (pPrevious)
+                travelled += glm::distance(FromNet(update.UpdatedMovement.Position), FromNet(pPrevious->UpdatedMovement.Position));
+            pPrevious = &update;
         }
         spdlog::info("Captured {} updates of {:X}: {} with animation variables, {} actions, {} with a VR pose ({} with bones, {} with hand positions), {:.0f} units travelled",
-                     m_capture.size(), m_captureId, withVariables, actions, withPose, withBones, withHands, travelled);
+                     updates, m_captureId, withVariables, actions, withPose, withBones, withHands, travelled);
 
         // Which actions, by name. One actor repeating one event hundreds of times is what fills a stream and starves
         // everything behind it (the "Unequip loop" of 2026-09-24); a Netch sent 1521 actions in twelve seconds on
@@ -1734,7 +1801,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         {
             std::map<std::string, size_t> byName;
             for (const auto& captured : m_capture)
-                for (const auto& action : captured.Update.ActionEvents)
+                for (const auto& action : captured.Actions)
                     ++byName[action.EventName.empty() ? fmt::format("(no name, action {:X}, idle {:X})", action.ActionId, action.IdleId) : std::string(action.EventName.c_str())];
             std::vector<std::pair<std::string, size_t>> sorted(byName.begin(), byName.end());
             std::sort(sorted.begin(), sorted.end(), [](const auto& acLeft, const auto& acRight) { return acLeft.second > acRight.second; });
@@ -1782,13 +1849,20 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             m_replayIndex = 0;
             m_replayRound = 0;
             m_replaying = !asNpc; // the bot's own heartbeat would drag its character back between two updates
-            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f}){}", m_capture.size(), m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z,
+            if (!asNpc)
+                m_lastReplayedPose = {};
+            const auto updates = std::count_if(m_capture.begin(), m_capture.end(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
+            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f}){}", updates, m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z,
                          noActions ? ", without their actions" : "");
         }
         if (m_replayTarget == kNoId)
             return true;
 
-        const glm::vec3 origin = FromNet(m_capture.front().Update.UpdatedMovement.Position);
+        // Where the recording starts and ends: its first and last movement update (a batch of actions has no place).
+        const auto cFirst = std::find_if(m_capture.begin(), m_capture.end(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
+        const auto cLast = std::find_if(m_capture.rbegin(), m_capture.rend(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
+        const glm::vec3 origin = cFirst != m_capture.end() ? FromNet(cFirst->Update.UpdatedMovement.Position) : glm::vec3{};
+        const glm::vec3 end = cLast != m_capture.rend() ? FromNet(cLast->Update.UpdatedMovement.Position) : glm::vec3{};
         const uint32_t length = m_capture.back().AtMs + 100;
         const auto elapsed = static_cast<uint32_t>(Seconds(now - m_commandStart) * 1000.f);
         while (m_replayRound < times)
@@ -1797,7 +1871,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (m_replayIndex >= m_capture.size())
             {
                 // Each round carries on from where the last one ended, so a walk repeated is a longer walk.
-                m_replayBase += FromNet(m_capture.back().Update.UpdatedMovement.Position) - origin;
+                m_replayBase += end - origin;
                 m_replayIndex = 0;
                 ++m_replayRound;
                 continue;
@@ -1806,41 +1880,56 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (roundStart + captured.AtMs > elapsed)
                 break;
 
-            ClientReferencesMoveRequest message{};
-            message.Tick = GetClock().GetCurrentTick();
-            ReferenceUpdate& update = message.Updates[m_replayTarget];
-            update = captured.Update;
-            if (m_hasHandTargets && update.UpdatedVRPose.HasData)
-            {
-                update.UpdatedVRPose.HasHandCheck = true;
-                for (int i = 0; i < 3; ++i)
-                {
-                    update.UpdatedVRPose.LeftHandOffset[i] = m_handTargets[0][i];
-                    update.UpdatedVRPose.RightHandOffset[i] = m_handTargets[1][i];
-                }
-            }
-            if (!asNpc && update.UpdatedVRPose.HasData)
-                m_lastReplayedPose = update.UpdatedVRPose;
-            const glm::vec3 place = m_replayBase + (FromNet(captured.Update.UpdatedMovement.Position) - origin);
-            update.UpdatedMovement.Position = ToNet(place);
-            update.UpdatedMovement.CellId = m_cell;
-            update.UpdatedMovement.WorldSpaceId = m_worldSpace;
-            if (noActions)
-                update.ActionEvents.clear();
-            for (auto& action : update.ActionEvents)
-            {
-                action.ActorId = m_replayTarget;
-                action.Tick = message.Tick;
-            }
-            SendMsg(message);
+            // Each message a later tick than the one before, as the game's client sends them, even when a hitch sends several at once.
+            const uint64_t cTick = std::max(GetClock().GetCurrentTick(), m_lastReplayTick + 1);
+            m_lastReplayTick = cTick;
 
-            if (!asNpc)
+            // As the game's client sends them: the actions on their own, reliably, at the time they came.
+            if (!noActions && !captured.Actions.empty())
             {
-                m_position = place;
-                m_lastMovement = now;
+                RequestActionEvents actions{};
+                auto& performed = actions.Actions[m_replayTarget];
+                performed = captured.Actions;
+                for (auto& action : performed)
+                {
+                    action.ActorId = m_replayTarget;
+                    action.Tick = cTick;
+                }
+                SendMsg(actions);
             }
-            else
-                m_npcPosition = place;
+
+            if (captured.HasUpdate)
+            {
+                ClientReferencesMoveRequest message{};
+                message.Tick = cTick;
+                ReferenceUpdate& update = message.Updates[m_replayTarget];
+                update = captured.Update;
+                if (m_hasHandTargets && update.UpdatedVRPose.HasData)
+                {
+                    update.UpdatedVRPose.HasHandCheck = true;
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        update.UpdatedVRPose.LeftHandOffset[i] = m_handTargets[0][i];
+                        update.UpdatedVRPose.RightHandOffset[i] = m_handTargets[1][i];
+                    }
+                }
+                if (!asNpc && update.UpdatedVRPose.HasData)
+                    KeepReplayedPose(update.UpdatedVRPose);
+                const glm::vec3 place = m_replayBase + (FromNet(captured.Update.UpdatedMovement.Position) - origin);
+                update.UpdatedMovement.Position = ToNet(place);
+                update.UpdatedMovement.CellId = m_cell;
+                update.UpdatedMovement.WorldSpaceId = m_worldSpace;
+                // The movement goes unreliably, so a lost one costs only itself.
+                SendMsg(message, MovementFlags());
+
+                if (!asNpc)
+                {
+                    m_position = place;
+                    m_lastMovement = now;
+                }
+                else
+                    m_npcPosition = place;
+            }
             ++m_replayIndex;
         }
         if (m_replayRound < times)
@@ -2253,6 +2342,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         update.UpdatedMovement.Flying = m_npcFlying;
         update.UpdatedMovement.CellId = m_cell;
         update.UpdatedMovement.WorldSpaceId = m_worldSpace;
+        // Reliable, unlike a stream of movement: this one step is all the test sends, and no later one would make it good.
         SendMsg(message);
         spdlog::info("[script] NPC {:X} moved to ({:.0f}, {:.0f}, {:.0f})", npcId, m_npcPosition.x, m_npcPosition.y, m_npcPosition.z);
         return true;
@@ -2382,11 +2472,13 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
         request.Item.BaseId = Skyrim(baseId);
         request.Item.Count = args.size() > 1 ? std::atoi(args[1].c_str()) : 1;
-        // "additem <base> <n> quest": a quest object, as a game sends one picked up from the world.
+        // "additem <base> <n> quest": a quest object, as a game sends one taken from a container or given by a script.
+        // "additem <base> <n> quest pickup": the same, as the echo of a pick-up from the world.
         request.Item.IsQuestItem = args.size() > 2 && args[2] == "quest";
+        request.PickedUp = request.Item.IsQuestItem && args.size() > 3 && args[3] == "pickup";
         request.UpdateClients = true;
         SendMsg(request);
-        spdlog::info("[script] {} of {:X} added to the inventory of server character {:X}", request.Item.Count, baseId, request.ServerId);
+        spdlog::info("[script] {} of {:X} added to the inventory of server character {:X}{}", request.Item.Count, baseId, request.ServerId, request.PickedUp ? " (picked up)" : "");
         return true;
     }
 
@@ -2690,12 +2782,16 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
     // "quest <base hex> start|stage|stop <stage>": this player's quest change, as a game in a party sends it.
     // The quest is a main quest of Skyrim.esm as the server numbers mods; the server checks nothing else about it.
-    if (name == "quest" && args.size() >= 3)
+    if (name == "quest")
     {
+        // A line it cannot read is logged and skipped like any other command's: false would run it again forever.
         uint32_t base = 0;
         float stage = 0.f;
-        if (!ParseHex(args[0], base) || !ParseFloat(args[2], stage))
-            return false;
+        if (args.size() < 3 || !ParseHex(args[0], base) || !ParseFloat(args[2], stage))
+        {
+            spdlog::error("[script] quest needs a hex quest id, start|stage|stop and a stage number, e.g. 'quest 3372B stage 10'");
+            return true;
+        }
 
         RequestQuestUpdate request{};
         request.Id = GameId(0, base);
@@ -2708,7 +2804,10 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         else if (args[1] == "stop")
             request.Status = RequestQuestUpdate::Stopped;
         else
-            return false;
+        {
+            spdlog::error("[script] quest: '{}' is not start, stage or stop", args[1]);
+            return true;
+        }
 
         SendMsg(request);
         spdlog::info("[script] quest {:X}: {} {}", base, args[1], request.Stage);
@@ -3335,6 +3434,31 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         aOutWhy = player == m_players.end() ? std::string("nobody else is here yet")
                                             : fmt::format("{:X} announced cell {:X}, this bot is in {:X}", id, player->CellId.BaseId, m_cell.BaseId);
         return same;
+    }
+
+    if (what == "nearby")
+    {
+        // nearby <who>: that player is outdoors in this bot's worldspace, within one grid square of this bot's own.
+        // An exterior cell id carries no coordinates, so the square is the player's latest position.
+        // That position counts only when it was sent from the cell the player announced last: one from before a trip away does not.
+        uint32_t id = 0;
+        if (!parseId(1, id))
+            return std::nullopt;
+        const auto player = std::find_if(m_players.begin(), m_players.end(), [id](const KnownPlayer& acPlayer) { return acPlayer.ServerId == id; });
+        if (id == kNoId || player == m_players.end())
+        {
+            aOutWhy = "nobody else is here yet";
+            return false;
+        }
+
+        const auto mine = GridCellCoords::CalculateGridCellCoords(m_position.x, m_position.y);
+        const auto theirs = GridCellCoords::CalculateGridCellCoords(player->Position.x, player->Position.y);
+        const bool outdoorsHere = m_worldSpace != GameId{} && player->WorldSpaceId == m_worldSpace && player->MovedInWorldSpace == m_worldSpace;
+        const bool fresh = player->MovedInCell != GameId{} && player->MovedInCell == player->CellId;
+        const bool close = std::abs(theirs.X - mine.X) <= 1 && std::abs(theirs.Y - mine.Y) <= 1;
+        aOutWhy = fmt::format("{:X} announced cell {:X} of worldspace {:X}, last moved in cell {:X} at grid ({}, {}); this bot is at grid ({}, {}) of {:X}", id,
+                              player->CellId.BaseId, player->WorldSpaceId.BaseId, player->MovedInCell.BaseId, theirs.X, theirs.Y, mine.X, mine.Y, m_worldSpace.BaseId);
+        return outdoorsHere && fresh && close;
     }
 
     if (what == "mydrop")

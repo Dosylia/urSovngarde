@@ -88,6 +88,13 @@ wait 4
 log CHECK ref 9B0A5 closed
 log CHECK logged Door 9B0A5 activated by 14, but a script blocks its activation; not sent
 expect activations == 1
+
+log -- the blocking script opens the door itself (Activate with default processing only): it opens, and that is sent
+log DO papyrus ObjectReference Activate 9B0A5 14 b:true
+wait 4
+log CHECK ref 9B0A5 open
+# The bot's count decides: the earlier step already logged a sent opening of this door.
+expect activations == 2
 log DO papyrus ObjectReference BlockActivation 9B0A5 b:false
 wait 2
 

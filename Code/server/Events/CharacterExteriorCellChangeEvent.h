@@ -9,9 +9,10 @@ struct Player;
  */
 struct CharacterExteriorCellChangeEvent
 {
-    CharacterExteriorCellChangeEvent(Player* apOwner, const entt::entity aEntity, const GameId aWorldSpaceId, const GridCellCoords aCurrentCoords)
+    CharacterExteriorCellChangeEvent(Player* apOwner, const entt::entity aEntity, const GameId aCellId, const GameId aWorldSpaceId, const GridCellCoords aCurrentCoords)
         : Owner(apOwner)
         , Entity{aEntity}
+        , CellId(aCellId)
         , WorldSpaceId(aWorldSpaceId)
         , CurrentCoords(aCurrentCoords)
     {
@@ -19,6 +20,7 @@ struct CharacterExteriorCellChangeEvent
 
     Player* Owner;
     entt::entity Entity;
+    GameId CellId;
     GameId WorldSpaceId;
     GridCellCoords CurrentCoords;
 };

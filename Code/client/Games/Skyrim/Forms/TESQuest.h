@@ -160,14 +160,9 @@ struct TESQuest : BGSStoryManagerTreeForm
     {
         uint16_t stageIndex;
         uint8_t flags;
-        uint8_t pad3[5];
-        // Log entries. Setting the stage runs each one's fragment, then sends TESQuestStageItemDoneEvent for it
-        GameValueList<void*> items;
 
         inline bool IsDone() { return flags & 1; }
     };
-
-    static_assert(offsetof(Stage, items) == 0x8);
 
     TESFullName fullName;
     GameArray<void*> instanceData;
@@ -180,8 +175,8 @@ struct TESQuest : BGSStoryManagerTreeForm
     Type type;            // 0x00DF
     int32_t scopedStatus; // 0x00E0 default init: -1, if not -1 outside of story manager scope
     uint32_t padE4;
-    // Sorted by stageIndex, head node is inline. CommonLibSSE's executedStages/waitingStages (0xE8/0xF0) are
-    // this head's item/next fields, not two separate lists.
+    // Read only by the quest debugger, as a list whose head node is inline.
+    // CommonLibVR has two list pointers here instead (executedStages, then waitingStages); which is right is not checked in game.
     GameValueList<Stage*> stages;
     GameList<Objective> objectives; // 0x00F8
     char pad108[0x100];             // 0x0108
@@ -219,7 +214,6 @@ struct TESQuest : BGSStoryManagerTreeForm
     bool ScriptSetStage(uint16_t stage);
     void SetStopped();
     bool IsStageReached(uint16_t aStage) noexcept;
-    uint32_t GetStageItemCount(uint16_t aStage) noexcept;
 };
 
 static_assert(sizeof(TESQuest) == 0x268);

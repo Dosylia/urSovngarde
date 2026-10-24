@@ -34,7 +34,6 @@ constexpr uint32_t kHoldingCellId = 0x005001;
 constexpr uint32_t kMapMarkerFirst = 0x005040;
 
 // While not connected, the world map's list is checked this often for markers a save left on it.
-constexpr auto kOfflineCheckPeriod = std::chrono::seconds(5);
 
 // A marker moves only once its player has moved this far (about 3.5 m).
 constexpr float kFollowDistance = 256.f;
@@ -116,6 +115,8 @@ PlayerMarkerService::PlayerMarkerService(World& aWorld, entt::dispatcher& aDispa
     m_leftConnection = aDispatcher.sink<NotifyPlayerLeft>().connect<&PlayerMarkerService::OnPlayerLeft>(this);
     m_whereaboutsConnection = aDispatcher.sink<NotifyPlayerWhereabouts>().connect<&PlayerMarkerService::OnWhereabouts>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&PlayerMarkerService::OnUpdate>(this);
+
+    EventDispatcherManager::Get()->loadGameEvent.RegisterSink(this);
 }
 
 bool PlayerMarkerService::FindForms() noexcept
@@ -167,6 +168,7 @@ void PlayerMarkerService::OnConnected(const ConnectedEvent&) noexcept
 void PlayerMarkerService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     m_connected = false;
+    m_sweepDue = true;
     m_names.clear();
     if (m_formsFound)
     {
@@ -268,22 +270,32 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
     }
 }
 
+BSTEventResult PlayerMarkerService::OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*)
+{
+    m_sweepDue = true;
+    return BSTEventResult::kOk;
+}
+
 void PlayerMarkerService::OnUpdate(const UpdateEvent&) noexcept
 {
-    // A save made while connected may hold our markers on the map's list; alone, nobody should show on the map.
-    if (m_connected)
+    // A save made while connected may hold our markers on the map's list, and where they stood then.
+    // So after each load or disconnect they all come off the list; while connected, the next whereabouts puts them back.
+    if (!m_sweepDue)
         return;
-    const auto cNow = std::chrono::steady_clock::now();
-    if (cNow < m_nextOfflineCheck)
-        return;
-    m_nextOfflineCheck = cNow + kOfflineCheckPeriod;
     // Only once a save is loaded: FindForms gives up for good when it fails, and at the menus it could.
     const PlayerCharacter* pPlayer = PlayerCharacter::Get();
     if (!pPlayer || !pPlayer->parentCell || !FindForms())
         return;
+    m_sweepDue = false;
 
     for (Slot& slot : m_mapSlots)
+    {
         HideFromMap(slot);
+        // The marker may stand anywhere the save left it, so it is placed again.
+        slot.Parked = true;
+        slot.CellId = GameId{};
+        slot.BodyCellId = 0;
+    }
 }
 
 void PlayerMarkerService::StopQuest() noexcept
@@ -388,7 +400,7 @@ void PlayerMarkerService::ShowOnMap(Slot& aSlot) noexcept
         pExtra->pData->Flags = kMapMarkerVisible;
 
     const uint32_t cHandle = aSlot.pMarker->GetHandle().handle.iBits;
-    if (pPlayer->HasMapMarker(cHandle) || !pPlayer->AddMapMarker(cHandle))
+    if (!pPlayer->AddMapMarker(cHandle))
         return;
     spdlog::info("Player markers: {:X} {} the world map's list for player {} ({} markers on it)", aSlot.pMarker->formID, aSlot.OnMap ? "back on" : "put on", aSlot.PlayerId,
                  pPlayer->currentMapMarkers.length);

@@ -329,6 +329,9 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         // Another player still holding keeps the banner up, and it names one of them if it named the one who let go.
         const bool cWasNamed = !m_revivers.empty() && m_revivers.back() == acMessage.ReviverId;
         std::erase(m_revivers, acMessage.ReviverId);
+        // A reviver who left the party or the server sends no let-go, so such a player is dropped here rather than named.
+        const auto& cMembers = cParty.GetPartyMembers();
+        std::erase_if(m_revivers, [&cMembers](const uint32_t acId) { return std::find(cMembers.begin(), cMembers.end(), acId) == cMembers.end(); });
         if (m_revivers.empty())
             VRBanner::Hide();
         else if (cWasNamed)

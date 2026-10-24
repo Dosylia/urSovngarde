@@ -50,6 +50,9 @@
 #include <Messages/AssignCharacterResponse.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
+#include <Messages/RequestActionEvents.h>
+#include <Messages/NotifyActionEvents.h>
+#include <MovementPacker.h>
 #include <Messages/ClashRequest.h>
 #include <Messages/NotifyClash.h>
 #include <Messages/NotifyArrowNocked.h>
@@ -438,7 +441,7 @@ ActorValues StandingValues(const ActorValues& acValues, const uint32_t aFormId) 
 
 // Measurement: an NPC this game runs that travels while it lies down (bleedout, essential down, knocked down).
 // Players saw downed essential NPCs slide along the floor; this says on whose game, and in which state.
-// Called about ten times a second per NPC; one line per NPC at most every five seconds.
+// Called with each movement update of the NPC, ten to thirty times a second; one line per NPC at most every five seconds.
 void NoteDownedTravel(uint32_t aFormId) noexcept
 {
     struct Down
@@ -509,6 +512,7 @@ bool IsPlaceLoadedHere(World& aWorld, const GameId& acWorldSpaceId, const GameId
     const GridCellCoords cCoordinates = GridCellCoords::CalculateGridCellCoords(acPosition);
     return std::abs(cCoordinates.X - pTES->centerGridX) <= 2 && std::abs(cCoordinates.Y - pTES->centerGridY) <= 2;
 }
+
 } // namespace
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
@@ -529,6 +533,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_assignCharacterConnection = m_dispatcher.sink<AssignCharacterResponse>().connect<&CharacterService::OnAssignCharacter>(this);
     m_characterSpawnConnection = m_dispatcher.sink<CharacterSpawnRequest>().connect<&CharacterService::OnCharacterSpawn>(this);
     m_referenceMovementSnapshotConnection = m_dispatcher.sink<ServerReferencesMoveRequest>().connect<&CharacterService::OnReferencesMoveRequest>(this);
+    m_actionEventsConnection = m_dispatcher.sink<NotifyActionEvents>().connect<&CharacterService::OnNotifyActionEvents>(this);
     m_factionsConnection = m_dispatcher.sink<NotifyFactionsChanges>().connect<&CharacterService::OnFactionsChanges>(this);
     m_ownershipTransferConnection = m_dispatcher.sink<NotifyOwnershipTransfer>().connect<&CharacterService::OnOwnershipTransfer>(this);
     m_removeCharacterConnection = m_dispatcher.sink<NotifyRemoveCharacter>().connect<&CharacterService::OnRemoveCharacter>(this);
@@ -823,7 +828,7 @@ void CharacterService::OnActorAdded(const ActorAddedEvent& acEvent) noexcept
 
 void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
 {
-    if (auto* pActor = Cast<Actor>(TESForm::GetById(acEvent.FormId)))
+    if (Actor* pActor = acEvent.pActor)
     {
         // GetExtension() returns null for an actor this client did not allocate, and this runs during the game's teardown.
         if (ActorExtension* pExtension = pActor->GetExtension())
@@ -847,7 +852,7 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
     const auto cId = *entityIt;
 
     auto& formIdComponent = view.get<FormIdComponent>(cId);
-    CancelServerAssignment(*entityIt, formIdComponent.Id);
+    CancelServerAssignment(*entityIt, formIdComponent.Id, acEvent.pActor);
 
     m_world.remove<EarlyAnimationBufferComponent>(cId);
 
@@ -1235,7 +1240,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         // As for a teleport (OnNotifyActorTeleport): not out to an exterior beyond the loaded area here.
         // The game would read that cell from disk in this frame.
         else if (!IsPlaceLoadedHere(m_world, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position) && (!IsActorLoadedHere(pActor) || acMessage.WorldSpaceId))
-            spdlog::info("Assignment of {:X}: not moved to its owner's place, beyond the loaded area here (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))",
+            spdlog::info("Assignment: {:X} not moved to its owner's place, beyond the loaded area here (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))",
                          pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
         else
             MoveActor(pActor, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position);
@@ -1353,6 +1358,18 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                             spdlog::info("Character {:X} also came back with a different inventory from the server's; not applied, only noticed", acMessage.ServerId);
                     }
                 }
+            }
+
+            // A copy still waiting for its 3D is made from its spawn request, so the server's newer state goes there.
+            // Otherwise what the owner looted, dropped or wore since the first spawn is undone when the 3D comes.
+            if (auto* pWaiting = m_world.try_get<WaitingFor3D>(cExisting))
+            {
+                pWaiting->SpawnRequest.InventoryContent = acMessage.InventoryContent;
+                pWaiting->SpawnRequest.FactionsContent = acMessage.FactionsContent;
+                pWaiting->SpawnRequest.InitialActorValues = acMessage.InitialActorValues;
+                pWaiting->SpawnRequest.IsDead = acMessage.IsDead;
+                pWaiting->SpawnRequest.IsWeaponDrawn = acMessage.IsWeaponDrawn;
+                pWaiting->SpawnRequest.OwnershipEpoch = acMessage.OwnershipEpoch;
             }
 
             return;
@@ -1586,7 +1603,6 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
             continue;
 
         auto& interpolationComponent = view.get<InterpolationComponent>(*itor);
-        auto& animationComponent = view.get<RemoteAnimationComponent>(*itor);
         const auto& movement = update.UpdatedMovement;
 
         InterpolationComponent::TimePoint point;
@@ -1598,8 +1614,24 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
         point.VRPoseData = update.UpdatedVRPose;
 
         InterpolationSystem::AddPoint(interpolationComponent, point, m_transport.GetMessageReceiveTime());
+    }
+}
 
-        for (const auto& action : update.ActionEvents)
+void CharacterService::OnNotifyActionEvents(const NotifyActionEvents& acMessage) const noexcept
+{
+    auto view = m_world.view<RemoteComponent, RemoteAnimationComponent>();
+
+    for (const auto& [serverId, actions] : acMessage.Actions)
+    {
+        auto itor = std::find_if(std::begin(view), std::end(view), [serverId = serverId, view](entt::entity entity) { return view.get<RemoteComponent>(entity).Id == serverId; });
+
+        if (itor == std::end(view))
+            continue;
+
+        auto& animationComponent = view.get<RemoteAnimationComponent>(*itor);
+
+        // Each action plays once the actor's playback reaches its tick, in step with its movement.
+        for (const auto& action : actions)
         {
             animationComponent.TimePoints.push_back(action);
         }
@@ -1920,7 +1952,7 @@ void CharacterService::OnNotifyRespawn(const NotifyRespawn& acMessage) const noe
     const auto cId = *entityIt;
 
     auto& formIdComponent = view.get<FormIdComponent>(cId);
-    CancelServerAssignment(*entityIt, formIdComponent.Id);
+    CancelServerAssignment(*entityIt, formIdComponent.Id, Cast<Actor>(TESForm::GetById(formIdComponent.Id)));
 
     m_world.remove<EarlyAnimationBufferComponent>(cId);
 
@@ -2604,7 +2636,8 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
     }
 }
 
-void CharacterService::CancelServerAssignment(const entt::entity aEntity, const uint32_t aFormId) const noexcept
+// apActor is the actor itself, null once the game has freed it: its id may already name another object.
+void CharacterService::CancelServerAssignment(const entt::entity aEntity, const uint32_t aFormId, Actor* apActor) const noexcept
 {
     // Gone from the game, so its id may be given to an actor of the game's own next. See s_lastConnectionCopies.
     s_lastConnectionCopies.erase(aFormId);
@@ -2614,7 +2647,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
     const bool cGameMade = s_ownCopies.find(aFormId) == s_ownCopies.end();
     if (cTemporaryId)
     {
-        Actor* pSeen = Cast<Actor>(TESForm::GetById(aFormId));
+        Actor* pSeen = apActor;
         spdlog::info("CopyGone: {:X} removed as {}; the actor is {}; made by this client: {}", aFormId,
                      m_world.all_of<RemoteComponent>(aEntity) ? "remote" : m_world.all_of<LocalComponent>(aEntity) ? "local" : m_world.all_of<WaitingForAssignmentComponent>(aEntity) ? "waiting" : "untracked",
                      pSeen ? (pSeen->IsDeleted() ? "still there, marked deleted" : pSeen->GetNiNode() ? "still there, with 3D" : "still there, no 3D") : "gone from the game already",
@@ -2623,7 +2656,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
 
     if (m_world.all_of<RemoteComponent>(aEntity))
     {
-        Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+        Actor* pActor = apActor;
 
         if (pActor)
         {
@@ -2749,7 +2782,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
         request.OwnershipEpoch = localComponent.OwnershipEpoch;
         request.Reason = OwnershipReleaseReason::Relinquish;
 
-        if (Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId)))
+        if (Actor* pActor = apActor)
         {
             if (!pActor->IsTemporary())
             {
@@ -3141,7 +3174,8 @@ void CharacterService::ProcessLeveledConforms() noexcept
 
 void CharacterService::RunLocalUpdates() const noexcept
 {
-    // The local player is sent at ~30 Hz for smooth VR head and hand movement, other actors at 10 Hz.
+    // The local player is sent at ~30 Hz for smooth VR head and hand movement, mounts and actors in combat too, other actors at 10 Hz.
+    // Actions of every actor go at each send.
     static std::chrono::steady_clock::time_point lastSendTimePoint;
     static std::chrono::steady_clock::time_point lastFullSendTimePoint;
     constexpr auto cDelayBetweenPlayerSnapshots = 33ms;
@@ -3238,8 +3272,17 @@ void CharacterService::RunLocalUpdates() const noexcept
     if (fullSnapshot)
         lastFullSendTimePoint = now;
 
-    ClientReferencesMoveRequest message;
-    message.Tick = m_transport.GetClock().GetCurrentTick();
+    // Actions go reliably in their own message, since a lost one would leave the copy out of step until the next.
+    // They go first: the movement after them can then come in any order.
+    RequestActionEvents actionsMessage;
+
+    // Who moves this time: the player, mounts and actors in combat at each send, the others ten times a second.
+    struct Mover
+    {
+        uint32_t ServerId;
+        Actor* pActor;
+    };
+    Vector<Mover> movers;
 
     auto animatedLocalView = m_world.view<LocalComponent, LocalAnimationComponent, FormIdComponent>();
 
@@ -3249,17 +3292,77 @@ void CharacterService::RunLocalUpdates() const noexcept
         auto& animationComponent = animatedLocalView.get<LocalAnimationComponent>(entity);
         auto& formIdComponent = animatedLocalView.get<FormIdComponent>(entity);
 
-        if (!fullSnapshot && formIdComponent.Id != 0x14)
+        Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
+        if (!pActor)
             continue;
 
-        if (formIdComponent.Id != 0x14)
-            NoteDownedTravel(formIdComponent.Id);
+        AnimationSystem::SerializeActions(actionsMessage, localComponent, animationComponent);
 
-        AnimationSystem::Serialize(m_world, message, localComponent, animationComponent, formIdComponent);
+        if (!fullSnapshot && formIdComponent.Id != 0x14 && !pActor->IsMount() && !pActor->IsInCombat())
+            continue;
+
+        // The player first: the first message of a frame starts a packet, and each one after may fall across two.
+        if (formIdComponent.Id == 0x14)
+            movers.insert(movers.begin(), Mover{localComponent.Id, pActor});
+        else
+            movers.push_back(Mover{localComponent.Id, pActor});
     }
 
-    if (fullSnapshot || !message.Updates.empty())
-        m_transport.Send(message);
+    if (!actionsMessage.Actions.empty())
+        m_transport.Send(actionsMessage);
+
+    // Movement goes unreliably: a lost message is not sent again, and the next one replaces it.
+    // Each message is kept within one network packet's size, so a lost packet costs only the actors it carried.
+    // A player's VR pose fills much of a packet, so messages are cut by size rather than by number of actors.
+    TiltedPhoques::Buffer scratch(1 << 14);
+    MovementPacker<ClientReferencesMoveRequest> packer(m_transport.GetClock().GetCurrentTick(), scratch);
+
+    // Measurement: how big the movement messages are, once a minute.
+    static uint32_t s_movementMessages = 0;
+    static size_t s_largestBits = 0;
+    static uint32_t s_oversized = 0;
+    static std::chrono::steady_clock::time_point s_nextSizeSaid = now + 60s;
+    const auto sendMovement = [&](const ClientReferencesMoveRequest& acMessage, const TiltedPhoques::EPacketFlags aFlags)
+    {
+        const size_t cBits = MovementPacker<ClientReferencesMoveRequest>::WrittenBits(scratch, acMessage);
+        if (m_transport.Send(acMessage, aFlags))
+        {
+            ++s_movementMessages;
+            s_largestBits = std::max(s_largestBits, cBits);
+            if (cBits > MovementPacker<ClientReferencesMoveRequest>::kMaxBits)
+                ++s_oversized;
+        }
+    };
+
+    ClientReferencesMoveRequest full;
+    for (const auto& [cServerId, pActor] : movers)
+    {
+        if (pActor->formID != 0x14)
+            NoteDownedTravel(pActor->formID);
+
+        ReferenceUpdate update;
+        AnimationSystem::SerializeMovement(m_world, pActor, update);
+
+        const size_t cEntryBits = packer.EntryBits(cServerId, update);
+        if (packer.Add(cServerId, std::move(update), cEntryBits, full))
+            sendMovement(full, TiltedPhoques::kUnreliable);
+    }
+
+    // The last movement message goes out at once, and everything queued before it this frame with it.
+    // An empty one still goes ten times a second: the server hands the actors of a silent player away.
+    if (fullSnapshot || !packer.Empty())
+        sendMovement(packer.Current(), TiltedPhoques::kUnreliableNoNagle);
+
+    if (now >= s_nextSizeSaid)
+    {
+        s_nextSizeSaid = now + 60s;
+        if (s_movementMessages > 0)
+            spdlog::info("MovementSend: {} movement messages in the last minute, the largest {} bytes, {} over {} bytes (one actor alone)", s_movementMessages,
+                         (s_largestBits + 7) / 8, s_oversized, MovementPacker<ClientReferencesMoveRequest>::kMaxBits / 8);
+        s_movementMessages = 0;
+        s_largestBits = 0;
+        s_oversized = 0;
+    }
 }
 
 // Shows the other player's name and health above their head on the game's world-space meter (WSEnemyMeters).
@@ -3510,7 +3613,8 @@ void CharacterService::RunRemoteUpdates() noexcept
             pActor = Cast<Actor>(pForm);
         }
 
-        InterpolationSystem::Update(pActor, interpolationComponent, cNow, interpolatedEntities.get<RemoteComponent>(entity).DeadAtOwner);
+        const auto* pAnimation = m_world.try_get<RemoteAnimationComponent>(entity);
+        InterpolationSystem::Update(pActor, interpolationComponent, cNow, interpolatedEntities.get<RemoteComponent>(entity).DeadAtOwner, pAnimation ? pAnimation->LastRanAction.Tick : 0);
 
 #ifdef SKYRIMVR
         // Cheap: it returns at once unless this is a dead body within arm's reach.
@@ -3796,7 +3900,7 @@ void CharacterService::ApplyPendingInventories() noexcept
         Actor* pActor = Cast<Actor>(TESForm::GetById(it->first));
         if (!pActor || !IsSameCopy(it->first, it->second))
         {
-            spdlog::info("Waiting inventory of {:X} dropped: the copy it came for is gone or changed hands", it->first);
+            spdlog::info("CopyInventory: waiting inventory of {:X} dropped: the copy it came for is gone or changed hands", it->first);
             it = m_pendingInventories.erase(it);
             continue;
         }
@@ -3838,6 +3942,21 @@ void CharacterService::OnNotifyInventoryChanges(const NotifyInventoryChanges& ac
     if (acMessage.OwnershipEpoch == 0)
         return;
 
+    // A copy waiting for its 3D gets its spawn request's inventory once it has it, which would undo this change.
+    auto waitingView = m_world.view<RemoteComponent, WaitingFor3D>();
+    for (auto entity : waitingView)
+    {
+        const auto& cRemote = waitingView.get<RemoteComponent>(entity);
+        if (cRemote.Id != acMessage.ServerId || cRemote.OwnershipEpoch != acMessage.OwnershipEpoch)
+            continue;
+        if (!acMessage.Drop || acMessage.Item.Count < 0)
+        {
+            waitingView.get<WaitingFor3D>(entity).SpawnRequest.InventoryContent.AddOrRemoveEntry(acMessage.Item);
+            spdlog::info("CopyInventory: waiting copy {:X}, an inventory change from its owner applied to its spawn request too ({:+})", acMessage.ServerId, acMessage.Item.Count);
+        }
+        return;
+    }
+
     for (auto it = m_pendingInventories.begin(); it != m_pendingInventories.end(); ++it)
     {
         if (it->second.ServerId != acMessage.ServerId || it->second.OwnershipEpoch != acMessage.OwnershipEpoch)
@@ -3846,7 +3965,7 @@ void CharacterService::OnNotifyInventoryChanges(const NotifyInventoryChanges& ac
         if (!acMessage.Drop || acMessage.Item.Count < 0)
         {
             it.value().Content.AddOrRemoveEntry(acMessage.Item);
-            spdlog::info("Waiting inventory of {:X}: an inventory change from its owner applied to it too ({:+})", it->first, acMessage.Item.Count);
+            spdlog::info("CopyInventory: waiting inventory of {:X}, an inventory change from its owner applied to it too ({:+})", it->first, acMessage.Item.Count);
         }
         return;
     }

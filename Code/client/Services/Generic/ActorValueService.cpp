@@ -50,6 +50,25 @@ ActorValueService::ActorValueService(World& aWorld, entt::dispatcher& aDispatche
 // A copy at 1 health goes down on the next hit and stops being drawn.
 constexpr float kRemotePlayerHealthFloor = 25.f;
 
+// The least health an NPC copy is given: only its owner's death word kills it.
+constexpr float kNpcCopyHealthFloor = 1.f;
+
+static bool IsNpcCopy(Actor* apActor) noexcept
+{
+    const ActorExtension* pExtension = apActor ? apActor->GetExtension() : nullptr;
+    return pExtension && pExtension->IsRemote() && !pExtension->IsPlayer();
+}
+
+// Once per copy, so that a fight leaves a few lines.
+static void SayNpcCopyKeptUp(Actor* apActor, float aHealth) noexcept
+{
+    static TiltedPhoques::Set<uint32_t> s_said;
+    if (s_said.size() > 256)
+        s_said.clear();
+    if (s_said.insert(apActor->formID).second)
+        spdlog::info("Death sync: NPC copy {:X} kept at {:.0f} health instead of {:.0f}; its owner's game decides whether it dies", apActor->formID, kNpcCopyHealthFloor, aHealth);
+}
+
 void ActorValueService::CreateActorValuesComponent(const entt::entity aEntity, Actor* apActor) noexcept
 {
     auto& actorValuesComponent = m_world.emplace_or_replace<ActorValuesComponent>(aEntity);
@@ -432,6 +451,13 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
         spdlog::info("Remote player {:X} copy kept at {:.0f} health instead of {:.0f}; its owner decides", pActor->formID, kRemotePlayerHealthFloor, newHealth);
         newHealth = kRemotePlayerHealthFloor;
     }
+    // Nor does a health value alone kill an NPC copy: its owner's death word does (OnDeathStateChange).
+    // Killed here while its owner's actor lived on, the copy lay dead where it fell while the real one fought on.
+    else if (IsNpcCopy(pActor) && newHealth < kNpcCopyHealthFloor)
+    {
+        SayNpcCopyKeptUp(pActor, newHealth);
+        newHealth = kNpcCopyHealthFloor;
+    }
 
     pActor->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, newHealth);
 
@@ -657,7 +683,8 @@ void ActorValueService::OnActorMaxValueChanges(const NotifyActorMaxValueChanges&
 
 void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessage) const noexcept
 {
-    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    // A copy still waiting to be made, or for its 3D, has no form id yet or no body to kill, but it must not miss the death.
+    auto view = m_world.view<RemoteComponent>();
 
     // Separated from the epoch test so a stale epoch can be told apart from a character we simply do not have.
     const auto it = std::find_if(std::begin(view), std::end(view), [&acMessage, view](entt::entity entity)
@@ -694,8 +721,23 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
     // Kept even when the copy is already in that state here: the corpse placement waits for this word.
     view.get<RemoteComponent>(*it).DeadAtOwner = acMessage.IsDead;
 
-    auto& formIdComponent = view.get<FormIdComponent>(*it);
-    Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
+    // The copy is killed or brought back once it has its 3D, from its spawn request (CharacterService::RunRemoteUpdates).
+    if (auto* pWaiting = m_world.try_get<WaitingFor3D>(*it))
+    {
+        pWaiting->SpawnRequest.IsDead = acMessage.IsDead;
+        spdlog::info("Death sync: server id {:X} is {} at its owner while its copy waits to be made here; it will be made so", acMessage.Id,
+                     acMessage.IsDead ? "dead" : "alive");
+        return;
+    }
+
+    const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(*it);
+    if (!pFormIdComponent)
+    {
+        say("its copy has no actor in the game");
+        return;
+    }
+
+    Actor* pActor = Cast<Actor>(TESForm::GetById(pFormIdComponent->Id));
 
     if (!pActor)
     {

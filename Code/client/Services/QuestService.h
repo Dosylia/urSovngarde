@@ -37,7 +37,8 @@ class QuestService final : public BSTEventSink<TESQuestStartStopEvent>,
                            BSTEventSink<TESSceneEvent>,
                            BSTEventSink<TESSceneActionEvent>,
                            BSTEventSink<TESScenePhaseEvent>,
-                           BSTEventSink<TESTopicInfoEvent>
+                           BSTEventSink<TESTopicInfoEvent>,
+                           BSTEventSink<TESLoadGameEvent>
 {
 public:
     QuestService(World&, entt::dispatcher&);
@@ -51,8 +52,17 @@ public:
     {
         // Member stages not applied yet, sorted
         Vector<uint16_t> Stages{};
-        // A stage per log entry of the applied stages whose fragment hasn't run yet
-        Vector<uint16_t> PendingItems{};
+        struct AppliedStage
+        {
+            uint16_t Stage;
+            std::chrono::steady_clock::time_point At;
+        };
+
+        // Applied stages none of whose fragments has reported done yet, with when each was applied
+        Vector<AppliedStage> Applied{};
+        // When a stage was last held, applied or done waiting for.
+        // After a long time without, the rest are applied (see FlushHeldStages).
+        std::chrono::steady_clock::time_point LastProgress{};
     };
 
 private:
@@ -68,9 +78,12 @@ private:
     BSTEventResult OnEvent(const TESSceneActionEvent*, const EventDispatcher<TESSceneActionEvent>*) override;
     BSTEventResult OnEvent(const TESScenePhaseEvent*, const EventDispatcher<TESScenePhaseEvent>*) override;
     BSTEventResult OnEvent(const TESTopicInfoEvent*, const EventDispatcher<TESTopicInfoEvent>*) override;
+    BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
     void OnQuestUpdate(const NotifyQuestUpdate&) noexcept;
     void HoldStage(TESQuest* apQuest, uint16_t aStage) noexcept;
+    // Applies every quest's held stages in order, without waiting for scenes: the server relays a stage only once, so dropping them would lose them.
+    void FlushHeldStages(const char* acpReason) noexcept;
     // The quest's held stages, while it has stages to apply or fragments to wait for. Drops the stages that can't be
     // applied anymore.
     HeldStages* GetHeldStages(uint32_t aQuestFormId, TESQuest* apQuest) noexcept;

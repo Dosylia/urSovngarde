@@ -1,5 +1,6 @@
 ﻿#include <Components.h>
 #include <GameServer.h>
+#include <steam/isteamnetworkingutils.h>
 #include <AdminKeys.h>
 #include <openssl/evp.h>
 #include <Packet.hpp>
@@ -186,6 +187,14 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole) noexcept
 {
     BASE_ASSERT(s_pInstance == nullptr, "Server instance already exists?");
     s_pInstance = this;
+
+    // The networking library fixes each connection's send rate at connect, 128 KiB/s for any ping over about 33 ms.
+    // Movement at 30 Hz with VR poses and NPCs in a fight passes that, and a full queue then refuses every send, reliable ones too.
+    if (ISteamNetworkingUtils* pUtils = SteamNetworkingUtils())
+    {
+        pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMin, 512 * 1024);
+        pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMax, 2 * 1024 * 1024);
+    }
 
     auto port = uServerPort.value_as<uint16_t>();
     while (!Host(port, GetUserTickRate()))

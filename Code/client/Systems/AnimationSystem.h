@@ -4,7 +4,8 @@
 
 struct World;
 struct Actor;
-struct ClientReferencesMoveRequest;
+struct ReferenceUpdate;
+struct RequestActionEvents;
 
 /**
  * @brief Applies animations coming from remote actors.
@@ -56,14 +57,19 @@ struct AnimationSystem
      */
     static void TrimBacklog(RemoteAnimationComponent& aAnimationComponent, uint32_t aFormId) noexcept;
     /**
-     * @brief Serializes the actions to-be-sent.
+     * @brief Captures the movement of a local actor, with the VR pose of the player or of a body moving within reach.
      * @param aWorld The registry where the actor in question lives.
-     * @param aMovementSnapshot The output of the animation data.
-     * @param localComponent The local component of the actor whose data is to be serialized.
-     * @param animationComponent The local animation component of the actor, used to give the output the server id of the actor.
-     * @param formIdComponent The form id component of the actor, used to fetch the actor pointer.
+     * @param apActor The local actor.
+     * @param aUpdate The output movement update; its actions are left empty, they travel in their own message.
      */
-    static void Serialize(World& aWorld, ClientReferencesMoveRequest& aMovementSnapshot, LocalComponent& localComponent, LocalAnimationComponent& animationComponent, FormIdComponent& formIdComponent);
+    static void SerializeMovement(World& aWorld, Actor* apActor, ReferenceUpdate& aUpdate) noexcept;
+    /**
+     * @brief Moves the actions a local actor performed since the last call into the message to-be-sent.
+     * @param aMessage The output message.
+     * @param localComponent The local component of the actor, gives the server id and keeps the latest action.
+     * @param animationComponent The local animation component of the actor, holding the actions not sent yet.
+     */
+    static void SerializeActions(RequestActionEvents& aMessage, LocalComponent& localComponent, LocalAnimationComponent& animationComponent) noexcept;
     /**
      * @brief Serializes the actions to-be-sent.
      *

@@ -177,8 +177,9 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
 {
     const auto now = std::chrono::steady_clock::now();
 
-    // A loading screen since the last update: another character's save can load with the player in a cell and drawn
-    // at every update in between, so seeing the player out of the game is not enough (live-load-other-character).
+    // A loading screen since the last update counts as a load.
+    // Another character's save can load with the player in a cell and drawn at every update in between.
+    // So seeing the player out of the game is not enough (live-load-other-character).
     const uint32_t cLoadingScreens = UI::LoadingScreensQueued();
     if (cLoadingScreens != m_loadingScreensSeen)
     {

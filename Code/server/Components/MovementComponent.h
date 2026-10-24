@@ -9,7 +9,7 @@
 
 struct MovementComponent
 {
-    uint64_t Tick;
+    uint64_t Tick{}; // the owner's tick of the newest report taken; 0 before the first and after a hand-over
     glm::vec3 Position;
     glm::vec3 Rotation;
     AnimationVariables Variables;

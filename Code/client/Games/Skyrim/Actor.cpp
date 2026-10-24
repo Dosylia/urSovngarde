@@ -1305,6 +1305,14 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
         if (pExHitter->IsLocalPlayer())
         {
             World::Get().GetRunner().Trigger(HealthChangeEvent(apThis->formID, -realDamage));
+            // This player's killing blow on an NPC copy goes to its owner's game, whose death word then kills the copy.
+            // Killed here while its owner's actor lived on, the copy lay dead where it fell while the real one fought on.
+            if (wouldKill && pExHittee->IsRemote())
+            {
+                apThis->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, 1.f);
+                spdlog::info("Death sync: this player's blow on NPC copy {:X} sent to its owner; the copy is kept at 1 health until its owner says it died", apThis->formID);
+                return false;
+            }
             return TiltedPhoques::ThisCall(RealDamageActor, apThis, aDamage, apHitter, aKillMove);
         }
         if (pExHitter->IsRemotePlayer())

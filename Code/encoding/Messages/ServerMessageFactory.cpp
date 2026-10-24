@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Messages/ServerMessageFactory.h>
+#include <DecodeGuard.h>
 
 static std::function<UniquePtr<ServerMessage>(TiltedPhoques::Buffer::Reader& aReader)> s_serverMessageExtractor[kServerOpcodeMax];
 
@@ -17,7 +18,11 @@ static struct ServerMessageFactoryInit
             s_serverMessageExtractor[T::Opcode] = [](TiltedPhoques::Buffer::Reader& aReader)
             {
                 auto ptr = TiltedPhoques::MakeUnique<T>();
+                // A message a reader found damaged is dropped whole (DecodeGuard).
+                DecodeGuard::t_failed = false;
                 ptr->DeserializeRaw(aReader);
+                if (DecodeGuard::t_failed)
+                    return UniquePtr<ServerMessage>{nullptr};
                 return TiltedPhoques::CastUnique<ServerMessage>(std::move(ptr));
             };
 

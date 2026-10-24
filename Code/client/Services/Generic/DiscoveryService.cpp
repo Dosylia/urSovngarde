@@ -260,10 +260,16 @@ void DiscoveryService::VisitForms() noexcept
         const auto formId = apReference->formID;
 
         auto it = m_forms.find(formId);
-        if (it != m_forms.end() && it->second.pReference != apReference)
+        // Same form id but another object (recycled temporary id, or the form was reloaded).
+        // Another handle at the same address is another object too: the freed one's memory was given to a new one.
+        const bool cOtherHandle = it != m_forms.end() && it->second.pReference == apReference && it->second.Handle && it->second.Handle != aHandle;
+        if (it != m_forms.end() && (it->second.pReference != apReference || cOtherHandle))
         {
-            // Same form id but another object (recycled temporary id, or the form was reloaded).
-            m_dispatcher.trigger(ActorRemovedEvent(formId));
+            if (cOtherHandle)
+                spdlog::info("Discovery: {:X} came back at the same address with another handle ({:X}, was {:X}), so it is another object", formId, aHandle, it->second.Handle);
+
+            // The object the entry was for is gone, and the one under this id now is not it.
+            m_dispatcher.trigger(ActorRemovedEvent(formId, nullptr));
             m_forms.erase(it);
             it = m_forms.end();
         }
@@ -336,6 +342,8 @@ void DiscoveryService::VisitForms() noexcept
         // Keep the existing discovery entry so rebuilding it does not cancel its assignment.
         const auto cKnown = m_forms.find(formId);
         TESObjectREFR* pLive = cKnown != m_forms.end() && cKnown->second.Handle ? TESObjectREFR::GetByHandle(cKnown->second.Handle) : nullptr;
+        if (cKnown != m_forms.end() && pLive != cKnown->second.pReference)
+            pLive = nullptr;
         if (auto* pActor = Cast<Actor>(pLive); pActor && !pActor->IsDeleted())
         {
             using ReconciliationStage = ActorExtension::ReconciliationStage;
@@ -351,7 +359,7 @@ void DiscoveryService::VisitForms() noexcept
 
         // Dispatched exactly once per removal.
         m_forms.erase(formId);
-        m_dispatcher.trigger(ActorRemovedEvent(formId));
+        m_dispatcher.trigger(ActorRemovedEvent(formId, Cast<Actor>(pLive)));
     }
 
     // Dispatch all adds

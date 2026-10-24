@@ -1,5 +1,6 @@
 
 #include <Services/TransportService.h>
+#include <steam/isteamnetworkingutils.h>
 #include <PerfScope.h>
 
 #include <Events/ConnectedEvent.h>
@@ -54,6 +55,14 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
 {
+    // The networking library fixes each connection's send rate at connect, 128 KiB/s for any ping over about 33 ms.
+    // Movement at 30 Hz with VR poses and NPCs in a fight passes that, and a full queue then refuses every send, reliable ones too.
+    if (ISteamNetworkingUtils* pUtils = SteamNetworkingUtils())
+    {
+        pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMin, 512 * 1024);
+        pUtils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMax, 2 * 1024 * 1024);
+    }
+
     m_updateConnection = m_dispatcher.sink<UpdateEvent>().connect<&TransportService::HandleUpdate>(this);
     m_settingsChangeConnection = m_dispatcher.sink<NotifySettingsChange>().connect<&TransportService::HandleNotifySettingsChange>(this);
     m_connectedConnection = m_dispatcher.sink<ConnectedEvent>().connect<&TransportService::HandleConnected>(this);

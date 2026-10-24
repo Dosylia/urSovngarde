@@ -24,13 +24,22 @@ $headless = Join-Path $PSScriptRoot 'headless.ps1'
 # headless.ps1 defines its paths and helpers before it acts; "status" only prints one line.
 . $headless status
 
+# The same refusals as "up", made before the try: its finally runs "down", which quits whatever game runs and closes SteamVR.
+# A refusal tests nothing: it ends as INVALID (2), never as a failure.
+if (Test-Running '^(urSovngarde|SkyrimTogetherVR|SkyrimVR)$') { Write-Host '   INVALID  The game is already running. If that is a real session, leave it alone; otherwise run "headless.ps1 down" first.'; exit 2 }
+if (Test-Running '^(vrserver|vrmonitor)$') { Write-Host '   INVALID  SteamVR is already running. If the headset is in use, leave it alone; otherwise close it first.'; exit 2 }
+
 $verdict = 'INVALID'
 $detail = ''
+# The helpers this run suspended: a suspended helper never quits by itself, and "down" does not stop it.
+$suspended = New-Object System.Collections.Generic.List[int]
 try {
+    $global:LASTEXITCODE = 0
     & $headless up -NoConnect
+    $upExit = $LASTEXITCODE
 
     $game = Get-Process $gameProcess -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $game) { throw 'The game is not running after "up".' }
+    if (-not $game) { throw "The game is not running after ""up"" (headless.ps1 exit $upExit)." }
 
     $helpers = @(Get-CimInstance Win32_Process -Filter "Name = 'TPProcess.exe'" | Where-Object { $_.CommandLine -match "--pid=$($game.Id)(\s|$)" })
     if (-not $helpers.Count) {
@@ -51,6 +60,7 @@ try {
                 if ($thread -eq [IntPtr]::Zero) { throw "Could not open the main thread of helper $($helper.ProcessId)." }
                 [HelperExitCheck.Win32]::SuspendThread($thread) | Out-Null
                 [HelperExitCheck.Win32]::CloseHandle($thread) | Out-Null
+                $suspended.Add([int]$helper.ProcessId)
             }
             Write-Host 'Each helper''s main thread is suspended.'
         }
@@ -71,7 +81,13 @@ try {
         }
     }
 }
+catch {
+    # The rig did not come up, or the run broke off before its verdict: it proves nothing either way.
+    $verdict = 'INVALID'
+    $detail = "the run broke off: $_"
+}
 finally {
+    $suspended | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
     & $headless down
 }
 

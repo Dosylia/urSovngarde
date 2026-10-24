@@ -23,6 +23,14 @@ activate 3F558 by nobody 3 cell BAEA
 wait 5
 log CHECK logged could not find actor server id 7FFFFF0 \(object 3F558\)
 log CHECK player cell BAE9
+wait 3
+
+log -- a door far away, used in another game in the player's cell: not loaded here, so left alone
+# 93BDB is a door inside Riverwood's inn; it is persistent, so this game holds it though the inn is not loaded.
+activate 93BDB by nobody 3 cell BAE9
+wait 4
+log CHECK absent Door 93BDB: opened in another game
+log CHECK logged Activation of 93BDB, activated by server id 7FFFFF0: its cell is not loaded here; not done
 
 wait 3
 log CHECK game alive

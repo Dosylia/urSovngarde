@@ -3,8 +3,8 @@
 #   python Tools\VR\live-check.py live-corpse-owner-alive
 #   python Tools\VR\live-check.py --expect-fail live-corpse-owner-alive     on a build without the fix: must be RED
 #
-# In play, NPC copies lay dead in one game while their owner's game had them alive and on the move.
-# The corpse placement pulled each body to where the owner had the living NPC, again and again, up to 8500 units.
+# An NPC copy can die in one game while its owner's game has it alive and on the move.
+# Without the fix the corpse placement pulls such a body to where the owner has the living NPC, again and again.
 # Here the game kills its copy of the bot's Lydia with Papyrus, while the bot keeps her alive and walks her 1200 units on.
 # The body must lie where it fell until the owner's game says she died; from then on it is placed as before.
 # Where the body lies is read from its ragdoll, as the corpse placement measures it ("CorpseDiag: ... lay N units").
