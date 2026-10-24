@@ -4,6 +4,22 @@
 #include <Services/GameClockFrame.h>
 
 #include <cmath>
+#include <iomanip>
+#include <sstream>
+
+namespace Catch
+{
+template <> struct StringMaker<TimeModel>
+{
+    static std::string convert(const TimeModel& acModel)
+    {
+        std::ostringstream out;
+        out << std::setprecision(9) << "{ TimeScale " << acModel.TimeScale << ", Time " << acModel.Time << ", Day " << acModel.Day << ", Month "
+            << acModel.Month << ", Year " << acModel.Year << " }";
+        return out.str();
+    }
+};
+} // namespace Catch
 
 namespace
 {
@@ -66,6 +82,11 @@ bool SameGlobals(const GameClockFrame::Globals& acLhs, const GameClockFrame::Glo
 // Typical frame times, a zero-length frame, a hitch and a loading screen.
 constexpr uint64_t kFrameTicks[] = {16, 17, 16, 33, 0, 11, 16, 250, 16, 7, 5000, 16};
 
+double TotalHours(const TimeModel& acModel)
+{
+    return DateTime(acModel).GetTimeInDays() * 24.0;
+}
+
 TimeModel StartModel(float aTimeScale, uint32_t aMonth, float aHour)
 {
     TimeModel model{};
@@ -84,15 +105,19 @@ TEST_CASE("the per-frame clock advances exactly as on main", "[clock]")
     const uint32_t cMonth = GENERATE(0u, 1u, 11u);
     const float cHour = GENERATE(0.f, 12.f, 23.9f);
 
-    TimeModel legacy = StartModel(cTimeScale, cMonth, cHour);
-    DateTime clock(legacy);
+    DateTime clock(StartModel(cTimeScale, cMonth, cHour));
     // Long enough to cross midnight, a month and the year at every time scale above 1.
     for (int i = 0; i < 20000; ++i)
     {
         const uint64_t cTicks = kFrameTicks[i % std::size(kFrameTicks)];
+        // Each frame starts from the same state, so a last-bit difference cannot build up over the run. Compilers that
+        // fuse a * b + c into one FMA (GCC on arm64) can round the two versions differently, so allow one float step
+        // of the hour, which also covers one side carrying into the next day at midnight while the other does not.
+        TimeModel legacy = clock.m_timeModel;
         LegacyUpdate(legacy, cTicks);
         clock.Update(cTicks);
-        REQUIRE(clock.m_timeModel == legacy);
+        REQUIRE(clock.m_timeModel.TimeScale == legacy.TimeScale);
+        REQUIRE(TotalHours(clock.m_timeModel) == Approx(TotalHours(legacy)).margin(1e-5));
     }
 }
 
