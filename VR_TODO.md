@@ -17,6 +17,23 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Waiting on a test or action
 
+- [!] **The menu redesign** (the in-headset menu, UI only, no protocol change; 2026-10-24). Deployed to both tools
+      folders on player 2's PC (`UI`; the old menu is in `UI.old-20261024-105922`) and runs with the v1.9.6 client.
+      Framed buttons that light up under the laser and answer a press; a status chip (not connected, connecting, or
+      connected with the server, the player count and the ping); a connecting card with a timer and a Cancel that
+      works; errors replace the window behind them, and a different mod list lists what to install and what to remove;
+      the player manager and settings keep Back inside the panel (the Party tab's Back was below the panel's edge and
+      nothing scrolled); toasts at the top; Rejoin last server. Settings no longer says `Version is outdated. Please
+      update.` (it compared our build with the original project's GitHub tags). Checked in the browser test mode at
+      the panel's size and zoom, not yet in the headset. To see in play: open the tab, connect, cancel a connect, open
+      Players and Party and press Back on each.
+- [!] **Reveal Players** (client; waits for the next client build, not built). The press ran on CEF's thread (in the
+      2026-10-18 log `revealPlayers` is on another thread than the game), and its 10 s ran while the headset's menu
+      paused the game, so the glow had mostly run out by the time the menu was closed; on VR the menu also went blank.
+      Now the effect starts on the game's thread, the 10 s start once no menu pauses the game, and on VR the menu
+      stays open. To see in play: press Reveal Players with the other player near and close the menu; they glow for
+      about 10 s. Read `Reveal: N of M other players near enough glow for 10 s`; with nobody near, the chat says
+      `Reveal: no other player is near enough to glow.`
 - [!] **Fixes from the second review of the last two commits** (build 67cefa2, FUS folder, client and server; a protocol
       change in the same build, so both players and the server need it).
       - Close the game in the "VR could not start" dialog ends the game at once with an `Exit:` line. Before, the

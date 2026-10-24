@@ -10,6 +10,7 @@ import { environment } from '../environments/environment';
 import { ActionButtonsComponent } from './components/action-buttons/action-buttons.component';
 import { ChatComponent } from './components/chat/chat.component';
 import { ConnectComponent } from './components/connect/connect.component';
+import { ConnectingComponent } from './components/connecting/connecting.component';
 import { ConnectPasswordComponent } from './components/connect-password/connect-password.component';
 import { DebugComponent } from './components/debug/debug.component';
 import { DisconnectComponent } from './components/disconnect/disconnect.component';
@@ -50,6 +51,7 @@ import { TranslocoRootModule } from './transloco-root.module';
   declarations: [
     ChatComponent,
     ConnectComponent,
+    ConnectingComponent,
     ConnectPasswordComponent,
     DebugComponent,
     DisconnectComponent,

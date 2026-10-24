@@ -45,11 +45,14 @@
       padding: 15px;
     }
 
-    .user-action-button {
-      padding: 0.25vw;
-      background-color: #292929;
-      border-radius: 2px;
-      margin-left: 5%;
+    td {
+      padding: 0.5rem 0.4rem;
+    }
+
+    .actions-col {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.6rem;
     }
   }
 }

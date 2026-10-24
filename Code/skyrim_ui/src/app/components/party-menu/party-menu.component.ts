@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { faCircleInfo, faFlag } from '@fortawesome/free-solid-svg-icons';
 import { Observable, pluck, startWith } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 import { Player } from 'src/app/models/player';
@@ -14,6 +15,9 @@ import { PlayerListService } from 'src/app/services/player-list.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class PartyMenuComponent {
+  readonly faFlag = faFlag;
+  readonly faCircleInfo = faCircleInfo;
+
   isLoading$ = this.loadingService.getLoading();
   members$ = this.groupService.selectMembers();
   memberCount$ = this.groupService.selectMembersLength(true);

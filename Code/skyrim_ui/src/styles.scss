@@ -83,16 +83,29 @@ option {
 
 button {
   border: 0;
-  opacity: 0.5;
+  opacity: 0.8;
   font-size: 1rem;
   text-transform: uppercase;
   background: transparent;
   padding: $-size-gap * 0.5;
   color: mod($-color-background, 1);
+  transition: opacity 120ms, transform 120ms, filter 120ms;
 
   &:hover:not([disabled]),
   &[data-style-active='true'] {
     opacity: 1;
+  }
+
+  // A press shows at once, before whatever it starts answers.
+  &:active:not([disabled]) {
+    opacity: 1;
+    filter: brightness(1.6);
+    transform: scale(0.97);
+  }
+
+  &[disabled] {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
 
   &[data-style-active='true'][data-style-ornament='inverted'] {
@@ -185,7 +198,8 @@ button {
 
 :root {
   font-size: 16px;
-  --scrollbar-thickness: 0.7rem;
+  // Thick enough to catch with the laser.
+  --scrollbar-thickness: 1.1rem;
 }
 
 ::-webkit-scrollbar {
@@ -247,10 +261,11 @@ input[type='range'] {
 }
 
 input[type='checkbox'] {
-  width: $scrollbar;
-  height: $scrollbar;
-  max-width: $scrollbar;
-  max-height: $scrollbar;
+  width: 1.4rem;
+  height: 1.4rem;
+  max-width: 1.4rem;
+  max-height: 1.4rem;
+  cursor: pointer;
 
   margin: 0;
 
@@ -336,5 +351,185 @@ hr {
 
   &:after {
     margin-right: -100%;
+  }
+}
+
+// The menu's own look: big framed buttons that answer every press, the status chip, the spinner.
+// Colours as custom properties, so every component's styles can use them.
+:root {
+  --ur-ink: #f0e8d6;
+  --ur-dim: rgba(240, 232, 214, 0.62);
+  --ur-gold: #c0982c;
+  --ur-gold-hi: #e2bb4f;
+  --ur-ok: #7ccf86;
+  --ur-busy: #e0b040;
+  --ur-bad: #e2675e;
+}
+
+.menu-button {
+  opacity: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  min-height: 3.4rem;
+  padding: 0.45rem 1rem;
+  border: 2px solid rgba(240, 232, 214, 0.45);
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--ur-ink);
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  text-align: left;
+  transition: border-color 120ms, background-color 120ms, box-shadow 120ms, transform 120ms, color 120ms;
+
+  .menu-button-icon {
+    flex: 0 0 1.5rem;
+    text-align: center;
+    color: var(--ur-gold);
+  }
+
+  .menu-button-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .menu-button-sub {
+    font-size: 0.75rem;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ur-dim);
+  }
+
+  .menu-button-end {
+    margin-left: auto;
+    font-size: 0.85rem;
+    text-transform: none;
+    color: var(--ur-dim);
+  }
+
+  &.primary {
+    border-color: var(--ur-gold);
+  }
+
+  &.danger {
+    border-color: rgba(226, 103, 94, 0.75);
+    color: #f3c3bf;
+
+    .menu-button-icon {
+      color: var(--ur-bad);
+    }
+  }
+
+  &.compact {
+    width: auto;
+    min-height: 2.4rem;
+    padding: 0.3rem 0.9rem;
+    font-size: 0.95rem;
+    justify-content: center;
+  }
+
+  &.centered {
+    justify-content: center;
+    text-align: center;
+  }
+
+  &.done {
+    border-color: var(--ur-ok);
+    color: #cdeed1;
+
+    .menu-button-icon {
+      color: var(--ur-ok);
+    }
+  }
+
+  &.working {
+    border-color: var(--ur-busy);
+  }
+
+  &:hover:not([disabled]) {
+    filter: none;
+    border-color: var(--ur-gold-hi);
+    background-color: rgba(192, 152, 44, 0.18);
+    box-shadow: 0 0 1rem rgba(226, 187, 79, 0.3);
+  }
+
+  &:active:not([disabled]) {
+    filter: none;
+    transform: scale(0.97);
+    border-color: #fff;
+    background-color: rgba(240, 232, 214, 0.85);
+    color: #111;
+
+    .menu-button-sub,
+    .menu-button-end,
+    .menu-button-icon {
+      color: #333;
+    }
+  }
+
+  &[disabled] {
+    opacity: 0.35;
+    background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.07) 0 0.3rem, transparent 0.3rem 0.6rem), rgba(0, 0, 0, 0.6);
+  }
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.9rem;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+
+  .status-chip-dot {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+    background: #888;
+  }
+
+  .status-chip-detail {
+    color: var(--ur-dim);
+    font-size: 0.8rem;
+  }
+
+  &.ok {
+    border-color: rgba(124, 207, 134, 0.7);
+
+    .status-chip-dot {
+      background: var(--ur-ok);
+      box-shadow: 0 0 0.5rem var(--ur-ok);
+    }
+  }
+
+  &.busy {
+    border-color: rgba(224, 176, 64, 0.8);
+
+    .status-chip-dot {
+      background: var(--ur-busy);
+      box-shadow: 0 0 0.5rem var(--ur-busy);
+    }
+  }
+}
+
+.spinner {
+  display: inline-block;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  border: 0.2rem solid rgba(224, 176, 64, 0.25);
+  border-top-color: var(--ur-busy);
+  border-right-color: var(--ur-busy);
+  animation: spinner-turn 0.9s linear infinite;
+}
+
+@keyframes spinner-turn {
+  to {
+    transform: rotate(360deg);
   }
 }

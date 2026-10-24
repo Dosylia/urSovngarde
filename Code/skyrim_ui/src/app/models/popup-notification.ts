@@ -9,6 +9,8 @@ export interface PopupNotification {
   /** milliseconds */
   duration?: number;
   actions?: PopupNotifactionAction[];
+  /** How a toast is framed: something done, or something that failed. */
+  kind?: 'ok' | 'bad';
 }
 
 export interface PopupNotifactionAction {

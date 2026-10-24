@@ -1,4 +1,5 @@
 #include <Services/MagicService.h>
+#include <Services/OverlayService.h>
 #include <PerfScope.h>
 
 #include <World.h>
@@ -35,6 +36,7 @@
 #include <PlayerCharacter.h>
 
 #include <Games/TES.h>
+#include <Games/Skyrim/Interface/UI.h>
 
 #ifdef SKYRIMVR
 namespace
@@ -767,12 +769,14 @@ void MagicService::UpdateRevealOtherPlayersEffect(bool aForceTrigger) noexcept
 
     static std::chrono::steady_clock::time_point revealStartTimePoint;
     static std::chrono::steady_clock::time_point lastSendTimePoint;
+    static bool s_reported = false;
 
     const bool shouldActivate = aForceTrigger || GetAsyncKeyState(VK_F4) & 0x01;
 
     if (shouldActivate && !m_revealingOtherPlayers)
     {
         m_revealingOtherPlayers = true;
+        s_reported = false;
         revealStartTimePoint = std::chrono::steady_clock::now();
     }
 
@@ -780,6 +784,15 @@ void MagicService::UpdateRevealOtherPlayersEffect(bool aForceTrigger) noexcept
         return;
 
     const auto now = std::chrono::steady_clock::now();
+
+    // While a menu pauses the game (on VR the headset's menu, where the button was pressed), the glow would run out unseen.
+    // The 10 s start once the game runs again.
+    if (const UI* pUI = UI::Get(); pUI && pUI->numPausesGame > 0)
+    {
+        revealStartTimePoint = now;
+        lastSendTimePoint = {};
+        return;
+    }
 
     if (now - revealStartTimePoint > cRevealDuration)
     {
@@ -810,6 +823,8 @@ void MagicService::UpdateRevealOtherPlayersEffect(bool aForceTrigger) noexcept
     data.fUnkFloat1 = 1.f;
     data.eCastingSource = MagicSystem::CastingSource::CASTING_SOURCE_COUNT;
 
+    uint32_t nearby = 0;
+    uint32_t glowing = 0;
     auto view = World::Get().view<FormIdComponent, PlayerComponent>();
     for (const auto entity : view)
     {
@@ -821,6 +836,16 @@ void MagicService::UpdateRevealOtherPlayersEffect(bool aForceTrigger) noexcept
         if (!pRemotePlayer)
             continue;
 
-        pRemotePlayer->magicTarget.AddTarget(data, 1.f, false);
+        ++nearby;
+        if (pRemotePlayer->magicTarget.AddTarget(data, 1.f, false))
+            ++glowing;
+    }
+
+    if (!s_reported)
+    {
+        s_reported = true;
+        spdlog::info("Reveal: {} of {} other players near enough glow for 10 s", glowing, nearby);
+        if (nearby == 0)
+            m_world.GetOverlayService().SendSystemMessage("Reveal: no other player is near enough to glow.");
     }
 }

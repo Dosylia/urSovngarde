@@ -1,0 +1,19 @@
+<div class="connecting">
+  <h2>
+    <span class="spinner"></span>
+    {{ 'COMPONENT.CONNECTING.TITLE' | transloco }}
+    <span class="connecting-time">{{ seconds }} s</span>
+  </h2>
+  <p class="connecting-address">{{ address }}</p>
+  <div class="connecting-bar"><i></i></div>
+  <p class="connecting-hint">{{ 'COMPONENT.CONNECTING.WAITING' | transloco }}</p>
+
+  <button class="menu-button primary centered" (click)="cancel.emit()">
+    <span class="menu-button-text">
+      {{ 'COMPONENT.CONNECTING.CANCEL' | transloco }}
+      <span class="menu-button-sub">{{
+        'COMPONENT.CONNECTING.CANCEL_INFO' | transloco
+      }}</span>
+    </span>
+  </button>
+</div>
