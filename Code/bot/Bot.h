@@ -87,6 +87,9 @@ struct KnownActor
     //! transfer advances it. Handing an actor back with a stale epoch is silently ignored -- three separate bugs
     //! in this family were the same mistake (2026-09-26) -- so the number has to be stored, not guessed.
     uint32_t OwnershipEpoch{};
+    //! Where its owner's game last reported it (ServerReferencesMoveRequest), for `markpos` and `movedfrommark`.
+    glm::vec3 Position{};
+    bool PositionKnown{};
     std::chrono::steady_clock::time_point LastChange{};
     //! What this actor was last seen equipping, by base form id. Empty once it unequips. Last, so that
     //! KnownActor{serverId} still initialises the id.
@@ -278,6 +281,8 @@ private:
     std::map<uint32_t, std::string> m_downStates;
     //! The other player last found, for OtherPlayerIdOrLast.
     mutable uint32_t m_lastOtherPlayerId{0};
+    //! `markpos <who>`: where that actor was reported when the script marked it, by server id, for `movedfrommark`.
+    std::map<uint32_t, glm::vec3> m_positionMarks;
     //! How many times the server sent each downed state for each player id, for `downcount`.
     std::map<uint32_t, std::map<std::string, int>> m_downCounts;
     // Quest updates the server relayed to this bot, by quest base id (`questupdates`).

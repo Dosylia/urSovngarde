@@ -1087,6 +1087,12 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             if (m_capturing && entry.first == m_captureId)
                 m_capture.push_back({static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count()), true, entry.second, {}});
 
+            if (KnownActor* pActor = FindActor(entry.first))
+            {
+                pActor->Position = FromNet(entry.second.UpdatedMovement.Position);
+                pActor->PositionKnown = true;
+            }
+
             if (KnownPlayer* pPlayer = FindPlayerCharacter(entry.first))
             {
                 pPlayer->Position = FromNet(entry.second.UpdatedMovement.Position);
@@ -1621,6 +1627,28 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
         else
             spdlog::error("[script] infront: no host known");
+        return true;
+    }
+
+    // "markpos <who>": notes where that actor's owner last reported it, for "movedfrommark" (other, base:<hex>, ref:<hex> or a server id).
+    if (name == "markpos")
+    {
+        const std::string cWho = args.empty() ? std::string("other") : args[0];
+        const KnownActor* pActor = cWho.starts_with("ref:") ? ActorOfRef(cWho) : nullptr;
+        if (!pActor)
+        {
+            const uint32_t cId = TargetId(cWho);
+            for (const auto& actor : m_actors)
+                if (actor.ServerId == cId)
+                    pActor = &actor;
+        }
+        if (!pActor || !pActor->PositionKnown)
+        {
+            spdlog::warn("[script] markpos {}: {}", cWho, pActor ? "no position reported for it yet" : "no such actor known");
+            return true;
+        }
+        m_positionMarks[pActor->ServerId] = pActor->Position;
+        spdlog::info("[script] marked {:X} at ({:.0f}, {:.0f}, {:.0f})", pActor->ServerId, pActor->Position.x, pActor->Position.y, pActor->Position.z);
         return true;
     }
 
@@ -3459,6 +3487,31 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         aOutWhy = fmt::format("{:X} announced cell {:X} of worldspace {:X}, last moved in cell {:X} at grid ({}, {}); this bot is at grid ({}, {}) of {:X}", id,
                               player->CellId.BaseId, player->WorldSpaceId.BaseId, player->MovedInCell.BaseId, theirs.X, theirs.Y, mine.X, mine.Y, m_worldSpace.BaseId);
         return outdoorsHere && fresh && close;
+    }
+
+    if (what == "movedfrommark")
+    {
+        // movedfrommark <who> <op> <units>: how far the actor's reported position is from where "markpos" noted it.
+        uint32_t id = 0;
+        float wanted = 0.f;
+        if (!parseId(1, id) || acArgs.size() < 4 || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const KnownActor* pActor = id != kNoId ? findActor(id) : nullptr;
+        const auto cMark = m_positionMarks.find(id);
+        if (!pActor || cMark == m_positionMarks.end())
+        {
+            aOutWhy = pActor ? fmt::format("{:X} was never marked", id) : std::string("no such actor known");
+            return false;
+        }
+        const float cMoved = glm::distance(pActor->Position, cMark->second);
+        aOutWhy = fmt::format("{:X} moved {:.0f} units from its mark ({:.0f}, {:.0f}, {:.0f}), now reported at ({:.0f}, {:.0f}, {:.0f})", id, cMoved, cMark->second.x, cMark->second.y,
+                              cMark->second.z, pActor->Position.x, pActor->Position.y, pActor->Position.z);
+        const std::string& op = acArgs[2];
+        if (op == ">=") return cMoved >= wanted;
+        if (op == "<=") return cMoved <= wanted;
+        if (op == ">") return cMoved > wanted;
+        if (op == "<") return cMoved < wanted;
+        return std::nullopt;
     }
 
     if (what == "mydrop")

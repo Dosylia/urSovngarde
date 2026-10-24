@@ -28,7 +28,7 @@ struct TESQuest;
  * already reached. Stops skip scripts. ScopedQuestOverride keeps the events this fires from being sent back.
  *
  * Scenes: setting a stage a playing scene waits on can end its phase early, skipping its lines and scripts and leaving
- * the quest stuck. So the leader, whose world the party follows, holds member stages that an upcoming phase checks and
+ * the quest stuck. So the leader, whose world the party follows, holds member stages that the running or next phase checks and
  * queues later ones behind them. Members apply every stage right away.
  */
 class QuestService final : public BSTEventSink<TESQuestStartStopEvent>,
@@ -81,7 +81,8 @@ private:
     BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
     void OnQuestUpdate(const NotifyQuestUpdate&) noexcept;
-    void HoldStage(TESQuest* apQuest, uint16_t aStage) noexcept;
+    // aSceneId and aPhase: the playing scene and phase that check the stage, 0 when it waits behind stages held before it.
+    void HoldStage(TESQuest* apQuest, uint16_t aStage, uint32_t aSceneId, uint32_t aPhase) noexcept;
     // Applies every quest's held stages in order, without waiting for scenes: the server relays a stage only once, so dropping them would lose them.
     void FlushHeldStages(const char* acpReason) noexcept;
     // The quest's held stages, while it has stages to apply or fragments to wait for. Drops the stages that can't be

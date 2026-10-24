@@ -32,6 +32,7 @@ Checks:
                                                                           in an interior
     ref <hex> near <x> <y> <z> <units> | ref <hex> near player <units>    a reference of the game's own is that close
                                                                           to that place, or to the player
+    scene <hex> playing                                                   a scene of the game's own plays
     ref <hex> cell same | ref <hex> cell other                            a reference of the game's own is in the
                                                                           player's cell, or in another one
     ref <hex> open | ref <hex> closed                                     a door of the game's own is open (or
@@ -688,6 +689,11 @@ class Run:
                 ok = known and apart <= float(words[6])
                 detail = 'reference %s at %s, %s units from (%s)%s' % (form, [round(v) for v in at] if known else at,
                                                                      round(apart) if known else '?', ', '.join(words[3:6]), ', seen from above' if flat else '')
+            elif who == 'scene':
+                # "scene <hex> playing": a scene of the game's own plays.
+                playing = papyrus('Scene', 'IsPlaying', words[1])
+                ok = playing is True
+                detail = 'scene %s, IsPlaying %s' % (words[1], playing)
             elif who == 'ref' and words[2] == 'cell':
                 # "ref <hex> cell same|other": in the cell the player stands in, or in another one.
                 # Positions alone cannot tell: an interior's coordinates are as good as any outside.

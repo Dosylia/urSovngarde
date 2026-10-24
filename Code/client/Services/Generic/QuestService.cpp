@@ -358,9 +358,9 @@ static bool Compare(TESConditionItem::OpCode aOpCode, float aLhs, float aRhs) no
     }
 }
 
-// Whether setting the stage turns a GetStage/GetStageDone check on the quest from false to true. With aOrChecksLater,
-// also whether it changes the check's result at all, or the check is on the same or a later stage.
-static bool IsCheckedByStage(const TESCondition& acConditions, TESQuest* apQuest, uint16_t aStage, bool aOrChecksLater) noexcept
+// Whether setting the stage turns a GetStage/GetStageDone check on the quest from false to true.
+// With aAnyChange, also from true to false (a phase waiting on GetStage == N).
+static bool IsCheckedByStage(const TESCondition& acConditions, TESQuest* apQuest, uint16_t aStage, bool aAnyChange) noexcept
 {
     for (const TESConditionItem* pItem = acConditions.pHead; pItem; pItem = pItem->pNext)
     {
@@ -368,20 +368,17 @@ static bool IsCheckedByStage(const TESCondition& acConditions, TESQuest* apQuest
             continue;
 
         const TESConditionItem::OpCode cOpCode = pItem->GetOpCode();
-        float checkedStage = 0.f;
         bool before = false;
         bool after = false;
         if (pItem->function == TESConditionItem::kGetStage)
         {
             // Stages only go up, GetStage returns the highest one set
-            checkedStage = pItem->comparisonValue;
             before = Compare(cOpCode, apQuest->currentStage, pItem->comparisonValue);
             after = Compare(cOpCode, std::max(apQuest->currentStage, aStage), pItem->comparisonValue);
         }
         else if (pItem->function == TESConditionItem::kGetStageDone)
         {
             const uint16_t cStage = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(pItem->params[1]));
-            checkedStage = cStage;
             if (cStage == aStage)
             {
                 before = Compare(cOpCode, 0.f, pItem->comparisonValue);
@@ -396,7 +393,7 @@ static bool IsCheckedByStage(const TESCondition& acConditions, TESQuest* apQuest
         if (!before && after)
             return true;
 
-        if (aOrChecksLater && (before != after || checkedStage >= aStage))
+        if (aAnyChange && before != after)
             return true;
     }
 
@@ -425,16 +422,20 @@ static bool IsPhaseWaitingOnConditions(BGSScene* apScene, uint32_t aPhaseIndex) 
     return true;
 }
 
-// Whether a phase the playing scenes have yet to finish checks the stage or a later one, or checks differently with it
-// (a phase waiting on GetStage == N). Scenes that only end or repeat on it don't count (MQ105's sprint trial).
-static bool IsCheckedByPlayingScene(TESQuest* apQuest, uint16_t aStage) noexcept
+// Whether the stage changes a check of a playing scene's running phase, or of the phase after it.
+// Phases further on are not waited for: a long scene, an escort through a dungeon, checks most of its quest's stages somewhere.
+// Scenes that only end or repeat on it don't count (MQ105's sprint trial).
+// apSceneId and apPhase, when given, say which scene and phase check it.
+static bool IsCheckedByPlayingScene(TESQuest* apQuest, uint16_t aStage, uint32_t* apSceneId = nullptr, uint32_t* apPhase = nullptr) noexcept
 {
     for (BGSScene* pScene : apQuest->scenes)
     {
         if (!pScene)
             continue;
 
-        for (uint32_t i = pScene->GetNextPhaseIndex(); i < pScene->phases.length; ++i)
+        const uint32_t cFirst = pScene->GetNextPhaseIndex();
+        const uint32_t cEnd = std::min<uint32_t>(cFirst + 2, pScene->phases.length);
+        for (uint32_t i = cFirst; i < cEnd; ++i)
         {
             const BGSScenePhase* pPhase = pScene->phases[i];
             if (!pPhase)
@@ -445,6 +446,10 @@ static bool IsCheckedByPlayingScene(TESQuest* apQuest, uint16_t aStage) noexcept
             if ((!cIsRunning && IsCheckedByStage(pPhase->startConditions, apQuest, aStage, true)) ||
                 IsCheckedByStage(pPhase->completionConditions, apQuest, aStage, true))
             {
+                if (apSceneId)
+                    *apSceneId = pScene->formID;
+                if (apPhase)
+                    *apPhase = i;
                 return true;
             }
         }
@@ -453,7 +458,7 @@ static bool IsCheckedByPlayingScene(TESQuest* apQuest, uint16_t aStage) noexcept
     return false;
 }
 
-void QuestService::HoldStage(TESQuest* apQuest, uint16_t aStage) noexcept
+void QuestService::HoldStage(TESQuest* apQuest, uint16_t aStage, uint32_t aSceneId, uint32_t aPhase) noexcept
 {
     HeldStages& held = m_heldStages[apQuest->formID];
     // Holding more is no progress: the wait counts from the first stage held.
@@ -465,7 +470,10 @@ void QuestService::HoldStage(TESQuest* apQuest, uint16_t aStage) noexcept
     if (it == stages.end() || *it != aStage)
         stages.insert(it, aStage);
 
-    spdlog::info("Holding member quest stage {} for {:X} until no playing scene of it checks it", aStage, apQuest->formID);
+    if (aSceneId)
+        spdlog::info("Holding member quest stage {} for {:X} until no playing scene of it checks it: scene {:X} phase {} does", aStage, apQuest->formID, aSceneId, aPhase);
+    else
+        spdlog::info("Holding member quest stage {} for {:X} behind the stages held before it", aStage, apQuest->formID);
 }
 
 static void ApplyHeldStages(TESQuest* apQuest, HeldStages& aHeld, size_t aCount) noexcept
@@ -603,9 +611,11 @@ void QuestService::OnQuestUpdate(const NotifyQuestUpdate& aUpdate) noexcept
     // and scripts ran), so hold it, and the stages after it, until the scene gets there or reaches it itself.
     const bool cIsLeaderStage = aUpdate.Status == NotifyQuestUpdate::StageUpdate && m_world.GetPartyService().IsLeader();
     HeldStages* pHeld = cIsLeaderStage || aUpdate.Status == NotifyQuestUpdate::Stopped ? GetHeldStages(formId, pQuest) : nullptr;
-    if (cIsLeaderStage && (pHeld || IsCheckedByPlayingScene(pQuest, aUpdate.Stage)))
+    uint32_t checkingSceneId = 0;
+    uint32_t checkingPhase = 0;
+    if (cIsLeaderStage && (pHeld || IsCheckedByPlayingScene(pQuest, aUpdate.Stage, &checkingSceneId, &checkingPhase)))
     {
-        HoldStage(pQuest, aUpdate.Stage);
+        HoldStage(pQuest, aUpdate.Stage, checkingSceneId, checkingPhase);
         return;
     }
 

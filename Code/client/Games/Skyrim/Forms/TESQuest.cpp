@@ -56,8 +56,9 @@ bool TESQuest::IsStageDone(uint16_t stageIndex)
 {
     // The game's own answer: no stage flag here is known to mean "done" (CommonLibVR names none at bit 0).
     using Quest = TESQuest;
-    PAPYRUS_FUNCTION(bool, Quest, GetStageDone, int);
-    return s_pGetStageDone(this, stageIndex);
+    // Papyrus calls it IsStageDone; GetStageDone is the condition function's name.
+    PAPYRUS_FUNCTION(bool, Quest, IsStageDone, int);
+    return s_pIsStageDone(this, stageIndex);
 }
 
 bool TESQuest::Kill()

@@ -21,6 +21,7 @@
 
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
+#include <NetImmerse/NiTransform.h>
 
 #ifdef SKYRIMVR
 #include <PlayerCharacter.h>
@@ -285,6 +286,17 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
         aWorld.GetModSystem().GetServerModId(pWorldSpace->formID, movement.WorldSpaceId.ModId, movement.WorldSpaceId.BaseId);
 
     movement.Position = apActor->position;
+    // A dead body lies where its ragdoll is, and dragging or throwing it leaves its reference where it died.
+    // The others put their copy where this says (VRBodySync::PlaceCorpse), so the 3D root's world position is sent instead.
+    if (false && apActor != PlayerCharacter::Get() && apActor->actorState.IsDead())
+    {
+        if (const NiNode* pRoot = apActor->GetNiNode())
+        {
+            // NiAVObject::world is at 0x7C, as VRBodySync and DroppedItemService read it.
+            const auto& world = *reinterpret_cast<const NiTransform*>(reinterpret_cast<const uint8_t*>(pRoot) + 0x7C);
+            movement.Position = glm::vec3(world.translate.x, world.translate.y, world.translate.z);
+        }
+    }
 
     movement.Rotation.x = apActor->rotation.x;
     movement.Rotation.y = apActor->rotation.z;

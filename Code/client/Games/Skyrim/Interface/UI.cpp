@@ -183,6 +183,11 @@ static std::chrono::steady_clock::time_point s_lastGameEnemyMeterTargetAt{};
 
 void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI_MESSAGE_TYPE a3, void* a4)
 {
+    // The other half of "Menu queued": a menu asked to close, so a report shows which menu was left open.
+    // The VR HUD widgets (WS*) are left out, as there.
+    if ((a3 == UIMessage::kHide || a3 == UIMessage::kForceHide) && a2 && a2->AsAscii() && strncmp(a2->AsAscii(), "WS", 2) != 0)
+        spdlog::info("Menu closing: {}{}", a2->AsAscii(), a3 == UIMessage::kForceHide ? " (forced)" : "");
+
     // An empty message box opens at the main menu and after every save load, pausing the world; that show is dropped.
     if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "MessageBoxMenu") == 0)
     {

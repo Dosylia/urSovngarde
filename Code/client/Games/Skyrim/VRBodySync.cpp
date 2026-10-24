@@ -5237,6 +5237,21 @@ bool CaptureBodyPose(Actor* apActor, VRPose& aOutPose) noexcept
     aOutPose.HasFingers = false;
     aOutPose.HasScale = false;
 
+    // TEMPORARY: a dragged body was drawn well below the dragger's hand on the other side.
+    // Whether the 3D root follows the ragdoll's pelvis up, or stays below it, at most once a second per body.
+    {
+        static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextBodyDiag;
+        auto& nextDiag = s_nextBodyDiag[apActor->formID];
+        if (now >= nextDiag && capture.Nodes[VRPose::kPelvis])
+        {
+            nextDiag = now + std::chrono::seconds(1);
+            const glm::vec3 cPelvis = ToGlm(At<NiTransform>(capture.Nodes[VRPose::kPelvis], kWorldOffset).translate);
+            spdlog::info("BodyDiag: body {:X} root ({:.0f}, {:.0f}, {:.0f}), pelvis ({:.0f}, {:.0f}, {:.0f}): pelvis {:.0f} above the root, {:.0f} beside it",
+                         apActor->formID, rootPosition.x, rootPosition.y, rootPosition.z, cPelvis.x, cPelvis.y, cPelvis.z, cPelvis.z - rootPosition.z,
+                         glm::length(glm::vec2(cPelvis - rootPosition)));
+        }
+    }
+
     // Where the body is, not just how it is bent.
     // The receiver cannot use the reference position: a corpse moves with its ragdoll, not with its reference.
     aOutPose.HasRootPosition = true;

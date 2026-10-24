@@ -454,6 +454,38 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Open work
 
+- [ ] **Play session 2026-10-24 afternoon** (both on v1.9.6-9-g29aee76d; player 1 leader, the Jagged Crown):
+      - Quest stages reach the leader 30 s late: nearly every stage player 2 reached was held by player 1's game
+        (`Holding member quest stage N for 2610B until no playing scene of it checks it`) and applied only by the 30 s
+        timeout (`QuestHold: no progress ... applying the N left in order`), 14:38-14:52. Galmar's scene A0E3D sat in
+        phase 22 on player 1's side, repeating his lines every 14 s from 14:44 to 14:50, until stage 150 came. So the
+        Draugr ruin's doors, opened by that scene's scripts, opened for player 2 at 14:49 and not for player 1. The
+        hold's "a playing scene checks it" is true for almost every stage; the quest port's hold needs a narrower test.
+        Fixed in 626a969 (FUS, client and server): a member stage is held only when it changes a check of a playing
+        scene's running phase or the next one; before, any later phase checking it or a later stage held it. The
+        hold line names the scene and phase (`... checks it: scene X phase N does`). Also fixed: the leader never
+        knew a stage was done (`Papyrus: Quest.GetStageDone not found`, a wrong name since the quest port). Rig:
+        `live-quest-hold` red on 29aee76d, ok on 626a969. To see in play: few holds, each naming a scene's next step.
+      - Dead Imperial soldiers floating in the air with their hands still idling, for player 1 only (15:01; lootable,
+        so dead). They were player 2's fight: player 1's game took them over as leader at 14:59:36, all at once,
+        10 s after its arrival (the leader grace), while they were in bleedout (`DownedTravel: own NPC ... life
+        state 8`), and they died in player 1's game seconds later (`Death sync: local actor 8A009C68 is now dead`).
+        Lead: an NPC handed over in bleedout or mid-fight dies here without its ragdoll taking over. Not proven; a
+        rig test first (the bot owns an NPC in bleedout, the game's leader arrives and takes it, it dies here).
+      - Player 1's arrow held in the hand sat a little ahead of the hand on player 2's screen (15:03, picture). Player 2's
+        log: `arrow held in the right hand as its owner holds it, its head 68 units from the hand (hand scale 0.85)`.
+        The hold offset needs measuring against the owner's own arrow node in the rig before changing it.
+        Measured, no change: the archer's game sends the arrowhead at (21, -6, 77) in its body's hand-bone space in play
+        ((21, -6, 79) in the rig), about 80 units, and the copy puts it there (68 = 80 x its hand scale 0.85).
+        With a 64-unit arrow the nock sits about 6 units past the finger joints, as in the picture: the copy shows the
+        archer's body hand as it is. Open question: does the arrow also float ahead of the fingers in the archer's own
+        headset (VRIK body hands)? The rig cannot show it (no VRIK hand pose there; the first-person nodes are out of reach).
+      - Both players dragging one body: fine, "needs some improvement" (details to ask).
+      - Player 2 stuck in a menu after switching to Discord (15:07): nothing of ours in the log then; the log records
+        menus opening but not closing, so it cannot say which one stuck. A `Menu closed` line would tell next time.
+        Done in build 210e55b (client, FUS): `Menu closing: <name>` for each menu asked to close (WS* HUD widgets left out).
+        Rig: `live-menu-hold` RED on 29aee76d (no such line), ok on 210e55b; one line per real close. Not seen in play yet.
+
 - [ ] **Review fixes, doors, ownership, transport** (from the reviews of the last two commits and of playback session B,
       2026-10-24; build b5963dd, client and server in the FUS folders, not MGO yet; the PickedUp flag and the decode guard
       change the protocol again, in the same release). Rig: red on 5b24e15 (these fixes switched off), green on b5963dd:
