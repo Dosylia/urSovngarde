@@ -17,7 +17,7 @@ log DO god on
 log DO console set gamehour to 12
 log DO console cow WhiterunWorld 5 -3
 wait 90
-log CHECK logged Dialogue: \w+ \(server id \w+\) says .* in scene \w+; sent
+log CHECK logged Dialogue: \w+ \(server id \w+\) says .* in scene \w+ phase \d+; sent
 log CHECK game alive
 log DO god off
 wait 3

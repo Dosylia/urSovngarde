@@ -4,10 +4,7 @@
       <h2>{{ 'COMPONENT.SETTINGS.VERSION.HEADER' | transloco }}</h2>
       <div class="flex-item">
         {{ 'COMPONENT.SETTINGS.VERSION.INFO' | transloco }}
-        <div class="version" [class.outdated]="isVersionOutdated | async">{{ clientVersion$ | async }}</div>
-      </div>
-      <div *ngIf="isVersionOutdated | async" class="flex-item">
-        {{ 'COMPONENT.SETTINGS.VERSION.OUTDATED' | transloco }}
+        <div class="version">{{ clientVersion$ | async }}</div>
       </div>
     </section>
 
@@ -37,6 +34,7 @@
           [ngModel]="settings.volume | async"
           (ngModelChange)="settings.volume.next($event)"
         />
+        <span class="setting-value">{{ (settings.volume | async) * 100 | number: '1.0-0' }} %</span>
       </div>
     </section>
 
@@ -66,6 +64,7 @@
           [ngModel]="settings.voiceVolume | async"
           (ngModelChange)="settings.voiceVolume.next($event)"
         />
+        <span class="setting-value">{{ (settings.voiceVolume | async) * 100 | number: '1.0-0' }} %</span>
       </div>
       <div class="setting">
         <label>{{ 'COMPONENT.SETTINGS.TEST_MICROPHONE_INFO' | transloco }}</label>
@@ -174,6 +173,7 @@
           [ngModel]="settings.partyAnchorOffsetX | async"
           (ngModelChange)="settings.partyAnchorOffsetX.next($event)"
         />
+        <span class="setting-value">{{ settings.partyAnchorOffsetX | async }}</span>
       </div>
       <div class="setting">
         <label for="partyAnchorOffsetY">{{
@@ -188,6 +188,7 @@
           [ngModel]="settings.partyAnchorOffsetY | async"
           (ngModelChange)="settings.partyAnchorOffsetY.next($event)"
         />
+        <span class="setting-value">{{ settings.partyAnchorOffsetY | async }}</span>
       </div>
     </section>
 
@@ -209,7 +210,8 @@
 </div>
 
 <div class="actions">
-  <button data-style-ornament="simple" class="btnCancel" (click)="close()">
+  <button class="menu-button centered" (click)="close()">
+    <fa-icon class="menu-button-icon" [icon]="faArrowLeft"></fa-icon>
     {{ 'COMPONENT.SETTINGS.BACK' | transloco }}
   </button>
 </div>

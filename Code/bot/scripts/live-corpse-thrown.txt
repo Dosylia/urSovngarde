@@ -1,0 +1,38 @@
+# A dead body moved in its owner's game is reported where its ragdoll lies, not where it died.
+#
+#   python Tools\VR\live-check.py live-corpse-thrown
+#   python Tools\VR\live-check.py --expect-fail live-corpse-thrown     on a build without the change: must be RED
+#
+# A dragged or thrown ragdoll leaves its actor's reference where it died.
+# The other games put their copy where the owner says the body is (VRBodySync::PlaceCorpse), once the bones being dragged stop coming.
+# So the owner says where the ragdoll lies, and a copy is not put back where the body was picked up.
+# Here: the game places an Aspiring Mage (Skyrim.esm 753CB) next to the player and kills it, so the body is the game's own.
+# The bot marks where the game reports it, the game throws it with a Havok impulse, and the reported place must follow.
+log live corpse thrown
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- a mage of the game's own, killed next to the player
+log DO place 753CB
+wait 8
+log DO papyrus Actor Kill placed 14
+wait 8
+waitfor known base:753CB 20
+markpos base:753CB
+wait 2
+
+log -- the game throws the body; its reference stays where it died
+log DO papyrus ObjectReference ApplyHavokImpulse placed f:1 f:0 f:0.6 f:4000
+wait 8
+expect movedfrommark base:753CB >= 150
+log CHECK logged BodyDiag: body \w+ root
+
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

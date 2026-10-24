@@ -15,6 +15,7 @@
 
 #include <Messages/ClientMessageFactory.h>
 #include <Messages/ServerMessageFactory.h>
+#include <DecodeGuard.h>
 #include <Structs/Vector2_NetQuantize.h>
 
 #include <TiltedCore/Math.hpp>
@@ -469,6 +470,162 @@ TEST_CASE("Packets", "[encoding.packets]")
         recvMessage.DeserializeRaw(reader);
 
         REQUIRE(recvMessage.Updates[1].UpdatedMovement == sendMessage.Updates[1].UpdatedMovement);
+    }
+
+    SECTION("AssignObjectsResponse")
+    {
+        Buffer buff(1000);
+
+        AssignObjectsResponse sendMessage, recvMessage;
+        ObjectData door;
+        door.ServerId = 1234;
+        door.Id = GameId(0, 0x9B0A5);
+        door.CurrentLockData.IsLocked = true;
+        door.CurrentLockData.LockLevel = 25;
+        door.DoorOpenState = 1;
+        sendMessage.Objects.push_back(door);
+        ObjectData chest;
+        chest.ServerId = 1235;
+        chest.Id = GameId(0, 0x3EF03);
+        chest.IsSenderFirst = true;
+        sendMessage.Objects.push_back(chest);
+
+        Buffer::Writer writer(&buff);
+        sendMessage.Serialize(writer);
+
+        Buffer::Reader reader(&buff);
+
+        uint64_t trash;
+        reader.ReadBits(trash, 8); // pop opcode
+
+        recvMessage.DeserializeRaw(reader);
+
+        REQUIRE(sendMessage == recvMessage);
+        REQUIRE(recvMessage.Objects[0].DoorOpenState == 1);
+        REQUIRE(recvMessage.Objects[1].DoorOpenState == 0);
+    }
+
+    SECTION("RequestActionEvents and NotifyActionEvents")
+    {
+        ActionEvent swing;
+        swing.ActionId = 42;
+        swing.State1 = 6547;
+        swing.Tick = 48;
+        swing.ActorId = 12345678;
+        swing.EventName = "attackStart";
+        swing.TargetEventName = "toast";
+        swing.TargetId = 963741;
+        swing.Type = 4;
+        ActionEvent block = swing;
+        block.Tick = 52;
+        block.EventName = "blockStart";
+
+        {
+            Buffer buff(1000);
+            RequestActionEvents sendMessage, recvMessage;
+            sendMessage.Actions[7] = {swing, block};
+            sendMessage.Actions[100003] = {block};
+
+            Buffer::Writer writer(&buff);
+            sendMessage.Serialize(writer);
+            Buffer::Reader reader(&buff);
+            const ClientMessageFactory factory;
+            auto pMessage = factory.Extract(reader);
+            REQUIRE(pMessage);
+            REQUIRE(pMessage->GetOpcode() == sendMessage.GetOpcode());
+            REQUIRE(*CastUnique<RequestActionEvents>(std::move(pMessage)) == sendMessage);
+        }
+
+        {
+            Buffer buff(1000);
+            NotifyActionEvents sendMessage;
+            sendMessage.Actions[7] = {swing, block};
+
+            Buffer::Writer writer(&buff);
+            sendMessage.Serialize(writer);
+            Buffer::Reader reader(&buff);
+            const ServerMessageFactory factory;
+            auto pMessage = factory.Extract(reader);
+            REQUIRE(pMessage);
+            REQUIRE(pMessage->GetOpcode() == sendMessage.GetOpcode());
+            const auto pRecv = CastUnique<NotifyActionEvents>(std::move(pMessage));
+            REQUIRE(*pRecv == sendMessage);
+            // The order the actions were performed in is kept.
+            REQUIRE(pRecv->Actions[7][0].EventName == "attackStart");
+            REQUIRE(pRecv->Actions[7][1].EventName == "blockStart");
+        }
+    }
+}
+
+TEST_CASE("Damaged messages are dropped", "[encoding.damaged]")
+{
+    SECTION("An action count no message holds")
+    {
+        Buffer buff(1000);
+        Buffer::Writer writer(&buff);
+        writer.WriteBits(kRequestActionEvents, 8);
+        Serialization::WriteVarInt(writer, 1);
+        Serialization::WriteVarInt(writer, 7);
+        Serialization::WriteVarInt(writer, 1ull << 40);
+
+        Buffer::Reader reader(&buff);
+        REQUIRE(!ClientMessageFactory{}.Extract(reader));
+    }
+
+    SECTION("An actor named twice")
+    {
+        Buffer buff(1000);
+        Buffer::Writer writer(&buff);
+        writer.WriteBits(kNotifyActionEvents, 8);
+        Serialization::WriteVarInt(writer, 2);
+        Serialization::WriteVarInt(writer, 7);
+        Serialization::WriteVarInt(writer, 0);
+        Serialization::WriteVarInt(writer, 7);
+        Serialization::WriteVarInt(writer, 0);
+
+        Buffer::Reader reader(&buff);
+        REQUIRE(!ServerMessageFactory{}.Extract(reader));
+    }
+
+    SECTION("A movement count no message holds")
+    {
+        Buffer buff(1000);
+        Buffer::Writer writer(&buff);
+        writer.WriteBits(kClientReferencesMoveRequest, 8);
+        Serialization::WriteVarInt(writer, 1234);
+        Serialization::WriteVarInt(writer, 1ull << 33);
+
+        Buffer::Reader reader(&buff);
+        REQUIRE(!ClientMessageFactory{}.Extract(reader));
+    }
+
+    SECTION("An animation variable count no graph has")
+    {
+        Buffer buff(1000);
+        Buffer::Writer writer(&buff);
+        Serialization::WriteVarInt(writer, 1ull << 40);
+        Serialization::WriteVarInt(writer, 0);
+        Serialization::WriteVarInt(writer, 0);
+
+        Buffer::Reader reader(&buff);
+        DecodeGuard::t_failed = false;
+        AnimationVariables variables;
+        variables.ApplyDiff(reader);
+        REQUIRE(DecodeGuard::t_failed);
+        REQUIRE(variables.Booleans.empty());
+        DecodeGuard::t_failed = false;
+    }
+
+    SECTION("A sound message still reads")
+    {
+        Buffer buff(1000);
+        RequestActionEvents sendMessage;
+        sendMessage.Actions[7].resize(2);
+        Buffer::Writer writer(&buff);
+        sendMessage.Serialize(writer);
+
+        Buffer::Reader reader(&buff);
+        REQUIRE(ClientMessageFactory{}.Extract(reader));
     }
 }
 

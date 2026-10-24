@@ -2,29 +2,59 @@
 
 @import 'functions/rem';
 
+// As tall as the window may be, never taller: the window's frame (26 px a side) takes the rest.
 :host {
   position: relative;
   display: flex;
   flex-direction: column;
-}
-
-hr {
-  width: 100%;
+  max-height: calc(100vh - #{$-popup-top + 2 * $-size-gap} - 56px);
 }
 
 .tab-buttons {
+  flex: 0 0 auto;
   display: flex;
-  padding-bottom: 10px;
+  border: 2px solid rgba(240, 232, 214, 0.45);
 
   button {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     display: flex;
+    align-items: center;
     justify-content: center;
+    gap: 0.6rem;
+    min-height: 3rem;
+    font-size: 1.15rem;
+    color: var(--ur-dim);
+
+    &.active {
+      opacity: 1;
+      background: var(--ur-ink);
+      color: #111;
+    }
   }
 }
 
+.tab-count {
+  padding: 0.1rem 0.45rem;
+  border: 2px solid currentColor;
+  font-size: 0.8rem;
+}
+
+.tab-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 1rem 0;
+  padding-right: 0.5rem;
+}
+
 .actions {
-  margin-top: 1rem;
+  flex: 0 0 auto;
   display: flex;
   justify-content: center;
+  padding-top: 0.8rem;
+  border-top: 2px solid rgba(255, 255, 255, 0.2);
+
+  .menu-button {
+    width: 40%;
+  }
 }

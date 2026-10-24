@@ -1,0 +1,42 @@
+# A dead body held still in the player's hand keeps being sent, so the other player still sees it in that hand.
+#
+#   python Tools\VR\live-check.py live-body-hold
+#   python Tools\VR\live-check.py --expect-fail live-body-hold     on a build without the change: must be RED
+#
+# The game holding a body sends its bones while it moves, and stopped two seconds after it came to rest.
+# A body hanging still from a hand counted as at rest: the other game dropped it to the ground under the hand,
+# then pulled it back up into the hand when it moved again.
+# Here: the player takes the bot's dead mage with the right hand, drags it, then stands still holding it.
+log live body hold
+waitfor connected 45
+collect spawn health death ownership
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a human of this bot's (Aspiring Mage, Skyrim.esm 753CB), killed
+npc temp 753CB
+waitfor owned == 1 20
+wait 8
+npclife dead 0
+wait 6
+log CHECK npc dead
+
+log -- the player takes it with the right hand and drags it in 15-unit steps, as live-body-grab does
+# A step of DO walk takes about 0.4 s in the rig (each SetPosition brings up a loading screen), so 12 steps last about 5 s.
+log DO papyrus Actor SheatheWeapon 14
+wait 3
+log DO grab npc right
+wait 4
+log DO walk 0 15 0 12
+waitfor owned == 0 15
+wait 2
+expect bonesago mynpc <= 600
+
+log -- the player stands still, holding it: its bones must keep coming
+wait 14
+expect bonesago mynpc <= 600
+log CHECK game alive
+wait 3
+log done
+stop

@@ -32,7 +32,9 @@ namespace
 {
 extern "C" const IMAGE_DOS_HEADER __ImageBase;
 
-constinit const uint8_t* pBasePtr = reinterpret_cast<const uint8_t*>(&__ImageBase);
+// Not constinit: a newer MSVC refuses a reinterpret_cast in a constant initializer (C2127).
+// Declared first in this file, it is still initialized before kpImageEnd below.
+const uint8_t* pBasePtr = reinterpret_cast<const uint8_t*>(&__ImageBase);
 const uint8_t* kpImageEnd{pBasePtr + ((PIMAGE_NT_HEADERS)(pBasePtr + __ImageBase.e_lfanew))->OptionalHeader.SizeOfImage};
 
 bool InRange(const uint8_t* apObj, const uint8_t* apLo, const uint8_t* apHi)

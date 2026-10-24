@@ -62,6 +62,10 @@ struct Player
     [[nodiscard]] std::chrono::steady_clock::time_point GetLastMovementAt() const noexcept { return m_lastMovementAt; }
     void MarkMovement() noexcept { m_lastMovementAt = std::chrono::steady_clock::now(); }
 
+    // When this player last entered a cell from elsewhere (a load, a door, a fast travel), not a walk between cells.
+    [[nodiscard]] std::chrono::steady_clock::time_point GetLastCellEnterAt() const noexcept { return m_lastCellEnterAt; }
+    void MarkCellEnter() noexcept { m_lastCellEnterAt = std::chrono::steady_clock::now(); }
+
 private:
     uint32_t m_id{0};
     ConnectionId_t m_connectionId;
@@ -77,6 +81,7 @@ private:
     uint32_t m_stringCacheId{0};
     uint16_t m_level{0};
     std::chrono::steady_clock::time_point m_lastMovementAt{};
+    std::chrono::steady_clock::time_point m_lastCellEnterAt{};
     String m_place;
     bool m_hiddenFromPublicPage{false};
     bool m_voiceEnabled{false};

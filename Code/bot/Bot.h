@@ -87,6 +87,11 @@ struct KnownActor
     //! transfer advances it. Handing an actor back with a stale epoch is silently ignored -- three separate bugs
     //! in this family were the same mistake (2026-09-26) -- so the number has to be stored, not guessed.
     uint32_t OwnershipEpoch{};
+    //! Where its owner's game last reported it (ServerReferencesMoveRequest), for `markpos` and `movedfrommark`.
+    glm::vec3 Position{};
+    bool PositionKnown{};
+    //! When its owner's game last sent its bones (a dead body being moved there), for `bonesago`.
+    std::chrono::steady_clock::time_point BonesAt{};
     std::chrono::steady_clock::time_point LastChange{};
     //! What this actor was last seen equipping, by base form id. Empty once it unequips. Last, so that
     //! KnownActor{serverId} still initialises the id.
@@ -118,6 +123,9 @@ struct KnownPlayer
     glm::vec2 Rotation{};
     GameId CellId{};
     GameId WorldSpaceId{};
+    //! Where the player's latest movement update was made; it tells a fresh position from one left over from before a cell change.
+    GameId MovedInCell{};
+    GameId MovedInWorldSpace{};
     TiltedPhoques::String AppearanceBuffer;
     uint32_t ChangeFlags{};
     Tints FaceTints{};
@@ -159,7 +167,7 @@ private:
 
     using Clock = std::chrono::steady_clock;
 
-    template <class T> bool SendMsg(const T& acMessage, bool aUnreliable = false) noexcept;
+    template <class T> bool SendMsg(const T& acMessage, TiltedPhoques::EPacketFlags aFlags = TiltedPhoques::kReliable) noexcept;
 
     void Tick() noexcept;
     void ApplyFakeNetwork() noexcept;
@@ -170,6 +178,8 @@ private:
     void Assign() noexcept;
     void SendCellEntry() noexcept;
     void SendMovement() noexcept;
+    //! Takes a replayed pose as the one `holdpose` sends, keeping the fields that come only now and then.
+    void KeepReplayedPose(const VRPose& acPose) noexcept;
     void SendHealth(float aHealth) noexcept;
     void SendDeath(bool aDead) noexcept;
     void SendHit(uint32_t aTargetId, float aDelta, uint64_t aTick = 0) noexcept;
@@ -192,6 +202,11 @@ private:
     const KnownPlayer* Host() const noexcept;
     //! The player id of the first other player whose character this bot was sent, or 0.
     uint32_t OtherPlayerId() const noexcept;
+    //! A script's target: "other" (the other player's character), "base:<hex>" (the newest NPC copy of that base) or a server id; kNoId if none.
+    uint32_t TargetId(const std::string& acWho) const noexcept;
+    //! "ref:<hex>": the actor the server sent for that placed reference, the newest if it sent more than one; null if none.
+    //! Checks and commands find it the same way.
+    const KnownActor* ActorOfRef(const std::string& acWord) const noexcept;
     //! The same, or the last one found once it has gone: what the server said about a player that left is still about that player.
     uint32_t OtherPlayerIdOrLast() const noexcept;
     //! Move into the cell the host just entered, so a load door does not leave the bot outside.
@@ -243,6 +258,8 @@ private:
     //! with a single cookie, a second "npc" sent before the first was answered overwrote it and the first answer was
     //! dropped (live-copies-left-2's two bears 10 ms apart, one "NPC registered", 2026-10-06).
     std::map<uint32_t, GameId> m_npcCookies;
+    //! The server id of the NPC this bot registered last, for "mynpc": still found once another game runs it.
+    uint32_t m_lastNpcId{0xFFFFFFFF};
     std::string m_serverVersion;
 
     glm::vec3 m_position{};
@@ -268,12 +285,20 @@ private:
     std::map<uint32_t, std::string> m_downStates;
     //! The other player last found, for OtherPlayerIdOrLast.
     mutable uint32_t m_lastOtherPlayerId{0};
+    //! `markpos <who>`: where that actor was reported when the script marked it, by server id, for `movedfrommark`.
+    std::map<uint32_t, glm::vec3> m_positionMarks;
     //! How many times the server sent each downed state for each player id, for `downcount`.
     std::map<uint32_t, std::map<std::string, int>> m_downCounts;
+    // Quest updates the server relayed to this bot, by quest base id (`questupdates`).
+    std::map<uint32_t, int> m_questUpdates;
+    //! The items the server passed on as taken or given by another player's character, by base id, for `invchanges`.
+    std::map<uint32_t, int> m_inventoryChanges;
     //! Where the server said each player respawns (died, fallen or respawned); empty for the game's own spot.
     std::map<uint32_t, std::optional<glm::vec3>> m_respawnPoints;
     //! Why the server last refused a revive this bot asked for, or "none".
     std::string m_lastRefusal{"none"};
+    //! The caster's perk factors of the effects other games applied (NotifyAddTarget), by spell and effect base id, in arrival order.
+    std::map<uint32_t, std::map<uint32_t, std::vector<float>>> m_addTargets;
     //! Items lying in the world as the server has told this bot, by the server's id: what `drops` counts and
     //! `pickup any` takes. The server sends one when an item is dropped in range and again on entering its cell.
     std::map<uint32_t, GameId> m_drops;
@@ -312,6 +337,7 @@ private:
     uint64_t m_firstClashTick{}; //!< and the first
     uint32_t m_objectMoves{}; //!< world-object moves relayed to this bot
     uint32_t m_activationsBack{}; //!< activations relayed to this bot in its own name: its own, sent back by a game
+    uint32_t m_activations{}; //!< every activation relayed to this bot, whoever did it
     std::vector<std::pair<uint32_t, std::string>> m_names; // player id -> username
 
     size_t m_pc = 0;
@@ -323,19 +349,27 @@ private:
     //! variables, actions and VR pose, exactly as any client is given them -- and when each piece arrived. Replayed
     //! as this bot's own character (or an NPC it owns), it is a remote body that moves the way a real one does,
     //! which a bot walking in straight lines with no animation data never was.
+    //! A movement update and a batch of actions (NotifyActionEvents) are separate entries, each at the time it arrived.
+    //! The game's client sends a frame's early movement chunks before its actions, so an action is never tied to a movement update.
     struct CapturedUpdate
     {
         uint32_t AtMs{};
+        bool HasUpdate{false};
         ReferenceUpdate Update{};
+        TiltedPhoques::Vector<ActionEvent> Actions{};
     };
     std::vector<CapturedUpdate> m_capture;
     uint32_t m_captureId{};
     bool m_capturing{false};
     Clock::time_point m_captureStart{};
     size_t m_replayIndex{};
+    //! The tick of the last replayed message: each one gets a later tick, or the game drops the second of a pair as a duplicate.
+    uint64_t m_lastReplayTick{};
     uint32_t m_replayTarget{};
     int m_replayRound{};
     bool m_replaying{false};
+    //! `quiet`: no movement goes out, not even the heartbeat, as when the owner's game freezes.
+    bool m_quiet{false};
     glm::vec3 m_replayBase{};
     //! `handtargets`: hand positions (root space, left then right) written into every replayed VR pose instead of the
     //! recorded ones -- the rig's headset has no real controllers, so a recorded pose has the hands on the floor.

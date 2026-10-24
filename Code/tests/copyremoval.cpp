@@ -38,7 +38,7 @@ TEST_CASE("the waiting list cannot grow past the bound, however the game behaves
     // The exact failure of 2026-09-27: the handle count never reaches zero because the holders are the game's
     // own lists. Five hundred removals in a row, none of them ever released.
     std::deque<int> waiting;
-    for (int i = 0; i < 500; ++i)
+    for (int i = 0; i < static_cast<int>(kMaxWaiting) * 2; ++i)
     {
         if (OnRemoved(3, waiting.size()) == Action::WaitDisabled)
             waiting.push_back(i);
@@ -48,6 +48,17 @@ TEST_CASE("the waiting list cannot grow past the bound, however the game behaves
     }
 
     REQUIRE(waiting.size() == kMaxWaiting);
+}
+
+TEST_CASE("a player leaving with a hundred and thirty copies held frees none of them early", "[copyremoval]")
+{
+    // A burst as large as one seen in play: every copy still held, none forced out by the bound.
+    std::deque<int> waiting;
+    for (int i = 0; i < 130; ++i)
+        if (OnRemoved(3, waiting.size()) == Action::WaitDisabled)
+            waiting.push_back(i);
+
+    REQUIRE(waiting.size() == 130);
 }
 
 TEST_CASE("a waiting copy is released once its handles clear", "[copyremoval]")

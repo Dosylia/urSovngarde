@@ -151,12 +151,14 @@ void EnsureEngineFixes7Settings(const std::filesystem::path& acGamePath)
 // Data drive this. The intent is make sure we can put this in an external file for easy updates
 // (although the format would probably be updated to something standard like JSON then, it 
 // just isn't worth the additional code while there is only one)
+// A validator is searched over the whole file, and MSVC 14.51 gives ^ its standard meaning, the start of the text only.
+// So a line start is written (^|\n): with ^ alone a newer build blocked Engine Fixes whenever its key was not on the first line.
 const DllGreyEntry kDllGreyList[] = 
 {
     {
         L"EngineFixes.dll", 
         L"Data\\SKSE\\Plugins\\EngineFixes.toml",
-        "^VerboseLogging\\s*=",         // Matches EngineFixes Release 6.x series.
+        "(^|\\n)VerboseLogging\\s*=",   // Matches EngineFixes Release 6.x series.
         "# SKYRIM TOGETHER REBORN marker for EngineFixes required compatibility settings v2, DO NOT CHANGE THIS LINE",
 
         L"For EngineFixes to work with Skyrim Together Reborn, some settings are required:\n"
@@ -189,7 +191,7 @@ const DllGreyEntry kDllGreyList[] =
     {
         L"EngineFixes.dll", 
         L"Data\\SKSE\\Plugins\\EngineFixes.toml",
-        "^bVerboseLogging\\s*=",        // Matches EngineFixes Release 7.x series.
+        "(^|\\n)bVerboseLogging\\s*=",  // Matches EngineFixes Release 7.x series.
         "",                             // No sig regex
         L"",                            // No prompt
         "",                             // No sig to insert

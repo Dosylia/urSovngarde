@@ -1,0 +1,65 @@
+# A copy the server removes before it has loaded goes, rather than staying as an actor of the player's own game.
+#
+#   python Tools\VR\live-check.py live-copy-door-race
+#
+# This bot comes back into the player's view and goes through a door a moment later.
+# In play: one player arrives by fast travel next to the other, who is already going through a door.
+# The server sends this bot's character, then removes it, before the game has recorded the copy (a frame or two).
+# Before the change the removal left the copy behind without its gear, and the game then announced it to the server as an NPC of its own.
+# The window is narrow, so the bot tries four gaps between arriving and the door; "Removed before loading" says one came in time.
+log live copy door race
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+additem 13985 1
+equip 13985 both
+wait 3
+
+log -- arrive, and go into Dragonsreach 60 ms later
+teleport away
+wait 6
+teleport back
+wait 0.06
+cell 165A3
+wait 4
+cell out
+wait 6
+
+log -- 40 ms later
+teleport away
+wait 6
+teleport back
+wait 0.04
+cell 165A3
+wait 4
+cell out
+wait 6
+
+log -- 25 ms later
+teleport away
+wait 6
+teleport back
+wait 0.025
+cell 165A3
+wait 4
+cell out
+wait 6
+
+log -- 10 ms later
+teleport away
+wait 6
+teleport back
+wait 0.01
+cell 165A3
+wait 4
+cell out
+wait 8
+
+log CHECK logged Removed before loading: server character [0-9A-F]+ is gone before its copy [0-9A-F]+ loaded
+log CHECK absent No leveled pick recoverable for temp base
+log -- out again: one copy, dressed
+log CHECK copy equipped 13985
+log CHECK game alive
+log done
+stop

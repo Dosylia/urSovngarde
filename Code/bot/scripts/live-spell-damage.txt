@@ -1,0 +1,33 @@
+# Spell damage on an NPC lands once, in the game that runs it: another player's AddTarget is not applied there, its health change is.
+#
+#   python Tools\VR\live-check.py live-spell-damage
+#
+# A player's destruction spell on an NPC another game runs reaches that game twice: as an AddTarget at the spell's base
+# magnitude, and as health changes of what the caster's game dealt, perks, burn and difficulty included (HookDamageActor).
+# The owner must apply only the changes, or the NPC takes the damage twice; HookDamageActor drops damage from another
+# player's copy. Here the game owns a Lydia (base A2C8E) at 200 health, and the bot sends both kinds as a caster's game would:
+# Firebolt (1C789) with its fire damage effect (1CEA1, 40), then a hit of -30.
+log live spell damage
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+log -- a Lydia this game owns, at 200 health
+log DO place A2C8E
+wait 6
+log DO papyrus Actor ForceActorValue placed s:Health f:200
+wait 4
+waitfor health base:A2C8E == 200 10
+
+log -- the bot's Firebolt as an AddTarget: not applied by the NPC's own game
+effect base:A2C8E 1C789 1CEA1 40
+wait 4
+expect health base:A2C8E == 200
+
+log -- the bot's health change of -30: applied
+hit base:A2C8E -30
+wait 4
+expect health base:A2C8E == 170
+log CHECK game alive
+log done
+stop

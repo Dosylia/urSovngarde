@@ -1,59 +1,63 @@
-<div class="container">
-  <div class="instructions">
-    <p [innerHtml]="'COMPONENT.CONNECT.INFO.SERVER_ADDRESS' | transloco"></p>
-    <p class="warning">
-      {{ 'COMPONENT.CONNECT.INFO.HELGEN' | transloco }}
-    </p>
-  </div>
+<app-connecting
+  *ngIf="connecting; else form"
+  [address]="address"
+  (cancel)="cancelConnecting()"
+></app-connecting>
 
-  <input
-    #input
-    type="text"
-    [placeholder]="'COMPONENT.CONNECT.ADDRESS' | transloco"
-    (keydown.enter)="connect()"
-    [(ngModel)]="address"
-    spellcheck="false"
-  />
-  <input
-    [type]="hidePassword ? 'password' : 'text'"
-    [placeholder]="'COMPONENT.CONNECT.PASSWORD' | transloco"
-    spellcheck="false"
-    [(ngModel)]="password"
-    (keydown.enter)="connect()"
-  />
-  <div class="password-options">
-    <span>
-      <input type="checkbox" id="save-password" [(ngModel)]="savePassword" />
-      <label for="save-password">{{
-        'COMPONENT.CONNECT.SAVE_PASSWORD' | transloco
-      }}</label>
-    </span>
-    <span>
-      <input type="checkbox" id="hide-password" [(ngModel)]="hidePassword" />
-      <label for="hide-password">{{
-        'COMPONENT.CONNECT.HIDE_PASSWORD' | transloco
-      }}</label>
-    </span>
-  </div>
+<ng-template #form>
+  <div class="container">
+    <div class="instructions">
+      <p [innerHtml]="'COMPONENT.CONNECT.INFO.SERVER_ADDRESS' | transloco"></p>
+      <p class="warning">
+        {{ 'COMPONENT.CONNECT.INFO.HELGEN' | transloco }}
+      </p>
+    </div>
 
-  <app-action-buttons>
-    <button
-      [disabled]="connecting"
-      (click)="connect()"
-      data-style-ornament="simple"
-    >
-      {{ 'COMPONENT.CONNECT.CONNECT' | transloco }}
+    <input
+      #input
+      type="text"
+      [placeholder]="'COMPONENT.CONNECT.ADDRESS' | transloco"
+      (keydown.enter)="connect()"
+      [(ngModel)]="address"
+      spellcheck="false"
+    />
+    <input
+      [type]="hidePassword ? 'password' : 'text'"
+      [placeholder]="'COMPONENT.CONNECT.PASSWORD' | transloco"
+      spellcheck="false"
+      [(ngModel)]="password"
+      (keydown.enter)="connect()"
+    />
+    <div class="password-options">
+      <span>
+        <input type="checkbox" id="save-password" [(ngModel)]="savePassword" />
+        <label for="save-password">{{
+          'COMPONENT.CONNECT.SAVE_PASSWORD' | transloco
+        }}</label>
+      </span>
+      <span>
+        <input type="checkbox" id="hide-password" [(ngModel)]="hidePassword" />
+        <label for="hide-password">{{
+          'COMPONENT.CONNECT.HIDE_PASSWORD' | transloco
+        }}</label>
+      </span>
+    </div>
+
+    <app-action-buttons>
+      <button
+        class="menu-button compact primary"
+        [disabled]="!address.trim()"
+        (click)="connect()"
+      >
+        {{ 'COMPONENT.CONNECT.CONNECT' | transloco }}
+      </button>
+      <button class="menu-button compact" (click)="cancel()">
+        {{ 'COMPONENT.CONNECT.CANCEL' | transloco }}
+      </button>
+    </app-action-buttons>
+    <hr />
+    <button class="menu-button compact" (click)="openServerList()">
+      {{ 'COMPONENT.CONNECT.PUBLIC_SERVERS' | transloco }}
     </button>
-    <button
-      [disabled]="connecting"
-      (click)="cancel()"
-      data-style-ornament="simple"
-    >
-      {{ 'COMPONENT.CONNECT.CANCEL' | transloco }}
-    </button>
-  </app-action-buttons>
-  <hr />
-  <button (click)="openServerList()" data-style-ornament="simple">
-    {{ 'COMPONENT.CONNECT.PUBLIC_SERVERS' | transloco }}
-  </button>
-</div>
+  </div>
+</ng-template>

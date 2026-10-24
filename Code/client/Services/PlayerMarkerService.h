@@ -1,10 +1,12 @@
 #pragma once
 
 #include <Structs/GameId.h>
+#include <Events/EventDispatcher.h>
 
 struct World;
 struct ConnectedEvent;
 struct DisconnectedEvent;
+struct UpdateEvent;
 struct NotifyPlayerJoined;
 struct NotifyPlayerLeft;
 struct NotifyPlayerWhereabouts;
@@ -17,7 +19,7 @@ struct Actor;
  * @brief Other players as world map icons ("<name>, near Whiterun") from NotifyPlayerWhereabouts, hidden when in sight.
  * Uses SkyrimTogether.esp's records (Tools/VR/player-markers.py).
  */
-struct PlayerMarkerService
+struct PlayerMarkerService final : BSTEventSink<TESLoadGameEvent>
 {
     PlayerMarkerService(World& aWorld, entt::dispatcher& aDispatcher);
     ~PlayerMarkerService() noexcept = default;
@@ -32,6 +34,8 @@ protected:
     void OnPlayerJoined(const NotifyPlayerJoined& acMessage) noexcept;
     void OnPlayerLeft(const NotifyPlayerLeft& acMessage) noexcept;
     void OnWhereabouts(const NotifyPlayerWhereabouts& acMessage) noexcept;
+    void OnUpdate(const UpdateEvent& acEvent) noexcept;
+    BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
 private:
     // One marker and the player it shows, if any.
@@ -44,6 +48,7 @@ private:
         uint32_t BodyCellId{0}; // the cell of their body in our game, when the marker follows that instead
         glm::vec3 Position{};
         bool Parked{true}; // waiting in the holding cell, on no map
+        bool OnMap{false}; // put on the world map's marker list at least once
     };
 
     bool FindForms() noexcept;
@@ -53,6 +58,8 @@ private:
     void Park(Slot& aSlot, size_t aIndex) noexcept;
     void Free(Slot& aSlot, size_t aIndex) noexcept;
     void SetMapMarkerName(TESObjectREFR* apMarker, const String& acText) noexcept;
+    void ShowOnMap(Slot& aSlot) noexcept;
+    void HideFromMap(Slot& aSlot) noexcept;
     void FreeAll() noexcept;
 
     World& m_world;
@@ -61,6 +68,7 @@ private:
     entt::scoped_connection m_joinedConnection;
     entt::scoped_connection m_leftConnection;
     entt::scoped_connection m_whereaboutsConnection;
+    entt::scoped_connection m_updateConnection;
 
     bool m_formsLooked{false};
     bool m_formsFound{false};
@@ -71,4 +79,6 @@ private:
     TESObjectCELL* m_pHoldingCell{nullptr};
     std::array<Slot, kMapMarkers> m_mapSlots{};
     std::unordered_map<uint32_t, String> m_names;
+    //! Set by a save load or a disconnect: our markers are taken off the map's list once the game is in the world again.
+    bool m_sweepDue{false};
 };

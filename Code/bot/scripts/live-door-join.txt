@@ -1,0 +1,58 @@
+# A door used while a game was elsewhere is as it was left when that game comes back into its cell.
+#
+#   python Tools\VR\live-check.py live-door-join
+#   python Tools\VR\live-check.py --expect-fail live-door-join     on a build without the change: must be RED
+#
+# A door's use reaches only the players who have its cell loaded. A player who came in later found it as their own
+# game last had it, open on one screen and shut on the other.
+# Now the server keeps each door's state after an activation, and a game entering the cell is given it.
+# Here: Helgen keep's door 9B0A5 (5DE24, not a load door), closed. The player leaves for Riverwood's inn while the bot
+# stays in the keep, so the server keeps the keep's objects. The bot opens the door, and the player comes back.
+log live door join
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- the player into Helgen's keep, next to the door, which is closed first
+log DO console player.moveto 9B0A5
+wait 12
+cell 5DE24
+stay
+wait 4
+# DevBench's Papyrus calls take effect a little after they return, so each one is given a few seconds.
+log DO papyrus ObjectReference SetOpen 9B0A5 b:false
+wait 6
+log REQUIRE ref 9B0A5 closed
+wait 3
+
+log -- the player leaves for Riverwood's inn; the bot stays in the keep
+# Indoors to indoors: console travel out to Tamriel has hit Community Shaders' crash at a load (+0x1208c8) in the rig.
+log DO console coc RiverwoodSleepingGiantInn
+wait 20
+log REQUIRE player cell 133C6
+wait 3
+
+log -- the bot opens the door while the player is away: it does not reach the player
+activate 9B0A5 by me 3
+wait 4
+log CHECK absent Door 9B0A5: opened in another game
+
+log -- the player comes back: the door is open here too
+log DO console player.moveto 9B0A5
+wait 15
+log CHECK ref 9B0A5 open
+log CHECK logged Door 9B0A5: open in the other games when this game came in; set open here from state 3
+# Setting a door is not an activation here: nothing goes back out.
+expect activations == 0
+
+wait 3
+log CHECK game alive
+log DO god off
+# The player is left in the keep: a jump out at once has hit Community Shaders' crash at a load (+0x1208c8) in the rig.
+# Run this script after a fresh `headless.ps1 up`, which loads the save again.
+cell out
+wait 2
+log done
+stop

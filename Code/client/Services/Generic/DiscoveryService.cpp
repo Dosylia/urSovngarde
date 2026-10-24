@@ -255,27 +255,34 @@ void DiscoveryService::VisitForms() noexcept
     static Vector<uint32_t> s_removedForms;
     s_removedForms.clear();
 
-    const auto visitor = [this, visit](TESObjectREFR* apReference)
+    const auto visitor = [this, visit](TESObjectREFR* apReference, uint32_t aHandle)
     {
         const auto formId = apReference->formID;
 
         auto it = m_forms.find(formId);
-        if (it != m_forms.end() && it->second.pReference != apReference)
+        // Same form id but another object (recycled temporary id, or the form was reloaded).
+        // Another handle at the same address is another object too: the freed one's memory was given to a new one.
+        const bool cOtherHandle = it != m_forms.end() && it->second.pReference == apReference && it->second.Handle && it->second.Handle != aHandle;
+        if (it != m_forms.end() && (it->second.pReference != apReference || cOtherHandle))
         {
-            // Same form id but another object (recycled temporary id, or the form was reloaded).
-            m_dispatcher.trigger(ActorRemovedEvent(formId));
+            if (cOtherHandle)
+                spdlog::info("Discovery: {:X} came back at the same address with another handle ({:X}, was {:X}), so it is another object", formId, aHandle, it->second.Handle);
+
+            // The object the entry was for is gone, and the one under this id now is not it.
+            m_dispatcher.trigger(ActorRemovedEvent(formId, nullptr));
             m_forms.erase(it);
             it = m_forms.end();
         }
 
         if (it == m_forms.end())
         {
-            m_forms[formId] = KnownForm{apReference, visit, {}};
+            m_forms[formId] = KnownForm{apReference, aHandle, visit, {}};
 
             m_dispatcher.enqueue(ActorAddedEvent(formId));
         }
         else
         {
+            it->second.Handle = aHandle;
             it->second.LastSeenVisit = visit;
             it->second.MissingSince = {};
         }
@@ -283,18 +290,20 @@ void DiscoveryService::VisitForms() noexcept
 
     for (uint32_t i = 0; i < pProcessLists->highActorHandleArray.length; ++i)
     {
-        TESObjectREFR* const pRefr = TESObjectREFR::GetByHandle(pProcessLists->highActorHandleArray[i]);
+        const uint32_t cHandle = pProcessLists->highActorHandleArray[i];
+        TESObjectREFR* const pRefr = TESObjectREFR::GetByHandle(cHandle);
         if (pRefr)
         {
             if (pRefr->GetNiNode())
             {
-                visitor(pRefr);
+                visitor(pRefr, cHandle);
             }
         }
     }
 
     // Not in actor holder
-    visitor(PlayerCharacter::Get());
+    PlayerCharacter* const pPlayer = PlayerCharacter::Get();
+    visitor(pPlayer, pPlayer->GetHandle().handle.iBits);
 
     // We dispatch removal events first to prevent needless reallocations
     for (auto& [formId, known] : m_forms)
@@ -305,7 +314,7 @@ void DiscoveryService::VisitForms() noexcept
         if (known.MissingSince == std::chrono::steady_clock::time_point{})
             known.MissingSince = now;
 
-        const bool isSameObject = TESForm::GetById(formId) == static_cast<TESForm*>(known.pReference);
+        const bool isSameObject = known.Handle && TESObjectREFR::GetByHandle(known.Handle) == known.pReference;
 
         // Copies of actors owned by another player are removed right away once their 3D is gone.
         // The server may already want to respawn them (after a load door), and that request is dropped while the old copy exists.
@@ -331,8 +340,11 @@ void DiscoveryService::VisitForms() noexcept
     {
         // A conform can remove both the 3D and the high-process handle.
         // Keep the existing discovery entry so rebuilding it does not cancel its assignment.
-        // TODO: GetById performance in loop?
-        if (auto* pActor = Cast<Actor>(TESForm::GetById(formId)); pActor && !pActor->IsDeleted())
+        const auto cKnown = m_forms.find(formId);
+        TESObjectREFR* pLive = cKnown != m_forms.end() && cKnown->second.Handle ? TESObjectREFR::GetByHandle(cKnown->second.Handle) : nullptr;
+        if (cKnown != m_forms.end() && pLive != cKnown->second.pReference)
+            pLive = nullptr;
+        if (auto* pActor = Cast<Actor>(pLive); pActor && !pActor->IsDeleted())
         {
             using ReconciliationStage = ActorExtension::ReconciliationStage;
             const auto cStage = pActor->GetExtension()->Reconciliation;
@@ -347,7 +359,7 @@ void DiscoveryService::VisitForms() noexcept
 
         // Dispatched exactly once per removal.
         m_forms.erase(formId);
-        m_dispatcher.trigger(ActorRemovedEvent(formId));
+        m_dispatcher.trigger(ActorRemovedEvent(formId, Cast<Actor>(pLive)));
     }
 
     // Dispatch all adds

@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { faHandshakeSimple } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faHandshakeSimple, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { Subject } from 'rxjs';
 import { PopupNotification } from '../models/popup-notification';
 import { Sound, SoundService } from './sound.service';
@@ -25,13 +25,25 @@ export class PopupNotificationService {
       messageKey: 'SERVICE.PLAYER_LIST.PARTY_INVITE',
       messageParams: { from },
       icon: faHandshakeSimple,
-      duration: 30000,
+      // Short: the invite also waits in the party tab, and the Party button counts it.
+      duration: 8000,
       actions: [
         {
           nameKey: 'COMPONENT.NOTIFICATIONS.ACCEPT',
           callback,
         },
       ],
+    });
+  }
+
+  /** A short line at the top of the panel saying that something was done or failed; the action plays its own sound. */
+  public addToast(messageKey: string, messageParams?: Record<string, any>, kind: 'ok' | 'bad' = 'ok') {
+    this.message.next({
+      messageKey,
+      messageParams,
+      icon: kind === 'ok' ? faCheck : faXmark,
+      duration: 4000,
+      kind,
     });
   }
 

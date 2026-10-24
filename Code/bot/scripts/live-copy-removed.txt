@@ -1,0 +1,47 @@
+# A copy the server removes is not freed while the game still holds it.
+#
+#   python Tools\VR\live-check.py live-copy-removed
+#   python Tools\VR\live-check.py --expect-fail live-copy-removed     on a build without the fix: must be RED
+#
+# When the server removes a character (its owner let go and nobody else may take it, a summon whose time ran out,
+# a player leaving), every game deletes its copy. A copy the game still holds handles on was freed at once, and two
+# players crashed within 7 s of each other on 2026-10-18, each just after such deletions.
+# Here: six bears registered as this bot's summons stand next to the player, so the game holds its copies; then the
+# bot lets each go, and the server removes them. The game must disable them and wait until it lets go of them.
+log live copy removed
+waitfor connected 45
+collect spawn
+expect known me
+waitfor known other 40
+wait 5
+
+log -- six summoned bears of this bot's next to the player
+npc temp 23A8A summon
+npc temp 23A8A summon
+npc temp 23A8A summon
+npc temp 23A8A summon
+npc temp 23A8A summon
+npc temp 23A8A summon
+waitfor owned == 6 30
+wait 8
+log DO god on
+# The game made a copy of each (its log, not DevBench: a summon copy's position is not always readable there).
+log REQUIRE atleast 6 Spawn Actor: FF\w+, and NPC .*[Bb]ear
+
+log -- the bot lets them go; the server removes summons for everyone
+release any
+release any
+release any
+release any
+release any
+release any
+wait 6
+log REQUIRE logged (DeleteClaim: deleting \w+ while something still holds it -- deleted because the server removed it|Temporary Remote Held \w+: .* the server removed it)
+log CHECK absent DeleteClaim: deleting \w+ while something still holds it -- deleted because the server removed it
+log CHECK logged Temporary Remote Held \w+: \d+ handle\(s\) still on it, disabled and queued .*; the server removed it
+wait 5
+log CHECK game alive
+log DO god off
+wait 3
+log done
+stop

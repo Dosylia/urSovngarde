@@ -1,0 +1,49 @@
+# Right after the party leader arrives outdoors, the server waits 10 s before handing the leader the NPCs another game runs.
+#
+#   python Tools\VR\live-check.py live-npc-grace-outdoors
+#   python Tools\VR\live-check.py --expect-fail live-npc-grace-outdoors     on a build without the change: must be RED
+#
+# live-npc-grace arrives indoors.
+# Outdoors a game sends its grid shift before its cell entry, and the wait starts at the grid shift.
+# The leader's game also claims each NPC it loads, and that claim waits as an assignment does.
+# Here: Lydia (A2C94, the follower in the test save) waits at the start cell with the bot, no longer the player's
+# teammate. The player travels seventeen cells north, so the bot is given her, and comes back next to her.
+log live npc grace outdoors
+waitfor connected 45
+collect ownership party
+expect known me
+waitfor known other 40
+ownership accept
+wait 5
+
+log DO god on
+log -- Lydia next to the player, waiting there, and no longer the player's teammate; the bot stays here
+log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+waitfor known ref:A2C94 40
+stay
+wait 3
+
+log -- the player travels seventeen cells north; the bot, still next to her, is given her
+log DO console cow Tamriel 34 8
+waitfor ownedby ref:A2C94 me 60
+expect ownedby ref:A2C94 me
+wait 5
+
+log -- the player comes back outdoors: the bot keeps her for a while, then she goes to the leader
+log DO console cow Tamriel 34 -9
+waitfor nearby other 60
+wait 5
+expect ownedby ref:A2C94 me
+waitfor ownedby ref:A2C94 other 20
+expect ownedby ref:A2C94 other
+wait 3
+
+log CHECK game alive
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:0
+log DO papyrus Actor SetPlayerTeammate A2C94 b:true b:false
+log DO god off
+wait 2
+log done
+stop

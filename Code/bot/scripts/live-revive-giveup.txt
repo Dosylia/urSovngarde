@@ -40,7 +40,7 @@ expect downstate other respawned
 wait 2
 log CHECK logged PlayerService: the player gave up the wait
 log CHECK logged PlayerService: the heartbeat sound stopped
-log CHECK logged VRBanner: 'YOU DIED' shown
+log CHECK logged VRBanner: 'YOU DIED( / [^']+)?' shown
 wait 10
 log CHECK logged VRBanner: '[^']+' shown for 3\.0 s
 log CHECK spot back 150

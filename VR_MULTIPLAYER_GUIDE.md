@@ -62,18 +62,19 @@ Edit these only while the server is closed.
 
 Already done on the host's PC; repeat these steps if the router or PC changes.
 
-1. **Router (Orange Livebox)**, `http://192.168.1.1`:
-   - **Network → DHCP → Static leases:** `DESKTOP-5JBCN0L` → `192.168.1.10`.
-   - **Network → NAT/PAT:** internal port `10578`, external port `10578`, protocol **UDP**, device
-     `DESKTOP-5JBCN0L`, external IP **Toutes** (all). Make sure the device is picked from the
-     dropdown and isn't typed by hand.
-   - **Firewall level:** `Moyen` is fine.
+1. **Router**, its admin page (often `http://192.168.1.1`):
+   - **DHCP → static lease:** give the host PC (`<host PC name>`) a fixed local address, for example
+     `192.168.1.10`.
+   - **Port forwarding (NAT/PAT):** internal port `10578`, external port `10578`, protocol **UDP**, device
+     `<host PC name>`, from any external IP. Make sure the device is picked from the dropdown and isn't
+     typed by hand.
+   - **Firewall level:** medium is fine.
 2. **Windows Firewall:** run once in **Terminal (Admin)**:
    ```powershell
    New-NetFirewallRule -DisplayName "Skyrim Together Server (UDP 10578)" -Direction Inbound -Protocol UDP -LocalPort 10578 -Action Allow -Profile Any
    ```
-3. **Public IP:** open https://api.ipify.org. At the time of writing it is `86.248.47.218`. Orange can
-   change it after a Livebox restart; if the friend suddenly can't connect, check it again.
+3. **Public IP:** open https://api.ipify.org on the host PC. The internet provider can change it after a
+   router restart; if the friend suddenly can't connect, check it again.
 
 ---
 
@@ -87,7 +88,7 @@ By hand: create the folder `%LOCALAPPDATA%\SkyrimTogetherVR\` if it doesn't exis
 | Who | Line 1 | Line 2 |
 |---|---|---|
 | Host (server on the same PC) | `127.0.0.1:10578` | server password, if one is set |
-| Friend | `86.248.47.218:10578` (host's public IP) | server password, if one is set |
+| Friend | `<host public IP>:10578` | server password, if one is set |
 
 Just the address, nothing else: no `http://` and no quotes.
 

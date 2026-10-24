@@ -26,8 +26,12 @@ log DO papyrus Actor SheatheWeapon 14
 wait 3
 log DO grab npc right
 wait 4
+log DO mark body npc
 log DO walk 0 15 0 30
 wait 10
+# The body itself must have come along (its pelvis, where it is drawn), not only the log lines about it.
+log CHECK moved body atleast 100
+log CHECK near body 250
 log CHECK logged Body \w+ \(server id \w+\) is being moved here; asking for it
 log CHECK logged VRBodySync: body \w+ is being moved here
 log CHECK game alive

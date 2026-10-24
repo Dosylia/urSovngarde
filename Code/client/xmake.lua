@@ -71,6 +71,9 @@ target(name)
         "dbghelp",
         "kernel32")
 
+    -- The game's font library is zlib-compressed (BannerPicture.cpp, built for both games).
+    add_packages("zlib")
+
     if isVR then
         add_defines("SKYRIMVR")
         -- Only the header is used: the game's own openvr_api.dll is called at runtime (VRDashboard.cpp).

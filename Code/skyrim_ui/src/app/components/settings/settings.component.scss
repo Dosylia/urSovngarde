@@ -7,9 +7,10 @@
   display: block;
 }
 
+// What is left of the window once its frame (26 px a side) and the Back button are in.
 .container {
   overflow: auto;
-  max-height: 60vh;
+  max-height: calc(100vh - #{$-popup-top + 2 * $-size-gap + 6rem} - 56px);
   padding-right: 1rem;
 
   .settings {
@@ -23,11 +24,7 @@
       border-bottom: 2px solid;
 
       .version {
-        color: green;
-
-        .outdated {
-          color: red;
-        }
+        color: var(--ur-ok);
       }
 
       .flex-item {
@@ -70,6 +67,25 @@
     max-width: 10em;
     font-size: inherit;
   }
+
+  // The label toggles its checkbox: it lights up under the laser like a button.
+  & > label[for] {
+    cursor: pointer;
+
+    &:hover {
+      color: var(--ur-gold-hi);
+    }
+  }
+}
+
+.setting-value {
+  flex: 0 0 3.5em;
+  text-align: right;
+  color: var(--ur-dim);
+}
+
+.actions .menu-button {
+  width: 40%;
 }
 
 .actions {

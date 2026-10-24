@@ -1,5 +1,6 @@
 #include <Structs/AnimationVariables.h>
 #include <TiltedCore/Serialization.hpp>
+#include <DecodeGuard.h>
 #include <iostream>
 
 bool AnimationVariables::operator==(const AnimationVariables& acRhs) const noexcept
@@ -113,6 +114,15 @@ void AnimationVariables::ApplyDiff(TiltedPhoques::Buffer::Reader& aReader)
     size_t booleansSize = TiltedPhoques::Serialization::ReadVarInt(aReader);
     size_t integersSize = TiltedPhoques::Serialization::ReadVarInt(aReader);
     size_t floatsSize   = TiltedPhoques::Serialization::ReadVarInt(aReader);
+    // A behavior graph syncs a few hundred variables at most; a larger count is a damaged message.
+    constexpr uint64_t cMaxVariables = 1024;
+    if (!DecodeGuard::Within(booleansSize, cMaxVariables) || !DecodeGuard::Within(integersSize, cMaxVariables) || !DecodeGuard::Within(floatsSize, cMaxVariables))
+    {
+        Booleans.clear();
+        Integers.clear();
+        Floats.clear();
+        return;
+    }
     if (Integers.size() != integersSize)
         Integers.assign(integersSize, 0);
     if (Floats.size() != floatsSize)

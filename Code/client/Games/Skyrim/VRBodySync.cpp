@@ -2791,6 +2791,18 @@ TiltedPhoques::Vector<uint32_t> s_touchCandidates;
 // When the owner's bones last moved a dead body here (ApplyRemotePoses). See IsRemoteBodyGrabbedHere.
 std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_bodyPosedByOwnerAt;
 
+// Where PlaceCorpse last put each copy's body, and how its moves went.
+struct PlacedCorpse
+{
+    std::chrono::steady_clock::time_point NextAt{};
+    std::chrono::steady_clock::time_point MovedAt{};
+    bool SayAfter = false;
+    glm::vec3 WantedAt{};
+    float ApartBeforeMove = -1.f; // how far it lay when last moved for this place; -1: not moved yet
+    uint32_t Fruitless = 0;
+};
+std::unordered_map<uint32_t, PlacedCorpse> s_placedCorpses;
+
 // How close the nearer of the player's hands is to any node of a body, in units; very large when unknown.
 // Every node counts, not only the root: a dragon is dragged by a wing or the tail, far from its root.
 float NearestHandToBody(void* apBodyRoot) noexcept
@@ -4121,22 +4133,18 @@ void PulseClashHaptics(const uint8_t aSide) noexcept
         VRHaptics::Pulse(aSide == 1, 3999);
 }
 
+void ForgetCorpse(const uint32_t aFormId) noexcept
+{
+    s_placedCorpses.erase(aFormId);
+    s_bodyPosedByOwnerAt.erase(aFormId);
+}
+
 bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
 {
     // A corpse is drawn from its ragdoll, and moving the reference (ForcePosition, MoveTo, SetPosition) leaves the ragdoll behind.
     // So each of the ragdoll's rigid bodies is moved by the same offset, as PLANCK warps a ragdoll.
     // PLANCK's main.cpp does it with `rb->getRigidMotion()->setTransform` and `updateMovedBodyInfo`, velocities zeroed.
     // Covered by `live-corpse-place`.
-    struct Placed
-    {
-        std::chrono::steady_clock::time_point NextAt{};
-        std::chrono::steady_clock::time_point MovedAt{};
-        bool SayAfter = false;
-        glm::vec3 WantedAt{};
-        float ApartBeforeMove = -1.f; // how far it lay when last moved for this place; -1: not moved yet
-        uint32_t Fruitless = 0;
-    };
-    static std::unordered_map<uint32_t, Placed> s_placed;
     if (!apActor)
         return false;
     const auto cNow = std::chrono::steady_clock::now();
@@ -4147,7 +4155,7 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
         cPosed != s_bodyPosedByOwnerAt.end() && cNow - cPosed->second < std::chrono::milliseconds(1500))
         return false;
 
-    auto& placed = s_placed[apActor->formID];
+    auto& placed = s_placedCorpses[apActor->formID];
     if (cNow < placed.NextAt)
         return false;
     placed.NextAt = cNow + std::chrono::milliseconds(500);
@@ -4159,6 +4167,9 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     void* pRoot = apActor->GetNiNode();
     if (!(cScale > 0.f) || !pRoot || !s_setPositionAndRotation.Get())
         return false;
+
+    // TEMPORARY: the walk and the move are timed for the "moved there" line, against the 20-47 ms frames seen with it in play.
+    const auto cWalkStart = std::chrono::steady_clock::now();
 
     // The ragdoll's bodies: a live tree, so only null checks, no IsReadable (it costs milliseconds per call here).
     // Only dynamic bodies in a world count; the first found from the root is the ragdoll's root (pelvis or centre of mass).
@@ -4225,9 +4236,11 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     const glm::vec3 cOffset{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y, acWanted.z + cLift - cRagdollRoot.z};
     const glm::vec3 cHavokOffset = cOffset * cScale;
 
+    const auto cMoveStart = std::chrono::steady_clock::now();
     WorldWriteLock lock(BhkWorldOf(pHkpWorld));
     if (!lock.Held())
         return false;
+    const auto cLockedAt = std::chrono::steady_clock::now();
     uint32_t moved = 0;
     for (uint8_t* pBody : bodies)
     {
@@ -4235,8 +4248,9 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
         if (At<void*>(pBody, kHkWorldOffset) != pHkpWorld)
             continue;
         const float* pAt = reinterpret_cast<const float*>(pBody + kBodyTranslationOffset);
-        const float position[4] = {pAt[0] + cHavokOffset.x, pAt[1] + cHavokOffset.y, pAt[2] + cHavokOffset.z, 0.f};
-        float rotation[4];
+        // Havok reads them as vectors with aligned loads (movaps), so both arrays are 16-byte aligned.
+        alignas(16) const float position[4] = {pAt[0] + cHavokOffset.x, pAt[1] + cHavokOffset.y, pAt[2] + cHavokOffset.z, 0.f};
+        alignas(16) float rotation[4];
         std::memcpy(rotation, pBody + kBodyQuaternionOffset, sizeof(rotation));
         s_setPositionAndRotation.Get()(pBody, position, rotation);
         std::memset(pBody + kAngularVelocityOffset - 0x10, 0, 16); // linear velocity
@@ -4248,7 +4262,10 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     placed.ApartBeforeMove = cApart;
     placed.MovedAt = cNow;
     placed.SayAfter = true;
-    spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies)", apActor->formID, cApart, moved);
+    const auto cMoveEnd = std::chrono::steady_clock::now();
+    spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies; walk {:.2f} ms, lock {:.2f} ms, move {:.2f} ms)",
+                 apActor->formID, cApart, moved, std::chrono::duration<double, std::milli>(cMoveStart - cWalkStart).count(),
+                 std::chrono::duration<double, std::milli>(cLockedAt - cMoveStart).count(), std::chrono::duration<double, std::milli>(cMoveEnd - cLockedAt).count());
     return moved > 0;
 }
 
@@ -4555,6 +4572,11 @@ bool PlayClashSound(const glm::vec3& acPoint) noexcept
     return GameSound::Play(kBladeBlockSound, &position);
 }
 
+// The pose's kept fields (weapons, fingers, scale) are sent when they change and again this often.
+// Movement and the pose travel unreliable, so a change lost on the way is made good within a quarter second.
+// The resend also gives them to a player who arrives later.
+constexpr auto kKeptFieldsResend = std::chrono::milliseconds(250);
+
 // Where this player's weapons are held, relative to the third-person hands the pose is read from (VRPose::HasWeapons).
 // In VR the visible weapon hangs off the first-person hand at the angle VR holds it, not at the body's own attach node.
 // The attach nodes are searched twice a second, as ResolveHolding does, and read in between.
@@ -4618,7 +4640,7 @@ void CaptureWeapons(PlayerCharacter* apPlayer, void* apRoot, const BoneNodes& ac
         offset[side] = at;
     }
 
-    // Sent when the grip changes or once a second, like the fingers; the receiver keeps the last.
+    // Sent when the grip changes or every kKeptFieldsResend, like the fingers; the receiver keeps the last.
     static std::array<bool, 2> s_lastHeld{};
     static std::array<Quaternion_NetQuantize, 2> s_lastRotation{};
     static std::array<glm::vec3, 2> s_lastOffset{};
@@ -4628,7 +4650,7 @@ void CaptureWeapons(PlayerCharacter* apPlayer, void* apRoot, const BoneNodes& ac
         changed = held[side] && (rotation[side] != s_lastRotation[side] || glm::distance(offset[side], s_lastOffset[side]) > 0.05f);
 
     aOutPose.HasWeapons = false;
-    if (!changed && aNow - s_lastSentAt < std::chrono::seconds(1))
+    if (!changed && aNow - s_lastSentAt < kKeptFieldsResend)
         return;
 
     s_lastHeld = held;
@@ -4906,8 +4928,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
     CaptureWeapons(apPlayer, pRoot, nodes, aOutPose, now);
     CaptureArrowHold(apPlayer, nodes, now);
 
-    // Fingers: sent only when both hands' bones are known, and only when they changed or a second has passed.
-    // The resend lets a player who arrives later still get them.
+    // Fingers: sent only when both hands' bones are known, and only when they changed or kKeptFieldsResend has passed.
     aOutPose.HasFingers = false;
     if (s_local.FingersFound[0] && s_local.FingersFound[1])
     {
@@ -4920,7 +4941,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
         std::array<Quaternion_NetQuantize, VRPose::kFingerBoneCount> quantized{};
         for (size_t i = 0; i < VRPose::kFingerBoneCount; ++i)
             quantized[i] = rotations[i];
-        if (quantized != s_lastSent || now - s_lastSentAt >= std::chrono::seconds(1))
+        if (quantized != s_lastSent || now - s_lastSentAt >= kKeptFieldsResend)
         {
             s_lastSent = quantized;
             s_lastSentAt = now;
@@ -4929,7 +4950,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
         }
     }
 
-    // Body size: the skeleton root's world scale, sent when it changes or once a second.
+    // Body size: the skeleton root's world scale, sent when it changes or every kKeptFieldsResend.
     // Logged whenever it changes, to show what scale VRIK gave this body.
     aOutPose.HasScale = false;
     if (s_local.pSkeletonRoot)
@@ -4938,7 +4959,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
         static std::chrono::steady_clock::time_point s_lastScaleSentAt{};
         const float worldScale = At<NiTransform>(s_local.pSkeletonRoot, kWorldOffset).scale;
         const uint16_t quantized = static_cast<uint16_t>(glm::clamp(worldScale * 1000.f, 50.f, 20000.f) + 0.5f);
-        if (quantized != s_lastScaleSent || now - s_lastScaleSentAt >= std::chrono::seconds(1))
+        if (quantized != s_lastScaleSent || now - s_lastScaleSentAt >= kKeptFieldsResend)
         {
             if (quantized != s_lastScaleSent)
                 spdlog::info("VRBodySync: local body scale {:.3f} (skeleton root world scale, actor scale field {})", worldScale, apPlayer->scale);
@@ -5146,6 +5167,15 @@ bool CaptureBodyPose(Actor* apActor, VRPose& aOutPose) noexcept
     capture.LastPosition = rootPosition;
     capture.Placed = true;
 
+    // A body hanging still from one of this player's hands has not come to rest: the others would drop it under that hand.
+    // The hand is looked for only when the body would stop being sent, so a held body costs one search every two seconds.
+    const bool cStill = now - capture.MovedAt >= std::chrono::seconds(2) || (!capture.Boneless && now - capture.LastChangeAt >= std::chrono::seconds(2));
+    if (capture.Sent && cStill && NearestHandToBody(pRoot) <= 40.f)
+    {
+        capture.MovedAt = now;
+        capture.LastChangeAt = now;
+    }
+
     // Two seconds after it comes to rest, this body stops costing anything at all.
     if (now - capture.MovedAt >= std::chrono::seconds(2))
     {
@@ -5215,6 +5245,21 @@ bool CaptureBodyPose(Actor* apActor, VRPose& aOutPose) noexcept
     aOutPose.HasLegs = capture.LegsFound;
     aOutPose.HasFingers = false;
     aOutPose.HasScale = false;
+
+    // TEMPORARY: a dragged body was drawn well below the dragger's hand on the other side.
+    // Whether the 3D root follows the ragdoll's pelvis up, or stays below it, at most once a second per body.
+    {
+        static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextBodyDiag;
+        auto& nextDiag = s_nextBodyDiag[apActor->formID];
+        if (now >= nextDiag && capture.Nodes[VRPose::kPelvis])
+        {
+            nextDiag = now + std::chrono::seconds(1);
+            const glm::vec3 cPelvis = ToGlm(At<NiTransform>(capture.Nodes[VRPose::kPelvis], kWorldOffset).translate);
+            spdlog::info("BodyDiag: body {:X} root ({:.0f}, {:.0f}, {:.0f}), pelvis ({:.0f}, {:.0f}, {:.0f}): pelvis {:.0f} above the root, {:.0f} beside it",
+                         apActor->formID, rootPosition.x, rootPosition.y, rootPosition.z, cPelvis.x, cPelvis.y, cPelvis.z, cPelvis.z - rootPosition.z,
+                         glm::length(glm::vec2(cPelvis - rootPosition)));
+        }
+    }
 
     // Where the body is, not just how it is bent.
     // The receiver cannot use the reference position: a corpse moves with its ragdoll, not with its reference.

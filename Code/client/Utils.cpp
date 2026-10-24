@@ -1,6 +1,8 @@
 #include <World.h>
 #include <Components.h>
 #include <Actor.h>
+#include <PlayerCharacter.h>
+#include <Games/ActorExtension.h>
 
 namespace Utils
 {
@@ -80,6 +82,29 @@ std::optional<ActorOwnershipToken> GetRemoteOwnershipToken(const uint32_t aFormI
         return std::nullopt;
 
     return ActorOwnershipToken{remoteComponent.Id, remoteComponent.OwnershipEpoch};
+}
+
+std::optional<ActorOwnershipToken> GetBodyTakeToken(const Actor* apBody, const NiPoint3* apDropAt) noexcept
+{
+    // Dead, not dying: a dying body's drop is its death drop, which every game makes for itself.
+    if (!apBody || !apBody->actorState.IsDead())
+        return std::nullopt;
+
+    // A non-player's body this game does not run; its own bodies already send their changes.
+    const ActorExtension* pExtension = const_cast<Actor*>(apBody)->GetExtension();
+    if (!pExtension || !pExtension->IsRemote() || pExtension->IsPlayer())
+        return std::nullopt;
+
+    // Within this player's reach, so taken by them rather than by something else in the world.
+    constexpr float cReach = 400.f;
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return std::nullopt;
+    const glm::vec3 cAt = apDropAt ? static_cast<glm::vec3>(*apDropAt) : static_cast<glm::vec3>(apBody->position);
+    if (glm::distance(cAt, static_cast<glm::vec3>(pPlayer->position)) > cReach)
+        return std::nullopt;
+
+    return GetRemoteOwnershipToken(apBody->formID);
 }
 
 void ShowHudMessage(const TiltedPhoques::String& acMessage)

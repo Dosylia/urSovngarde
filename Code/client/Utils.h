@@ -21,6 +21,8 @@
     }
 
 struct TESForm;
+struct Actor;
+struct NiPoint3;
 
 namespace Utils
 {
@@ -43,6 +45,9 @@ std::optional<uint32_t> GetServerId(entt::entity aEntity) noexcept;
 std::optional<entt::entity> FindEntityByServerId(uint32_t aServerId) noexcept;
 std::optional<ActorOwnershipToken> GetLocalOwnershipToken(uint32_t aFormId) noexcept;
 std::optional<ActorOwnershipToken> GetRemoteOwnershipToken(uint32_t aFormId) noexcept;
+//! The owner's token when an item drops out of a dead body another player's game runs, within this player's reach.
+//! That is a hand taking it (HIGGS uses the game's drop), and the owner's body has to lose it too.
+std::optional<ActorOwnershipToken> GetBodyTakeToken(const Actor* apBody, const NiPoint3* apDropAt) noexcept;
 
 template <class T> T* GetByServerId(const uint32_t acServerId) noexcept
 {

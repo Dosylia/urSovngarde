@@ -23,5 +23,7 @@ struct ObjectData
     GridCellCoords CurrentCoords{};
     LockData CurrentLockData{};
     Inventory CurrentInventory{};
+    //! A door's state (the game's open state) after the last activation the server passed on; 0 when none came.
+    uint8_t DoorOpenState{};
     bool IsSenderFirst{};
 };

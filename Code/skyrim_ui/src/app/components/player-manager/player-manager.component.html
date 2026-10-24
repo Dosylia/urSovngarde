@@ -1,37 +1,35 @@
 <div class="tab-buttons">
   <button
-    data-style-ornament="inverted"
-    [attr.data-style-active]="
-      (activeTab$ | async) === PlayerManagerTab.PLAYER_LIST
-    "
+    [class.active]="(activeTab$ | async) === PlayerManagerTab.PLAYER_LIST"
     (click)="switchTab(PlayerManagerTab.PLAYER_LIST)"
   >
     {{ 'COMPONENT.PLAYER_MANAGER.PLAYER_LIST' | transloco }}
+    <span class="tab-count">{{ playerCount$ | async }}</span>
   </button>
   <button
-    data-style-ornament="inverted"
-    [attr.data-style-active]="
-      (activeTab$ | async) === PlayerManagerTab.PARTY_MENU
-    "
+    [class.active]="(activeTab$ | async) === PlayerManagerTab.PARTY_MENU"
     (click)="switchTab(PlayerManagerTab.PARTY_MENU)"
   >
     {{ 'COMPONENT.PLAYER_MANAGER.PARTY_MENU' | transloco }}
+    <span *ngIf="inviteCount$ | async as invites" class="tab-count">{{
+      'COMPONENT.ROOT.INVITES' | transloco: { count: invites }
+    }}</span>
   </button>
 </div>
 
-<hr />
-
-<ng-container [ngSwitch]="activeTab$ | async">
-  <app-player-list
-    *ngSwitchCase="PlayerManagerTab.PLAYER_LIST"
-  ></app-player-list>
-  <app-party-menu *ngSwitchCase="PlayerManagerTab.PARTY_MENU"></app-party-menu>
-</ng-container>
-
-<hr />
+<!-- Only this part scrolls, so the tabs and Back stay in reach whatever the list holds. -->
+<div class="tab-content">
+  <ng-container [ngSwitch]="activeTab$ | async">
+    <app-player-list
+      *ngSwitchCase="PlayerManagerTab.PLAYER_LIST"
+    ></app-player-list>
+    <app-party-menu *ngSwitchCase="PlayerManagerTab.PARTY_MENU"></app-party-menu>
+  </ng-container>
+</div>
 
 <div class="actions">
-  <button data-style-ornament="simple" class="btnCancel" (click)="close()">
+  <button class="menu-button centered" (click)="close()">
+    <fa-icon class="menu-button-icon" [icon]="faArrowLeft"></fa-icon>
     {{ 'COMPONENT.PLAYER_MANAGER.BACK' | transloco }}
   </button>
 </div>

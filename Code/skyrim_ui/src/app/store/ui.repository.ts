@@ -9,6 +9,7 @@ interface UiProps {
   connectIp: string;
   connectPort: number;
   connectName: string;
+  connectNow: boolean | string;
   hideVersionMismatchedServers: boolean;
   hideFullServers: boolean;
   hidePasswordProtectedServers: boolean;
@@ -22,6 +23,7 @@ const uiStore = createStore(
     connectIp: null,
     connectPort: null,
     connectName: null,
+    connectNow: false,
     hideVersionMismatchedServers: true,
     hideFullServers: true,
     hidePasswordProtectedServers: true
@@ -117,13 +119,33 @@ export class UiRepository {
     }));
   }
 
-  openConnectWithPasswordView(connectIp: string, connectPort: number, connectName: string) {
+  /** Opens the connect window, which connects at once to the address given. */
+  openConnectNow(address: string) {
+    uiStore.update(state => ({
+      ...state,
+      view: View.CONNECT,
+      connectNow: address,
+    }));
+  }
+
+  /** Whether the connect window was opened to connect at once, and to what; asking clears it. */
+  takeConnectNow() {
+    const connectNow = uiStore.getValue().connectNow;
+    uiStore.update(state => ({
+      ...state,
+      connectNow: false,
+    }));
+    return connectNow;
+  }
+
+  openConnectWithPasswordView(connectIp: string, connectPort: number, connectName: string, connectNow = false) {
     uiStore.update((state) => ({
       ...state,
       view: View.CONNECT_PASSWORD,
       connectIp,
       connectPort,
       connectName,
+      connectNow,
     }))
   }
 }

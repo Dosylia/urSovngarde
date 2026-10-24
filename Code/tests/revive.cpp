@@ -60,6 +60,12 @@ TEST_CASE("the revive messages keep who, what, how long and where", "[revive]")
     ReviveRequest revive{};
     revive.TargetPlayerId = 0xFFFFFFFFu;
     REQUIRE(RoundTrip(revive) == revive);
+    for (const auto cStage : {ReviveRequest::kHoldStart, ReviveRequest::kHoldStop})
+    {
+        revive.HoldStage = cStage;
+        REQUIRE(RoundTrip(revive) == revive);
+        REQUIRE(RoundTrip(revive).HoldStage == cStage);
+    }
 
     SafePointRequest safePoint{};
     safePoint.CellId = GameId(3, 0x1A26F);
@@ -73,7 +79,8 @@ TEST_CASE("the revive messages keep who, what, how long and where", "[revive]")
 
     for (const auto cChange :
          {NotifyDownedState::kDown, NotifyDownedState::kRevived, NotifyDownedState::kRespawned, NotifyDownedState::kPartyFallen, NotifyDownedState::kDied,
-          NotifyDownedState::kStoodUp, NotifyDownedState::kReviveRefused, NotifyDownedState::kLeft})
+          NotifyDownedState::kStoodUp, NotifyDownedState::kReviveRefused, NotifyDownedState::kLeft, NotifyDownedState::kReviveHeld,
+          NotifyDownedState::kReviveLetGo})
     {
         NotifyDownedState notify{};
         notify.PlayerId = 7;

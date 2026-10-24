@@ -17,6 +17,7 @@
 #include <Messages/NotifyLockChange.h>
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
+#include <Structs/DoorState.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESObjectCELL.h>
@@ -26,6 +27,10 @@
 #include <Games/TES.h>
 
 #include <inttypes.h>
+
+// The states travel as the game's own numbers.
+static_assert(DoorState::kOpen == TESObjectREFR::kOpen && DoorState::kOpening == TESObjectREFR::kOpening && DoorState::kClosed == TESObjectREFR::kClosed &&
+              DoorState::kClosing == TESObjectREFR::kClosing && DoorState::kNone == TESObjectREFR::kNone);
 
 ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport)
     : m_world(aWorld)
@@ -194,30 +199,51 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
         TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
         if (!pObject)
         {
-            spdlog::error("Object not found for form id {:X}", objectData.Id);
+            spdlog::error("Object not found for form id {:X} (server mod {:X}, base {:X})", cObjectId, objectData.Id.ModId, objectData.Id.BaseId);
             continue;
         }
 
         CreateObjectEntity(pObject->formID, objectData.ServerId);
 
-        if (objectData.IsSenderFirst)
-            continue;
-
-        if (objectData.CurrentLockData != LockData{})
+        if (!objectData.IsSenderFirst && objectData.CurrentLockData != LockData{})
         {
             Lock* pLock = pObject->GetLock();
-
             if (!pLock)
-            {
                 pLock = pObject->CreateLock();
-                if (!pLock)
-                    continue;
+            if (pLock)
+            {
+                pLock->lockLevel = objectData.CurrentLockData.LockLevel;
+                pLock->SetLock(objectData.CurrentLockData.IsLocked);
+                pObject->LockChange();
             }
-
-            pLock->lockLevel = objectData.CurrentLockData.LockLevel;
-            pLock->SetLock(objectData.CurrentLockData.IsLocked);
-            pObject->LockChange();
         }
+
+        // A door used in another game while this one was away is set to the state the server last passed on.
+        // It comes even when this game is the first in the cell: the door may have been used from the next cell over.
+        // Setting it is not an activation, so nothing is sent back.
+        const auto cShared = static_cast<TESObjectREFR::OpenState>(objectData.DoorOpenState);
+        if (cShared != TESObjectREFR::kNone && pObject->baseForm->formType == FormType::Door && !pObject->extraData.Contains(ExtraDataType::Teleport))
+        {
+            const bool cOpen = cShared == TESObjectREFR::kOpen;
+            const TESObjectREFR::OpenState cLocal = pObject->GetOpenState();
+            const Lock* pLock = pObject->GetLock();
+            // A door locked here stays shut: opening it would unlock it, as the game's SetOpen does.
+            const bool cLockedHere = pLock && pLock->IsLocked();
+            if (cLocal == TESObjectREFR::kNone || cLocal == cShared || cLocal == (cOpen ? TESObjectREFR::kOpening : TESObjectREFR::kClosing) || (cOpen && cLockedHere))
+            {
+                spdlog::info("Door {:X}: {} in the other games when this game came in; {} here (state {})", pObject->formID, cOpen ? "open" : "closed",
+                             cLocal == TESObjectREFR::kNone ? "no state known" : cOpen && cLockedHere ? "left shut, it is locked" : "already so", static_cast<int>(cLocal));
+            }
+            else
+            {
+                pObject->SetOpen(cOpen);
+                spdlog::info("Door {:X}: {} in the other games when this game came in; set {} here from state {}", pObject->formID, cOpen ? "open" : "closed",
+                             cOpen ? "open" : "closed", static_cast<int>(cLocal));
+            }
+        }
+
+        if (objectData.IsSenderFirst)
+            continue;
 
         if (pObject->baseForm->formType == FormType::Container)
         {
@@ -259,9 +285,11 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     if (!m_transport.IsConnected())
         return;
 
+    // A locked object opens the lockpicking menu, not itself, so its activation is not sent.
+    // Only the locked bit counts: a leveled lock keeps its flag once unlocked, and that door's openings were never sent.
     if (Lock* pLock = acEvent.pObject->GetLock())
     {
-        if (pLock->flags & 0xFF)
+        if (pLock->IsLocked())
             return;
     }
 
@@ -302,6 +330,23 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
         return;
     }
 
+    // A door whose activation a script blocks (BlockActivation) does not move here, so the other games must not open it either.
+    // The script's own Activate with default processing only does move it, block or not, so that one is sent.
+    const bool cDoor = acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Door;
+    if (cDoor && !acEvent.DefaultProcessing && acEvent.ActivationBlocked)
+    {
+        // A script can turn its door away again and again, so each door says so at most every 5 s.
+        static Map<uint32_t, std::chrono::steady_clock::time_point> s_lastBlockedLog;
+        const auto cNow = std::chrono::steady_clock::now();
+        auto& last = s_lastBlockedLog[acEvent.pObject->formID];
+        if (cNow - last >= std::chrono::seconds(5))
+        {
+            last = cNow;
+            spdlog::info("Door {:X} activated by {:X}, but a script blocks its activation; not sent", acEvent.pObject->formID, acEvent.pActivator->formID);
+        }
+        return;
+    }
+
     std::optional<uint32_t> serverIdRes = Utils::GetServerId(*pEntity);
     if (!serverIdRes.has_value())
         return;
@@ -310,20 +355,19 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     request.PreActivationOpenState = acEvent.PreActivationOpenState;
 
     m_transport.Send(request);
+
+    if (acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Door)
+        spdlog::info("Door {:X} ({:X}:{:X}) activated by {:X} from state {}; sent to the players in cell {:X}:{:X}", acEvent.pObject->formID, request.Id.ModId, request.Id.BaseId,
+                     acEvent.pActivator->formID, static_cast<int>(acEvent.PreActivationOpenState), request.CellId.ModId, request.CellId.BaseId);
 }
 
 void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
 {
     Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ActivatorId);
-    if (!pActor)
-    {
-        spdlog::error("{}: could not find actor server id {:X}", __FUNCTION__, acMessage.ActivatorId);
-        return;
-    }
 
     // An activation by one of this game's actors is our own coming back from another game.
     // Replaying it would do it twice, putting the player back through a load door.
-    if (const auto entity = Utils::FindEntityByServerId(acMessage.ActivatorId); pActor == PlayerCharacter::Get() || (entity && m_world.all_of<LocalComponent>(*entity)))
+    if (const auto entity = Utils::FindEntityByServerId(acMessage.ActivatorId); pActor && (pActor == PlayerCharacter::Get() || (entity && m_world.all_of<LocalComponent>(*entity))))
     {
         spdlog::warn("Activation of {:X}:{:X} by {:X}, an actor of this game, came back from another game; not done again", acMessage.Id.ModId, acMessage.Id.BaseId, pActor->formID);
         return;
@@ -333,7 +377,50 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
     TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
     if (!pObject)
     {
-        spdlog::error("Failed to retrieve object to activate.");
+        spdlog::error("Failed to retrieve object to activate: {:X}:{:X} (form {:X} here), activated by server id {:X}", acMessage.Id.ModId, acMessage.Id.BaseId, cObjectId,
+                      acMessage.ActivatorId);
+        return;
+    }
+
+    // Only an object in a cell this game has loaded is used here: a script's use of a far or indoor reference must not run its scripts here.
+    // A door's state still comes when this game enters its cell, with the cell's objects.
+    const TESObjectCELL* pCell = pObject->GetParentCellEx();
+    if (!pCell || !pCell->IsAttached())
+    {
+        spdlog::info("Activation of {:X}, activated by server id {:X}: its cell is not loaded here; not done", pObject->formID, acMessage.ActivatorId);
+        return;
+    }
+
+    // A door that does not lead elsewhere is set to the state it was left in over there, not used again here.
+    // It needs no actor, so a door opened by an NPC this game has no copy of opens too.
+    // Setting it is not an activation here, so nothing is sent back and two games cannot pass it to and fro.
+    const auto cRemoteBefore = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
+    const auto cRemoteAfter = static_cast<TESObjectREFR::OpenState>(DoorState::AfterActivation(cRemoteBefore));
+    if (pObject->baseForm->formType == FormType::Door && !pObject->extraData.Contains(ExtraDataType::Teleport) && cRemoteAfter != TESObjectREFR::kNone)
+    {
+        const bool cOpen = cRemoteAfter == TESObjectREFR::kOpen;
+        const TESObjectREFR::OpenState cLocal = pObject->GetOpenState();
+        const Lock* pLock = pObject->GetLock();
+        const bool cLockedHere = pLock && pLock->IsLocked();
+        const std::string cBy = pActor ? fmt::format("{:X}", pActor->formID) : fmt::format("server id {:X}, not here", acMessage.ActivatorId);
+
+        // Already there, or on its way.
+        if (cLocal == cRemoteAfter || cLocal == (cOpen ? TESObjectREFR::kOpening : TESObjectREFR::kClosing))
+        {
+            spdlog::info("Door {:X}: {} in another game (by {}); already {} here", pObject->formID, cOpen ? "opened" : "closed", cBy, static_cast<int>(cLocal));
+            return;
+        }
+
+        // Opening a door locked here unlocks it too (the game's SetOpen does): it was unlocked over there, since a locked door's use is not sent.
+        pObject->SetOpen(cOpen);
+        spdlog::info("Door {:X}: {} in another game (by {}, from state {}); set {} here from state {}{}", pObject->formID, cOpen ? "opened" : "closed", cBy,
+                     static_cast<int>(cRemoteBefore), cOpen ? "open" : "closed", static_cast<int>(cLocal), cLockedHere && cOpen ? ", and unlocked: it was locked here" : "");
+        return;
+    }
+
+    if (!pActor)
+    {
+        spdlog::error("{}: could not find actor server id {:X} (object {:X})", __FUNCTION__, acMessage.ActivatorId, pObject->formID);
         return;
     }
 
@@ -341,13 +428,21 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
     {
         auto remotePreActivationState = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
         TESObjectREFR::OpenState localState = pObject->GetOpenState();
+        const Lock* pLock = pObject->GetLock();
+        const bool cLockedHere = pLock && pLock->IsLocked();
 
         if (remotePreActivationState != localState)
         {
             // The doors are unsynced at this point. If we'll Activate the one on our side
             // it'll just continue to be unsynced (open remotely, closed locally and vice versa)
+            spdlog::info("Door {:X}: {:X} activated it in another game from state {}, here it is in state {}{}; left as it is", pObject->formID, pActor->formID,
+                         static_cast<int>(remotePreActivationState), static_cast<int>(localState), cLockedHere ? " and locked" : "");
             return;
         }
+
+        // Activated by the other player's copy, which has no key: a door locked here stays shut.
+        spdlog::info("Door {:X}: {:X} activated it in another game from state {}; done here too{}", pObject->formID, pActor->formID,
+                     static_cast<int>(remotePreActivationState), cLockedHere ? ", but it is locked here and will not open" : "");
     }
 
     // unsure if these flags are the best, but these are passed with the papyrus Activate fn

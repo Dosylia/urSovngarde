@@ -39,6 +39,7 @@
 #include <Games/Skyrim/Misc/InventoryEntry.h>
 #include <Games/Skyrim/ExtraData/ExtraCount.h>
 #include <Games/Misc/ActorKnowledge.h>
+#include <InventoryCompare.h>
 
 #include <ExtraData/ExtraDataList.h>
 #include <ExtraData/ExtraCharge.h>
@@ -843,11 +844,29 @@ void Actor::SetActorInventory(const Inventory& acInventory) noexcept
 
     Inventory currentInventory = GetActorInventory();
 
-    const ActorExtension* pSelfExtension = this->GetExtension();
-    if (pSelfExtension && !pSelfExtension->IsPlayer() && currentInventory.ContainsQuestItems())
-        SetInventoryRetainingQuestItems(currentInventory, acInventory);
-    else
-        SetInventory(acInventory);
+    // An NPC often carries here just what its owner's game has, a fixed outfit.
+    // Setting it means taking every item off and putting it back, about 17 ms a copy: 26 copies arriving after a load took 436 ms in one frame.
+    static uint32_t s_unchanged = 0;
+    static uint32_t s_applied = 0;
+    static std::chrono::steady_clock::time_point s_nextSaid{};
+    const bool cUnchanged = HoldsSameItems(currentInventory, acInventory);
+    ++(cUnchanged ? s_unchanged : s_applied);
+    if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextSaid)
+    {
+        s_nextSaid = cNow + std::chrono::seconds(30);
+        spdlog::info("InventoryApply: {} of {} copies' inventories already held their owner's items and were not set again", s_unchanged, s_unchanged + s_applied);
+        s_unchanged = 0;
+        s_applied = 0;
+    }
+
+    if (!cUnchanged)
+    {
+        const ActorExtension* pSelfExtension = this->GetExtension();
+        if (pSelfExtension && !pSelfExtension->IsPlayer() && currentInventory.ContainsQuestItems())
+            SetInventoryRetainingQuestItems(currentInventory, acInventory);
+        else
+            SetInventory(acInventory);
+    }
 
     SetMagicEquipment(acInventory.CurrentMagicEquipment);
 }
@@ -1292,6 +1311,14 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
         if (pExHitter->IsLocalPlayer())
         {
             World::Get().GetRunner().Trigger(HealthChangeEvent(apThis->formID, -realDamage));
+            // This player's killing blow on an NPC copy goes to its owner's game, whose death word then kills the copy.
+            // Killed here while its owner's actor lived on, the copy lay dead where it fell while the real one fought on.
+            if (wouldKill && pExHittee->IsRemote())
+            {
+                apThis->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, 1.f);
+                spdlog::info("Death sync: this player's blow on NPC copy {:X} sent to its owner; the copy is kept at 1 health until its owner says it died", apThis->formID);
+                return false;
+            }
             return TiltedPhoques::ThisCall(RealDamageActor, apThis, aDamage, apHitter, aKillMove);
         }
         if (pExHitter->IsRemotePlayer())
@@ -1421,7 +1448,17 @@ void* TP_MAKE_THISCALL(HookDropObject, Actor, void* apResult, TESBoundObject* ap
     const bool cOwnDrop = !ScopedInventoryOverride::IsOverriden() && apThis == PlayerCharacter::Get();
     Inventory::Entry dropped = item;
 
-    QueueActorInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item), true));
+    // Out of a dead body another player's game runs, next to this player: a hand took it, and that game's body loses it too.
+    if (const auto cTaken = !ScopedInventoryOverride::IsOverriden() ? Utils::GetBodyTakeToken(apThis, apLocation) : std::nullopt)
+    {
+        spdlog::info("BodyTake: {:X} x{} dropped off {:X}, a body another game runs; its owner's body loses it too", apObject->formID, aCount, apThis->formID);
+        InventoryChangeEvent event(apThis->formID, std::move(item), true);
+        event.ServerId = cTaken->ServerId;
+        event.OwnershipEpoch = cTaken->OwnershipEpoch;
+        World::Get().GetRunner().Trigger(std::move(event));
+    }
+    else
+        QueueActorInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item), true));
 
     ScopedInventoryOverride _;
 
@@ -1540,12 +1577,19 @@ float TP_MAKE_THISCALL(HookSpeakSoundFunction, Actor, const char* apName, uint32
     const bool cIsPlayerDialogue = MenuTopicManager::IsPlayerDialogueSpeaker(apThis);
     const bool cShouldSync = (pSpeakerExtension && pSpeakerExtension->IsLocal()) || cIsPlayerDialogue;
 
-    // Lines from a scene let other clients that play the same scene skip them. Menu dialogue always plays.
+    // Lines from a scene let other clients that play the same scene skip them, unless their copy is stuck in an earlier
+    // phase. Menu dialogue always plays.
     BGSScene* pScene = cIsPlayerDialogue ? nullptr : apThis->GetCurrentScene();
-    const uint32_t cSceneId = pScene && pScene->isPlaying ? pScene->formID : 0;
+    uint32_t sceneId = 0;
+    uint32_t scenePhase = 0;
+    if (pScene && pScene->isPlaying)
+    {
+        sceneId = pScene->formID;
+        scenePhase = pScene->currentPhaseIndex;
+    }
 
     if (cShouldSync)
-        World::Get().GetRunner().Trigger(DialogueEvent(apThis->formID, apName, cSceneId));
+        World::Get().GetRunner().Trigger(DialogueEvent(apThis->formID, apName, sceneId, scenePhase));
 
     return TiltedPhoques::ThisCall(RealSpeakSoundFunction, apThis, apName, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14);
 }

@@ -1,0 +1,57 @@
+# Right after the party leader arrives, the server waits 10 s before handing the leader the NPCs another game runs.
+#
+#   python Tools\VR\live-check.py live-npc-grace
+#   python Tools\VR\live-check.py --expect-fail live-npc-grace     on a build without the change: must be RED
+#
+# A leader's game claims the NPCs around it as it loads them in. Handed over at once while that game was still
+# bringing actors in after a load, sixteen NPCs went back and forth between the games for a minute (MGO).
+# Here: Lydia (A2C94, the follower in the test save) waits in Helgen's keep, no longer the player's teammate.
+# The player leaves for another interior, so the bot, which stays in the keep, is given her.
+# The player comes back: the bot must keep her for about 10 s.
+log live npc grace
+waitfor connected 45
+collect ownership party
+expect known me
+waitfor known other 40
+ownership accept
+wait 5
+
+log DO god on
+log -- the player into Helgen's keep, Lydia next to the player, waiting there, and no longer the player's teammate
+log DO console player.moveto 9B0A5
+wait 12
+cell 5DE24
+stay
+wait 3
+log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+waitfor known ref:A2C94 40
+wait 3
+
+log -- the player leaves for Riverwood's inn; the bot, still in the keep, is given her
+# Indoors to indoors: console travel out to Tamriel has hit Community Shaders' crash at a load (+0x1208c8) in the rig.
+log DO console coc RiverwoodSleepingGiantInn
+waitfor ownedby ref:A2C94 me 40
+expect ownedby ref:A2C94 me
+wait 5
+
+log -- the player comes back: the bot keeps her for a while, then she goes to the leader
+log DO console player.moveto A2C94
+waitfor samecell other 60
+wait 5
+expect ownedby ref:A2C94 me
+waitfor ownedby ref:A2C94 other 20
+expect ownedby ref:A2C94 other
+wait 3
+log CHECK ref A2C94 near player 1500
+
+log CHECK game alive
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:0
+log DO papyrus Actor SetPlayerTeammate A2C94 b:true b:false
+log DO god off
+# The player is left in the keep: run this script after a fresh `headless.ps1 up`, which loads the save again.
+cell out
+wait 2
+log done
+stop

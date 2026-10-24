@@ -1,0 +1,23 @@
+# Party members' scripts often reach the same quest stage on their own: the server relays each stage once.
+# This side starts a quest and reaches stage 10 first; the other side then reaches stage 10 too, then stage 20.
+# Only stage 20 may come back here: a duplicate stage relayed mid-scene pushed another game's scene past its own scripts.
+#
+#   powershell -File Tools\VR\run-bot-tests.ps1 -Pair questdup
+log questdup actor
+waitfor connected 45
+record questdup actor
+waitfor known other 40
+wait 3
+log -- this side starts the quest and reaches stage 10 first
+quest 1F0 start 0
+wait 1
+quest 1F0 stage 10
+log -- the other side reaches stage 10 on its own, then stage 20: only stage 20 is relayed here
+waitfor questupdates 1F0 >= 1 20
+wait 3
+expect questupdates 1F0 == 1
+expect connected
+record off
+report bot-questdup-actor.txt
+log done
+stop

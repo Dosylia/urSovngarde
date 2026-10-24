@@ -22,7 +22,7 @@
           <td class="actions-col">
             <button
               *ngIf="voiceEnabled$ | async"
-              class="user-action-button"
+              class="menu-button compact"
               (click)="toggleMute(player.name)"
             >
               {{
@@ -39,7 +39,7 @@
                 player.isMember ||
                 !(isPartyLeader$ | async)
               "
-              class="user-action-button"
+              class="menu-button compact"
               (click)="sendPartyInvite(player.id)"
             >
               {{ 'COMPONENT.PARTY_LIST.INVITE' | transloco }}

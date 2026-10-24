@@ -106,6 +106,11 @@ void ReviveService::OnUpdate(const UpdateEvent&) noexcept
             m_holdSince = cNow;
             spdlog::info("Revive: holding a hand on player {} '{}', {:.0f} units from its body", touched, NameOf(touched).c_str(), touchedDistance);
             Utils::ShowHudMessage(String("urSovngarde: reviving ") + NameOf(touched) + ", keep your hand on them");
+            // The downed player learns someone is on it.
+            ReviveRequest held{};
+            held.TargetPlayerId = touched;
+            held.HoldStage = ReviveRequest::kHoldStart;
+            m_transport.Send(held);
         }
         return;
     }
@@ -197,7 +202,9 @@ void ReviveService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         Utils::ShowHudMessage(String("urSovngarde: ") + who + " left while down");
         break;
     case NotifyDownedState::kPartyFallen:
-    case NotifyDownedState::kReviveRefused: break;
+    case NotifyDownedState::kReviveRefused:
+    case NotifyDownedState::kReviveHeld:
+    case NotifyDownedState::kReviveLetGo: break;
     }
 }
 
@@ -251,7 +258,13 @@ String ReviveService::NameOf(const uint32_t aPlayerId) const noexcept
 void ReviveService::StopHolding() noexcept
 {
     if (m_holdTarget && !m_asked)
+    {
         spdlog::info("Revive: hand taken off player {} '{}' before the revive, {:.0f} units from its body", m_holdTarget, NameOf(m_holdTarget).c_str(), m_holdDistance);
+        ReviveRequest letGo{};
+        letGo.TargetPlayerId = m_holdTarget;
+        letGo.HoldStage = ReviveRequest::kHoldStop;
+        m_transport.Send(letGo);
+    }
     m_holdTarget = 0;
     m_asked = false;
 }

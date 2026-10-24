@@ -19,7 +19,7 @@ struct RequestInventoryChanges final : ClientMessage
 
     bool operator==(const RequestInventoryChanges& acRhs) const noexcept
     {
-        return GetOpcode() == acRhs.GetOpcode() && ServerId == acRhs.ServerId && OwnershipEpoch == acRhs.OwnershipEpoch && Item == acRhs.Item && Drop == acRhs.Drop && UpdateClients == acRhs.UpdateClients;
+        return GetOpcode() == acRhs.GetOpcode() && ServerId == acRhs.ServerId && OwnershipEpoch == acRhs.OwnershipEpoch && Item == acRhs.Item && Drop == acRhs.Drop && UpdateClients == acRhs.UpdateClients && PickedUp == acRhs.PickedUp;
     }
 
     uint32_t ServerId{};
@@ -27,4 +27,6 @@ struct RequestInventoryChanges final : ClientMessage
     Inventory::Entry Item{};
     bool Drop = false;
     bool UpdateClients = true;
+    //! The item came from a reference this player picked up in the world; the others replay that pick-up on its copy too.
+    bool PickedUp = false;
 };

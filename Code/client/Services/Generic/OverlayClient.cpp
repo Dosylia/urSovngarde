@@ -147,8 +147,12 @@ void OverlayClient::ProcessDisconnectMessage()
 
 void OverlayClient::ProcessRevealPlayersMessage()
 {
+#ifndef SKYRIMVR
     SetUIVisible(false);
-    World::Get().GetMagicService().StartRevealingOtherPlayers();
+#endif
+    // On VR the menu stays: it says the players glow once it is closed, when the game runs again.
+    // The effect goes on actors, so it starts on the game's thread, not CEF's.
+    World::Get().GetRunner().Queue([]() { World::Get().GetMagicService().StartRevealingOtherPlayers(); });
 }
 
 void OverlayClient::ProcessChatMessage(CefRefPtr<CefListValue> aEventArgs)

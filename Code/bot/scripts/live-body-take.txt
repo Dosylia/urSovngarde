@@ -1,0 +1,40 @@
+# An item taken by hand off a dead body the other player's game runs: does that game's body lose it too?
+#
+#   python Tools\VR\live-check.py live-body-take
+#
+# A hand takes loot off a body through the game's own drop (HIGGS does): the item comes out into the world, with no
+# container in between. For a body another game runs, only a container transfer to the player was sent. So the
+# owner's body kept the item, and its owner could still take it there: one item became two.
+# This bot owns a dead NPC carrying an iron dagger, and the game drops the dagger off its copy next to the player, the
+# way a hand takes it. The bot stands for the owner's game: the server has to pass the change on to it.
+log live body take
+waitfor connected 45
+collect spawn health death ownership
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a human of this bot's (Aspiring Mage, Skyrim.esm 753CB) carrying an iron dagger, killed
+npc temp 753CB
+waitfor owned == 1 20
+wait 6
+additem 1397E 1 npc
+wait 3
+log REQUIRE npc has 1397E
+npclife dead 0
+wait 6
+log CHECK npc dead
+
+log -- the dagger comes out of the copy next to the player, the way a hand takes it
+# 150 units off: near enough to reach, too far to shove the body (a body moved here changes hands, live-body-grab).
+log DO papyrus ObjectReference MoveTo 14 npc f:150 f:0 f:0 b:false
+wait 3
+log DO papyrus ObjectReference DropObject npc 1397E n:1
+wait 4
+# Still the owner, so the body the change reached was one another game runs.
+expect owned == 1
+expect invchanges 1397E == 1
+log CHECK game alive
+wait 3
+log done
+stop

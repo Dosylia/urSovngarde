@@ -19,9 +19,16 @@ target("TPTests")
     if is_plat("windows") then
         -- SmallDump.h (client) writes minidumps.
         add_syslinks("dbghelp")
+        -- The VR banner's pictures are drawn with GDI, in the game's fonts read from its zlib-compressed font library.
+        add_files("../client/Games/Skyrim/BannerPicture.cpp")
+        add_syslinks("gdi32", "user32")
+        add_packages("zlib")
     else
         -- Windows minidumps: on Linux this file broke the server's CI build from 2026-10-07 (c5d3236e).
         remove_files("smalldump.cpp")
+        remove_files("banner.cpp")
+        -- PatchCheck.h asks Windows what memory a call leads to.
+        remove_files("patch_check.cpp")
     end
     add_packages(
         "tiltedcore",

@@ -22,4 +22,8 @@ struct RemoteComponent
     //! The game reuses a deleted copy's form id; a changed base means CachedRefId now names another actor.
     //! See CharacterService::RunSpawnUpdates.
     uint32_t CachedBaseId{};
+    //! The owner's game has said this actor is dead: it came dead, or its death arrived (the death message, or the server's spawn data).
+    //! A copy can die here alone; its corpse is then not placed where its owner has the living actor (InterpolationSystem::Update).
+    //! A health broadcast that kills the copy does not count: the copy's health can be lower than the owner's.
+    bool DeadAtOwner{};
 };

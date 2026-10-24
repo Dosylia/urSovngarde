@@ -1,0 +1,35 @@
+# The party leader holds a member's quest stage only when its playing scene is about to check it.
+#
+#   python Tools\VR\live-check.py live-quest-hold
+#   python Tools\VR\live-check.py --expect-fail live-quest-hold     on a build without the change: must be RED
+#
+# The leader held nearly every stage a member reached while a long scene of the quest played, since some later phase of
+# it checked that stage or a later one; each came 30 s late, and the leader's quest fell behind.
+# Now only a check the stage changes counts, in the scene's running phase or the phase after it.
+# Here: this game leads; the Jagged Crown (2610B) runs at stage 100 with Galmar's escort scene A0E3D playing, its next
+# phase waiting on stage 110. The bot, a member, reaches stage 102, which changes no check of the running or next phase.
+# A run counts only when (REQUIRE): the scene played, and the game logged what it did with the bot's stage.
+log live quest hold
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the quest at stage 100 here, its escort scene playing
+log DO papyrus Quest Start 2610B
+wait 5
+log DO papyrus Quest SetCurrentStageID 2610B n:100
+wait 5
+log DO papyrus Scene Start A0E3D
+wait 5
+log REQUIRE scene A0E3D playing
+
+log -- the bot reaches stage 102
+quest 2610B stage 102
+wait 6
+log REQUIRE logged (Holding member quest stage 102 for 2610B|Remote quest updated: 2610B, stage: 102)
+log CHECK absent Holding member quest stage 102 for 2610B
+log CHECK game alive
+wait 2
+log done
+stop

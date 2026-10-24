@@ -8,6 +8,7 @@
 # First done by hand on 2026-10-01; this is those steps, in the order that worked. What it relies on:
 #   - SteamVR's 'null' driver with two virtual controllers (the SkyrimVR Devkit's source, built and copied in by hand).
 #     Valve's stock null driver has no controllers, and skyrimvrtools.dll crashes six seconds after a load without them.
+#     Controllers SteamVR turned off for being idle count as none, so 'up' also keeps them on for the run.
 #     The driver is only active while a 'driver_null' block is in steamvr.vrsettings, which 'up' adds and 'down' removes.
 #     SteamVR must be closed for either, because it rewrites that file when it exits.
 #   - DevBench (an SKSE plugin, http://127.0.0.1:8921) to load the save and to quit.
@@ -22,6 +23,8 @@ param(
     [switch]$NoConnect,                 # no server and no waiting for a connection: the game alone, mod loaded
     [switch]$AutoConnect,               # the launcher's "connect automatically" setting on: the game connects by itself, F6 is not pressed
     [int]$LoadTimeout = 180,
+    # Seconds the game has to reach the main menu: MGO takes about five and a half minutes, FUS under three.
+    [int]$MenuTimeout = 600,
     # Where the player is put once the save has loaded: the tests start outside Mistwatch (Tamriel, cell 34 -9).
     # The most recent save is wherever the player last played. Empty leaves the player where the save has them.
     [string]$StartCell = 'Tamriel 34 -9',
@@ -51,14 +54,30 @@ if (-not $fusRoot) {
 if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT to its directory.' }
 $mo2 = Join-Path $fusRoot 'ModOrganizer.exe'
 $mo2Ini = Join-Path $fusRoot 'ModOrganizer.ini'
-$mo2Shortcut = if ($Shortcut) { $Shortcut } elseif ((Test-Path -LiteralPath $mo2Ini) -and
-    (Select-String -LiteralPath $mo2Ini -Pattern '^\d+\\title=PLAY Skyrim Together VR$' -Quiet)) {
-    'PLAY Skyrim Together VR'
-} else {
-    'SkyrimTogetherVR'
+# The MO2 entry that runs the mod's program, found by its program: the launcher renames its title ("urSovngarde"), never its program.
+function Get-ModEntryTitle([string]$ini) {
+    if (-not (Test-Path -LiteralPath $ini)) { return $null }
+    $titles = @{}
+    $entry = $null
+    $inside = $false
+    foreach ($line in Get-Content -LiteralPath $ini) {
+        if ($line -match '^\[') { $inside = $line -eq '[customExecutables]'; continue }
+        if (-not $inside -or $line -notmatch '^(\d+)\\(binary|title)=(.*)$') { continue }
+        $index, $field, $value = $Matches[1], $Matches[2], $Matches[3]
+        if ($field -eq 'title') { $titles[$index] = $value }
+        elseif ($value -match '(^|[\\/])(urSovngarde|SkyrimTogetherVR)\.exe$') { $entry = $index }
+    }
+    if ($entry) { return $titles[$entry] }
+    return $null
 }
+$mo2Shortcut = if ($Shortcut) { $Shortcut } else { Get-ModEntryTitle $mo2Ini }
+if (-not $mo2Shortcut) { $mo2Shortcut = 'SkyrimTogetherVR' }
 $release = (Resolve-Path (Join-Path $PSScriptRoot '..\..\build\windows\x64\release')).Path
-$clientLog = Join-Path $fusRoot 'tools\Skyrim Together VR\logs\tp_client.log'
+# The client's folder among MO2's tools: 'Skyrim Together VR' on the host's PC, 'urSovngarde' on another player's.
+$clientDir = @('Skyrim Together VR', 'urSovngarde') | ForEach-Object { Join-Path $fusRoot "tools\$_" } |
+    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'urSovngarde.exe') } | Select-Object -First 1
+if (-not $clientDir) { $clientDir = Join-Path $fusRoot 'tools\Skyrim Together VR' }
+$clientLog = Join-Path $clientDir 'logs\tp_client.log'
 $stateFile = Join-Path $env:TEMP 'st-headless-state.json'
 # The game plays in the player's own MO2 profile, so whatever it saves lands among the player's saves.
 # A test autosave (going through a door) becomes the newest save, and the player's next "Continue" would load it.
@@ -66,11 +85,27 @@ $stateFile = Join-Path $env:TEMP 'st-headless-state.json'
 # So the saves folder is copied aside before the game starts and put back exactly as it was once the game has gone.
 # Whatever the test game wrote or changed is moved to saves-made-by-rig\<time>; whatever it overwrote comes back from the copy.
 # A run that died before putting it back is put right by the next "up" or "down".
-$profileDir = Join-Path $fusRoot 'profiles\FUS RO DAH (Basic + Appearance + Gameplay)'
-$savesDir = Join-Path $profileDir 'saves'
-$savesCopy = Join-Path $profileDir 'saves-before-rig'
-$savesCopyDone = Join-Path $profileDir 'saves-before-rig.complete'
-$rigSaves = Join-Path $profileDir 'saves-made-by-rig'
+# The game starts in the profile MO2 has selected, so that is the one whose saves are protected.
+$selectedProfileDir = Join-Path $fusRoot 'profiles\FUS RO DAH (Basic + Appearance + Gameplay)'
+if (Test-Path -LiteralPath $mo2Ini) {
+    $selected = Select-String -LiteralPath $mo2Ini -Pattern '^selected_profile=(@ByteArray\()?(.+?)\)?$' | Select-Object -First 1
+    if ($selected) { $selectedProfileDir = Join-Path $fusRoot "profiles\$($selected.Matches[0].Groups[2].Value)" }
+}
+function Set-ProfilePaths([string]$dir) {
+    $script:profileDir = $dir
+    $script:profileName = Split-Path -Leaf $dir
+    $script:savesDir = Join-Path $dir 'saves'
+    $script:savesCopy = Join-Path $dir 'saves-before-rig'
+    $script:savesCopyDone = Join-Path $dir 'saves-before-rig.complete'
+    $script:rigSaves = Join-Path $dir 'saves-made-by-rig'
+    $script:ownRigSaves = Join-Path $dir 'saves-rig'
+}
+# "up" writes the protected profile's folder into the state file before it copies a save, and every later call takes it from there.
+# Read anew from MO2, a profile switched after a run died would hide where that run put its saves aside.
+# Once that profile was selected again, the saves made meanwhile would be moved away as the test game's.
+$runState = $null
+if (Test-Path -LiteralPath $stateFile) { try { $runState = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json } catch { } }
+Set-ProfilePaths $(if ($runState -and $runState.profileDir) { $runState.profileDir } else { $selectedProfileDir })
 $devbench = 'http://127.0.0.1:8921'
 
 function Test-Running([string]$pattern) {
@@ -86,18 +121,60 @@ function Get-Health {
     try { return Invoke-RestMethod -Uri "$devbench/api/health" -TimeoutSec 3 } catch { return $null }
 }
 
-# The settings file is JSON that SteamVR writes itself; it is read and written whole, and only one key is touched.
+# Drivers that hang SteamVR's start next to the null driver, switched off for the run where the owner has no setting of their own.
+# With activateMultipleDrivers, SteamVR 2.18.4 loads the PlayStation VR2 add-on again once the null headset is active, and that second cleanup never returns.
+$driversOffForRun = @('driver_playstation_vr2')
+# Which of them 'up' switched off, so that 'down' takes out those blocks and no others.
+$driversOffMarker = Join-Path $env:TEMP 'urSovngarde-headless-drivers-off.txt'
+# SteamVR turns controllers off after five minutes without a move (power.turnOffControllersTimeout, 300 s), and the rig's only move when a test moves them.
+# A controller turned off has no hand role, and at the next save load PapyrusVR reads the pose of "no device" and crashes (skyrimvrtools.dll+0x71B5).
+# So for the run the timeout is a day; the marker keeps the player's own setting ('none' when there was none) for 'down' to put back.
+$controllersOffAfterForRun = 86400.0
+$controllersOffMarker = Join-Path $env:TEMP 'urSovngarde-headless-controllers-timeout.txt'
+
+# The settings file is JSON that SteamVR writes itself; it is read and written whole, and only the rig's keys are touched.
 function Set-NullDriver([bool]$on) {
     if (Test-Running '^(vrserver|vrmonitor|vrcompositor)$') { throw 'SteamVR is running; its settings cannot be changed until it is closed.' }
     $text = [System.IO.File]::ReadAllText($settingsPath)
     $settings = $text | ConvertFrom-Json
-    $has = [bool]($settings.PSObject.Properties.Name -contains 'driver_null')
+    $names = @($settings.PSObject.Properties.Name)
+    $changed = $false
     if ($on) {
         $block = [pscustomobject]@{ enable = $true; windowWidth = 1280; windowHeight = 720; renderWidth = 1024; renderHeight = 1024; displayFrequency = 90.0 }
-        if ($has) { $settings.driver_null = $block } else { $settings | Add-Member -NotePropertyName 'driver_null' -NotePropertyValue $block }
+        if ($names -contains 'driver_null') { $settings.driver_null = $block } else { $settings | Add-Member -NotePropertyName 'driver_null' -NotePropertyValue $block }
+        $changed = $true
+        $added = @($driversOffForRun | Where-Object { $names -notcontains $_ })
+        foreach ($name in $added) { $settings | Add-Member -NotePropertyName $name -NotePropertyValue ([pscustomobject]@{ enable = $false }) }
+        if ($added.Count) { Set-Content -LiteralPath $driversOffMarker -Value $added }
+        # A marker left by a run that died is kept: it still holds the player's setting, not the rig's.
+        if ($names -notcontains 'power') { $settings | Add-Member -NotePropertyName 'power' -NotePropertyValue ([pscustomobject]@{}) }
+        $own = $settings.power.PSObject.Properties['turnOffControllersTimeout']
+        if (-not (Test-Path -LiteralPath $controllersOffMarker)) { Set-Content -LiteralPath $controllersOffMarker -Value $(if ($own) { $own.Value } else { 'none' }) }
+        if ($own) { $settings.power.turnOffControllersTimeout = $controllersOffAfterForRun }
+        else { $settings.power | Add-Member -NotePropertyName 'turnOffControllersTimeout' -NotePropertyValue $controllersOffAfterForRun }
     }
-    elseif ($has) { $settings.PSObject.Properties.Remove('driver_null') }
-    else { return }
+    else {
+        if ($names -contains 'driver_null') { $settings.PSObject.Properties.Remove('driver_null'); $changed = $true }
+        if (Test-Path -LiteralPath $driversOffMarker) {
+            foreach ($name in @(Get-Content -LiteralPath $driversOffMarker)) {
+                if ($names -contains $name) { $settings.PSObject.Properties.Remove($name); $changed = $true }
+            }
+            Remove-Item -LiteralPath $driversOffMarker
+        }
+        if (Test-Path -LiteralPath $controllersOffMarker) {
+            $was = (Get-Content -LiteralPath $controllersOffMarker -TotalCount 1).Trim()
+            $power = $settings.PSObject.Properties['power']
+            if ($power -and $was -eq 'none') {
+                $power.Value.PSObject.Properties.Remove('turnOffControllersTimeout')
+                # A power block that only held the rig's timeout goes with it.
+                if (-not @($power.Value.PSObject.Properties).Count) { $settings.PSObject.Properties.Remove('power') }
+            }
+            elseif ($power) { $power.Value.turnOffControllersTimeout = [double]$was }
+            $changed = $true
+            Remove-Item -LiteralPath $controllersOffMarker
+        }
+    }
+    if (-not $changed) { return }
     $out = $settings | ConvertTo-Json -Depth 20
     [System.IO.File]::WriteAllText($settingsPath, $out + "`n", (New-Object System.Text.UTF8Encoding($false)))
 }
@@ -174,6 +251,15 @@ function Show-Status {
         $(if (Test-Running '^(urSovngardeServer|SkyrimTogetherServer)$') { 'running' } else { 'stopped' }))
 }
 
+# The saves of a run that died are put back in the profile that run protected, before a new run protects the one MO2 has selected now.
+# Every script that starts the game calls this, then writes the state file and copies the saves aside (Copy-SavesAside).
+function Switch-ToSelectedProfile {
+    if ($profileDir -eq $selectedProfileDir) { return }
+    Restore-Saves
+    if (Test-Path -LiteralPath $savesCopy) { throw "The saves of profile '$profileName' from an earlier run could not be put back ($savesCopy); not starting the game." }
+    Set-ProfilePaths $selectedProfileDir
+}
+
 function Copy-SavesAside {
     if (Test-Path -LiteralPath $savesCopy) { Restore-Saves }
     if (Test-Path -LiteralPath $savesCopy) { throw "The saves from an earlier run could not be put back ($savesCopy); not starting the game." }
@@ -185,7 +271,7 @@ function Copy-SavesAside {
     if ($copied.Count -ne $files.Count) { throw "Only $($copied.Count) of $($files.Count) saves were copied aside; not starting the game." }
     # Only a complete copy may ever be used to decide what the test game wrote.
     Set-Content -LiteralPath $savesCopyDone -Value $files.Count
-    Write-Host "Saves copied aside ($($files.Count) files); they are put back when the game is closed."
+    Write-Host "Saves of profile '$profileName' copied aside ($($files.Count) files); they are put back when the game is closed."
 }
 
 function Restore-Saves {
@@ -201,6 +287,13 @@ function Restore-Saves {
     $quarantine = Join-Path $rigSaves (Get-Date -Format 'yyyyMMdd-HHmmss')
     $before = @{}
     foreach ($f in Get-ChildItem -LiteralPath $savesCopy -File) { $before[$f.Name] = $f }
+    # The profile's own rig save was only copied in for the run: its copy goes, the original stays in saves-rig.
+    if (Test-Path -LiteralPath $ownRigSaves) {
+        foreach ($f in Get-ChildItem -LiteralPath $ownRigSaves -File) {
+            $copy = Join-Path $savesDir $f.Name
+            if (-not $before[$f.Name] -and (Test-Path -LiteralPath $copy)) { Remove-Item -LiteralPath $copy -Force }
+        }
+    }
     foreach ($f in Get-ChildItem -LiteralPath $savesDir -File) {
         $old = $before[$f.Name]
         if ($old -and $old.Length -eq $f.Length -and $old.LastWriteTimeUtc -eq $f.LastWriteTimeUtc) { continue }
@@ -252,16 +345,25 @@ function Restore-Connect {
     Write-Host 'Connect file put back as it was.'
 }
 
+function Write-RigQuit([string]$what) {
+    $line = '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $what
+    Write-Host $line
+    try { Add-Content -LiteralPath (Join-Path $clientDir 'logs\rig-quits.log') -Value $line } catch { }
+}
+
 function Stop-Everything {
     $state = $null
     if (Test-Path $stateFile) { $state = Get-Content $stateFile -Raw | ConvertFrom-Json }
 
     if (Test-Running $gamePattern) {
         # The game's own quit. A kill would leave a crash report that reads like a real crash later.
+        # Its time goes to logs\rig-quits.log beside the client's log, so that a crash block there can be matched to the rig's quit.
+        Write-RigQuit 'the rig sent qqq to the game'
         try { Invoke-Tool 'console' @{ action = 'exec'; command = 'qqq' } 8 | Out-Null } catch { }
         try { Wait-Until { -not (Test-Running $gamePattern) } 40 'the game to quit' }
         catch {
             Write-Host 'The game did not quit on its own; stopping it.' -ForegroundColor Yellow
+            Write-RigQuit 'the game did not quit on its own; the rig stopped it'
             Get-Process $gameProcess -ErrorAction SilentlyContinue | Stop-Process -Force
         }
     }
@@ -291,7 +393,9 @@ function Stop-Everything {
     try { Set-NullDriver $false; $settingOff = $true; Write-Host 'Headset setting off: the Quest starts normally again.' }
     catch { Write-Host "COULD NOT REMOVE the driver_null setting: $_" -ForegroundColor Red }
 
-    Remove-Item $stateFile -ErrorAction SilentlyContinue
+    # Kept while the saves are still aside, so that the next "up" or "down" knows which profile they belong to.
+    if (Test-Path -LiteralPath $savesCopy) { Write-Host "The saves of profile '$profileName' are still aside; run ""down"" again once the game has closed." -ForegroundColor Red }
+    else { Remove-Item $stateFile -ErrorAction SilentlyContinue }
     if (-not $settingOff) {
         Write-Host 'THE FAKE HEADSET IS STILL SWITCHED ON. Close SteamVR and run "headless.ps1 down" again before playing.' -ForegroundColor Red
         $script:downFailed = $true
@@ -305,6 +409,8 @@ if ($Action -eq 'down') { Stop-Everything; Show-Status; if ($script:downFailed) 
 if (Test-Running '^(urSovngarde|SkyrimTogetherVR|SkyrimVR)$') { throw 'The game is already running. If that is a real session, leave it alone; otherwise run "down" first.' }
 if (Test-Running '^(vrserver|vrmonitor)$') { throw 'SteamVR is already running. If the headset is in use, leave it alone; otherwise close it first.' }
 
+Switch-ToSelectedProfile
+
 $rates = @(Get-MonitorRates)
 $fastest = ($rates | Measure-Object -Property Hz -Maximum).Maximum
 Write-Host ('Monitors: ' + (($rates | ForEach-Object { '{0} {1} Hz' -f $_.Name, $_.Hz }) -join ', ') + "; the rig will run near $fastest fps.")
@@ -313,19 +419,34 @@ if ($fastest -gt 60) {
 }
 
 $startedServer = $false
-# The tests run on one fixed save, since the newest one changes with every play session and changes the results with it.
+# The tests run on one fixed save per modlist, since the newest one changes with every play session and changes the results with it.
 # The bot clones the player's equipment, and a save's effects (a cloak spell, a companion) can kill the bot's creatures.
-# The newest save is used only when the fixed one is gone.
+# A profile's own rig save sits in its saves-rig folder, outside the player's saves, where it is never the newest one.
+# "up" copies it in once the saves are aside, and "down" takes the copy out again (Restore-Saves).
+# Without one, FUS's fixed save, which its saves folder holds; the newest save only when neither is there.
+$ownRigSave = $null
+if (-not $Save -and (Test-Path -LiteralPath $ownRigSaves)) {
+    $ownRigSave = Get-ChildItem -LiteralPath $ownRigSaves -Filter '*.ess' -File | Select-Object -First 1
+    if ($ownRigSave) {
+        $Save = $ownRigSave.BaseName
+        Write-Host "Loading this profile's rig save $Save from saves-rig (pass -Save to load another)."
+    }
+}
 $rigSave = 'Save46_C232C981_0_517565656E20456D6D61_Tamriel_011038_20261011155852_30_1'
 if (-not $Save -and (Test-Path -LiteralPath (Join-Path $savesDir "$rigSave.ess"))) {
     $Save = $rigSave
     Write-Host "Loading the rig's fixed save $rigSave (pass -Save to load another)."
 }
 try {
+    @{ startedServer = $false; save = $Save; profileDir = $profileDir } | ConvertTo-Json | Set-Content $stateFile
     Copy-SavesAside
+    if ($ownRigSave) {
+        # The save and its script extender file, which share its name.
+        Get-ChildItem -LiteralPath $ownRigSaves -File | Where-Object { $_.BaseName -eq $ownRigSave.BaseName } |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $savesDir -Force }
+    }
     Set-RigConnect
     Set-NullDriver $true
-    @{ startedServer = $false; save = $Save } | ConvertTo-Json | Set-Content $stateFile
 
     Start-Process 'steam://rungameid/250820'
     Wait-Until { Test-Running '^vrserver$' } 90 'SteamVR to start'
@@ -338,13 +459,13 @@ try {
     if (-not $NoConnect -and -not (Test-Running '^(urSovngardeServer|SkyrimTogetherServer)$')) {
         Start-Process -FilePath (Join-Path $release 'urSovngardeServer.exe') -WorkingDirectory $release -WindowStyle Hidden
         $startedServer = $true
-        @{ startedServer = $true; save = $Save } | ConvertTo-Json | Set-Content $stateFile
+        @{ startedServer = $true; save = $Save; profileDir = $profileDir } | ConvertTo-Json | Set-Content $stateFile
         Start-Sleep -Seconds 4
     }
 
     Start-Process -FilePath $mo2 -ArgumentList "`"moshortcut://:$mo2Shortcut`""
     Wait-Until { Get-Health } 180 'DevBench to answer (the game to start)'
-    Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } 180 'the main menu' -NeedsGame
+    Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } $MenuTimeout 'the main menu' -NeedsGame
 
     if ($Save) { Invoke-Tool 'game' @{ action = 'load'; name = $Save } | Out-Null }
     else { Invoke-Tool 'game' @{ action = 'loadLast' } | Out-Null }

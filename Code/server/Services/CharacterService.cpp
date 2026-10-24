@@ -41,6 +41,9 @@
 #include <Messages/SubtitleRequest.h>
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
+#include <Messages/RequestActionEvents.h>
+#include <Messages/NotifyActionEvents.h>
+#include <MovementPacker.h>
 
 #include <Setting.h>
 namespace
@@ -69,6 +72,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher)
     , m_syncExperienceConnection(aDispatcher.sink<PacketEvent<SyncExperienceRequest>>().connect<&CharacterService::OnSyncExperienceRequest>(this))
     , m_dialogueConnection(aDispatcher.sink<PacketEvent<DialogueRequest>>().connect<&CharacterService::OnDialogueRequest>(this))
     , m_subtitleConnection(aDispatcher.sink<PacketEvent<SubtitleRequest>>().connect<&CharacterService::OnSubtitleRequest>(this))
+    , m_actionEventsConnection(aDispatcher.sink<PacketEvent<RequestActionEvents>>().connect<&CharacterService::OnActionEventsRequest>(this))
 {
 }
 
@@ -231,10 +235,56 @@ void CharacterService::OnUpdate(const UpdateEvent&) const noexcept
 {
     ProcessFactionsChanges();
     HandOffAbandonedActors();
+    ProcessPendingLeaderAssignments();
+}
+
+bool CharacterService::HoldUntilSettled(Player* apLeader, const entt::entity aEntity, const uint32_t aOwnershipEpoch, const OwnershipTransferReason aReason) const noexcept
+{
+    // Right after the leader's arrival (a load), its game is still bringing actors in.
+    // Handed over at once, they go back and forth between the games, so the hand-over waits until the arrival is 10 s old.
+    constexpr auto cGrace = std::chrono::seconds(10);
+    const auto cReadyAt = apLeader->GetLastCellEnterAt() + cGrace;
+    if (std::chrono::steady_clock::now() >= cReadyAt)
+        return false;
+
+    m_pendingLeaderAssignments.push_back(PendingLeaderAssignment{apLeader->GetId(), aEntity, aOwnershipEpoch, cReadyAt, aReason});
+    spdlog::info("Ownership: {} of actor {:X} by player {:X} held back until 10 s after their arrival", GetOwnershipTransferReasonName(aReason), World::ToInteger(aEntity),
+                 apLeader->GetId());
+    return true;
+}
+
+void CharacterService::ProcessPendingLeaderAssignments() const noexcept
+{
+    if (m_pendingLeaderAssignments.empty())
+        return;
+
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = m_pendingLeaderAssignments.begin(); it != m_pendingLeaderAssignments.end();)
+    {
+        if (cNow < it->ReadyAt)
+        {
+            ++it;
+            continue;
+        }
+
+        const PendingLeaderAssignment cPending = *it;
+        it = m_pendingLeaderAssignments.erase(it);
+
+        Player* const pPlayer = m_world.GetPlayerManager().GetById(cPending.PlayerId);
+        if (!pPlayer || !m_world.valid(cPending.Entity))
+            continue;
+        // The rules are checked again: another arrival, a hand-over or a departure may have come meanwhile.
+        if (CanClaimOwnership(pPlayer, cPending.Entity, cPending.OwnershipEpoch, cPending.Reason))
+            TransferOwnership(pPlayer, cPending.Entity, cPending.Reason);
+    }
 }
 
 void CharacterService::OnCharacterExteriorCellChange(const CharacterExteriorCellChangeEvent& acEvent) const noexcept
 {
+    // The character's own place is set now, before it is sent: its first actions there may come before its movement, and go by it.
+    if (auto* pCell = m_world.try_get<CellIdComponent>(acEvent.Entity))
+        *pCell = CellIdComponent{acEvent.CellId, acEvent.WorldSpaceId, acEvent.CurrentCoords};
+
     CharacterSpawnRequest spawnMessage;
     Serialize(m_world, acEvent.Entity, &spawnMessage);
 
@@ -259,6 +309,10 @@ void CharacterService::OnCharacterExteriorCellChange(const CharacterExteriorCell
 
 void CharacterService::OnCharacterInteriorCellChange(const CharacterInteriorCellChangeEvent& acEvent) const noexcept
 {
+    // The character's own place is set now, before it is sent: its first actions there may come before its movement, and go by it.
+    if (auto* pCell = m_world.try_get<CellIdComponent>(acEvent.Entity))
+        *pCell = CellIdComponent{acEvent.NewCell};
+
     CharacterSpawnRequest spawnMessage;
     Serialize(m_world, acEvent.Entity, &spawnMessage);
 
@@ -329,7 +383,7 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
             acMessage.pPlayer->Send(response);
 
             // The assignment response establishes a remote component before the grant arrives.
-            if (transferToLeader)
+            if (transferToLeader && !HoldUntilSettled(acMessage.pPlayer, *itor, ownerComponent.OwnershipEpoch, OwnershipTransferReason::LeaderAssignment))
                 TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
 
             return;
@@ -449,6 +503,13 @@ void CharacterService::OnOwnershipClaimRequest(const PacketEvent<RequestOwnershi
     if (message.Follower)
         if (auto* pOwnerComponent = m_world.try_get<OwnerComponent>(cEntity))
             pOwnerComponent->FollowerOfPlayerId = acMessage.pPlayer->GetId();
+
+    // The leader's game claims each NPC it loads, so after its arrival the claim waits like an assignment.
+    // A follower and a dead body to drag go at once.
+    const auto* pCharacter = m_world.try_get<CharacterComponent>(cEntity);
+    const bool cLivingNpc = pCharacter && !pCharacter->IsDead();
+    if (!message.Follower && cLivingNpc && HoldUntilSettled(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim))
+        return;
     TransferOwnership(acMessage.pPlayer, cEntity, OwnershipTransferReason::LeaderClaim);
 }
 
@@ -474,7 +535,9 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
     // Relayed at once to every other player in range, with the owner's own tick: each receiving game times its playback
     // from when the owner captured the update, not from when the server passed it on.
-    TiltedPhoques::Map<Player*, ServerReferencesMoveRequest> relays;
+    using Packer = MovementPacker<ServerReferencesMoveRequest>;
+    thread_local TiltedPhoques::Buffer s_scratch(1 << 16);
+    TiltedPhoques::Map<Player*, std::unique_ptr<Packer>> relays;
     const auto characterView = m_world.view<CharacterComponent>();
 
     for (auto& entry : message.Updates)
@@ -490,8 +553,12 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
         auto& movementComponent = view.get<MovementComponent>(*itor);
         auto& cellIdComponent = view.get<CellIdComponent>(*itor);
-        auto& animationComponent = view.get<AnimationComponent>(*itor);
 
+        // Movement arrives unreliably, so an older report can come after a newer one, and would set the actor back.
+        // It is dropped; a step back of more than a second is a clock resync and is taken.
+        constexpr uint64_t cReorderWindowMs = 1000;
+        if (message.Tick < movementComponent.Tick && movementComponent.Tick - message.Tick < cReorderWindowMs)
+            continue;
         movementComponent.Tick = message.Tick;
 
         const auto movementCopy = movementComponent;
@@ -506,23 +573,88 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
         movementComponent.Flying = movement.Flying;
         movementComponent.VRPoseData = update.UpdatedVRPose;
 
+        const CellIdComponent cCellBefore = cellIdComponent;
         cellIdComponent.Cell = movement.CellId;
         cellIdComponent.WorldSpaceId = movement.WorldSpaceId;
         cellIdComponent.CenterCoords = GridCellCoords::CalculateGridCellCoords(movement.Position.x, movement.Position.y);
 
-        Vector<ActionEvent> actions;
-        for (auto& action : update.ActionEvents)
+
+        const auto cCharacter = characterView.find(entity);
+        const bool cIsDragon = cCharacter != characterView.end() && characterView.get<CharacterComponent>(*cCharacter).IsDragon();
+        const bool cIsPlayer = cCharacter != characterView.end() && characterView.get<CharacterComponent>(*cCharacter).IsPlayer();
+        const bool cCellChanged = cCellBefore.Cell != cellIdComponent.Cell || cCellBefore.WorldSpaceId != cellIdComponent.WorldSpaceId ||
+                                  !(cCellBefore.CenterCoords == cellIdComponent.CenterCoords);
+        // An NPC whose own move takes it out of a player's range is removed from that player's view.
+        // A move that brings it back sends it to them again.
+        // Players' characters are handled by their own cell changes.
+        if (cCellChanged && !cIsPlayer && cCharacter != characterView.end())
+            UpdateViewsAfterMove(acMessage.pPlayer, entity, cCellBefore, cellIdComponent, cIsDragon);
+
+        ReferenceUpdate relayed;
+        relayed.UpdatedMovement = movement;
+        relayed.UpdatedVRPose = update.UpdatedVRPose;
+        const size_t cEntryBits = Packer::EntryBits(s_scratch, entry.first, relayed);
+
+        for (Player* pPlayer : m_world.GetPlayerManager())
         {
-            auto [canceled, reason] = GameServer::Get()->GetWorld().GetScriptService().HandleCharacterMove(entity);
-            if (canceled)
+            if (pPlayer == acMessage.pPlayer || !cellIdComponent.IsInRange(pPlayer->GetCellComponent(), cIsDragon))
                 continue;
 
-            animationComponent.CurrentAction = action;
-            actions.push_back(action);
+            // Movement goes unreliably: a lost message costs only itself, and the next one is already on its way.
+            auto& pPacker = relays[pPlayer];
+            if (!pPacker)
+                pPacker = std::make_unique<Packer>(message.Tick, s_scratch);
+            ServerReferencesMoveRequest full;
+            if (pPacker->Add(entry.first, relayed, cEntryBits, full))
+                pPlayer->Send(full, TiltedPhoques::kUnreliable);
+        }
+    }
+
+    // The last message to a player skips Nagle's wait, so the whole batch leaves now.
+    for (auto it = relays.begin(); it != relays.end(); ++it)
+        it->first->Send(it.value()->Current(), TiltedPhoques::kUnreliableNoNagle);
+}
+
+Vector<ActionEvent> CharacterService::KeepActions(const entt::entity aEntity, AnimationComponent& aAnimationComponent, const Vector<ActionEvent>& acActions) const noexcept
+{
+    Vector<ActionEvent> kept;
+    for (const auto& action : acActions)
+    {
+        auto [canceled, reason] = GameServer::Get()->GetWorld().GetScriptService().HandleCharacterMove(aEntity);
+        if (canceled)
+            continue;
+
+        aAnimationComponent.CurrentAction = action;
+        kept.push_back(action);
+    }
+
+    // A player who comes into range later is sent these, so the actor starts in the right state.
+    aAnimationComponent.ActionsReplayCache.AppendAll(kept);
+    return kept;
+}
+
+void CharacterService::OnActionEventsRequest(const PacketEvent<RequestActionEvents>& acMessage) const noexcept
+{
+    OwnerView<AnimationComponent, CellIdComponent> view(m_world, acMessage.GetSender());
+    const auto characterView = m_world.view<CharacterComponent>();
+
+    // Relayed at once and reliably to every other player in range, as the movement is.
+    TiltedPhoques::Map<Player*, NotifyActionEvents> relays;
+    for (const auto& [serverId, actions] : acMessage.Packet.Actions)
+    {
+        const auto entity = static_cast<entt::entity>(serverId);
+        auto itor = view.find(entity);
+        if (itor == std::end(view))
+        {
+            spdlog::debug("{:x} sent actions of {:x}, which it does not own or which does not exist", acMessage.pPlayer->GetConnectionId(), serverId);
+            continue;
         }
 
-        animationComponent.ActionsReplayCache.AppendAll(update.ActionEvents);
+        const Vector<ActionEvent> kept = KeepActions(entity, view.get<AnimationComponent>(*itor), actions);
+        if (kept.empty())
+            continue;
 
+        const auto& cellIdComponent = view.get<CellIdComponent>(*itor);
         const auto cCharacter = characterView.find(entity);
         const bool cIsDragon = cCharacter != characterView.end() && characterView.get<CharacterComponent>(*cCharacter).IsDragon();
         for (Player* pPlayer : m_world.GetPlayerManager())
@@ -530,18 +662,51 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
             if (pPlayer == acMessage.pPlayer || !cellIdComponent.IsInRange(pPlayer->GetCellComponent(), cIsDragon))
                 continue;
 
-            auto& relay = relays[pPlayer];
-            auto& relayed = relay.Updates[entry.first];
-            relayed.UpdatedMovement = movement;
-            relayed.UpdatedVRPose = update.UpdatedVRPose;
-            relayed.ActionEvents = actions;
+            auto& relayed = relays[pPlayer].Actions[serverId];
+            relayed.insert(relayed.end(), kept.begin(), kept.end());
         }
     }
 
     for (auto it = relays.begin(); it != relays.end(); ++it)
-    {
-        it.value().Tick = message.Tick;
         it->first->Send(it->second);
+}
+
+
+void CharacterService::UpdateViewsAfterMove(const Player* apOwner, const entt::entity aEntity, const CellIdComponent& acBefore, const CellIdComponent& acNow,
+                                            const bool aIsDragon) const noexcept
+{
+    const uint32_t cServerId = World::ToInteger(aEntity);
+    // Only a door or a worldspace change removes it.
+    // A walk along the edge of a player's loaded area would remove and re-create it again and again.
+    // Outdoors, the copy there waits at that edge until the actor comes back.
+    const bool cThroughDoor = acBefore.IsInInteriorCell() || acNow.IsInInteriorCell() || acBefore.WorldSpaceId != acNow.WorldSpaceId;
+    for (Player* pPlayer : m_world.GetPlayerManager())
+    {
+        if (pPlayer == apOwner)
+            continue;
+
+        const auto& cViewer = pPlayer->GetCellComponent();
+        const bool cWasInRange = acBefore.IsInRange(cViewer, aIsDragon);
+        const bool cIsInRange = acNow.IsInRange(cViewer, aIsDragon);
+        if (cWasInRange == cIsInRange || (cWasInRange && !cThroughDoor))
+            continue;
+
+        if (cWasInRange)
+        {
+            NotifyRemoveCharacter removeMessage;
+            removeMessage.ServerId = cServerId;
+            pPlayer->Send(removeMessage);
+            spdlog::info("CellRange: character {:X} moved from cell {:X} to {:X}, out of player {:X}'s range; removed from their view", cServerId, acBefore.Cell.BaseId,
+                         acNow.Cell.BaseId, pPlayer->GetId());
+        }
+        else
+        {
+            CharacterSpawnRequest spawnMessage;
+            Serialize(m_world, aEntity, &spawnMessage);
+            pPlayer->Send(spawnMessage);
+            spdlog::info("CellRange: character {:X} moved from cell {:X} to {:X}, into player {:X}'s range; sent to them", cServerId, acBefore.Cell.BaseId, acNow.Cell.BaseId,
+                         pPlayer->GetId());
+        }
     }
 }
 
@@ -689,6 +854,7 @@ void CharacterService::OnDialogueRequest(const PacketEvent<DialogueRequest>& acM
     notify.ServerId = message.ServerId;
     notify.SoundFilename = message.SoundFilename;
     notify.SceneId = message.SceneId;
+    notify.ScenePhase = message.ScenePhase;
 
     const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.GetSender()))
@@ -703,6 +869,7 @@ void CharacterService::OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acM
     notify.ServerId = message.ServerId;
     notify.Text = message.Text;
     notify.SceneId = message.SceneId;
+    notify.ScenePhase = message.ScenePhase;
 
     const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.GetSender()))
@@ -970,6 +1137,9 @@ bool CharacterService::TransferOwnership(Player* apPlayer, const entt::entity aE
 
     ownerComponent.SetOwner(apPlayer);
     ownerComponent.OwnershipEpoch = newEpoch;
+    // The new owner's reports are ordered on its own clock, which may run a little behind the old owner's.
+    if (auto* pMovement = m_world.try_get<MovementComponent>(aEntity))
+        pMovement->Tick = 0;
     if (aResetInvalidOwners)
         ownerComponent.InvalidOwners.clear();
 

@@ -96,16 +96,19 @@ int64_t TP_MAKE_THISCALL(HookCompareVariables, void, BSScript::Variable* apVar1,
 static TiltedPhoques::Initializer s_vmHooks(
     []()
     {
-        POINTER_SKYRIMSE(TRegisterPapyrusFunction, s_registerPapyrusFunction, 104788, 104788);
         POINTER_SKYRIMSE(TBindEverythingToScript, s_bindEverythingToScript, 55739, 55739);
 
         // POINTER_SKYRIMSE(TCompareVariables, s_compareVariables, 105220, 105220);
 
-        RealRegisterPapyrusFunction = s_registerPapyrusFunction.Get();
         RealBindEverythingToScript = s_bindEverythingToScript.Get();
         // RealCompareVariables = s_compareVariables.Get();
 
+#ifndef SKYRIMVR
+        // On VR this address does not exist; HookBindEverythingToScript hooks the function from the VM's vtable instead.
+        POINTER_SKYRIMSE(TRegisterPapyrusFunction, s_registerPapyrusFunction, 104788, 104788);
+        RealRegisterPapyrusFunction = s_registerPapyrusFunction.Get();
         TP_HOOK(&RealRegisterPapyrusFunction, HookRegisterPapyrusFunction);
+#endif
         TP_HOOK(&RealBindEverythingToScript, HookBindEverythingToScript);
         // TP_HOOK(&RealCompareVariables, HookCompareVariables);
     });

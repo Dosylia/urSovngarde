@@ -69,6 +69,8 @@ private:
     TiltedPhoques::String m_connectedName;
     // A loading screen was seen since the last name check: the name is compared once the game has settled after it.
     bool m_nameCheckDue{false};
+    // Loading screens the game had queued by the last update (UI::LoadingScreensQueued).
+    uint32_t m_loadingScreensSeen{0};
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;

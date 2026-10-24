@@ -1,0 +1,54 @@
+# A door locked in this game stays shut when the other games left it open: opening it would unlock it.
+#
+#   python Tools\VR\live-check.py live-door-join-locked
+#   python Tools\VR\live-check.py --expect-fail live-door-join-locked     on a build without the change: must be RED
+#
+# The server keeps a door's state after an activation, and a game entering its cell is given it (live-door-join).
+# A door locked here since, or by a quest, is left shut, and locking a door makes the server forget its state.
+# Here: Helgen keep's door 9B0A5, closed and locked by this game. The player leaves for Riverwood's inn, the bot opens the
+# door, and the player comes back. One trip only: a second one in the same run has hit Community Shaders' crash at a load.
+log live door join locked
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- the player into Helgen's keep, the door closed and locked
+log DO console player.moveto 9B0A5
+wait 12
+cell 5DE24
+stay
+wait 4
+log DO papyrus ObjectReference SetOpen 9B0A5 b:false
+wait 6
+log DO papyrus ObjectReference Lock 9B0A5 b:true b:false
+wait 4
+log REQUIRE ref 9B0A5 closed
+log REQUIRE ref 9B0A5 locked
+wait 3
+
+log -- the player leaves for Riverwood's inn; the bot opens the door while the player is away
+log DO console coc RiverwoodSleepingGiantInn
+wait 20
+log REQUIRE player cell 133C6
+wait 3
+activate 9B0A5 by me 3
+wait 4
+
+log -- back in the keep: the door stays shut and locked here
+log DO console player.moveto 9B0A5
+wait 15
+log CHECK ref 9B0A5 closed
+log CHECK ref 9B0A5 locked
+log CHECK logged Door 9B0A5: open in the other games when this game came in; left shut, it is locked here
+log DO papyrus ObjectReference Lock 9B0A5 b:false b:false
+
+wait 3
+log CHECK game alive
+log DO god off
+# The player is left in the keep: run this script after a fresh `headless.ps1 up`, which loads the save again.
+cell out
+wait 2
+log done
+stop

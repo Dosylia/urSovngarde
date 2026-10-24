@@ -1,0 +1,49 @@
+# Frost and shock spells on the other player do damage, as fire does.
+#
+#   python Tools\VR\live-check.py live-pvp-spell-elements
+#   python Tools\VR\live-check.py --expect-fail live-pvp-spell-elements     on a build without the fix: must be RED
+#
+# The caster's game sends a damage spell on the other player as a health change (PvP on, as on the rig's server).
+# It sends an effect that lowers health; frost and shock lower it as dual value modifiers (with stamina or magicka).
+# Here the player casts a frost touch (3384A AAAFrostTouch, 10), a shock touch (50CFA, a storm atronach's, 20) and Fireball (1C789, 40)
+# at this bot's character.
+# The rig's idle controllers aim a cast loosely: Ice Spike, Ice Storm and Chain Lightning miss the copy in some runs.
+# So frost and shock are touch spells, which land on the target without aim.
+# Their effects are dual value modifiers on health, like Ice Spike's and Chain Lightning's.
+# Fireball bursts over an area, so it lands without aim too.
+# The frost touch goes first, so the first health change that reaches the bot is the frost one.
+# A run counts only when (REQUIRE): the fire spell was sent, so the casts reach the copy at all.
+log live pvp spell elements
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a frost touch on this bot's character
+log DO face copy
+wait 2
+log DO papyrus Spell Cast 3384A 14 copy
+wait 6
+log CHECK logged PvP: spell 3384A hit remote player
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -\d+\.\d
+wait 2
+
+log -- a shock touch
+log DO face copy
+wait 2
+log DO papyrus Spell Cast 50CFA 14 copy
+wait 6
+log CHECK logged PvP: spell 50CFA hit remote player
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -20\.0
+wait 2
+
+log -- Fireball
+log DO face copy
+wait 2
+log DO papyrus Spell Cast 1C789 14 copy
+wait 6
+log REQUIRE logged PvP: spell 1C789 hit remote player
+wait 3
+log CHECK game alive
+log done
+stop

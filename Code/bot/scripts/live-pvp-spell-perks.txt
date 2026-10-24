@@ -1,0 +1,32 @@
+# A player's damage spell on the other player carries the caster's perks, as it does on an NPC.
+#
+#   python Tools\VR\live-check.py live-pvp-spell-perks
+#   python Tools\VR\live-check.py --expect-fail live-pvp-spell-perks     on a build without the fix: must be RED
+#
+# The caster's game sends a damage spell on the other player as a health change (PvP on, as on the rig's server).
+# It sent the spell's base magnitude: the caster's perks adjust an effect only as the game makes it (AdjustForPerks).
+# Here the player gets Augmented Flames (25 % more fire damage; F392E, its name is printed) and casts Fireball (1C789,
+# 40 fire damage) at this bot's character. The bot must receive more than the base 40.
+# A run counts only when (REQUIRE): the game sent the hit at all.
+log live pvp spell perks
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the player takes Augmented Flames
+log DO papyrus Form GetName F392E
+log DO console player.addperk F392E
+wait 2
+
+log -- Fireball at this bot's character
+log DO face copy
+wait 2
+log DO papyrus Spell Cast 1C789 14 copy
+wait 6
+log REQUIRE logged PvP: spell 1C789 hit remote player
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -(4[6-9]|[5-9]\d|\d{3,})\.\d
+wait 3
+log CHECK game alive
+log done
+stop

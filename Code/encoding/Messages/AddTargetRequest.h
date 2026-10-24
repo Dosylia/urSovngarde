@@ -19,7 +19,7 @@ struct AddTargetRequest final : ClientMessage
     {
         return GetOpcode() == acRhs.GetOpcode() && TargetId == acRhs.TargetId && CasterId == acRhs.CasterId && SpellId == acRhs.SpellId &&
                EffectId == acRhs.EffectId && Magnitude == acRhs.Magnitude && IsDualCasting == acRhs.IsDualCasting &&
-               ApplyHealPerkBonus == acRhs.ApplyHealPerkBonus && ApplyStaminaPerkBonus == acRhs.ApplyStaminaPerkBonus;
+               CasterPerkFactor == acRhs.CasterPerkFactor && ApplyStaminaPerkBonus == acRhs.ApplyStaminaPerkBonus;
     }
 
     uint32_t TargetId{};
@@ -28,6 +28,7 @@ struct AddTargetRequest final : ClientMessage
     GameId EffectId{};
     float Magnitude{};
     bool IsDualCasting{};
-    bool ApplyHealPerkBonus{};
+    // How much the caster's perks multiplied a heal or buff on another player, in the caster's game.
+    float CasterPerkFactor{1.f};
     bool ApplyStaminaPerkBonus{};
 };

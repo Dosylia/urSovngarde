@@ -6,6 +6,7 @@
 
 #include <Events/ConnectedEvent.h>
 #include <Events/DisconnectedEvent.h>
+#include <Events/UpdateEvent.h>
 
 #include <Messages/NotifyPlayerJoined.h>
 #include <Messages/NotifyPlayerLeft.h>
@@ -31,6 +32,8 @@ namespace
 constexpr uint32_t kQuestId = 0x005000;
 constexpr uint32_t kHoldingCellId = 0x005001;
 constexpr uint32_t kMapMarkerFirst = 0x005040;
+
+// While not connected, the world map's list is checked this often for markers a save left on it.
 
 // A marker moves only once its player has moved this far (about 3.5 m).
 constexpr float kFollowDistance = 256.f;
@@ -111,6 +114,9 @@ PlayerMarkerService::PlayerMarkerService(World& aWorld, entt::dispatcher& aDispa
     m_joinedConnection = aDispatcher.sink<NotifyPlayerJoined>().connect<&PlayerMarkerService::OnPlayerJoined>(this);
     m_leftConnection = aDispatcher.sink<NotifyPlayerLeft>().connect<&PlayerMarkerService::OnPlayerLeft>(this);
     m_whereaboutsConnection = aDispatcher.sink<NotifyPlayerWhereabouts>().connect<&PlayerMarkerService::OnWhereabouts>(this);
+    m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&PlayerMarkerService::OnUpdate>(this);
+
+    EventDispatcherManager::Get()->loadGameEvent.RegisterSink(this);
 }
 
 bool PlayerMarkerService::FindForms() noexcept
@@ -162,6 +168,7 @@ void PlayerMarkerService::OnConnected(const ConnectedEvent&) noexcept
 void PlayerMarkerService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     m_connected = false;
+    m_sweepDue = true;
     m_names.clear();
     if (m_formsFound)
     {
@@ -256,6 +263,38 @@ void PlayerMarkerService::OnWhereabouts(const NotifyPlayerWhereabouts& acMessage
         }
         else
             FollowServerPosition(slot, index, entry.WorldSpaceId, entry.CellId, glm::vec3(entry.Position.x, entry.Position.y, entry.Position.z));
+
+        // The game empties the map's list at every load, so a shown marker is put back on it here, every two seconds.
+        if (!slot.Parked)
+            ShowOnMap(slot);
+    }
+}
+
+BSTEventResult PlayerMarkerService::OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*)
+{
+    m_sweepDue = true;
+    return BSTEventResult::kOk;
+}
+
+void PlayerMarkerService::OnUpdate(const UpdateEvent&) noexcept
+{
+    // A save made while connected may hold our markers on the map's list, and where they stood then.
+    // So after each load or disconnect they all come off the list; while connected, the next whereabouts puts them back.
+    if (!m_sweepDue)
+        return;
+    // Only once a save is loaded: FindForms gives up for good when it fails, and at the menus it could.
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer || !pPlayer->parentCell || !FindForms())
+        return;
+    m_sweepDue = false;
+
+    for (Slot& slot : m_mapSlots)
+    {
+        HideFromMap(slot);
+        // The marker may stand anywhere the save left it, so it is placed again.
+        slot.Parked = true;
+        slot.CellId = GameId{};
+        slot.BodyCellId = 0;
     }
 }
 
@@ -316,6 +355,7 @@ void PlayerMarkerService::Park(Slot& aSlot, size_t aIndex) noexcept
     if (aSlot.Parked)
         return;
 
+    HideFromMap(aSlot);
     aSlot.pMarker->MoveTo(m_pHoldingCell, ToNiPoint(glm::vec3(static_cast<float>(aIndex) * 64.f, 0.f, 0.f)));
     aSlot.Parked = true;
     spdlog::info("Player markers: {:X} put away (player {})", aSlot.pMarker->formID, aSlot.PlayerId);
@@ -335,6 +375,49 @@ void PlayerMarkerService::FreeAll() noexcept
     for (size_t i = 0; i < kMapMarkers; ++i)
         if (m_mapSlots[i].PlayerId)
             Free(m_mapSlots[i], i);
+}
+
+// The world map draws only the markers on the player's list (PlayerCharacter::currentMapMarkers); moving a marker does not put it there.
+void PlayerMarkerService::ShowOnMap(Slot& aSlot) noexcept
+{
+#ifdef SKYRIMVR
+    PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return;
+    if (!PlayerCharacter::CanEditMapMarkers())
+    {
+        static bool s_said = false;
+        if (!s_said)
+        {
+            s_said = true;
+            spdlog::warn("Player markers: the lock on the world map's marker list is not known; no players on the map");
+        }
+        return;
+    }
+
+    // Shown only: the game's own pass over the list must never make it a fast travel destination.
+    if (auto* pExtra = static_cast<MapMarkerExtra*>(aSlot.pMarker->extraData.GetByType(kExtraMapMarker)); pExtra && pExtra->pData)
+        pExtra->pData->Flags = kMapMarkerVisible;
+
+    const uint32_t cHandle = aSlot.pMarker->GetHandle().handle.iBits;
+    if (!pPlayer->AddMapMarker(cHandle))
+        return;
+    spdlog::info("Player markers: {:X} {} the world map's list for player {} ({} markers on it)", aSlot.pMarker->formID, aSlot.OnMap ? "back on" : "put on", aSlot.PlayerId,
+                 pPlayer->currentMapMarkers.length);
+    aSlot.OnMap = true;
+#endif
+}
+
+void PlayerMarkerService::HideFromMap(Slot& aSlot) noexcept
+{
+#ifdef SKYRIMVR
+    PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer || !aSlot.pMarker || !PlayerCharacter::CanEditMapMarkers())
+        return;
+    if (pPlayer->RemoveMapMarker(aSlot.pMarker->GetHandle().handle.iBits))
+        spdlog::info("Player markers: {:X} taken off the world map's list{}", aSlot.pMarker->formID, m_connected ? "" : " (left there by a save; not connected)");
+    aSlot.OnMap = false;
+#endif
 }
 
 void PlayerMarkerService::SetMapMarkerName(TESObjectREFR* apMarker, const String& acText) noexcept

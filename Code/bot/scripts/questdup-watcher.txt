@@ -1,0 +1,23 @@
+# The other half of questdup: it is told of the other side's start and stage 10, then reaches stage 10 itself (a duplicate,
+# not relayed) and stage 20 (relayed).
+#
+# "party lead": this bot keeps the party the server makes for it, so the other side joins it.
+party lead
+log questdup watcher
+waitfor connected 45
+record questdup watcher
+waitfor known other 40
+log -- the other side's start and stage 10 arrive
+waitfor questupdates 1F0 >= 2 30
+expect questupdates 1F0 == 2
+log -- this side reaches stage 10 too, then stage 20
+quest 1F0 stage 10
+wait 1
+quest 1F0 stage 20
+wait 5
+expect questupdates 1F0 == 2
+expect connected
+record off
+report bot-questdup-watcher.txt
+log done
+stop
