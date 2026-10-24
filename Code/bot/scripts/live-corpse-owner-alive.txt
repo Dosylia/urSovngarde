@@ -1,0 +1,60 @@
+# A copy that dies here while its owner's game still has it alive is not dragged after the living owner.
+#
+#   python Tools\VR\live-check.py live-corpse-owner-alive
+#   python Tools\VR\live-check.py --expect-fail live-corpse-owner-alive     on a build without the fix: must be RED
+#
+# In play, NPC copies lay dead in one game while their owner's game had them alive and on the move.
+# The corpse placement pulled each body to where the owner had the living NPC, again and again, up to 8500 units.
+# Here the game kills its copy of the bot's Lydia with Papyrus, while the bot keeps her alive and walks her 1200 units on.
+# The body must lie where it fell until the owner's game says she died; from then on it is placed as before.
+# Where the body lies is read from its ragdoll, as the corpse placement measures it ("CorpseDiag: ... lay N units").
+# A skeleton node would not do: the game stops posing a body outside the headset's view, so its nodes stay put.
+# A run counts only when (REQUIRE): the copy was alive, then dead here.
+log live corpse owner alive
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a Lydia of this bot's, alive; not essential in this game, so the kill takes
+log DO papyrus ActorBase SetEssential A2C8E b:false
+npc temp A2C8E
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc alive
+
+log -- this game kills its copy; the bot's Lydia lives on
+# DevBench needs every argument written out: the player is the killer.
+log DO papyrus Actor Kill npc 14
+wait 6
+log REQUIRE npc dead
+
+log -- the living Lydia walks 1200 units east, 300 at a time, inside her cell (34, up to x 143360)
+npcmove 300 0 0
+wait 3
+npcmove 300 0 0
+wait 3
+npcmove 300 0 0
+wait 3
+npcmove 300 0 0
+wait 3
+npcmove 0 0 0
+wait 6
+log CHECK absent CorpseDiag: \w+'s ragdoll lay \d+ units from where its owner's corpse is; moved there
+log CHECK logged CorpseDiag: \w+ is dead here, but its owner's game has not said it died; left where it lies
+# The bot does not wait for the checks above; without this they could read lines from after her owner's death.
+wait 5
+
+log -- the owner's Lydia dies too: from now on the body goes where the owner's corpse lies
+npclife dead 0
+wait 6
+npcmove 0 0 0
+wait 6
+# Her body still lay where it fell, about 1200 units from her owner's.
+# Dragged along, it is at most one step (300) plus the 130-260 a moved ragdoll settles back from its target behind.
+log CHECK logged CorpseDiag: \w+'s ragdoll lay (9\d\d|\d{4,}) units from where its owner's corpse is; moved there
+wait 3
+log CHECK game alive
+wait 3
+log done
+stop

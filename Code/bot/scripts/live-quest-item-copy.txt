@@ -1,0 +1,39 @@
+# A quest object another player picks up from the world reaches that player's copy here once, not twice.
+#
+#   python Tools\VR\live-check.py live-quest-item-copy
+#   python Tools\VR\live-check.py --expect-fail live-quest-item-copy     on a build without the fix: must be RED
+#
+# The picker's game sends the pick-up (an activation) and the item (an inventory change marked as a quest object).
+# This game replays the activation on the picker's copy, which takes the object, then the inventory change added a
+# second one to the same copy before handing this game's player their own (TESObjectREFR::AddOrRemoveItem). The
+# copy then held one more than its owner until its next full inventory set (review C24).
+# Here the bot is the picker: Thieves Guild's quest object 44E13 (base 44E12) lies loose in Pinewatch in the test save.
+log live quest item copy
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO god on
+# This bot is in Pinewatch first: the player then arrives where it already is, and the server sends its character
+# with the cell. Following the player in instead, the copy came back only some of the time before the pick-up.
+cell 1F359
+wait 3
+log DO console player.moveto 44E13
+wait 15
+log REQUIRE ref 44E13 3d
+log REQUIRE copy exists
+log REQUIRE copy count 44E12 0
+wait 3
+
+log -- the bot picks up the quest object: its pick-up, then the item
+activate 44E13 by me
+wait 3
+additem 44E12 1 quest
+wait 4
+log CHECK copy count 44E12 1
+log CHECK player has 44E12
+wait 3
+log DO god off
+log CHECK game alive
+log done
+stop

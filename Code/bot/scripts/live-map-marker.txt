@@ -1,0 +1,37 @@
+# Another player out of sight shows on the world map.
+#
+#   python Tools\VR\live-check.py live-map-marker
+#   python Tools\VR\live-check.py --expect-fail live-map-marker     on a build without the fix: must be RED
+#
+# The markers (SkyrimTogether.esp, 0x005040 on) were moved to each player, but the world map draws only the markers
+# on the player's list (PlayerCharacter::currentMapMarkers, VR +0xAE8), and moving one does not put it there: nobody
+# ever saw an icon. Now a shown marker is put on that list under the game's own lock, put back after a load (the
+# game empties the list then), and taken off when its player comes into sight.
+# Here the bot walks out of sight (beyond 2100 units) east of the player, and the world map is opened and pictured.
+# Look at the picture: an icon east of the player's, named after the bot.
+log live map marker
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- the bot walks 4000 units east, out of sight
+walk rel 4000 0 800
+wait 8
+log CHECK logged Player markers: \w+ follows player
+log CHECK logged Player markers: \w+ put on the world map's list for player
+wait 3
+
+log -- the world map, pictured while open
+log DO menu 8 MapMenu shot map
+wait 10
+
+log -- back next to the player: the marker is taken off the list
+walk rel -3800 0 800
+wait 8
+log CHECK logged Player markers: \w+ taken off the world map's list
+log CHECK game alive
+wait 3
+log done
+stop

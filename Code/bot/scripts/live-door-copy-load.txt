@@ -1,0 +1,47 @@
+# A copy of another game's actor does not go through a load door on its own in this game.
+#
+#   python Tools\VR\live-check.py live-door-copy-load
+#   python Tools\VR\live-check.py --expect-fail live-door-copy-load     on a build without the fix: must be RED
+#
+# In play the receiving game ran its own AI on a quest NPC's copy, and that AI walked the copy through load doors.
+# The copy then stood in a cell its owner never entered; the game removed it there and the server spawned it again.
+# Here the game makes the bot's NPC copy use Mistwatch's upper door, the same game function the AI calls.
+# The copy must stay where it is, loaded; its owner (the bot) never used the door.
+# A run counts only when (REQUIRE): the copy was loaded next to the player before the door was used.
+log live door copy load
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+# The player stays where the rig starts, outside Mistwatch, with the bot beside them; the door is within the loaded cells.
+# Moving the player by console would leave the bot and its NPC behind, out of the server's view of the player.
+log CHECK player in Tamriel
+
+log -- the bot brings its own Lydia; the game shows a copy of her
+npc temp A2C8E
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc 3d
+log DO mark start npc
+
+log -- the game makes the copy use the load door, as its AI did in play (Activate works at any distance)
+log DO papyrus ObjectReference Activate 3F558 npc b:false
+wait 2
+log CHECK npc 3d
+log CHECK moved start atmost 300
+log CHECK logged Load door 3F558: not used by [0-9A-F]+, a copy of another game's actor
+
+log -- a while later the copy is still there, and was never removed and spawned again
+wait 8
+log CHECK npc exists
+log CHECK npc 3d
+log CHECK moved start atmost 300
+log CHECK fewer 2 CharacterSpawnRequest, server id: [0-9A-F]+, form id: [0-9A-F]+, local base A2C8E
+wait 3
+log CHECK game alive
+log DO god off
+wait 3
+log done
+stop
