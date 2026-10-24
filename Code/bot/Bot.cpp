@@ -1046,6 +1046,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             npc.OwnedByUs = message.Owner;
             npc.OwnershipEpoch = message.OwnershipEpoch;
             npc.Ref = pending->second; // so that "claim ref:<hex>" finds this bot's own NPC too
+            m_lastNpcId = message.ServerId;
             m_npcCookies.erase(pending);
             npc.LastChange = Clock::now();
             spdlog::info("NPC registered as actor {:X} (owner {}) at epoch {}", message.ServerId, message.Owner ? "yes" : "no", message.OwnershipEpoch);
@@ -1091,6 +1092,8 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             {
                 pActor->Position = FromNet(entry.second.UpdatedMovement.Position);
                 pActor->PositionKnown = true;
+                if (entry.second.UpdatedVRPose.HasData)
+                    pActor->BonesAt = Clock::now();
             }
 
             if (KnownPlayer* pPlayer = FindPlayerCharacter(entry.first))
@@ -3281,6 +3284,13 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
             return true;
         }
 
+        // "mynpc" is the NPC this bot registered last, whichever game runs it now.
+        if (acArgs[aIndex] == "mynpc")
+        {
+            aOut = m_lastNpcId;
+            return true;
+        }
+
         // "npc" is the first NPC this bot holds a copy of or owns. Like "other", a script cannot know its id.
         if (acArgs[aIndex] == "npc")
         {
@@ -3511,6 +3521,29 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         if (op == "<=") return cMoved <= wanted;
         if (op == ">") return cMoved > wanted;
         if (op == "<") return cMoved < wanted;
+        return std::nullopt;
+    }
+
+    if (what == "bonesago")
+    {
+        // bonesago <who> <op> <ms>: how long ago the actor's owner last sent its bones.
+        uint32_t id = 0;
+        float wanted = 0.f;
+        if (!parseId(1, id) || acArgs.size() < 4 || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const KnownActor* pActor = id != kNoId ? findActor(id) : nullptr;
+        if (!pActor || pActor->BonesAt == Clock::time_point{})
+        {
+            aOutWhy = pActor ? fmt::format("{:X}: no bones ever came", id) : std::string("no such actor known");
+            return false;
+        }
+        const float cAgo = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - pActor->BonesAt).count());
+        aOutWhy = fmt::format("{:X}: bones last came {:.0f} ms ago", id, cAgo);
+        const std::string& op = acArgs[2];
+        if (op == ">=") return cAgo >= wanted;
+        if (op == "<=") return cAgo <= wanted;
+        if (op == ">") return cAgo > wanted;
+        if (op == "<") return cAgo < wanted;
         return std::nullopt;
     }
 

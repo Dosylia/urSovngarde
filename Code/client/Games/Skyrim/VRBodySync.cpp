@@ -5167,6 +5167,15 @@ bool CaptureBodyPose(Actor* apActor, VRPose& aOutPose) noexcept
     capture.LastPosition = rootPosition;
     capture.Placed = true;
 
+    // A body hanging still from one of this player's hands has not come to rest: the others would drop it under that hand.
+    // The hand is looked for only when the body would stop being sent, so a held body costs one search every two seconds.
+    const bool cStill = now - capture.MovedAt >= std::chrono::seconds(2) || (!capture.Boneless && now - capture.LastChangeAt >= std::chrono::seconds(2));
+    if (capture.Sent && cStill && NearestHandToBody(pRoot) <= 40.f)
+    {
+        capture.MovedAt = now;
+        capture.LastChangeAt = now;
+    }
+
     // Two seconds after it comes to rest, this body stops costing anything at all.
     if (now - capture.MovedAt >= std::chrono::seconds(2))
     {

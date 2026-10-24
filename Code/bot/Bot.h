@@ -90,6 +90,8 @@ struct KnownActor
     //! Where its owner's game last reported it (ServerReferencesMoveRequest), for `markpos` and `movedfrommark`.
     glm::vec3 Position{};
     bool PositionKnown{};
+    //! When its owner's game last sent its bones (a dead body being moved there), for `bonesago`.
+    std::chrono::steady_clock::time_point BonesAt{};
     std::chrono::steady_clock::time_point LastChange{};
     //! What this actor was last seen equipping, by base form id. Empty once it unequips. Last, so that
     //! KnownActor{serverId} still initialises the id.
@@ -256,6 +258,8 @@ private:
     //! with a single cookie, a second "npc" sent before the first was answered overwrote it and the first answer was
     //! dropped (live-copies-left-2's two bears 10 ms apart, one "NPC registered", 2026-10-06).
     std::map<uint32_t, GameId> m_npcCookies;
+    //! The server id of the NPC this bot registered last, for "mynpc": still found once another game runs it.
+    uint32_t m_lastNpcId{0xFFFFFFFF};
     std::string m_serverVersion;
 
     glm::vec3 m_position{};

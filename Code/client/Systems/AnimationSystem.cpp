@@ -288,7 +288,7 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
     movement.Position = apActor->position;
     // A dead body lies where its ragdoll is, and dragging or throwing it leaves its reference where it died.
     // The others put their copy where this says (VRBodySync::PlaceCorpse), so the 3D root's world position is sent instead.
-    if (false && apActor != PlayerCharacter::Get() && apActor->actorState.IsDead())
+    if (apActor != PlayerCharacter::Get() && apActor->actorState.IsDead())
     {
         if (const NiNode* pRoot = apActor->GetNiNode())
         {
@@ -365,11 +365,12 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
     {
         // A body this machine owns, within reach of this player: its bones let the others see it dragged, thrown or shoved.
         // It is only sent while the body is moving (CaptureBodyPose returns false otherwise), and far bodies are never read.
+        // Measured from where the body lies (movement.Position above), not where it died: a body dragged far away is still in reach.
         constexpr float cReachSquared = 600.f * 600.f;
         const auto* pPlayer = PlayerCharacter::Get();
         if (pPlayer)
         {
-            const glm::vec3 toPlayer = static_cast<glm::vec3>(apActor->position) - static_cast<glm::vec3>(pPlayer->position);
+            const glm::vec3 toPlayer = static_cast<const glm::vec3&>(movement.Position) - static_cast<glm::vec3>(pPlayer->position);
             if (glm::dot(toPlayer, toPlayer) <= cReachSquared)
             {
                 VRPose pose{};

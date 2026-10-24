@@ -18,7 +18,7 @@ log DO god on
 log -- a mage of the game's own, killed next to the player
 log DO place 753CB
 wait 8
-log DO papyrus Actor Kill placed
+log DO papyrus Actor Kill placed 14
 wait 8
 waitfor known base:753CB 20
 markpos base:753CB

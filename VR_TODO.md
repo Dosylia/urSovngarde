@@ -472,6 +472,10 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         state 8`), and they died in player 1's game seconds later (`Death sync: local actor 8A009C68 is now dead`).
         Lead: an NPC handed over in bleedout or mid-fight dies here without its ragdoll taking over. Not proven; a
         rig test first (the bot owns an NPC in bleedout, the game's leader arrives and takes it, it dies here).
+        Rig experiment on 18fffe5 (the same soldier base, 8A009657, placed by the game, connected): killed outright, or
+        taken to bleedout and then killed by the player, its body settles in about 2 s and lies still (pelvis 22-24
+        units over the floor, hands not moving). Not reproduced, so no change. The play case (a copy of player 2's,
+        taken over, then killed by player 2's hits) needs the bot to fight, which it cannot.
       - Player 1's arrow held in the hand sat a little ahead of the hand on player 2's screen (15:03, picture). Player 2's
         log: `arrow held in the right hand as its owner holds it, its head 68 units from the hand (hand scale 0.85)`.
         The hold offset needs measuring against the owner's own arrow node in the rig before changing it.
@@ -480,7 +484,22 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         With a 64-unit arrow the nock sits about 6 units past the finger joints, as in the picture: the copy shows the
         archer's body hand as it is. Open question: does the arrow also float ahead of the fingers in the archer's own
         headset (VRIK body hands)? The rig cannot show it (no VRIK hand pose there; the first-person nodes are out of reach).
-      - Both players dragging one body: fine, "needs some improvement" (details to ask).
+      - Both players dragging one body: the dragger's hand drawn well above the body, and the body sometimes flashing
+        back to where it was picked up (15:00, picture). Logs, body A46FF: the dragging game stopped sending the body
+        two seconds after it stopped moving, also while it hung still in the hand (player 2's log restarts sending five
+        times in one drag), so the other game let it drop under the hand. 1.5 s later that game moved it to where the
+        owner reported it, and the owner reported where it died: the reference stays there while a hand drags the body
+        (`A46FF's ragdoll lay 166 units from where its owner's corpse is; moved there`, 14:59:56, player 1).
+        Fixed in fa5e36c (client; FUS and MGO, server too): a body within 40 units of one of this player's hands keeps
+        being sent while it hangs still; a dead body is reported where its 3D root is, not where its reference is;
+        its 600-unit send range is measured from there too. Note: commit 0e8178e0 holds the second part switched off
+        (`if (false && ...` in `AnimationSystem::SerializeMovement`, a rig red switch); the working tree has it on.
+        Rig: `live-body-hold` (new; the player's hand drags the bot's body, then holds it still 14 s; the bot must
+        still get its bones) RED on 5fee1f4 (bones stopped 7167 ms before the check), ok on fa5e36c (94 ms).
+        `live-corpse-thrown` ok on both: in the rig a thrown body's reference follows it, so the reported-position
+        part is backed by the play log only. Regression `live-corpse-place` ok. Not seen in play yet.
+        TEMPORARY `BodyDiag` lines (where the 3D root lies against the pelvis while a body is dragged, once a second)
+        stay for one session, then go: if the hand still looks too high, they tell whether the root lags the pelvis.
       - Player 2 stuck in a menu after switching to Discord (15:07): nothing of ours in the log then; the log records
         menus opening but not closing, so it cannot say which one stuck. A `Menu closed` line would tell next time.
         Done in build 210e55b (client, FUS): `Menu closing: <name>` for each menu asked to close (WS* HUD widgets left out).
