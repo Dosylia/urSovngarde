@@ -320,12 +320,12 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
 
         VRPose pose{};
         float heading = apActor->rotation.z;
-        // In the skills, map and sleep/wait menus (unpaused online) the others see the body's standing animation, not the
+        // In the skills and map menus (unpaused online) the others see the body's standing animation, not the
         // hands moving in the menu: no pose is sent. The map also parks the rig at its camera, and it is not home yet
         // when the menu closes. The heading is held; UI.cpp blocks turning while one of these menus is open.
         static float s_heldHeading = 0.f;
         static bool s_hasHeldHeading = false;
-        if (IsOptionalMenuOpenUnpaused() || (UnpausedMenusOnline() && VRBodySync::IsRigParked(apActor)))
+        if (IsOptionalMenuOpenUnpaused() || (UnpausedMenusOnline() && VRBodySync::IsRigParked(pPlayer)))
         {
             if (s_hasHeldHeading)
                 movement.Rotation.y = s_heldHeading;

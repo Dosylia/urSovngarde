@@ -18,6 +18,6 @@ struct ServerSettings
     bool SyncPlayerCalendar{};
     bool AutoPartyJoin{};
 
-    // VR: more menus run unpaused online (skills, map, sleep/wait; UI.cpp kOptionalUnpausedMenus), with the fixes that needs.
+    // VR: more menus run unpaused online (skills, map; UI.cpp kOptionalUnpausedMenus), with the fixes that needs.
     bool UnpausedMenus{};
 };

@@ -4,9 +4,6 @@
 #include <TiltedOnlinePCH.h>
 #include "immersive_launcher/stubs/DllBlocklist.h"
 
-#ifdef SKYRIMVR
-#include <Games/Skyrim/Interface/DeferredSleepWait.h>
-#endif
 #include <World.h>
 #include <PatchCheck.h>
 
@@ -110,8 +107,6 @@ static constexpr const char* kAllowList[] = {
 #ifdef SKYRIMVR
     // Unpaused in VR only. Menus/MapMenu.cpp fixes what that breaks: fog, fade and laser pointer.
     "MapMenu",
-    // Unpaused in VR only, so the others keep playing while one player picks how long to sleep or wait.
-    "Sleep/Wait Menu",
 #endif
     //"MapMenu", // MapMenu is disabled till we find a proper fix for first person.
     //"Journal Menu", // Journal menu, aka pause menu, is disabled until we find a fix for manual save crashing while unpaused.
@@ -134,7 +129,7 @@ bool IsMenuOpenUnpaused(const BSFixedString& acName) noexcept
 }
 
 // The menus Gameplay:bUnpausedMenus decides about; the rest of kAllowList is unpaused either way.
-static constexpr const char* kOptionalUnpausedMenus[] = {"StatsMenu", "MapMenu", "Sleep/Wait Menu"};
+static constexpr const char* kOptionalUnpausedMenus[] = {"StatsMenu", "MapMenu"};
 
 static bool IsOptionalUnpausedMenu(const char* acpName)
 {
@@ -200,105 +195,6 @@ constexpr uintptr_t kPlayerControlsCanProcess = 0x72DB00;
 
 TP_THIS_FUNCTION(TPlayerControlsCanProcess, bool, void);
 static TPlayerControlsCanProcess* RealPlayerControlsCanProcess;
-
-// SleepWaitMenu::ProcessMessage (0x1408EA840) passes input (Scaleform key events, Accept, Cancel) on only from the main
-// thread: GetCurrentThreadId, compared with the main thread's id, then this jnz past the handling. Unpaused, the UI
-// handles messages on its job pool, so the menu ignored every input. Paused it always runs on the main thread.
-constexpr uintptr_t kSleepWaitMainThreadCheck = 0x8EA896;
-constexpr uint8_t kSleepWaitMainThreadJump[]{0x0F, 0x85, 0xD4, 0x02, 0x00, 0x00};
-
-// The menu's OK callback (0x1408EACA0: click sound, FadeOutGame, start sleep or wait for N hours) is the original sleep
-// start. Run from a UI worker it hung Main::Render; run on the main thread it works in the unpaused menu. So it is
-// taken off the worker and run at the next main loop. Pausing the game under the open menu by hand hung it.
-constexpr uintptr_t kSleepWaitOkCallback = 0x8EACA0; // registered as "OK" in SleepWaitMenu::Accept (0x1408EAB90)
-constexpr uintptr_t kMainSingleton = 0x2FEB7A0;      // what the menu's own check reads; main thread id at +0x20
-constexpr uintptr_t kSleepWaitProcessMessage = 0x8EA840;
-
-// SleepWaitMenu::ProcessMessage paces the native sleep step (0x6C2C00) using its timer at +0x40.
-// The two regular player updates also call that step, normally stopped by the paused menu. Unpaused, they
-// consume the remaining sleep every frame. Suppress only those calls while the menu owns the countdown;
-// leave the menu's timed call at 0x8EA9E7 and the jail fast-forward at 0x6D6170 alone.
-// The menu's +0x61 flag means the countdown is active, not finished. Its timed update clears that flag
-// and closes the menu naturally; queuing the menu again is not a reason to send Cancel.
-constexpr uintptr_t kPlayerSleepWaitCalls[] = {0x6BF425, 0x6BFDF5};
-constexpr uintptr_t kSleepWaitStep = 0x6C2C00;
-using TSleepWaitStep = void(void* apPlayer);
-static TSleepWaitStep* RealPlayerSleepWaitStep;
-
-static void HookPlayerSleepWaitStep(void* apPlayer)
-{
-    static const BSFixedString s_menuName("Sleep/Wait Menu");
-    if (IsMenuOpenUnpaused(s_menuName))
-        return;
-
-    RealPlayerSleepWaitStep(apPlayer);
-}
-
-using TSleepWaitOk = void(void* apArgs);
-static TSleepWaitOk* RealSleepWaitOk;
-
-static DeferredSleepWait s_sleepWaitAccept;
-TP_THIS_FUNCTION(TSleepWaitProcessMessage, uint32_t, IMenu, UIMessage&);
-static TSleepWaitProcessMessage* RealSleepWaitProcessMessage;
-
-static uint32_t HookSleepWaitProcessMessage(IMenu* apMenu, UIMessage& aMessage)
-{
-    // Invalidate before the native close can destroy the menu. A show starts a fresh session even
-    // when the allocator reuses the previous menu's address.
-    if (aMessage.eType == UIMessage::kShow)
-        s_sleepWaitAccept.Open(apMenu);
-    else if (aMessage.eType == UIMessage::kHide || aMessage.eType == UIMessage::kForceHide)
-        s_sleepWaitAccept.Close(apMenu);
-
-    return TiltedPhoques::ThisCall(RealSleepWaitProcessMessage, apMenu, aMessage);
-}
-
-static bool OnMainThread()
-{
-    const auto* pMain = *reinterpret_cast<const uint8_t* const*>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) + kMainSingleton);
-    return pMain && GetCurrentThreadId() == *reinterpret_cast<const DWORD*>(pMain + 0x20);
-}
-
-// FxDelegateArgs as the OK callback reads it: the menu at +0x18, the argument array at +0x28, the hours a double at +0x10 of the first.
-static void HookSleepWaitOk(void* apArgs)
-{
-    if (OnMainThread())
-    {
-        s_sleepWaitAccept.Take(*reinterpret_cast<void**>(static_cast<uint8_t*>(apArgs) + 0x18));
-        RealSleepWaitOk(apArgs);
-        return;
-    }
-
-    auto* pArgs = static_cast<uint8_t*>(apArgs);
-    const void* pMenu = *reinterpret_cast<void**>(pArgs + 0x18);
-    if (pMenu)
-        s_sleepWaitAccept.Queue(pMenu, *reinterpret_cast<const double*>(*reinterpret_cast<uint8_t**>(pArgs + 0x28) + 0x10));
-}
-
-// Called from the start of Main::Update (SkyrimVM64.cpp).
-void RunDeferredSleepWaitAccept()
-{
-    if (!s_sleepWaitAccept.HasPending())
-        return;
-
-    static const BSFixedString s_menuName("Sleep/Wait Menu");
-    UI* pUI = UI::Get();
-    IMenu* pMenu = pUI && pUI->GetMenuOpen(s_menuName) ? pUI->FindMenuByName(s_menuName) : nullptr;
-    const auto cHours = s_sleepWaitAccept.Take(pMenu);
-    if (!cHours)
-        return;
-
-    // A GFxValue holding the hours as a number, and the FxDelegateArgs fields the callback reads.
-    alignas(16) uint8_t value[0x18]{};
-    *reinterpret_cast<uint32_t*>(value + 0x08) = 3; // GFxValue::kNumber
-    *reinterpret_cast<double*>(value + 0x10) = *cHours;
-    alignas(16) uint8_t args[0x40]{};
-    *reinterpret_cast<IMenu**>(args + 0x18) = pMenu;
-    *reinterpret_cast<uint8_t**>(args + 0x28) = value;
-    *reinterpret_cast<uint32_t*>(args + 0x30) = 1;
-
-    RealSleepWaitOk(args);
-}
 
 static bool HookPlayerControlsCanProcess(void* apControls)
 {
@@ -544,25 +440,6 @@ static TiltedPhoques::Initializer s_s(
             TiltedPhoques::SwapCall(reinterpret_cast<uint8_t*>(exe + kMeleeSwingMenuCheck), RealMeleeSwingMenuCheck, &HookMeleeSwingMenuCheck);
             RealPlayerControlsCanProcess = reinterpret_cast<TPlayerControlsCanProcess*>(exe + kPlayerControlsCanProcess);
             TP_HOOK(&RealPlayerControlsCanProcess, HookPlayerControlsCanProcess);
-
-            auto* pSleepWaitCheck = reinterpret_cast<uint8_t*>(exe + kSleepWaitMainThreadCheck);
-            if (std::memcmp(pSleepWaitCheck, kSleepWaitMainThreadJump, sizeof(kSleepWaitMainThreadJump)) == 0)
-                TiltedPhoques::Nop(pSleepWaitCheck, sizeof(kSleepWaitMainThreadJump));
-            else
-                spdlog::error("Sleep/Wait menu: {} is not the main thread check, leaving it alone; the menu ignores input while unpaused", fmt::ptr(pSleepWaitCheck));
-            RealSleepWaitOk = reinterpret_cast<TSleepWaitOk*>(exe + kSleepWaitOkCallback);
-            TP_HOOK(&RealSleepWaitOk, HookSleepWaitOk);
-            RealSleepWaitProcessMessage = reinterpret_cast<TSleepWaitProcessMessage*>(exe + kSleepWaitProcessMessage);
-            TP_HOOK(&RealSleepWaitProcessMessage, HookSleepWaitProcessMessage);
-
-            for (const uintptr_t cCall : kPlayerSleepWaitCalls)
-            {
-                auto* pCall = reinterpret_cast<uint8_t*>(exe + cCall);
-                if (*pCall == 0xE8 && pCall + 5 + *reinterpret_cast<const int32_t*>(pCall + 1) == reinterpret_cast<uint8_t*>(exe + kSleepWaitStep))
-                    TiltedPhoques::SwapCall(pCall, RealPlayerSleepWaitStep, &HookPlayerSleepWaitStep);
-                else
-                    spdlog::error("Sleep/Wait menu: {} is not the player sleep step call, leaving it alone; unpaused sleep may run too fast", fmt::ptr(pCall));
-            }
         }
 #endif
 
