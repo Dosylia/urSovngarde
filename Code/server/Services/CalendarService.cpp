@@ -22,13 +22,17 @@ namespace
 {
 Console::Setting bEnableSleep{"Gameplay:bEnableSleep", "Lets a party member's sleep or wait move the clock forward for everybody, with their party waiting in place while it runs. Private servers only", true};
 
-bool IsAdmin(const Player* apPlayer) noexcept
+// A server strangers join: listed upstream or on the public server page. Nobody, admins included,
+// may move the hour for strangers there.
+bool IsPublicServer() noexcept
 {
-    for (const auto cSession : GameServer::Get()->GetAdminSessions())
-        if (const Player* pAdmin = PlayerManager::Get()->GetByConnectionId(cSession); pAdmin && pAdmin == apPlayer)
-            return true;
-    return false;
+    return bAnnounceServer || bPublicStatus;
 }
+}
+
+bool CalendarService::IsSleepAvailable() noexcept
+{
+    return bEnableSleep && !IsPublicServer();
 }
 
 CalendarService::CalendarService(World& aWorld, entt::dispatcher& aDispatcher)
@@ -81,7 +85,7 @@ void CalendarService::OnSleepRequest(const PacketEvent<RequestSleep>& acMessage)
 
     switch (cRequest.SleepStep)
     {
-    case RequestSleep::Step::kProgress: SendToSleepAudience(*cHours, false); break;
+    case RequestSleep::Step::kProgress: SendSleepProgress(*cHours); break;
     case RequestSleep::Step::kFinish: EndSleep(*cHours); break;
     case RequestSleep::Step::kCancel: EndSleep(0.f); break;
     case RequestSleep::Step::kHeartbeat: break;
@@ -96,10 +100,12 @@ void CalendarService::AskToSleep(Player* apPlayer) noexcept
 
     auto* pParty = m_world.GetPartyService().GetPlayerParty(apPlayer);
     const bool cAlone = PlayerManager::Get()->Count() == 1;
-    const bool cAllowed = IsAdmin(apPlayer) || (!bAnnounceServer && !bPublicStatus && (pParty || cAlone));
+    const bool cAllowed = pParty || cAlone;
 
     if (!bEnableSleep)
         answer.SleepEvent = NotifySleep::Event::kRefusedDisabled;
+    else if (IsPublicServer())
+        answer.SleepEvent = NotifySleep::Event::kRefusedPublic;
     else if (!cAllowed)
         answer.SleepEvent = NotifySleep::Event::kRefusedNotAllowed;
     else if (m_sleepSession.GetPlayerId() && m_sleepSession.GetPlayerId() != apPlayer->GetId())
@@ -128,6 +134,7 @@ void CalendarService::AskToSleep(Player* apPlayer) noexcept
     if (answer.SleepEvent == NotifySleep::Event::kGranted)
     {
         m_sleepSession.Start(apPlayer->GetId(), GameServer::Get()->GetTick());
+        m_sleepProgressSent = false;
         m_sleepAudience.clear();
         if (pParty)
             for (const Player* pMember : pParty->Members)
@@ -138,13 +145,15 @@ void CalendarService::AskToSleep(Player* apPlayer) noexcept
     apPlayer->Send(answer);
 }
 
-void CalendarService::SendToSleepAudience(float aHours, bool aFinished) const noexcept
+void CalendarService::SendSleepProgress(float aHours) noexcept
 {
     if (!m_sleepSession.GetPlayerId())
         return;
 
+    m_sleepProgressSent = true;
+
     NotifySleep notify{};
-    notify.SleepEvent = aFinished ? NotifySleep::Event::kFinished : NotifySleep::Event::kProgress;
+    notify.SleepEvent = NotifySleep::Event::kProgress;
     notify.PlayerId = *m_sleepSession.GetPlayerId();
     notify.HoursSlept = aHours;
 
@@ -155,15 +164,47 @@ void CalendarService::SendToSleepAudience(float aHours, bool aFinished) const no
 
 void CalendarService::EndSleep(float aHours) noexcept
 {
-    SendToSleepAudience(aHours, true);
-
+    const auto cSleeperId = m_sleepSession.GetPlayerId();
+    const bool cProgressSent = m_sleepProgressSent;
+    const Vector<uint32_t> cAudience = std::move(m_sleepAudience);
     m_sleepSession.Reset();
     m_sleepAudience.clear();
+    m_sleepProgressSent = false;
+
+    NotifySleep finished{};
+    finished.SleepEvent = NotifySleep::Event::kFinished;
+    finished.PlayerId = cSleeperId.value_or(0);
+    finished.HoursSlept = aHours;
 
     if (aHours > 0.f)
+    {
+        // The same players receive the resync below. Send the elapsed duration first so personal
+        // calendars and GameDaysPassed advance too, without locking controls outside the party.
+        if (cSleeperId)
+            GameServer::Get()->SendToLoaded(finished);
         m_dateTime.AdvanceHours(aHours);
-    // Even a cancelled chooser has paused the sleeper's local clock while the server kept running.
-    SendTimeResync();
+        SendTimeResync();
+        return;
+    }
+
+    // A cancelled sleep, such as a wait menu opened and closed, moved no clock but the sleeper's and, once
+    // progress was relayed, the party's. Only they roll back and resync; the shared hour never changed.
+    const ServerTimeSettings cResync = TimeResync();
+    if (cSleeperId)
+        if (Player* pSleeper = PlayerManager::Get()->GetById(*cSleeperId))
+            pSleeper->Send(cResync);
+
+    if (!cProgressSent)
+        return;
+
+    for (const uint32_t cId : cAudience)
+    {
+        if (Player* pMember = PlayerManager::Get()->GetById(cId))
+        {
+            pMember->Send(finished);
+            pMember->Send(cResync);
+        }
+    }
 }
 
 void CalendarService::ExpireSleep() noexcept
@@ -266,7 +307,7 @@ bool CalendarService::SetDate(int aDay, int aMonth, float aYear) noexcept
     return false;
 }
 
-void CalendarService::SendTimeResync() noexcept
+ServerTimeSettings CalendarService::TimeResync() const noexcept
 {
     ServerTimeSettings timeMsg;
     timeMsg.timeModel.TimeScale = m_dateTime.m_timeModel.TimeScale;
@@ -274,7 +315,12 @@ void CalendarService::SendTimeResync() noexcept
     timeMsg.timeModel.Day = m_dateTime.m_timeModel.Day;
     timeMsg.timeModel.Month = m_dateTime.m_timeModel.Month;
     timeMsg.timeModel.Year = m_dateTime.m_timeModel.Year;
-    GameServer::Get()->SendToLoaded(timeMsg);
+    return timeMsg;
+}
+
+void CalendarService::SendTimeResync() noexcept
+{
+    GameServer::Get()->SendToLoaded(TimeResync());
 }
 
 CalendarService::TTime CalendarService::GetTime() const noexcept

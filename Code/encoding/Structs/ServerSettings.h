@@ -17,4 +17,6 @@ struct ServerSettings
     bool DeathSystemEnabled{};
     bool SyncPlayerCalendar{};
     bool AutoPartyJoin{};
+    // A sleep can be granted (bEnableSleep on a private server); clients only report combat then.
+    bool SleepEnabled{};
 };

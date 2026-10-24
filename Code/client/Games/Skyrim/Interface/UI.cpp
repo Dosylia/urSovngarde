@@ -146,7 +146,8 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
 
 #ifdef SKYRIMVR
-    if (SleepWaitHooksReady() && apSelf->FindMenuByName(BSFixedString("Sleep/Wait Menu")) == apMenu)
+    static const BSFixedString s_sleepWaitMenu("Sleep/Wait Menu");
+    if (SleepWaitHooksReady() && apSelf->FindMenuByName(s_sleepWaitMenu) == apMenu)
     {
         UnfreezeMenu(apMenu);
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);

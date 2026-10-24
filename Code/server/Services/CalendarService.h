@@ -10,6 +10,7 @@ struct UpdateEvent;
 struct PlayerJoinEvent;
 struct PlayerLeaveEvent;
 struct RequestSleep;
+struct ServerTimeSettings;
 struct Player;
 
 /**
@@ -25,6 +26,9 @@ public:
     // provides direct support for these
     using TTime = std::pair<int, int>;
     using TDate = std::tuple<int, int, int>;
+
+    // bEnableSleep on a private server: a sleep can be granted, so clients report their combat state.
+    static bool IsSleepAvailable() noexcept;
 
     bool SetTime(int aHour, int aMinutes, float aScale) noexcept;
     bool SetDate(int aDay, int aMonth, float aYear) noexcept;
@@ -43,12 +47,13 @@ private:
     void OnUpdate(const UpdateEvent&) noexcept;
     void OnPlayerJoin(const PlayerJoinEvent&) noexcept;
     void OnPlayerLeave(const PlayerLeaveEvent&) noexcept;
+    ServerTimeSettings TimeResync() const noexcept;
     void SendTimeResync() noexcept;
 
-    // A party member sleeping moves everybody's hour; their party fades out and watches the sleeper's clock.
+    // Sleep advances everyone's clock and calendar; only the party receives provisional progress and waits in place.
     void OnSleepRequest(const PacketEvent<RequestSleep>&) noexcept;
     void AskToSleep(Player* apPlayer) noexcept;
-    void SendToSleepAudience(float aHours, bool aFinished) const noexcept;
+    void SendSleepProgress(float aHours) noexcept;
     void EndSleep(float aHours) noexcept;
     void ExpireSleep() noexcept;
 
@@ -58,6 +63,7 @@ private:
 
     SleepSession m_sleepSession;
     Vector<uint32_t> m_sleepAudience; // the sleeper's party at the grant, sleeper excluded
+    bool m_sleepProgressSent = false; // the audience holds provisional hours a cancellation must undo
     TiltedPhoques::Set<uint32_t> m_playersInCombat;
 
     World& m_world;

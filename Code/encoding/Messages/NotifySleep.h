@@ -2,7 +2,7 @@
 
 #include "Message.h"
 
-//! The server's side of a sleep: an answer to the sleeper's ask, or progress relayed to the sleeper's party.
+//! Sleep permission, party-only provisional progress, and a final duration committed for every loaded player.
 struct NotifySleep final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifySleep;
@@ -11,12 +11,13 @@ struct NotifySleep final : ServerMessage
     {
         kGranted,          // to the sleeper: let the clock go
         kRefusedDisabled,  // to the sleeper: bEnableSleep is off
-        kRefusedNotAllowed, // to the sleeper: public server, or not in a party with others online
+        kRefusedNotAllowed, // to the sleeper: not in a party with others online
         kRefusedBusy,      // to the sleeper: PlayerId is already sleeping
         kRefusedCombat,    // to the sleeper: PlayerId is in combat
         kProgress,         // to the party: PlayerId has slept HoursSlept so far
-        kFinished,         // to the party: PlayerId woke up after HoursSlept
+        kFinished,         // to everyone loaded: commit HoursSlept before the time resync; zero cancels, sent only to a party that saw progress
         kRevoked,          // to the sleeper: stop using the game clock; an authoritative resync follows
+        kRefusedPublic,    // to the sleeper: bAnnounceServer or bPublicStatus is on, so the server is public
     };
 
     NotifySleep()

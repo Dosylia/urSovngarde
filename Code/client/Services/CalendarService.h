@@ -31,7 +31,6 @@ private:
     void OnDisconnected(const DisconnectedEvent&) noexcept;
 
     void ToggleGameClock(bool aEnable);
-    float TimeInterpolate(const TimeModel& aFrom, TimeModel& aTo) const;
 
     // Sleeping online: the server grants the sleep, the clock goes back to the game until it is done,
     // and the hours slept are sent on so the sleeper's party can watch and everybody's hour moves.
@@ -42,6 +41,7 @@ private:
     float SleptHours(const TimeModel& acNow) const noexcept;
     void UpdateWatch(double aDelta) noexcept;
     void StopWatching(float aHours) noexcept;
+    void CommitSleepTime(uint32_t aSleeperId, float aHours) noexcept;
     void ReportCombat(double aDelta) noexcept;
     String PlayerName(uint32_t aPlayerId) const noexcept;
 

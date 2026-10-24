@@ -8,7 +8,9 @@
 #include <DateTime.h>
 #include <Messages/RequestSleep.h>
 #include <Messages/NotifySleep.h>
+#include <Structs/ServerSettings.h>
 #include <SleepSession.h>
+#include <Services/SleepTimeSync.h>
 
 #include <limits>
 
@@ -39,7 +41,7 @@ TEST_CASE("a sleep notification keeps whose sleep it is", "[sleep]")
 {
     const auto cEvent = GENERATE(
         NotifySleep::Event::kGranted, NotifySleep::Event::kRefusedDisabled, NotifySleep::Event::kRefusedNotAllowed, NotifySleep::Event::kRefusedBusy,
-        NotifySleep::Event::kRefusedCombat, NotifySleep::Event::kProgress, NotifySleep::Event::kFinished, NotifySleep::Event::kRevoked);
+        NotifySleep::Event::kRefusedCombat, NotifySleep::Event::kProgress, NotifySleep::Event::kFinished, NotifySleep::Event::kRevoked, NotifySleep::Event::kRefusedPublic);
     NotifySleep notify{};
     notify.SleepEvent = cEvent;
     notify.PlayerId = 0xFFFFFFFFu;
@@ -176,4 +178,171 @@ TEST_CASE("hours slept past midnight move the date", "[sleep]")
     REQUIRE(clock.m_timeModel.Day == 11);
     REQUIRE(clock.m_timeModel.Month == 3);
     REQUIRE(clock.m_timeModel.Year == 201);
+}
+
+TEST_CASE("a non-party player's personal calendar and days passed advance before the sleep resync", "[sleep]")
+{
+    const uint32_t cMonth = GENERATE(0u, 1u, 11u);
+    const float cHours = GENERATE(8.f, 24.f);
+    TimeModel personal{};
+    personal.Year = 201;
+    personal.Month = cMonth;
+    personal.Day = DateTime::GetNumberOfDaysByMonthIndex(cMonth);
+    personal.Time = 22.f;
+    DateTime clock(personal);
+    float daysPassed = 90.f;
+
+    // An unrelated player's calendar can be years ahead. Only the hour is shared in this setting.
+    TimeModel server = personal;
+    server.Year = 250;
+    server.Month = 3;
+    server.Day = 10;
+    SleepTimeSync::ApplyServerTime(clock, server, personal, false);
+
+    const auto cDays = SleepTimeSync::CommitSleep(clock, 3, 1, cHours, std::nullopt, 0.f);
+    REQUIRE(cDays.has_value());
+    daysPassed += *cDays;
+    REQUIRE(clock.m_timeModel.Time == Approx(cHours == 8.f ? 6.f : 22.f));
+    REQUIRE(clock.m_timeModel.Day == 1);
+    REQUIRE(clock.m_timeModel.Month == (cMonth + 1) % 12);
+    REQUIRE(clock.m_timeModel.Year == (cMonth == 11 ? 202 : 201));
+    REQUIRE(daysPassed == Approx(90.f + cHours / 24.f));
+
+    DateTime serverClock(server);
+    serverClock.AdvanceHours(cHours);
+    const auto cCommitted = clock.m_timeModel;
+    // The service publishes the committed clock before the resync snapshots the game's globals.
+    // Repeated normal resyncs must neither undo that date nor add the sleep twice.
+    for (int i = 0; i < 2; ++i)
+    {
+        const TimeModel localGlobals = clock.m_timeModel;
+        SleepTimeSync::ApplyServerTime(clock, serverClock.m_timeModel, localGlobals, false);
+        REQUIRE(clock.m_timeModel == cCommitted);
+        REQUIRE(daysPassed == Approx(90.f + cHours / 24.f));
+    }
+}
+
+TEST_CASE("a party member commits only sleep hours not already applied as progress", "[sleep]")
+{
+    const float cProgress = GENERATE(0.f, 3.f, 8.f, 10.f);
+    const float cFinalHours = GENERATE(0.f, 8.f);
+    TimeModel start{};
+    start.Year = 201;
+    start.Month = 11;
+    start.Day = 31;
+    start.Time = 22.f;
+    DateTime clock(start);
+    clock.AdvanceHours(cProgress);
+    float daysPassed = 90.f + cProgress / 24.f;
+
+    const auto cDays = SleepTimeSync::CommitSleep(clock, 2, 1, cFinalHours, 1, cProgress);
+    REQUIRE(cDays.has_value());
+    daysPassed += *cDays;
+    REQUIRE(clock.m_timeModel.Time == Approx(cFinalHours == 0.f ? 22.f : 6.f));
+    REQUIRE(clock.m_timeModel.Day == (cFinalHours == 0.f ? 31u : 1u));
+    REQUIRE(clock.m_timeModel.Month == (cFinalHours == 0.f ? 11u : 0u));
+    REQUIRE(clock.m_timeModel.Year == (cFinalHours == 0.f ? 201u : 202u));
+    REQUIRE(daysPassed == Approx(90.f + cFinalHours / 24.f));
+}
+
+TEST_CASE("a native sleeper never receives its own elapsed sleep a second time", "[sleep]")
+{
+    TimeModel native{};
+    native.Year = 202;
+    native.Month = 0;
+    native.Day = 1;
+    native.Time = 6.f;
+    DateTime clock(native);
+    REQUIRE_FALSE(SleepTimeSync::CommitSleep(clock, 1, 1, 8.f, std::nullopt, 0.f));
+    REQUIRE(clock.m_timeModel == native);
+}
+
+TEST_CASE("a cancelled or timed-out observer can accept a later committed sleep as a non-party player", "[sleep]")
+{
+    TimeModel start{};
+    start.Time = 22.f;
+    DateTime clock(start);
+    clock.AdvanceHours(5.f);
+    float daysPassed = 90.f + 5.f / 24.f;
+    const auto cRollback = SleepTimeSync::CommitSleep(clock, 2, 1, 0.f, 1, 5.f);
+    REQUIRE(cRollback.has_value());
+    daysPassed += *cRollback;
+    REQUIRE(clock.m_timeModel == start);
+    REQUIRE(daysPassed == Approx(90.f));
+
+    const auto cCommit = SleepTimeSync::CommitSleep(clock, 2, 1, 8.f, std::nullopt, 0.f);
+    REQUIRE(cCommit.has_value());
+    daysPassed += *cCommit;
+    REQUIRE(clock.m_timeModel.Time == Approx(6.f));
+    REQUIRE(clock.m_timeModel.Day == start.Day + 1);
+    REQUIRE(daysPassed == Approx(90.f + 8.f / 24.f));
+}
+
+TEST_CASE("a non-party cancellation does not change its calendar or elapsed days", "[sleep]")
+{
+    TimeModel start{};
+    start.Time = 22.f;
+    DateTime clock(start);
+    const auto cDays = SleepTimeSync::CommitSleep(clock, 3, 1, 0.f, std::nullopt, 0.f);
+    REQUIRE_FALSE(cDays);
+    REQUIRE(clock.m_timeModel == start);
+}
+
+TEST_CASE("invalid committed sleep durations leave the personal calendar untouched", "[sleep]")
+{
+    const float cHours = GENERATE(-1.f, 25.f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity());
+    TimeModel start{};
+    DateTime clock(start);
+    REQUIRE_FALSE(SleepTimeSync::CommitSleep(clock, 3, 1, cHours, std::nullopt, 0.f));
+    REQUIRE(clock.m_timeModel == start);
+}
+
+TEST_CASE("sleep commits respect full calendar sync without counting server date offsets as elapsed days", "[sleep]")
+{
+    TimeModel local{};
+    local.Year = 201;
+    local.Time = 22.f;
+    DateTime clock(local);
+    const auto cDays = SleepTimeSync::CommitSleep(clock, 3, 1, 8.f, std::nullopt, 0.f);
+    REQUIRE(cDays.has_value());
+    REQUIRE(*cDays == Approx(8.f / 24.f));
+    TimeModel server = clock.m_timeModel;
+    server.Year = 250;
+    SleepTimeSync::ApplyServerTime(clock, server, clock.m_timeModel, true);
+    REQUIRE(clock.m_timeModel == server);
+}
+
+TEST_CASE("an ordinary admin time resync does not invent a sleep duration", "[sleep]")
+{
+    TimeModel local{};
+    local.Time = 22.f;
+    DateTime clock(local);
+    TimeModel server = local;
+    server.Year = 250;
+    server.Time = 6.f;
+    SleepTimeSync::ApplyServerTime(clock, server, local, false);
+    REQUIRE(clock.m_timeModel.Time == 6.f);
+    REQUIRE(clock.m_timeModel.Day == local.Day);
+    REQUIRE(clock.m_timeModel.Month == local.Month);
+    REQUIRE(clock.m_timeModel.Year == local.Year);
+}
+
+TEST_CASE("server settings carry whether a sleep can be granted", "[sleep]")
+{
+    for (const bool cSleepEnabled : {false, true})
+    {
+        ServerSettings settings{};
+        settings.AutoPartyJoin = true;
+        settings.SleepEnabled = cSleepEnabled;
+
+        Buffer buffer(32);
+        Buffer::Writer writer(&buffer);
+        settings.Serialize(writer);
+        Buffer::Reader reader(&buffer);
+        ServerSettings back{};
+        back.Deserialize(reader);
+        REQUIRE(back.SleepEnabled == cSleepEnabled);
+        REQUIRE(back.AutoPartyJoin);
+        REQUIRE(back == settings);
+    }
 }

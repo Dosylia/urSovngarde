@@ -1,4 +1,6 @@
 #include <Services/CalendarService.h>
+#include <Services/SleepTimeSync.h>
+#include <Services/GameClockFrame.h>
 #include <PerfScope.h>
 
 #include <Events/DisconnectedEvent.h>
@@ -19,7 +21,7 @@
 #include <Services/PartyService.h>
 #include <Services/TransportService.h>
 
-constexpr float kTransitionSpeed = 5.f;
+using GameClockFrame::kTransitionSpeed;
 
 namespace
 {
@@ -43,7 +45,9 @@ bool IsSleepMenuOpen() noexcept
 {
     UI* pUI = UI::Get();
     // Sleeping and waiting both run through this menu.
-    return pUI && pUI->GetMenuOpen(BSFixedString("Sleep/Wait Menu"));
+    // Checked every frame; interning the name once avoids a string-cache lookup per call.
+    static const BSFixedString s_name("Sleep/Wait Menu");
+    return pUI && pUI->GetMenuOpen(s_name);
 }
 
 TimeModel ReadGameClock() noexcept
@@ -106,21 +110,7 @@ void CalendarService::OnTimeUpdate(const ServerTimeSettings& acMessage) noexcept
     // disable the game clock
     ToggleGameClock(false);
     m_lastTick = m_world.GetTick();
-    m_onlineTime.m_timeModel.TimeScale = acMessage.timeModel.TimeScale;
-    m_onlineTime.m_timeModel.Time = acMessage.timeModel.Time;
-
-    if (m_world.GetServerSettings().SyncPlayerCalendar)
-    {
-        m_onlineTime.m_timeModel.Day = acMessage.timeModel.Day;
-        m_onlineTime.m_timeModel.Month = acMessage.timeModel.Month;
-        m_onlineTime.m_timeModel.Year = acMessage.timeModel.Year;
-    }
-    else
-    {
-        m_onlineTime.m_timeModel.Day = m_offlineTime.m_timeModel.Day;
-        m_onlineTime.m_timeModel.Month = m_offlineTime.m_timeModel.Month;
-        m_onlineTime.m_timeModel.Year = m_offlineTime.m_timeModel.Year;
-    }
+    SleepTimeSync::ApplyServerTime(m_onlineTime, acMessage.timeModel, m_offlineTime.m_timeModel, m_world.GetServerSettings().SyncPlayerCalendar);
 }
 
 void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
@@ -203,6 +193,7 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
         Utils::ShowHudMessage("urSovngarde: sleep session expired, reopen the sleep/wait menu to try again");
         return;
     case Event::kRefusedDisabled:
+    case Event::kRefusedPublic:
     case Event::kRefusedNotAllowed:
     case Event::kRefusedBusy:
     case Event::kRefusedCombat:
@@ -216,6 +207,8 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
         String reason;
         if (acMessage.SleepEvent == Event::kRefusedDisabled)
             reason = "sleeping does not pass time on this server";
+        else if (acMessage.SleepEvent == Event::kRefusedPublic)
+            reason = "sleeping only passes time on private servers";
         else if (acMessage.SleepEvent == Event::kRefusedNotAllowed)
             reason = "join a party to sleep, the hour is shared";
         else if (acMessage.SleepEvent == Event::kRefusedBusy)
@@ -259,25 +252,36 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
         }
         return;
     case Event::kFinished:
-        if (m_watchedSleeper == acMessage.PlayerId)
-            StopWatching(acMessage.HoursSlept);
+        CommitSleepTime(acMessage.PlayerId, acMessage.HoursSlept);
         return;
     }
 }
 
 void CalendarService::StopWatching(float aHours) noexcept
 {
+    CommitSleepTime(*m_watchedSleeper, aHours);
+}
+
+void CalendarService::CommitSleepTime(uint32_t aSleeperId, float aHours) noexcept
+{
     // Progress is provisional until the finish. Undo it on cancellation/disconnect/timeout, including
-    // midnight and GameDaysPassed; a final packet can also supply a last step not sent as progress.
-    const float cCorrection = aHours - m_watchHours;
-    m_onlineTime.AdvanceHours(cCorrection);
+    // midnight and GameDaysPassed. Players outside the party have no progress to subtract, so their
+    // personal calendar advances by the full duration, even with bSyncPlayerCalendar disabled.
+    const auto cDays = SleepTimeSync::CommitSleep(m_onlineTime, m_transport.GetLocalPlayerId(), aSleeperId, aHours, m_watchedSleeper, m_watchHours);
+    if (!cDays)
+        return;
+
     m_fadeTimer = kTransitionSpeed;
     if (s_gameClockLocked)
     {
-        TimeData::Get()->GameDaysPassed->f += cCorrection / 24.f;
-        // A resync can arrive in the same transport poll. It must see the corrected personal date.
+        TimeData::Get()->GameDaysPassed->f += *cDays;
+        // The following resync snapshots these globals. Publish the new date now so it cannot put
+        // 06:00 back on the old day; it must also preserve a 24-hour sleep with the same final hour.
         WriteGameClock(m_onlineTime.m_timeModel);
     }
+
+    if (m_watchedSleeper != aSleeperId)
+        return;
 
     if (aHours >= kMinSleepHours)
         Utils::ShowHudMessage(String("urSovngarde: ") + PlayerName(*m_watchedSleeper) + " woke up, " + FormatHour(m_onlineTime.m_timeModel.Time));
@@ -435,7 +439,18 @@ void CalendarService::ReportCombat(double aDelta) noexcept
     m_combatCheckTimer = kCombatCheckInterval;
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
-    const bool cInCombat = pPlayer && pPlayer->IsInCombat();
+    const bool cFighting = pPlayer && pPlayer->IsInCombat();
+    // The server only checks the party for combat at the ask. A watcher attacked later gets their controls
+    // back but keeps watching, so the sleep's hours still arrive once, at the finish.
+    if (cFighting && s_sleepControlsLocked)
+    {
+        s_sleepControlsLocked = false;
+        Utils::ShowHudMessage("urSovngarde: in combat, controls released while " + PlayerName(*m_watchedSleeper) + " sleeps");
+    }
+
+    // Only a server that can grant a sleep needs combat reports. If it stops granting them, a last report
+    // clears this player from its combat set, so re-enabling sleep cannot refuse it on a stale entry.
+    const bool cInCombat = cFighting && m_world.GetServerSettings().SleepEnabled;
     if (cInCombat == m_reportedCombat)
         return;
 
@@ -445,21 +460,6 @@ void CalendarService::ReportCombat(double aDelta) noexcept
     report.SleepStep = RequestSleep::Step::kCombat;
     report.InCombat = cInCombat;
     m_transport.Send(report);
-}
-
-float CalendarService::TimeInterpolate(const TimeModel& aFrom, TimeModel& aTo) const
-{
-    const auto t = aTo.Time - aFrom.Time;
-    if (t < 0.f)
-    {
-        const auto v = t + 24.f;
-        // interpolate on the time difference, not the time
-        const auto x = TiltedPhoques::Lerp(0.f, v, m_fadeTimer / kTransitionSpeed) + aFrom.Time;
-
-        return TiltedPhoques::Mod(x, 24.f);
-    }
-
-    return TiltedPhoques::Lerp(aFrom.Time, aTo.Time, m_fadeTimer / kTransitionSpeed);
 }
 
 void CalendarService::ToggleGameClock(bool aEnable)
@@ -502,23 +502,16 @@ void CalendarService::HandleUpdate(const UpdateEvent& aEvent) noexcept
         const auto delta = now - m_lastTick;
         m_lastTick = now;
 
-        m_onlineTime.Update(delta);
+        GameClockFrame::Globals globals{};
+        globals.GameDaysPassed = pGameTime->GameDaysPassed->f;
         // Maintain the authoritative baseline even while a granted sleeper owns the native clock.
-        if (!s_gameClockLocked)
+        if (!GameClockFrame::Step(m_onlineTime, m_offlineTime.m_timeModel, delta, updateDelta, m_fadeTimer, s_gameClockLocked, globals))
             return;
-        pGameTime->TimeScale->f = m_onlineTime.m_timeModel.TimeScale;
-        pGameTime->GameDay->f = m_onlineTime.m_timeModel.Day;
-        pGameTime->GameMonth->f = m_onlineTime.m_timeModel.Month;
-        pGameTime->GameYear->f = m_onlineTime.m_timeModel.Year;
-        pGameTime->GameDaysPassed->f += m_onlineTime.GetDeltaTime(delta) * (1.f / 24.f);
-
-        // time transition in
-        if (m_fadeTimer < kTransitionSpeed)
-        {
-            pGameTime->GameHour->f = TimeInterpolate(m_offlineTime.m_timeModel, m_onlineTime.m_timeModel);
-            m_fadeTimer += updateDelta;
-        }
-        else
-            pGameTime->GameHour->f = m_onlineTime.m_timeModel.Time;
+        pGameTime->TimeScale->f = globals.TimeScale;
+        pGameTime->GameDay->f = globals.GameDay;
+        pGameTime->GameMonth->f = globals.GameMonth;
+        pGameTime->GameYear->f = globals.GameYear;
+        pGameTime->GameDaysPassed->f = globals.GameDaysPassed;
+        pGameTime->GameHour->f = globals.GameHour;
     }
 }
