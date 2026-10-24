@@ -83,3 +83,28 @@ TEST_CASE("the connect request of a 2000-plugin list is sent whole, the way the 
     CHECK(pReceived->HideFromPublicPage);
     REQUIRE(cFits);
 }
+
+TEST_CASE("a message larger than the send buffer is never taken as whole", "[sendbuffer]")
+{
+    // About 1.6 MB of plugin names: more than the buffer holds, and more than the scratch area lets it grow to.
+    AuthenticationRequest request = LargeListRequest();
+    request.UserMods.ModList.clear();
+    for (uint16_t i = 0; i < 25000; ++i)
+    {
+        Mods::Entry entry{};
+        entry.Id = i;
+        entry.Filename = String("A Plugin Name As Long As Most In The List - ") + std::to_string(i).c_str() + ".esp";
+        request.UserMods.ModList.push_back(entry);
+    }
+
+    bool fits = true;
+    {
+        ScratchAllocator scratch(SendBuffer::kScratchBytes);
+        ScopedAllocator scope{scratch};
+
+        Buffer buffer(SendBuffer::kBufferBytes);
+        Buffer::Writer writer(&buffer);
+        fits = SendBuffer::Write(request, buffer, writer);
+    }
+    REQUIRE_FALSE(fits);
+}

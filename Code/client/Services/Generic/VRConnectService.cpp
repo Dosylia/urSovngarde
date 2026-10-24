@@ -11,6 +11,7 @@
 #include <Events/ConnectionErrorEvent.h>
 
 #include <Games/TES.h>
+#include <Interface/UI.h>
 #include <Forms/TESNPC.h>
 #include <PlayerCharacter.h>
 #include <ScriptExtender.h>
@@ -176,6 +177,16 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
 {
     const auto now = std::chrono::steady_clock::now();
 
+    // A loading screen since the last update: another character's save can load with the player in a cell and drawn
+    // at every update in between, so seeing the player out of the game is not enough (live-load-other-character).
+    const uint32_t cLoadingScreens = UI::LoadingScreensQueued();
+    if (cLoadingScreens != m_loadingScreensSeen)
+    {
+        m_loadingScreensSeen = cLoadingScreens;
+        m_inGameSince = {};
+        m_nameCheckDue = true;
+    }
+
     if (!IsInGame())
     {
         m_inGameSince = {};
@@ -260,6 +271,7 @@ void VRConnectService::OnConnected(const ConnectedEvent&) noexcept
     m_autoConnectDone = true;
     m_connectedName = PlayerName();
     m_nameCheckDue = false;
+    m_loadingScreensSeen = UI::LoadingScreensQueued();
 }
 
 void VRConnectService::OnDisconnected(const DisconnectedEvent&) noexcept

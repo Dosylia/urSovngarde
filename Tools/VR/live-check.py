@@ -19,6 +19,8 @@ with the value it read. The bot alone can only say what the server sent; this sa
 Checks:
     copy exists | copy 3d | copy alive | copy dead | copy health <n>      the game's copy of the bot's character
     npc exists  | npc alive | npc dead | npc health <n|full>             its copy of an NPC the bot owns
+    npc gone | copy gone                                                  that copy is no longer in this game (deleted or disabled)
+    player cell <hex>                                                     the cell the player stands in, by form id
     player mark | player dropped <n>                                      the local player's health, before and after
     drop exists | drop gone | drop mark | drop moved <dx> <dy> <dz>       the item the game placed for the bot's drop
     player alive                                                          the local player is not dead
@@ -48,7 +50,7 @@ Checks:
 A line `log DO console <command>` runs that console command in the game at that point of the script, and
 `log DO key <name> <ms>` holds a key down in the game for that long (DevBench's keyboard input; `w` walks the player
 forward even in VR), `log DO look <degrees> <ms> [hold <ms>] [back]` turns the virtual headset that far over that time
-while both hands rest still at the sides (positive turns left; `back` returns it), and `log DO load last` loads the most recent save (while connected, which is the point of asking). `log DO combat on` and
+while both hands rest still at the sides (positive turns left; `back` returns it), and `log DO load last` loads the most recent save (while connected, which is the point of asking); `log DO load save <name>` loads that save. `log DO combat on` and
 `log DO combat off` switch combat AI (off is the run's default, so a creature a test spawns just stands there; on makes
 it come for the player, which is how it is made to move). `log DO god on` and
 `log DO god off` set god mode for a script that sends the player somewhere dangerous: the away tests go to wherever
@@ -59,7 +61,7 @@ Lydia stands, which in the test save is under water, where the player can drown.
 The bot's script does not stop while the driver is busy with that, so its own `wait` lines run out meanwhile:
 `log DO sleep <seconds>` makes the driver itself wait before it reads the next line.
 `log DO server restart after console <command>` runs that command while the server is down (the game offline).
-`log DO menu <seconds> <menu name>` keeps a menu open that long (the driver waits; the bot's script does not).
+`log DO menu <seconds> <menu name> [shot <name>]` keeps a menu open that long (the driver waits; the bot's script does not), with `shot` taking a SHOT picture of it halfway.
 `log DO pickup own` has the player pick up the newest item this game dropped itself.
 `log DO papyrus <Script> <Function> <self> [form ...]` calls a native function on a reference (ids in hex; a number as n:<value>,
 a float as f:<value>, a bool as b:true or b:false, a string as s:<text>).
@@ -123,16 +125,15 @@ PLAYER_TOLERANCE = 2.0
 DROP_TOLERANCE = 4.0    # units; a position travels packed to about one unit
 SHOTS = os.path.join(RELEASE, 'logs', 'shots')
 CAPTURES = os.path.join(FUS_ROOT, 'overwrite', 'SKSE', 'Plugins', 'devbench', 'captures')   # where MO2 puts what DevBench writes under Data
-# The hooks VR leaves out by design (KNOWN_ISSUES): their start-up lines say nothing about the setup.
-KNOWN_UNINSTALLED_HOOKS = {'HookRegisterPapyrusFunction', 'HookMainLoop', 'HookVMDestructor'}
 
 # Order matters: the "away" scripts travel by cell (`cow Tamriel 34 8` and back to 34 -9, Mistwatch) and leave the
 # player at the centre of the Mistwatch cell. Not "go to Lydia": she follows the player back, and the next "go to
 # Lydia" is then two paces that unload nothing (found 2026-10-02, a session that passed for that reason alone).
 ALL = ['live-copy', 'live-npc', 'live-dropmove', 'live-look', 'live-walk', 'live-copy-quiet', 'live-creatures', 'live-npc-away', 'live-away-seeker',
        'live-temp-remove', 'live-temp-reuse', 'live-copy-abandon', 'live-temp-reconnect', 'live-crime', 'live-netch',
-       'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead', 'live-load-soak', 'live-door-state']
+       'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-range', 'live-npc-indoors', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead', 'live-load-soak', 'live-door-state']
 # live-door-state is last: it leaves the player in Helgen's keep, where the bot of any later script finds nobody.
+# live-npc-grace and live-door-join leave the player there too, so they are not in the list: run each by name after a fresh `headless.ps1 up`.
 # Not in the list, run by name: live-seeker-copy-remote and live-seeker-copy-local (the two halves that showed the
 # crash of live-copy-abandon needs a copy and its original together).
 
@@ -233,8 +234,9 @@ def health_problems(lines):
     """What the client could not find on this setup in these lines: hooks, address ids, Papyrus natives, each named once."""
     problems = []
     for l in lines:
+        # The hooks VR leaves out by design are not tried there at all, so every line of this kind is a real miss.
         m = re.search(r'Hook (\S+) not installed: its game address did not resolve', l)
-        if m and m.group(1) not in KNOWN_UNINSTALLED_HOOKS:
+        if m:
             problems.append('hook %s not installed' % m.group(1))
         m = re.search(r'Address id (\d+) did not resolve on this build', l)
         if m:
@@ -535,6 +537,8 @@ class Run:
         self.watch = []
         # "DO mark": name -> (what it is, where it was).
         self.marks = {}
+        # "CHECK bounty <faction> mark": faction -> the player's bounty with it then.
+        self.bounty_marks = {}
 
     def subject(self, who):
         sid = self.bot_id if who == 'copy' else self.npc_id
@@ -649,17 +653,20 @@ class Run:
                 ok = isinstance(base, dict) and int(got, 16) & 0xFFFFFF == int(words[3], 16) & 0xFFFFFF
                 detail = 'reference %s, levelled base %s (%s)' % (form, got, base.get('editorId', '') if isinstance(base, dict) else '')
             elif who == 'ref' and words[2] == 'near':
-                # "ref <hex> near <x> <y> <z> <units>": a reference of the game's own is that close to that place.
-                # "ref <hex> near player <units>": that close to where the player stands now.
+                # "ref <hex> near <x> <y> <z> <units> [flat]": a reference of the game's own is that close to that place.
+                # "ref <hex> near player <units> [flat]": that close to where the player stands now.
+                # "flat" measures from above only: on MGO a held object's reference sits on the ground while its 3D is held up.
                 form = words[1]
                 at = [papyrus('ObjectReference', 'GetPosition' + axis, form) for axis in 'XYZ']
                 if words[3] == 'player':
                     words = words[:3] + [str(v) for v in (position('14') or (0.0, 0.0, 0.0))] + words[4:]
                 wanted = [float(v) for v in words[3:6]]
+                flat = words[-1] == 'flat'
                 known = all(isinstance(v, (int, float)) for v in at)
-                ok = known and math.dist(at, wanted) <= float(words[6])
-                detail = 'reference %s at %s, %s units from (%s)' % (form, [round(v) for v in at] if known else at,
-                                                                   round(math.dist(at, wanted)) if known else '?', ', '.join(words[3:6]))
+                apart = (math.dist(at[:2], wanted[:2]) if flat else math.dist(at, wanted)) if known else None
+                ok = known and apart <= float(words[6])
+                detail = 'reference %s at %s, %s units from (%s)%s' % (form, [round(v) for v in at] if known else at,
+                                                                     round(apart) if known else '?', ', '.join(words[3:6]), ', seen from above' if flat else '')
             elif who == 'ref' and words[2] in ('open', 'closed'):
                 # "ref <hex> open|closed": a door of the game's own is open (or opening), or closed (or closing).
                 state = papyrus('ObjectReference', 'GetOpenState', words[1])
@@ -709,6 +716,18 @@ class Run:
                 share = changed_share(a, b, region)
                 ok = share > limit if what == 'differs' else share < limit
                 detail = '%.2f%% of the pixels changed%s (%s %.2f%%)' % (share, ' in that part' if region else '', 'above' if what == 'differs' else 'below', limit)
+            elif who == 'bounty':
+                # "bounty <faction hex> mark", then "bounty <faction hex> raised": the player's bounty with that crime
+                # faction (Faction.GetCrimeGold) went up since the mark.
+                gold = papyrus('Faction', 'GetCrimeGold', words[1])
+                if words[2] == 'mark':
+                    self.bounty_marks[words[1]] = gold
+                    ok = isinstance(gold, (int, float))
+                    detail = 'bounty with %s is %s' % (words[1], gold)
+                else:
+                    before = self.bounty_marks.get(words[1])
+                    ok = isinstance(gold, (int, float)) and isinstance(before, (int, float)) and gold > before
+                    detail = 'bounty with %s went from %s to %s' % (words[1], before, gold)
             elif who == 'gamehour':
                 # "gamehour away <hours>": the game clock (global 38) is not at that hour any more.
                 hour = papyrus('GlobalVariable', 'GetValue', '38')
@@ -788,6 +807,15 @@ class Run:
                 cell = (scene.get('cell') or {}).get('editorId') or (scene.get('cell') or {}).get('formId')
                 ok = ws == words[2]
                 detail = 'worldspace %s, cell %s' % (ws, cell)
+            elif who == 'player' and what == 'cell':
+                # "player cell <hex>": the cell the player stands in, by form id (an outdoor cell too).
+                scene = tool('inspect', {'kind': 'scene'})
+                got = str((scene.get('cell') or {}).get('formId') or '')
+                try:
+                    ok = int(got, 16) & 0xFFFFFF == int(words[2], 16) & 0xFFFFFF
+                except ValueError:
+                    ok = False
+                detail = 'cell %s (%s), wanted %s' % (got, (scene.get('cell') or {}).get('editorId'), words[2])
             elif who == 'spot':
                 # "spot mark": where the player stands.
                 # "spot back <units>": within that distance of the mark, in the same worldspace or interior.
@@ -883,6 +911,12 @@ class Run:
                     x = papyrus('ObjectReference', 'GetPositionX', form)
                     ok = isinstance(x, (int, float))
                     detail = 'actor %s, x %s' % (form, x)
+                elif what == 'gone':
+                    # "copy gone" / "npc gone": the copy the game made is no longer in this game, or no longer drawn.
+                    x = papyrus('ObjectReference', 'GetPositionX', form)
+                    enabled = papyrus('ObjectReference', 'IsEnabled', form) if isinstance(x, (int, float)) else None
+                    ok = not isinstance(x, (int, float)) or enabled is False
+                    detail = 'actor %s, x %s, enabled %s' % (form, x, enabled)
                 elif what == 'turned' and words[2] == 'below':
                     # "copy turned below <degrees> <seconds>": the copy's heading, sampled five times a second, stays
                     # within that many degrees over that time (a head turn of its player must not turn its body).
@@ -977,6 +1011,11 @@ class Run:
                     n = papyrus('ObjectReference', 'GetItemCount', form, [{'form': '0x' + words[2]}])
                     ok = isinstance(n, int) and n > 0
                     detail = 'actor %s, GetItemCount(%s) %s' % (form, words[2], n)
+                elif what == 'count':
+                    # "copy count <hex> <n>": the copy's inventory holds exactly that many.
+                    n = papyrus('ObjectReference', 'GetItemCount', form, [{'form': '0x' + words[2]}])
+                    ok = isinstance(n, int) and n == int(words[3])
+                    detail = 'actor %s, GetItemCount(%s) %s, wanted %s' % (form, words[2], n, words[3])
                 elif what in ('lefthand', 'righthand'):
                     # "copy lefthand <hex>": the weapon the game says is in that hand (GetEquippedWeapon).
                     weapon = papyrus('Actor', 'GetEquippedWeapon', form, [what == 'lefthand'])
@@ -1085,7 +1124,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO load save .*|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch npc \d+|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -1285,11 +1324,25 @@ class Run:
                 elif text.startswith('DO sleep '):
                     time.sleep(int(text.split()[2]))
                 elif text.startswith('DO menu '):
-                    # "DO menu <seconds> <menu name>": open a menu, keep it open, close it again (DevBench's menu tool).
+                    # "DO menu <seconds> <menu name> [shot <name>]": open a menu, keep it open, close it again (DevBench's menu tool).
+                    # With "shot", a SHOT picture of the open menu is taken halfway through.
                     words = text.split(None, 3)
+                    shot_name = None
+                    if ' shot ' in words[3]:
+                        words[3], shot_name = [w.strip() for w in words[3].split(' shot ', 1)]
                     try:
                         tool('menu', {'action': 'open', 'name': words[3]})
-                        time.sleep(float(words[2]))
+                        if shot_name:
+                            time.sleep(float(words[2]) / 2)
+                            path = screenshot('%s-%s' % (self.script, shot_name))
+                            if path:
+                                self.shots.append(path)
+                                print('   (screenshot: %s)' % path, flush=True)
+                            else:
+                                self.results.append((False, 'screenshot ' + shot_name, 'no picture came back'))
+                            time.sleep(float(words[2]) / 2)
+                        else:
+                            time.sleep(float(words[2]))
                         tool('menu', {'action': 'close', 'name': words[3]})
                         print('   (menu %s open for %s s)' % (words[3], words[2]), flush=True)
                     except Exception as e:
@@ -1612,6 +1665,15 @@ class Run:
                     except Exception as e:
                         print('   FAIL  load last: %s' % type(e).__name__, flush=True)
                         self.results.append((False, 'load last', type(e).__name__))
+                elif text.startswith('DO load save '):
+                    # "DO load save <name>": that save of the profile (another character's, say), while connected.
+                    name = text[len('DO load save '):].strip()
+                    try:
+                        r = tool('game', {'action': 'load', 'name': name})
+                        print('   (load: %s)' % r.get('name'), flush=True)
+                    except Exception as e:
+                        print('   FAIL  load save %s: %s' % (name, type(e).__name__), flush=True)
+                        self.results.append((False, 'load save ' + name, type(e).__name__))
                 elif text.startswith('DO console '):
                     # Something only the game can do, at a moment only the script knows: move the player, say.
                     command = text[len('DO console '):].strip()
@@ -1679,13 +1741,17 @@ class Run:
         return self.results
 
 
+# Result rows that are not checks: what an action of the script reported when it could not be done.
+ACTION_ROWS = ('DO ', 'screenshot ', 'console ', 'server restart', 'load last')
+
+
 def verdict(run, results, expect_fail):
     """What a script's run proves.
 
     INVALID when a precondition did not hold or the bot could not do its part: the run proves nothing either way.
     INCONCLUSIVE when nothing failed but a check found nothing to judge (SKIP).
     With --expect-fail (a build without the fix): RED when a check failed, which shows the test catches the bug;
-    NOT RED when it passed anyway, which shows it does not."""
+    NOT RED when it passed anyway, which shows it does not; INVALID when one of its actions failed."""
     bad = [text for ok, text, _ in results if ok is False]
     skipped = [text for ok, text, _ in results if ok is None]
     if not results and not run.invalid:
@@ -1693,7 +1759,15 @@ def verdict(run, results, expect_fail):
     if run.invalid:
         return 'invalid', 'INVALID: ' + '; '.join(run.invalid)
     if expect_fail:
-        return ('red', 'RED as expected: ' + '; '.join(bad)) if bad else ('not red', 'NOT RED: it passed without the fix, so it does not catch the bug')
+        # Only a failed check shows the bug.
+        # A failed action means the script could not do its part, and a health problem is not what the fix is about.
+        actions = [text for text in bad if text.startswith(ACTION_ROWS)]
+        if actions:
+            return 'invalid', 'INVALID: the script could not do its part: ' + '; '.join(actions)
+        health = [text for text in bad if text.startswith('health: ')]
+        checks = [text for text in bad if not text.startswith('health: ')]
+        also = (' (also logged: %s)' % '; '.join(health)) if health else ''
+        return ('red', 'RED as expected: ' + '; '.join(checks) + also) if checks else ('not red', 'NOT RED: it passed without the fix, so it does not catch the bug' + also)
     if bad:
         return 'failed', 'FAILED: ' + '; '.join(bad)
     if skipped:

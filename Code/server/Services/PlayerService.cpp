@@ -140,6 +140,13 @@ void PlayerService::HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellR
         }
 
         const CellIdComponent previous = pPlayer->GetCellComponent();
+        // An arrival (a load, a door, a fast travel) comes from indoors, another worldspace or further than one cell.
+        // A walk into the next cell is none.
+        // CharacterService holds back handing the party leader NPCs for a while after an arrival.
+        const bool cArrived = !previous || previous.IsInInteriorCell() || previous.WorldSpaceId != message.WorldSpaceId ||
+                              std::abs(previous.CenterCoords.X - message.CurrentCoords.X) > 1 || std::abs(previous.CenterCoords.Y - message.CurrentCoords.Y) > 1;
+        if (cArrived)
+            pPlayer->MarkCellEnter();
         pPlayer->SetCellComponent(cell);
         RemoveWhatLeftRange(pPlayer, previous);
 
@@ -178,6 +185,8 @@ void PlayerService::HandleInteriorCellEnter(const PacketEvent<EnterInteriorCellR
 
     const auto oldCell = pPlayer->GetCellComponent().Cell;
 
+    // Into an interior is always an arrival (see HandleExteriorCellEnter).
+    pPlayer->MarkCellEnter();
     auto cell = CellIdComponent{message.CellId, {}, {}};
     pPlayer->SetCellComponent(cell);
 

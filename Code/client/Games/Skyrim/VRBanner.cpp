@@ -113,11 +113,9 @@ void ShowDeath(const std::string& acTitle, const std::string& acSubtitle, const 
     vr::IVROverlay* pOverlay = GetOverlay();
     if (!pOverlay || !EnsureOverlay(pOverlay))
         return;
-    const BannerPicture::Picture cCard = BannerPicture::DeathCard(Widen(acTitle), Widen(acSubtitle), aRgb);
-    Present(pOverlay, cCard, acSubtitle.empty() ? acTitle : acTitle + " / " + acSubtitle, aHoldSeconds);
-
-    // The last death card, to see what a player saw.
-    BannerPicture::WritePng(TiltedPhoques::GetPath() / L"logs" / L"banner-death.png", cCard);
+    // The card is not written to a file here: encoding it took longer than drawing it, on the main thread, at every death.
+    // To see one, draw its text (the "shown" line logs it) with TPTests' [.banner-preview] case.
+    Present(pOverlay, BannerPicture::DeathCard(Widen(acTitle), Widen(acSubtitle), aRgb), acSubtitle.empty() ? acTitle : acTitle + " / " + acSubtitle, aHoldSeconds);
 }
 
 void Hide() noexcept

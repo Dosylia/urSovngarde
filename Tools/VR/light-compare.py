@@ -160,7 +160,41 @@ def save(label, results, notes):
     print('%s: %d pictures, mean luminance %s' % (label, len(results), ', '.join('%.1f' % m for m in means)), flush=True)
 
 
+def clear_message_boxes():
+    """Without the mod, the rig's save stops at message boxes after the load (content no longer present; our plugin's
+    "Skyrim Together is not running!"). E, the activate key, confirms each."""
+    closed = 0
+    for _ in range(6):
+        menus = tool('menu', {'action': 'list'}).get('openMenus', [])
+        if 'MessageBoxMenu' not in menus:
+            break
+        tool('input', {'action': 'down', 'device': 'keyboard', 'key': 'e', 'maxHoldMs': 200, 'owner': 'light-compare'})
+        closed += 1
+        time.sleep(3)
+    return closed
+
+
+# The rig's start cell (headless.ps1 puts the player there), and its centre.
+START_CELL = 'Tamriel 34 -9'
+START_AT = (140688.0, -32896.0)
+
+
+def to_start_cell():
+    """A run stopped at a message box missed headless.ps1's move to the start cell: made here."""
+    at = player_position()
+    if abs(at[0] - START_AT[0]) > 4096 or abs(at[1] - START_AT[1]) > 4096:
+        console('cow ' + START_CELL)
+        time.sleep(30)
+        clear_message_boxes()
+        return True
+    return False
+
+
 def run(label, with_connection):
+    if clear_message_boxes():
+        time.sleep(30)
+        clear_message_boxes()
+    to_start_cell()
     start = player_position()
     eye = (start[0], start[1], start[2] + 200.0)
     notes = []

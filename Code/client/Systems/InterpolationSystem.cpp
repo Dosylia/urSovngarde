@@ -1,5 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
+#include <unordered_set>
+
 #include <Systems/InterpolationSystem.h>
 #include <Systems/SpawnReveal.h>
 #include <Components.h>
@@ -63,6 +65,19 @@ bool IsOnFoot(const Actor* apActor) noexcept
     return ((cFlags >> 14) & 0xF) == 0 && ((cFlags >> 18) & 0x7) == 0;
 }
 
+// How fast the copy's legs go: the graph's own Speed, or the actor's when that is higher.
+// Some animation frameworks (MGO's) drive the legs from the graph while the actor's speed reads zero, and the walk went on.
+float LegSpeed(Actor* apActor) noexcept
+{
+    static BSFixedString s_speed("Speed");
+    float graphSpeed = 0.f;
+    apActor->animationGraphHolder.GetVariableFloat(&s_speed, &graphSpeed);
+    return std::max(graphSpeed, apActor->GetSpeed());
+}
+
+// Copies that went quiet without being stopped, so that why is logged once per quiet spell.
+TiltedPhoques::Set<uint32_t> s_quietNotStopped;
+
 // The graph's own stop, then no speed for the legs, as when the owner's character stands still.
 void StopQuietCopy(Actor* apActor, const double aQuietFor) noexcept
 {
@@ -76,7 +91,7 @@ void StopQuietCopy(Actor* apActor, const double aQuietFor) noexcept
             it = cNow - it->second.Since > 10min ? s_quietStopped.erase(it) : std::next(it);
 
         static BSFixedString s_moveStop("moveStop");
-        const float cSpeed = apActor->GetSpeed();
+        const float cSpeed = LegSpeed(apActor);
         const bool cTaken = apActor->SendAnimationEvent(&s_moveStop);
         s_quietStopped[apActor->formID] = QuietStop{cNow, {}};
         spdlog::info("QuietStop: copy {:X} had no report for {:.1f} s while moving (speed {:.0f}); stopped ('moveStop' {})", apActor->formID, aQuietFor / 1000.0, cSpeed,
@@ -103,7 +118,7 @@ void WatchQuietCopy(Actor* apActor) noexcept
         stopped.value().Back = cNow;
     const auto cBackFor = std::chrono::duration_cast<std::chrono::milliseconds>(cNow - stopped->second.Back).count();
 
-    const float cSpeed = apActor->GetSpeed();
+    const float cSpeed = LegSpeed(apActor);
     if (cSpeed > 1.f)
     {
         static BSFixedString s_moveStart("moveStart");
@@ -126,7 +141,7 @@ uint64_t InterpolationSystem::GetPlaybackTick(const InterpolationComponent& acIn
     return acInterpolationComponent.Clock.IsRunning() && cTick > 0.0 ? static_cast<uint64_t>(cTick) : 0;
 }
 
-void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterpolationComponent, const double aNow) noexcept
+void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterpolationComponent, const double aNow, const bool aDeadAtOwner) noexcept
 {
     const double cDeltaTime = aInterpolationComponent.Clock.Advance(aNow);
 
@@ -499,6 +514,17 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
 
     if (apActor->actorState.IsDead())
     {
+        // A copy that died here alone lies where it fell.
+        // The owner's position is then a living actor's, and the body would be dragged after it (live-corpse-owner-alive).
+        static std::unordered_set<uint32_t> s_saidDeadAlone;
+        if (!aDeadAtOwner)
+        {
+            if (s_saidDeadAlone.insert(apActor->formID).second)
+                spdlog::info("CorpseDiag: {:X} is dead here, but its owner's game has not said it died; left where it lies", apActor->formID);
+            return;
+        }
+        s_saidDeadAlone.erase(apActor->formID);
+
         // A dead body is moved to where the owner's corpse lies, but only when it is clearly elsewhere.
         // ForcePosition moves only the reference; the ragdoll the corpse is drawn from is moved by PlaceCorpse (live-corpse-place).
         constexpr float cCorpseSnapDistance = 64.f;
@@ -592,10 +618,22 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     {
         const double cQuietFor = cRenderTick - static_cast<double>(movements.back().Tick);
         const bool cStopped = s_quietStopped.find(apActor->formID) != s_quietStopped.end();
-        if (cQuietFor > cQuietStopAfter && IsOnFoot(apActor) && (cStopped || apActor->GetSpeed() > 1.f))
+        if (cQuietFor > cQuietStopAfter && IsOnFoot(apActor) && (cStopped || LegSpeed(apActor) > 1.f))
             StopQuietCopy(apActor, cQuietFor);
         else
         {
+            // A copy still moving by some measure but not stopped: why, once per quiet spell.
+            if (cQuietFor <= cQuietStopAfter)
+                s_quietNotStopped.erase(apActor->formID);
+            else if (!cStopped && LegSpeed(apActor) > 1.f && s_quietNotStopped.insert(apActor->formID).second)
+            {
+                static BSFixedString s_speed("Speed");
+                float graphSpeed = 0.f;
+                apActor->animationGraphHolder.GetVariableFloat(&s_speed, &graphSpeed);
+                spdlog::info("QuietStop: copy {:X} had no report for {:.1f} s and moves, but was not stopped (on foot {}, speed {:.0f}, graph speed {:.0f}, flags1 {:#x})",
+                             apActor->formID, cQuietFor / 1000.0, IsOnFoot(apActor), apActor->GetSpeed(), graphSpeed, apActor->actorState.flags1);
+            }
+
             apActor->LoadAnimationVariables(second.Variables);
             if (cStopped && cQuietFor <= cQuietStopAfter)
                 WatchQuietCopy(apActor);
@@ -695,4 +733,11 @@ void InterpolationSystem::Clean(World& aWorld, const entt::entity aEntity) noexc
 {
     if (aWorld.all_of<InterpolationComponent>(aEntity))
         aWorld.remove<InterpolationComponent>(aEntity);
+}
+
+void InterpolationSystem::Forget(const uint32_t aFormId) noexcept
+{
+    if (s_quietStopped.erase(aFormId))
+        spdlog::info("QuietStop: copy {:X} forgotten while stopped (removed, or run by this game now)", aFormId);
+    s_quietNotStopped.erase(aFormId);
 }

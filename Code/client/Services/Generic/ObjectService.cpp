@@ -219,6 +219,26 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             pObject->LockChange();
         }
 
+        // A door used in another game while this one was away is set to the state the server last passed on.
+        // Setting it is not an activation, so nothing is sent back.
+        const auto cShared = static_cast<TESObjectREFR::OpenState>(objectData.DoorOpenState);
+        if (cShared != TESObjectREFR::kNone && pObject->baseForm->formType == FormType::Door && !pObject->extraData.Contains(ExtraDataType::Teleport))
+        {
+            const bool cOpen = cShared == TESObjectREFR::kOpen;
+            const TESObjectREFR::OpenState cLocal = pObject->GetOpenState();
+            if (cLocal == TESObjectREFR::kNone || cLocal == cShared || cLocal == (cOpen ? TESObjectREFR::kOpening : TESObjectREFR::kClosing))
+            {
+                spdlog::info("Door {:X}: {} in the other games when this game came in; {} here (state {})", pObject->formID, cOpen ? "open" : "closed",
+                             cLocal == TESObjectREFR::kNone ? "no state known" : "already so", static_cast<int>(cLocal));
+            }
+            else
+            {
+                pObject->SetOpen(cOpen);
+                spdlog::info("Door {:X}: {} in the other games when this game came in; set {} here from state {}", pObject->formID, cOpen ? "open" : "closed",
+                             cOpen ? "open" : "closed", static_cast<int>(cLocal));
+            }
+        }
+
         if (pObject->baseForm->formType == FormType::Container)
         {
             Inventory currentInventory = pObject->GetInventory();
@@ -265,6 +285,14 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     {
         if (pLock->IsLocked())
             return;
+    }
+
+    // A door whose activation a script blocks (BlockActivation) does not move here, so the other games must not open it either.
+    const bool cDoor = acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Door;
+    if (cDoor && acEvent.pObject->IsActivationBlocked())
+    {
+        spdlog::info("Door {:X} activated by {:X}, but a script blocks its activation; not sent", acEvent.pObject->formID, acEvent.pActivator->formID);
+        return;
     }
 
     ActivateRequest request;

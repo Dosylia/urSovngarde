@@ -90,13 +90,15 @@ Grips GripsHeld() noexcept
     // BSInputDeviceManager keeps its devices in a list at 0x60; slots 3 to 8 are the VR controllers, two per headset type.
     // Only a BSOpenVRControllerDevice (known by its vtable) is read: its last poll's state sits at 0xC0.
     POINTER_SKYRIMSE(const uint8_t*, s_inputDeviceManager, 516574, 516574);
-    static const uintptr_t s_controllerVtable = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) + 0x17E87C0;
-    if (const uint8_t* pManager = *s_inputDeviceManager.Get())
+    POINTER_SKYRIMSE(void, s_controllerVtable, 9000014, 9000014);
+    const uintptr_t cControllerVtable = reinterpret_cast<uintptr_t>(s_controllerVtable.GetPtr());
+    const uint8_t* const* ppManager = s_inputDeviceManager.Get();
+    if (const uint8_t* pManager = ppManager && cControllerVtable ? *ppManager : nullptr)
     {
         for (int slot = 3; slot <= 8; ++slot)
         {
             const uint8_t* pDevice = *reinterpret_cast<const uint8_t* const*>(pManager + 0x60 + slot * sizeof(void*));
-            if (!pDevice || *reinterpret_cast<const uintptr_t*>(pDevice) != s_controllerVtable)
+            if (!pDevice || *reinterpret_cast<const uintptr_t*>(pDevice) != cControllerVtable)
                 continue;
             const auto& cState = *reinterpret_cast<const vr::VRControllerState_t*>(pDevice + 0xC0);
             if ((cState.ulButtonPressed & cGripMask) != 0)

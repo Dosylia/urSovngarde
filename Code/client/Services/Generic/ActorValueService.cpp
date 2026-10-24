@@ -691,6 +691,9 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         return;
     }
 
+    // Kept even when the copy is already in that state here: the corpse placement waits for this word.
+    view.get<RemoteComponent>(*it).DeadAtOwner = acMessage.IsDead;
+
     auto& formIdComponent = view.get<FormIdComponent>(*it);
     Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
 

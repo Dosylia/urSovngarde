@@ -13,11 +13,14 @@ namespace SendBuffer
 constexpr size_t kScratchBytes = 1 << 22;
 constexpr size_t kBufferBytes = 1 << 20;
 
-//! False when the message did not fit in the buffer: what it holds is cut short and must not be sent.
+//! False when the message did not fit in the buffer: what it holds may be cut short and must not be sent.
 inline bool Write(const ClientMessage& acMessage, TiltedPhoques::Buffer& aBuffer, TiltedPhoques::Buffer::Writer& aWriter) noexcept
 {
+    // The writer grows a full buffer, and a write is dropped only when it cannot, without a word to the message.
+    // So a buffer that never had to grow holds the whole message, and one that grew may have lost its last fields.
+    const size_t cSizeBefore = aBuffer.GetSize();
     aWriter.WriteBits(0, 8);
     acMessage.Serialize(aWriter);
-    return aWriter.Size() < aBuffer.GetSize();
+    return aBuffer.GetSize() == cSizeBefore;
 }
 } // namespace SendBuffer

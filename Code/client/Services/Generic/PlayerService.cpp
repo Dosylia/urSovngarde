@@ -107,6 +107,14 @@ TESObjectCELL* FindSafePointCell(World& aWorld, const GameId& acCellId, const Ga
     const GridCellCoords cCoordinates = GridCellCoords::CalculateGridCellCoords(acPosition.x, acPosition.y);
     return pWorldSpace->LoadCell(cCoordinates.X, cCoordinates.Y);
 }
+
+// The name a reviver goes by in the party, as the banner shows it.
+String ReviverName(const PartyService& acParty, const uint32_t aReviverId) noexcept
+{
+    const auto& cPlayers = acParty.GetPlayers();
+    const auto cName = cPlayers.find(aReviverId);
+    return cName != cPlayers.end() ? cName->second : String("A party member");
+}
 } // namespace
 
 PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
@@ -305,20 +313,32 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
     {
         if (m_downState != DownState::kDown)
             return;
-        const auto& cPlayers = cParty.GetPlayers();
-        const auto cName = cPlayers.find(acMessage.ReviverId);
-        const String cWho = cName != cPlayers.end() ? cName->second : String("A party member");
+        std::erase(m_revivers, acMessage.ReviverId);
+        m_revivers.push_back(acMessage.ReviverId);
+        const String cWho = ReviverName(cParty, acMessage.ReviverId);
         spdlog::info("PlayerService: player {} '{}' is reviving this player", acMessage.ReviverId, cWho.c_str());
         VRBanner::Show(std::string(cWho.c_str()) + " is reviving you", cPlaceColour, 72, 8.f);
         Utils::ShowHudMessage(String("urSovngarde: ") + cWho + " is reviving you");
         break;
     }
     case NotifyDownedState::kReviveLetGo:
+    {
         if (m_downState != DownState::kDown)
             return;
         spdlog::info("PlayerService: player {} stopped reviving this player", acMessage.ReviverId);
-        VRBanner::Hide();
+        // Another player still holding keeps the banner up, and it names one of them if it named the one who let go.
+        const bool cWasNamed = !m_revivers.empty() && m_revivers.back() == acMessage.ReviverId;
+        std::erase(m_revivers, acMessage.ReviverId);
+        if (m_revivers.empty())
+            VRBanner::Hide();
+        else if (cWasNamed)
+        {
+            const String cWho = ReviverName(cParty, m_revivers.back());
+            spdlog::info("PlayerService: player {} '{}' is still reviving this player", m_revivers.back(), cWho.c_str());
+            VRBanner::Show(std::string(cWho.c_str()) + " is reviving you", cPlaceColour, 72, 8.f);
+        }
         break;
+    }
     case NotifyDownedState::kStoodUp:
     case NotifyDownedState::kReviveRefused:
     case NotifyDownedState::kLeft: break;
@@ -442,6 +462,8 @@ void PlayerService::RunRespawnUpdates() noexcept
         // The server answers with how long the party has to revive the player, or at once that it respawns (alone) (OnNotifyDownedState).
         // Until it does, the wait is the old respawn delay, so a lost answer cannot leave the player down for good.
         m_downState = DownState::kDown;
+        m_revivers.clear();
+        m_downingCause.reset();
         m_downedAt = cNow;
         m_respawnDeadline = cNow + 5s;
         m_standingUp = false;
@@ -463,6 +485,9 @@ void PlayerService::RunRespawnUpdates() noexcept
 
     if (m_downState == DownState::kDown)
     {
+        if (!m_downingCause && cNow >= m_downedAt + cKillingBlow)
+            m_downingCause = DowningCause();
+
         if (!pPlayer->actorState.IsBleedingOut())
         {
             // After a loading screen the player is up in a loaded save: no respawn, as when playing alone.
@@ -736,12 +761,18 @@ std::string PlayerService::DeathLine() const noexcept
     const char* pVictim = pPlayer->baseForm ? pPlayer->baseForm->GetName() : nullptr;
     const std::string cVictim = pVictim && *pVictim ? pVictim : "The Dragonborn";
 
+    // A respawn sooner than the cause was told (down alone) tells it now.
+    return DeathSentence::Describe(cVictim, m_downingCause ? *m_downingCause : DowningCause());
+}
+
+DeathSentence::Cause PlayerService::DowningCause() const noexcept
+{
     // Blows on the player once down do not count; the game may tell of the last one a moment after.
     DeathSentence::Cause cause{};
     const auto cHit = DeathCause::LastBetween(m_downedAt - cBlowsCounted, m_downedAt + cKillingBlow);
     cause.Fell = m_downFell && (!cHit || cHit->At < m_downedAt - cKillingBlow);
     if (!cHit)
-        return DeathSentence::Describe(cVictim, cause);
+        return cause;
 
     // Another player is named as the party knows them.
     const auto& cPlayers = m_world.GetPartyService().GetPlayers();
@@ -774,7 +805,7 @@ std::string PlayerService::DeathLine() const noexcept
         cause.With = pSource->GetName();
     spdlog::info("PlayerService: the last blow before going down: attacker {:X}, player {}, source {:X}, projectile {:X}, flags {}, {} ms before", cHit->AttackerFormId,
                  playerId, cHit->SourceFormId, cHit->ProjectileFormId, cHit->Flags, std::chrono::duration_cast<std::chrono::milliseconds>(m_downedAt - cHit->At).count());
-    return DeathSentence::Describe(cVictim, cause);
+    return cause;
 }
 
 void PlayerService::StartHeartbeat() noexcept

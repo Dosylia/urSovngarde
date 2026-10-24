@@ -194,6 +194,9 @@ private:
     uint32_t OtherPlayerId() const noexcept;
     //! A script's target: "other" (the other player's character), "base:<hex>" (the newest NPC copy of that base) or a server id; kNoId if none.
     uint32_t TargetId(const std::string& acWho) const noexcept;
+    //! "ref:<hex>": the actor the server sent for that placed reference, the newest if it sent more than one; null if none.
+    //! Checks and commands find it the same way.
+    const KnownActor* ActorOfRef(const std::string& acWord) const noexcept;
     //! The same, or the last one found once it has gone: what the server said about a player that left is still about that player.
     uint32_t OtherPlayerIdOrLast() const noexcept;
     //! Move into the cell the host just entered, so a load door does not leave the bot outside.
@@ -272,6 +275,8 @@ private:
     mutable uint32_t m_lastOtherPlayerId{0};
     //! How many times the server sent each downed state for each player id, for `downcount`.
     std::map<uint32_t, std::map<std::string, int>> m_downCounts;
+    // Quest updates the server relayed to this bot, by quest base id (`questupdates`).
+    std::map<uint32_t, int> m_questUpdates;
     //! The items the server passed on as taken or given by another player's character, by base id, for `invchanges`.
     std::map<uint32_t, int> m_inventoryChanges;
     //! Where the server said each player respawns (died, fallen or respawned); empty for the game's own spot.

@@ -51,6 +51,8 @@
 #include <Messages/NotifyAddTarget.h>
 #include <Messages/SafePointRequest.h>
 #include <Messages/NotifyDownedState.h>
+#include <Messages/RequestQuestUpdate.h>
+#include <Messages/NotifyQuestUpdate.h>
 #include <Messages/RequestActorValueChanges.h>
 #include <Messages/RequestDeathStateChange.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
@@ -1370,6 +1372,15 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         return;
     }
 
+    // A quest update the server relayed from another party member: what `questupdates` counts.
+    if (opcode == NotifyQuestUpdate::Opcode)
+    {
+        const auto& message = static_cast<const NotifyQuestUpdate&>(acMessage);
+        ++m_questUpdates[message.Id.BaseId];
+        spdlog::info("Quest update relayed to this bot: quest {:X}:{:X}, stage {}, status {}", message.Id.ModId, message.Id.BaseId, message.Stage, message.Status);
+        return;
+    }
+
     // A player's downed state, as the server tells the party: what `downstate`, `respawnpoint` and `refused` assert.
     if (opcode == NotifyDownedState::Opcode)
     {
@@ -1670,10 +1681,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             else if (!args.empty() && args[0].rfind("ref:", 0) == 0)
             {
                 // "capture ref:<hex> <seconds>": the actor of that placed reference, as "claim ref:" finds it.
-                const uint32_t wanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
-                for (const auto& actor : m_actors)
-                    if ((actor.Ref.BaseId & 0x00FFFFFF) == wanted && actor.Ref != GameId{})
-                        m_captureId = actor.ServerId;
+                if (const KnownActor* pActor = ActorOfRef(args[0]))
+                    m_captureId = pActor->ServerId;
             }
             else if (!args.empty())
                 m_captureId = static_cast<uint32_t>(std::strtoul(args[0].c_str(), nullptr, 16));
@@ -2278,6 +2287,13 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         ActivateRequest request{};
         request.Id = Skyrim(refId);
         request.CellId = m_cell;
+        // "... cell <hex>": the door's cell given outright, e.g. the next cell over from where the players stand.
+        for (size_t i = 3; i + 1 < args.size(); ++i)
+        {
+            uint32_t cellId = 0;
+            if (args[i] == "cell" && ParseHex(args[i + 1], cellId))
+                request.CellId = Skyrim(cellId);
+        }
         request.ActivatorId = otherId;
         // The state the door had before it was used, as the sender saw it: a game replays a door's activation only when
         // its own door is in that state too. 3 is "closed", what a load door reports (TESObjectREFR::OpenState).
@@ -2366,6 +2382,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
         request.Item.BaseId = Skyrim(baseId);
         request.Item.Count = args.size() > 1 ? std::atoi(args[1].c_str()) : 1;
+        // "additem <base> <n> quest": a quest object, as a game sends one picked up from the world.
+        request.Item.IsQuestItem = args.size() > 2 && args[2] == "quest";
         request.UpdateClients = true;
         SendMsg(request);
         spdlog::info("[script] {} of {:X} added to the inventory of server character {:X}", request.Item.Count, baseId, request.ServerId);
@@ -2636,14 +2654,10 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
     if (name == "claim" && !args.empty() && args[0].rfind("ref:", 0) == 0)
     {
-        const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
-        const KnownActor* pFound = nullptr;
-        for (const auto& actor : m_actors)
-            if ((actor.Ref.BaseId & 0x00FFFFFF) == cWanted && actor.Ref != GameId{})
-                pFound = &actor;
+        const KnownActor* pFound = ActorOfRef(args[0]);
         if (!pFound)
         {
-            spdlog::error("[script] claim: no actor of reference {:X} known", cWanted);
+            spdlog::error("[script] claim: no actor of reference {} known", args[0].substr(4));
             return true;
         }
         RequestOwnershipClaim request{};
@@ -2651,7 +2665,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.ExpectedOwnershipEpoch = pFound->OwnershipEpoch;
         request.Follower = args.size() > 1 && args[1] == "follower";
         SendMsg(request);
-        spdlog::info("[script] claimed actor {:X} (reference {:X}) at epoch {}{}", request.ServerId, cWanted, request.ExpectedOwnershipEpoch,
+        spdlog::info("[script] claimed actor {:X} (reference {:X}) at epoch {}{}", request.ServerId, pFound->Ref.BaseId & 0x00FFFFFF, request.ExpectedOwnershipEpoch,
                      request.Follower ? " as our follower" : "");
         return true;
     }
@@ -2671,6 +2685,33 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         m_leftParty = true;
         SendMsg(PartyLeaveRequest{});
         spdlog::info("[script] leaving the party");
+        return true;
+    }
+
+    // "quest <base hex> start|stage|stop <stage>": this player's quest change, as a game in a party sends it.
+    // The quest is a main quest of Skyrim.esm as the server numbers mods; the server checks nothing else about it.
+    if (name == "quest" && args.size() >= 3)
+    {
+        uint32_t base = 0;
+        float stage = 0.f;
+        if (!ParseHex(args[0], base) || !ParseFloat(args[2], stage))
+            return false;
+
+        RequestQuestUpdate request{};
+        request.Id = GameId(0, base);
+        request.Stage = static_cast<uint16_t>(stage);
+        request.ClientQuestType = 1;
+        if (args[1] == "start")
+            request.Status = RequestQuestUpdate::Started;
+        else if (args[1] == "stage")
+            request.Status = RequestQuestUpdate::StageUpdate;
+        else if (args[1] == "stop")
+            request.Status = RequestQuestUpdate::Stopped;
+        else
+            return false;
+
+        SendMsg(request);
+        spdlog::info("[script] quest {:X}: {} {}", base, args[1], request.Stage);
         return true;
     }
 
@@ -2824,10 +2865,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         KnownActor* pActor = nullptr;
         if (!args.empty() && args[0].rfind("ref:", 0) == 0)
         {
-            const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(args[0].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
-            for (auto& actor : m_actors)
-                if ((actor.Ref.BaseId & 0x00FFFFFF) == cWanted && actor.Ref != GameId{})
-                    pActor = &actor;
+            if (const KnownActor* pFound = ActorOfRef(args[0]))
+                pActor = &Actor(pFound->ServerId);
         }
         else if (!args.empty() && args[0] != "any")
         {
@@ -3103,14 +3142,8 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         // game's own NPCs: "dead ref:45A63" is the Mistwatch bandit the game killed (2026-10-03, live-sender).
         if (acArgs[aIndex].rfind("ref:", 0) == 0)
         {
-            const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(acArgs[aIndex].c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
-            aOut = kNoId;
-            for (const auto& actor : m_actors)
-                if (!actor.IsPlayer && (actor.Ref.BaseId & 0x00FFFFFF) == cWanted && actor.Ref != GameId{})
-                {
-                    aOut = actor.ServerId;
-                    break;
-                }
+            const KnownActor* pActor = ActorOfRef(acArgs[aIndex]);
+            aOut = pActor ? pActor->ServerId : kNoId;
             return true;
         }
 
@@ -3417,6 +3450,26 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         return std::abs(cPoint->second->x - wantedX) <= 50.f && std::abs(cPoint->second->y - wantedY) <= 50.f;
     }
 
+    if (what == "questupdates")
+    {
+        // questupdates <quest base hex> <op> <n>: how many of that quest's updates the server relayed to this bot.
+        uint32_t base = 0;
+        float wanted = 0.f;
+        if (acArgs.size() < 4 || !ParseHex(acArgs[1], base) || !ParseFloat(acArgs[3], wanted))
+            return std::nullopt;
+        const auto cFound = m_questUpdates.find(base);
+        const int cCount = cFound != m_questUpdates.end() ? cFound->second : 0;
+        const float value = static_cast<float>(cCount);
+        aOutWhy = fmt::format("{} update(s) of quest {:X} relayed to this bot", cCount, base);
+        const std::string& op = acArgs[2];
+        if (op == "==") return value == wanted;
+        if (op == ">=") return value >= wanted;
+        if (op == "<=") return value <= wanted;
+        if (op == ">") return value > wanted;
+        if (op == "<") return value < wanted;
+        return std::nullopt;
+    }
+
     if (what == "downcount")
     {
         // downcount me|other <state> <op> <n>: how many times the server sent that downed state for that player (down, revived, respawned, fallen, died, up, left, held, letgo).
@@ -3572,6 +3625,23 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         if (op == ">") return value > wanted;
         if (op == "<") return value < wanted;
         return std::nullopt;
+    }
+
+    if (what == "ownedby")
+    {
+        // ownedby <who> me|other: whether that actor is this bot's now, as the server last said.
+        // "owned" counts every actor, and a bot that accepts hand-overs is given all the actors a player leaves behind.
+        uint32_t id = 0;
+        if (acArgs.size() < 3 || !parseId(1, id) || (acArgs[2] != "me" && acArgs[2] != "other"))
+            return std::nullopt;
+        const KnownActor* pActor = id != kNoId ? findActor(id) : nullptr;
+        if (!pActor)
+        {
+            aOutWhy = id != kNoId ? fmt::format("nothing known about {:X}", id) : std::string("no such actor known");
+            return false;
+        }
+        aOutWhy = fmt::format("{:X} is {}this bot's, epoch {}", id, pActor->OwnedByUs ? "" : "not ", pActor->OwnershipEpoch);
+        return pActor->OwnedByUs == (acArgs[2] == "me");
     }
 
     if (what == "owned")
@@ -3805,6 +3875,18 @@ uint32_t Bot::TargetId(const std::string& acWho) const noexcept
     char* pEnd = nullptr;
     const unsigned long cId = std::strtoul(acWho.c_str(), &pEnd, 16);
     return pEnd != acWho.c_str() ? static_cast<uint32_t>(cId) : kNoId;
+}
+
+const KnownActor* Bot::ActorOfRef(const std::string& acWord) const noexcept
+{
+    if (acWord.rfind("ref:", 0) != 0)
+        return nullptr;
+    const uint32_t cWanted = static_cast<uint32_t>(std::strtoul(acWord.c_str() + 4, nullptr, 16)) & 0x00FFFFFF;
+    const KnownActor* pFound = nullptr;
+    for (const auto& actor : m_actors)
+        if (actor.Ref != GameId{} && (actor.Ref.BaseId & 0x00FFFFFF) == cWanted)
+            pFound = &actor;
+    return pFound;
 }
 
 KnownPlayer* Bot::FindPlayerCharacter(const uint32_t aServerId) noexcept

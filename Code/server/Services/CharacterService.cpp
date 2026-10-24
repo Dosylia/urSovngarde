@@ -231,6 +231,33 @@ void CharacterService::OnUpdate(const UpdateEvent&) const noexcept
 {
     ProcessFactionsChanges();
     HandOffAbandonedActors();
+    ProcessPendingLeaderAssignments();
+}
+
+void CharacterService::ProcessPendingLeaderAssignments() const noexcept
+{
+    if (m_pendingLeaderAssignments.empty())
+        return;
+
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = m_pendingLeaderAssignments.begin(); it != m_pendingLeaderAssignments.end();)
+    {
+        if (cNow < it->ReadyAt)
+        {
+            ++it;
+            continue;
+        }
+
+        const PendingLeaderAssignment cPending = *it;
+        it = m_pendingLeaderAssignments.erase(it);
+
+        Player* const pPlayer = m_world.GetPlayerManager().GetById(cPending.PlayerId);
+        if (!pPlayer || !m_world.valid(cPending.Entity))
+            continue;
+        // The rules are checked again: another arrival, a hand-over or a departure may have come meanwhile.
+        if (CanClaimOwnership(pPlayer, cPending.Entity, cPending.OwnershipEpoch, OwnershipTransferReason::LeaderAssignment))
+            TransferOwnership(pPlayer, cPending.Entity, OwnershipTransferReason::LeaderAssignment);
+    }
 }
 
 void CharacterService::OnCharacterExteriorCellChange(const CharacterExteriorCellChangeEvent& acEvent) const noexcept
@@ -329,8 +356,21 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
             acMessage.pPlayer->Send(response);
 
             // The assignment response establishes a remote component before the grant arrives.
+            // Right after the leader's arrival (a load), its game is still bringing actors in.
+            // Handed over at once, they go back and forth between the games, so the hand-over waits until the arrival is 10 s old.
             if (transferToLeader)
-                TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
+            {
+                constexpr auto cGrace = std::chrono::seconds(10);
+                const auto cReadyAt = acMessage.pPlayer->GetLastCellEnterAt() + cGrace;
+                if (std::chrono::steady_clock::now() < cReadyAt)
+                {
+                    m_pendingLeaderAssignments.push_back(PendingLeaderAssignment{acMessage.pPlayer->GetId(), *itor, ownerComponent.OwnershipEpoch, cReadyAt});
+                    spdlog::info("Party leader assignment of actor {:X} to player {:X} held back until 10 s after their arrival", World::ToInteger(*itor),
+                                 acMessage.pPlayer->GetId());
+                }
+                else
+                    TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
+            }
 
             return;
         }
@@ -506,6 +546,7 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
         movementComponent.Flying = movement.Flying;
         movementComponent.VRPoseData = update.UpdatedVRPose;
 
+        const CellIdComponent cCellBefore = cellIdComponent;
         cellIdComponent.Cell = movement.CellId;
         cellIdComponent.WorldSpaceId = movement.WorldSpaceId;
         cellIdComponent.CenterCoords = GridCellCoords::CalculateGridCellCoords(movement.Position.x, movement.Position.y);
@@ -525,6 +566,15 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
         const auto cCharacter = characterView.find(entity);
         const bool cIsDragon = cCharacter != characterView.end() && characterView.get<CharacterComponent>(*cCharacter).IsDragon();
+        const bool cIsPlayer = cCharacter != characterView.end() && characterView.get<CharacterComponent>(*cCharacter).IsPlayer();
+        const bool cCellChanged = cCellBefore.Cell != cellIdComponent.Cell || cCellBefore.WorldSpaceId != cellIdComponent.WorldSpaceId ||
+                                  !(cCellBefore.CenterCoords == cellIdComponent.CenterCoords);
+        // An NPC whose own move takes it out of a player's range is removed from that player's view.
+        // A move that brings it back sends it to them again.
+        // Players' characters are handled by their own cell changes.
+        if (cCellChanged && !cIsPlayer && cCharacter != characterView.end())
+            UpdateViewsAfterMove(acMessage.pPlayer, entity, cCellBefore, cellIdComponent, cIsDragon);
+
         for (Player* pPlayer : m_world.GetPlayerManager())
         {
             if (pPlayer == acMessage.pPlayer || !cellIdComponent.IsInRange(pPlayer->GetCellComponent(), cIsDragon))
@@ -542,6 +592,44 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
     {
         it.value().Tick = message.Tick;
         it->first->Send(it->second);
+    }
+}
+
+void CharacterService::UpdateViewsAfterMove(const Player* apOwner, const entt::entity aEntity, const CellIdComponent& acBefore, const CellIdComponent& acNow,
+                                            const bool aIsDragon) const noexcept
+{
+    const uint32_t cServerId = World::ToInteger(aEntity);
+    // Only a door or a worldspace change removes it.
+    // A walk along the edge of a player's loaded area would remove and re-create it again and again.
+    // Outdoors, the copy there waits at that edge until the actor comes back.
+    const bool cThroughDoor = acBefore.IsInInteriorCell() || acNow.IsInInteriorCell() || acBefore.WorldSpaceId != acNow.WorldSpaceId;
+    for (Player* pPlayer : m_world.GetPlayerManager())
+    {
+        if (pPlayer == apOwner)
+            continue;
+
+        const auto& cViewer = pPlayer->GetCellComponent();
+        const bool cWasInRange = acBefore.IsInRange(cViewer, aIsDragon);
+        const bool cIsInRange = acNow.IsInRange(cViewer, aIsDragon);
+        if (cWasInRange == cIsInRange || (cWasInRange && !cThroughDoor))
+            continue;
+
+        if (cWasInRange)
+        {
+            NotifyRemoveCharacter removeMessage;
+            removeMessage.ServerId = cServerId;
+            pPlayer->Send(removeMessage);
+            spdlog::info("Character {:X} moved from cell {:X} to {:X}, out of player {:X}'s range; removed from their view", cServerId, acBefore.Cell.BaseId,
+                         acNow.Cell.BaseId, pPlayer->GetId());
+        }
+        else
+        {
+            CharacterSpawnRequest spawnMessage;
+            Serialize(m_world, aEntity, &spawnMessage);
+            pPlayer->Send(spawnMessage);
+            spdlog::info("Character {:X} moved from cell {:X} to {:X}, into player {:X}'s range; sent to them", cServerId, acBefore.Cell.BaseId, acNow.Cell.BaseId,
+                         pPlayer->GetId());
+        }
     }
 }
 
@@ -689,6 +777,7 @@ void CharacterService::OnDialogueRequest(const PacketEvent<DialogueRequest>& acM
     notify.ServerId = message.ServerId;
     notify.SoundFilename = message.SoundFilename;
     notify.SceneId = message.SceneId;
+    notify.ScenePhase = message.ScenePhase;
 
     const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.GetSender()))
@@ -703,6 +792,7 @@ void CharacterService::OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acM
     notify.ServerId = message.ServerId;
     notify.Text = message.Text;
     notify.SceneId = message.SceneId;
+    notify.ScenePhase = message.ScenePhase;
 
     const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.GetSender()))

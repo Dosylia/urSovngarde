@@ -83,6 +83,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
             auto& objectComponent = view.get<ObjectComponent>(*iter);
             objectData.CurrentLockData = objectComponent.CurrentLockData;
+            objectData.DoorOpenState = objectComponent.DoorOpenState;
 
             auto& inventoryComponent = view.get<InventoryComponent>(*iter);
             objectData.CurrentInventory = inventoryComponent.Content;
@@ -117,19 +118,56 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
         acMessage.pPlayer->Send(response);
 }
 
+namespace
+{
+// The game's door states: 1 open, 2 opening, 3 closed, 4 closing.
+// An activation opens a closed or closing door and closes an open or opening one; 0 when the state before is not known.
+uint8_t DoorStateAfterActivation(const uint8_t aBefore) noexcept
+{
+    switch (aBefore)
+    {
+    case 3:
+    case 4: return 1;
+    case 1:
+    case 2: return 3;
+    default: return 0;
+    }
+}
+} // namespace
+
 void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) const noexcept
 {
+    // A door's state is kept with its object, so a player who enters the cell later gets the door as it was left.
+    if (const uint8_t cAfter = DoorStateAfterActivation(acMessage.Packet.PreActivationOpenState))
+    {
+        auto objectView = m_world.view<FormIdComponent, ObjectComponent>();
+        const auto iter = std::find_if(std::begin(objectView), std::end(objectView),
+                                       [objectView, id = acMessage.Packet.Id](auto entity) { return objectView.get<FormIdComponent>(entity).Id == id; });
+        if (iter != std::end(objectView))
+        {
+            objectView.get<ObjectComponent>(*iter).DoorOpenState = cAfter;
+            spdlog::debug("Object {:X}:{:X} left in door state {} by an activation", acMessage.Packet.Id.ModId, acMessage.Packet.Id.BaseId, cAfter);
+        }
+    }
+
     NotifyActivate notifyActivate;
     notifyActivate.Id = acMessage.Packet.Id;
     notifyActivate.ActivatorId = acMessage.Packet.ActivatorId;
     notifyActivate.PreActivationOpenState = acMessage.Packet.PreActivationOpenState;
 
+    // Outdoors, every player who has the door's cell loaded gets it, not only those in that very cell.
+    // The sender's game made the activation, so the door is within the sender's loaded grid.
+    const CellIdComponent& cSenderCell = acMessage.pPlayer->GetCellComponent();
     for (auto pPlayer : m_world.GetPlayerManager())
     {
-        if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == acMessage.Packet.CellId)
-        {
+        if (pPlayer == acMessage.pPlayer)
+            continue;
+
+        const CellIdComponent& cCell = pPlayer->GetCellComponent();
+        const bool cSameCell = cCell.Cell == acMessage.Packet.CellId;
+        const bool cLoadedThere = !cSenderCell.IsInInteriorCell() && !cCell.IsInInteriorCell() && cSenderCell.IsInRange(cCell, false);
+        if (cSameCell || cLoadedThere)
             pPlayer->Send(notifyActivate);
-        }
     }
 }
 

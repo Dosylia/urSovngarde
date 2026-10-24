@@ -88,6 +88,16 @@ foreach ($name in @('urSovngarde.exe', 'urSovngarde.pdb', 'SkyrimTogetherVR.exe'
 Copy-Item $exe (Join-Path $Destination 'urSovngarde.exe') -Force
 Copy-Item $pdb (Join-Path $Destination 'urSovngarde.pdb') -Force
 
+# The menu's browser helper is a client binary too; it goes when it changed, with one fallback as above.
+$helper = Join-Path $release 'TPProcess.exe'
+$liveHelper = Join-Path $Destination 'TPProcess.exe'
+if ((Test-Path $helper) -and (-not (Test-Path $liveHelper) -or (Get-FileHash $helper).Hash -ne (Get-FileHash $liveHelper).Hash)) {
+    Get-ChildItem -Path $Destination -Filter 'TPProcess.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force
+    if (Test-Path $liveHelper) { Move-Item $liveHelper "$liveHelper.old-$stamp" -Force }
+    Copy-Item $helper $liveHelper -Force
+    Write-Host 'TPProcess.exe (the menu''s browser helper) changed and was copied too.'
+}
+
 # The players' own scripts go with every build, so the folder they are sent never carries an old one.
 foreach ($name in @('collect-logs.ps1', 'collect-logs.bat', 'setup-connect.ps1', 'setup-connect.bat', 'update.ps1', 'update.bat')) {
     Copy-Item (Join-Path $PSScriptRoot $name) (Join-Path $Destination $name) -Force

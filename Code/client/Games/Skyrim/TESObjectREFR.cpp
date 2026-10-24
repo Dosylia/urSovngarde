@@ -1,5 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
+#include <atomic>
+
 #include <Games/References.h>
 #include <Games/Overrides.h>
 
@@ -517,6 +519,17 @@ void TESObjectREFR::SetOpen(bool aOpen) noexcept
     s_pSetOpen(this, aOpen);
 }
 
+bool TESObjectREFR::IsActivationBlocked() noexcept
+{
+    using ObjectReference = TESObjectREFR;
+
+    // Papyrus IsActivationBlocked: a script (BlockActivation) takes the activations, and the game's own does not happen.
+    // Missing, it answers false.
+    PAPYRUS_FUNCTION(bool, ObjectReference, IsActivationBlocked);
+
+    return s_pIsActivationBlocked(this);
+}
+
 ExtraContainerChanges::Data* TESObjectREFR::GetContainerChanges() const noexcept
 {
     TP_THIS_FUNCTION(TGetContainterChanges, ExtraContainerChanges::Data*, const TESObjectREFR);
@@ -959,7 +972,15 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
 
     ExtraDataList* pExtraDataList = GetExtraDataFromItem(arEntry);
 
-    if (arEntry.Count > 0)
+    // A quest object another player picked up from the world already reached their copy here, through the replayed pick-up.
+    // Added again, the copy held one more than its owner (live-quest-item-copy); this game's player still gets theirs below.
+    Actor* pCopy = Cast<Actor>(this);
+    const bool cAlreadyOnCopy = arEntry.IsQuestItem && arEntry.Count > 0 && !aIsSettingInventory && pCopy && pCopy->GetExtension()->IsRemotePlayer() &&
+                                IsItemInInventory(objectId);
+    if (cAlreadyOnCopy)
+        spdlog::info("QuestItem: {:X} already reached copy {:X} through its owner's pick-up; not added again", objectId, formID);
+
+    if (arEntry.Count > 0 && !cAlreadyOnCopy)
     {
         bool isWorn = false;
         bool isWornLeft = false;
@@ -1095,6 +1116,22 @@ bool TP_MAKE_THISCALL(HookPlayAnimation, void, uint32_t auiStackID, TESObjectREF
 bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, uint8_t aUnk1, TESBoundObject* apObjectToGet, int32_t aCount, char aDefaultProcessing)
 {
     Actor* pActivator = Cast<Actor>(apActivator);
+
+    // A copy of another game's actor never goes through a load door on its own here: its owner's game reports where it went.
+    // Otherwise this game's AI takes the copy to a cell its owner never entered, where it is removed and spawned again.
+    // The owner's own use of the door is replayed with TESObjectREFR::Activate, which calls the game's function directly (live-door-copy-load).
+    const ActorExtension* pActivatorExtension = pActivator ? pActivator->GetExtension() : nullptr;
+    if (pActivatorExtension && pActivatorExtension->IsRemote() && apThis->baseForm && apThis->baseForm->formType == FormType::Door &&
+        apThis->extraData.Contains(ExtraDataType::Teleport))
+    {
+        // The copy's AI tries again while its package lasts, so this is logged at most every 5 s.
+        static std::atomic<int64_t> s_lastRefusalLogMs{0};
+        const int64_t cNowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        int64_t lastMs = s_lastRefusalLogMs.load();
+        if (cNowMs - lastMs >= 5000 && s_lastRefusalLogMs.compare_exchange_strong(lastMs, cNowMs))
+            spdlog::info("Load door {:X}: not used by {:X}, a copy of another game's actor; its owner's game reports where it goes", apThis->formID, pActivator->formID);
+        return false;
+    }
 
     // Exclude books from activation since only reading them removes them from the cell
     // Note: Books are now unsynced 

@@ -76,6 +76,21 @@ log CHECK logged Door 9B0A5: opened in another game \(by server id 7FFFFF0, not 
 # The unlock may go out as a lock change; the door opening itself still does not.
 expect activations == 1
 
+log -- a script blocks the door: this game's player uses it, it stays shut, and nothing goes to the others
+log DO papyrus ObjectReference SetOpen 9B0A5 b:false
+wait 6
+log DO papyrus ObjectReference BlockActivation 9B0A5 b:true
+wait 4
+log REQUIRE ref 9B0A5 closed
+wait 3
+log DO papyrus ObjectReference Activate 9B0A5 14 b:false
+wait 4
+log CHECK ref 9B0A5 closed
+log CHECK logged Door 9B0A5 activated by 14, but a script blocks its activation; not sent
+expect activations == 1
+log DO papyrus ObjectReference BlockActivation 9B0A5 b:false
+wait 2
+
 wait 3
 log CHECK game alive
 log DO god off

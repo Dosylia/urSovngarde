@@ -216,6 +216,7 @@ struct TESObjectREFR : TESForm
     void EnableImpl() noexcept;
     OpenState GetOpenState() noexcept;
     void SetOpen(bool aOpen) noexcept;
+    bool IsActivationBlocked() noexcept;
 
     Inventory GetInventory() const noexcept;
     Inventory GetInventory(std::function<bool(TESForm&)> aFilter) const noexcept;

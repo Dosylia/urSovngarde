@@ -470,6 +470,39 @@ TEST_CASE("Packets", "[encoding.packets]")
 
         REQUIRE(recvMessage.Updates[1].UpdatedMovement == sendMessage.Updates[1].UpdatedMovement);
     }
+
+    SECTION("AssignObjectsResponse")
+    {
+        Buffer buff(1000);
+
+        AssignObjectsResponse sendMessage, recvMessage;
+        ObjectData door;
+        door.ServerId = 1234;
+        door.Id = GameId(0, 0x9B0A5);
+        door.CurrentLockData.IsLocked = true;
+        door.CurrentLockData.LockLevel = 25;
+        door.DoorOpenState = 1;
+        sendMessage.Objects.push_back(door);
+        ObjectData chest;
+        chest.ServerId = 1235;
+        chest.Id = GameId(0, 0x3EF03);
+        chest.IsSenderFirst = true;
+        sendMessage.Objects.push_back(chest);
+
+        Buffer::Writer writer(&buff);
+        sendMessage.Serialize(writer);
+
+        Buffer::Reader reader(&buff);
+
+        uint64_t trash;
+        reader.ReadBits(trash, 8); // pop opcode
+
+        recvMessage.DeserializeRaw(reader);
+
+        REQUIRE(sendMessage == recvMessage);
+        REQUIRE(recvMessage.Objects[0].DoorOpenState == 1);
+        REQUIRE(recvMessage.Objects[1].DoorOpenState == 0);
+    }
 }
 
 TEST_CASE("StringCache", "[encoding.string_cache]")

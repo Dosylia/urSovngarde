@@ -1,6 +1,8 @@
 #include "MagicTarget.h"
 #include <Events/HealthChangeEvent.h>
 
+#include <cmath>
+
 #include <Actor.h>
 #include <World.h>
 #include "EffectItem.h"
@@ -16,6 +18,7 @@
 #include <PlayerCharacter.h>
 
 #include <Effects/ActiveEffect.h>
+#include <Forms/SpellItem.h>
 
 TP_THIS_FUNCTION(TAddTarget, bool, MagicTarget, MagicTarget::AddTargetData& arData);
 TP_THIS_FUNCTION(TCheckAddEffectTargetData, bool, MagicTarget::AddTargetData, void* arArgs, float afResistance);
@@ -39,6 +42,8 @@ static thread_local float s_casterPerkFactor = 1.f;
 // While this game's player casts on another player's copy: how much the caster's perks multiplied the effect.
 static thread_local bool s_measurePerks = false;
 static thread_local float s_perkFactor = 1.f;
+// A damaging spell on another player's copy is made only to measure its perks: the effect is left with no magnitude.
+static thread_local bool s_measureOnly = false;
 
 void MagicTarget::DispelAllSpells(bool aNow) noexcept
 {
@@ -49,8 +54,21 @@ void MagicTarget::DispelAllSpells(bool aNow) noexcept
 
 bool MagicTarget::AddTarget(AddTargetData& arData, float aCasterPerkFactor, bool aApplyStaminaPerkBonus) noexcept
 {
+    // The factor comes from another game: one that no perk could give (not a number, below 0, over 10 times) is not applied.
+    constexpr float cMostPerkFactor = 10.f;
+    const bool cSane = std::isfinite(aCasterPerkFactor) && aCasterPerkFactor >= 0.f && aCasterPerkFactor <= cMostPerkFactor;
+    if (!cSane)
+    {
+        static bool s_said = false;
+        if (!s_said)
+        {
+            s_said = true;
+            spdlog::warn("MagicTarget: a caster perk factor of {} from another game is not applied", aCasterPerkFactor);
+        }
+    }
+
     s_autoSucceedEffectCheck = true;
-    s_casterPerkFactor = aCasterPerkFactor;
+    s_casterPerkFactor = cSane ? aCasterPerkFactor : 1.f;
     s_applyStaminaPerkBonus = aApplyStaminaPerkBonus;
 
     bool result = TiltedPhoques::ThisCall(RealAddTarget, this, arData);
@@ -64,6 +82,15 @@ bool MagicTarget::AddTarget(AddTargetData& arData, float aCasterPerkFactor, bool
 
 bool MagicTarget::AddTargetData::ShouldSync()
 {
+    // Constant effect slow time is an ability each client's scripts add and remove on their own player, so a synced
+    // copy would stay on the other players for good. Fire and forget slow time (shouts) still syncs.
+    if (pEffectItem->IsSlowEffect())
+    {
+        SpellItem* pSpellItem = Cast<SpellItem>(pSpell);
+        if (pSpellItem && pSpellItem->eCastingType == MagicSystem::CastingType::CONSTANT_EFFECT)
+            return false;
+    }
+
     return !pEffectItem->IsSummonEffect() && !pSpell->IsInvisibilitySpell() && !pSpell->IsWardSpell();
 }
 
@@ -125,8 +152,20 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
             if (World::Get().GetServerSettings().PvpEnabled && arData.pSpell->IsDamageHealthSpell() && arData.pEffectItem && arData.pEffectItem->data.iDuration == 0 &&
                 arData.fMagnitude > 0.f)
             {
-                spdlog::info("PvP: spell {:X} hit remote player {:X} for {:.0f}", arData.pSpell->formID, pTargetActor->formID, arData.fMagnitude);
-                World::Get().GetRunner().Trigger(HealthChangeEvent(pTargetActor->formID, -arData.fMagnitude));
+                // The caster's perks (Augmented Flames and the like) adjust an effect only as it is made (AdjustForPerks), as on an NPC.
+                // So the effect is made on the copy to take their factor, and left with no magnitude there (live-pvp-spell-perks).
+                const float cBase = arData.fMagnitude;
+                s_measurePerks = true;
+                s_measureOnly = true;
+                s_perkFactor = 1.f;
+                TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
+                s_measurePerks = false;
+                s_measureOnly = false;
+
+                const float cDamage = cBase * s_perkFactor;
+                spdlog::info("PvP: spell {:X} hit remote player {:X} for {:.0f} (base {:.0f}, the caster's perks {:.2f})", arData.pSpell->formID, pTargetActor->formID, cDamage,
+                             cBase, s_perkFactor);
+                World::Get().GetRunner().Trigger(HealthChangeEvent(pTargetActor->formID, -cDamage));
             }
 
             return false;
@@ -223,6 +262,13 @@ void TP_MAKE_THISCALL(HookAdjustForPerks, ActiveEffect, Actor* apCaster, MagicTa
 
     if (s_measurePerks && cBefore != 0.f)
         s_perkFactor = apThis->fMagnitude / cBefore;
+
+    // The other player's game owns that body: the damage goes to it as a health change, and nothing lands on the copy here.
+    if (s_measureOnly)
+    {
+        apThis->fMagnitude = 0.f;
+        return;
+    }
 
     // The magnitude another game sends is not what the effect uses, so its caster's perks are applied here.
     apThis->fMagnitude *= s_casterPerkFactor;

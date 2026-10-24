@@ -4160,6 +4160,9 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     if (!(cScale > 0.f) || !pRoot || !s_setPositionAndRotation.Get())
         return false;
 
+    // TEMPORARY: the walk and the move are timed for the "moved there" line, against the 20-47 ms frames seen with it in play.
+    const auto cWalkStart = std::chrono::steady_clock::now();
+
     // The ragdoll's bodies: a live tree, so only null checks, no IsReadable (it costs milliseconds per call here).
     // Only dynamic bodies in a world count; the first found from the root is the ragdoll's root (pelvis or centre of mass).
     TiltedPhoques::Vector<uint8_t*> bodies;
@@ -4225,9 +4228,11 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     const glm::vec3 cOffset{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y, acWanted.z + cLift - cRagdollRoot.z};
     const glm::vec3 cHavokOffset = cOffset * cScale;
 
+    const auto cMoveStart = std::chrono::steady_clock::now();
     WorldWriteLock lock(BhkWorldOf(pHkpWorld));
     if (!lock.Held())
         return false;
+    const auto cLockedAt = std::chrono::steady_clock::now();
     uint32_t moved = 0;
     for (uint8_t* pBody : bodies)
     {
@@ -4235,8 +4240,9 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
         if (At<void*>(pBody, kHkWorldOffset) != pHkpWorld)
             continue;
         const float* pAt = reinterpret_cast<const float*>(pBody + kBodyTranslationOffset);
-        const float position[4] = {pAt[0] + cHavokOffset.x, pAt[1] + cHavokOffset.y, pAt[2] + cHavokOffset.z, 0.f};
-        float rotation[4];
+        // Havok reads them as vectors with aligned loads (movaps); unaligned, the move crashed reading "-1".
+        alignas(16) const float position[4] = {pAt[0] + cHavokOffset.x, pAt[1] + cHavokOffset.y, pAt[2] + cHavokOffset.z, 0.f};
+        alignas(16) float rotation[4];
         std::memcpy(rotation, pBody + kBodyQuaternionOffset, sizeof(rotation));
         s_setPositionAndRotation.Get()(pBody, position, rotation);
         std::memset(pBody + kAngularVelocityOffset - 0x10, 0, 16); // linear velocity
@@ -4248,7 +4254,10 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     placed.ApartBeforeMove = cApart;
     placed.MovedAt = cNow;
     placed.SayAfter = true;
-    spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies)", apActor->formID, cApart, moved);
+    const auto cMoveEnd = std::chrono::steady_clock::now();
+    spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies; walk {:.2f} ms, lock {:.2f} ms, move {:.2f} ms)",
+                 apActor->formID, cApart, moved, std::chrono::duration<double, std::milli>(cMoveStart - cWalkStart).count(),
+                 std::chrono::duration<double, std::milli>(cLockedAt - cMoveStart).count(), std::chrono::duration<double, std::milli>(cMoveEnd - cLockedAt).count());
     return moved > 0;
 }
 

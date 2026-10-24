@@ -27,6 +27,7 @@ struct SyncExperienceRequest;
 struct DialogueRequest;
 struct SubtitleRequest;
 struct Player;
+struct CellIdComponent;
 
 /**
  * @brief Manages player and actor state.
@@ -81,9 +82,23 @@ protected:
     ActorData BuildActorData(const entt::entity acEntity) const noexcept;
 
     void ProcessFactionsChanges() const noexcept;
+    //! Hands the party leader the NPCs its game announced right after an arrival, once the grace period is over.
+    void ProcessPendingLeaderAssignments() const noexcept;
+    //! Removes an NPC from the views of players its move took it out of range of, and sends it to those it came into range of.
+    void UpdateViewsAfterMove(const Player* apOwner, entt::entity aEntity, const CellIdComponent& acBefore, const CellIdComponent& acNow, bool aIsDragon) const noexcept;
 
 private:
     World& m_world;
+
+    // A party leader's assignment held back after their arrival (a load): who, which actor, at which epoch, and when.
+    struct PendingLeaderAssignment
+    {
+        uint32_t PlayerId;
+        entt::entity Entity;
+        uint32_t OwnershipEpoch;
+        std::chrono::steady_clock::time_point ReadyAt;
+    };
+    mutable Vector<PendingLeaderAssignment> m_pendingLeaderAssignments;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_exteriorCellChangeEventConnection;

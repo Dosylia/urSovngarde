@@ -6,7 +6,7 @@
 # First a death by console: no blow landed, so the line only says the player died.
 # Then a Netch, with combat AI on and the player's health forced low, downs the player with its first blow.
 # The game's hit event must carry the attacker (TESHitEvent's layout on VR), and the card must name it.
-# The card the player saw is written to logs\banner-death.png; look at it after the run.
+# The card's text is in the "shown" line; TPTests' [.banner-preview] case draws a card to a picture.
 # Run it last: the Netch stays in the world, and goes on downing the player after each respawn.
 log live death line
 waitfor connected 45
@@ -35,7 +35,7 @@ wait 25
 log REQUIRE logged DeathCause: the game's hits on the player arrive
 log CHECK logged PlayerService: the last blow before going down: attacker [0-9A-F]+, player 0
 log CHECK logged PlayerService: death card: .+ was (slain|killed) by Netch
-log CHECK logged VRBanner: 'YOU DIED / .+ WAS (SLAIN|KILLED) BY NETCH' shown
+log CHECK logged VRBanner: 'YOU DIED / .+ WAS (SLAIN|KILLED) BY NETCH( USING [^']+)?' shown
 wait 12
 log DO combat off
 wait 2

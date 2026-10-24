@@ -149,10 +149,24 @@ private:
 
     Map<uint32_t, WeaponDrawData> m_weaponDrawUpdates{};
 
-    // Actor form ID -> a full inventory that came while the actor had no loaded AI process here (ReconcileActorData).
+    // A full inventory that came while the actor had no loaded AI process here (ReconcileActorData).
     // The game's equip code reads that process, so the inventory waits until the actor has one (ApplyPendingInventories).
-    Map<uint32_t, Inventory> m_pendingInventories{};
+    // It is kept for the copy it came for: the same actor under the same server id and ownership epoch.
+    struct PendingInventory
+    {
+        Inventory Content;
+        const Actor* pActor = nullptr;
+        uint32_t ServerId = 0;
+        uint32_t OwnershipEpoch = 0;
+    };
+    // Actor form ID -> its waiting inventory.
+    Map<uint32_t, PendingInventory> m_pendingInventories{};
     void ApplyPendingInventories() noexcept;
+    // Whether the entity on this form id is still the copy a waiting inventory came for.
+    bool IsSameCopy(uint32_t aFormId, const PendingInventory& acPending) const noexcept;
+    // Changes the owner sends while an inventory waits are applied to it too, or applying it would undo them.
+    void OnNotifyInventoryChanges(const NotifyInventoryChanges& acMessage) noexcept;
+    entt::scoped_connection m_inventoryChangesConnection;
 
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.

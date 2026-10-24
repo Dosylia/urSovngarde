@@ -6,6 +6,21 @@
 
 #include <World.h>
 
+#include <algorithm>
+#include <cctype>
+
+namespace
+{
+// The key a native is recorded and looked up by, in lower case.
+// The game's string pool ignores case and keeps the first spelling it was given, so a name can be registered as "objectReference".
+String FunctionKey(const String& acNamespace, const String& acFunction) noexcept
+{
+    String key = acNamespace + "::" + acFunction;
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char aChar) { return static_cast<char>(std::tolower(aChar)); });
+    return key;
+}
+} // namespace
+
 PapyrusService::PapyrusService(entt::dispatcher& aDispatcher) noexcept
 {
     m_papyrusFunctionRegisterConnection = aDispatcher.sink<PapyrusFunctionRegisterEvent>().connect<&PapyrusService::HandlePapyrusFunctionEvent>(this);
@@ -14,7 +29,7 @@ PapyrusService::PapyrusService(entt::dispatcher& aDispatcher) noexcept
 const void* PapyrusService::Get(const String& acNamespace, const String& acFunction) const noexcept
 {
     std::shared_lock lock(m_lock);
-    const auto itor = m_functions.find(acNamespace + "::" + acFunction);
+    const auto itor = m_functions.find(FunctionKey(acNamespace, acFunction));
     if (itor != std::end(m_functions))
         return itor->second;
 
@@ -53,5 +68,5 @@ size_t PapyrusService::FunctionCount() const noexcept
 void PapyrusService::HandlePapyrusFunctionEvent(const PapyrusFunctionRegisterEvent& acEvent) noexcept
 {
     std::unique_lock lock(m_lock);
-    m_functions[acEvent.Namespace + "::" + acEvent.Name] = acEvent.Function;
+    m_functions[FunctionKey(acEvent.Namespace, acEvent.Name)] = acEvent.Function;
 }

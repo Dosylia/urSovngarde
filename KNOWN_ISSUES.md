@@ -78,10 +78,12 @@ stronger evidence; the AE path was left untouched.
     plus an uncommitted destructor guard). That commit was never pushed anywhere: the submodule
     remote is upstream TiltedPhoques. So the repo's submodule pointer stays on upstream
     `55ee3f29`, and nothing goes in the submodule.
-  - VR skips three hooks on every start (2026-10-04), none of which loses anything:
+  - VR does not try three hooks at all (behind `#ifndef SKYRIMVR` since 2026-10-18; before, it
+    skipped them at every start), none of which loses anything:
     - `HookMainLoop` and `HookVMDestructor` (ids 36564 and 40412): empty placeholders.
     - `HookRegisterPapyrusFunction` (id 104788): already installed from the VM's vtable
       instead (`BSScript.cpp`).
+    So a `Hook X not installed` line on VR is always a real miss, and the rig's start-up health counts it.
 
     Without the check, any one of them crashes the game at start.
 

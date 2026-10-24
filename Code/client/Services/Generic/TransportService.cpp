@@ -190,7 +190,9 @@ void TransportService::OnConnected()
     if (pPlayer->GetWorldSpace())
         modSystem.GetServerModId(pPlayer->GetWorldSpace()->formID, request.WorldSpaceId);
 
-    modSystem.GetServerModId(pPlayer->parentCell->formID, request.CellId);
+    // A connect can complete after the player left for the main menu, where the player has no cell.
+    if (pPlayer->parentCell)
+        modSystem.GetServerModId(pPlayer->parentCell->formID, request.CellId);
 
     request.Level = pPlayer->GetLevel();
 

@@ -25,6 +25,7 @@
 #include <Games/Skyrim/CellRespawnOverrides.h>
 
 #include <ModCompat/BehaviorVar.h>
+#include <BSSpinLock.h>
 
 int32_t PlayerCharacter::LastUsedCombatSkill = -1;
 
@@ -217,6 +218,70 @@ void PlayerCharacter::RemoveWaypoint() noexcept
 {
     return TiltedPhoques::ThisCall(RealRemoveWaypoint, this);
 }
+
+#ifdef SKYRIMVR
+namespace
+{
+// The game's lock on currentMapMarkers; the game empties the list under it at every load (see VRAddressOverrides.h).
+BSSpinLock* MapMarkersLock() noexcept
+{
+    POINTER_SKYRIMSE(BSSpinLock, s_lock, 404255, 9000013);
+    return s_lock.Get();
+}
+} // namespace
+
+bool PlayerCharacter::CanEditMapMarkers() noexcept
+{
+    return MapMarkersLock() != nullptr;
+}
+
+bool PlayerCharacter::HasMapMarker(uint32_t aHandle) noexcept
+{
+    BSSpinLock* pLock = MapMarkersLock();
+    if (!pLock)
+        return false;
+
+    BSScopedSpinLock _(*pLock);
+    for (const uint32_t cHandle : currentMapMarkers)
+        if (cHandle == aHandle)
+            return true;
+    return false;
+}
+
+bool PlayerCharacter::AddMapMarker(uint32_t aHandle) noexcept
+{
+    BSSpinLock* pLock = MapMarkersLock();
+    if (!pLock || !aHandle)
+        return false;
+
+    BSScopedSpinLock _(*pLock);
+    for (const uint32_t cHandle : currentMapMarkers)
+        if (cHandle == aHandle)
+            return true;
+
+    currentMapMarkers.Resize(currentMapMarkers.length + 1);
+    currentMapMarkers[currentMapMarkers.length - 1] = aHandle;
+    return true;
+}
+
+bool PlayerCharacter::RemoveMapMarker(uint32_t aHandle) noexcept
+{
+    BSSpinLock* pLock = MapMarkersLock();
+    if (!pLock)
+        return false;
+
+    BSScopedSpinLock _(*pLock);
+    for (uint32_t i = 0; i < currentMapMarkers.length; ++i)
+    {
+        if (currentMapMarkers[i] != aHandle)
+            continue;
+        std::copy(currentMapMarkers.data + i + 1, currentMapMarkers.data + currentMapMarkers.length, currentMapMarkers.data + i);
+        --currentMapMarkers.length;
+        return true;
+    }
+    return false;
+}
+#endif
 
 char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject, int32_t aCount, bool aUnk1, bool aUnk2)
 {

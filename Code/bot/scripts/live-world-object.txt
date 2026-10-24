@@ -6,63 +6,65 @@
 # A client watches the movable objects within 400 units of its player and sends where one goes.
 # The other client holds it (keyframed) and follows.
 #
-# The object is a wooden plate of Skyrim.esm by Mistwatch (reference 92D04, about 1800 units from where the test save
-# starts). The player is moved to it; the game moves it the way a hand would (papyrus SetPosition, since the VR
-# console refuses "<id>.<command>"), and the bot must hear of that; then the bot moves it, and the game's plate must be
-# where the bot put it.
+# The object is a bottle of Black-Briar Mead of Skyrim.esm at Mistwatch (reference 92CFE, base 2C35A), on FUS and MGO
+# alike. (The wooden plate 92D04 used before is gone on MGO: a mod there sinks it to z -30000.) The player is put 150
+# units from it, not on it, or the player's body would knock it away. The game moves it the way a hand would (papyrus
+# SetPosition, since the VR console refuses "<id>.<command>"), and the bot must hear of that; then the bot moves it,
+# and the game's bottle must be where the bot put it.
 log live world object
 waitfor connected 45
 expect known me
 waitfor known other 40
 wait 5
 
-# The plate is an ordinary reference, in memory only while its cell is loaded: the script before this one in the suite
-# (live-whiterun) leaves the player in Whiterun, and from there "moveto 92D04" finds nothing (2026-10-03 13:05).
-log -- to Mistwatch, where the plate is
+# The bottle is an ordinary reference, in memory only while its cell is loaded: the script before this one in the suite
+# (live-whiterun) leaves the player in Whiterun, from where Mistwatch's references are not loaded.
+log -- to Mistwatch, where the bottle is
 log DO god on
 log DO console cow Tamriel 34 -9
 wait 30
-log -- the player goes to the plate
-log DO console player.moveto 92D04
+log -- the player goes next to the bottle
+log DO papyrus ObjectReference MoveTo 14 92CFE f:150 f:0 f:0 b:true
 wait 10
+log REQUIRE ref 92CFE 3d
 
-log -- the game moves the plate; the bot must hear of it
-log DO papyrus ObjectReference SetPosition 92D04 f:139200 f:-33349 f:-9679
+log -- the game moves the bottle; the bot must hear of it
+log DO papyrus ObjectReference SetPosition 92CFE f:138739 f:-33100 f:-9679
 wait 1
-log DO papyrus ObjectReference SetPosition 92D04 f:139200 f:-33300 f:-9679
+log DO papyrus ObjectReference SetPosition 92CFE f:138739 f:-33050 f:-9679
 waitfor objectmoves >= 1 15
-# The client's log reaches the disk a little after the line is written; the check read it too early once (16:11).
+# The client's log reaches the disk a little after the line is written; the check read it too early once.
 wait 2
-log CHECK logged WorldObject: 92D04 is being moved here
+log CHECK logged WorldObject: 92CFE is being moved here
 wait 4
 
-log -- the bot moves the plate: the game holds it and follows
-# What the player sees while the bot carries it: the plate stays drawn the whole carry (a move that builds it again blinks).
-log CHECK ref 92D04 3d steady 3
-moveobject 92D04 139080 -33240 -9600 held
+log -- the bot moves the bottle: the game holds it and follows
+# What the player sees while the bot carries it: the bottle stays drawn the whole carry (a move that builds it again blinks).
+log CHECK ref 92CFE 3d steady 3
+moveobject 92CFE 138700 -33120 -9600 held
 wait 0.5
-moveobject 92D04 139060 -33230 -9600 held
+moveobject 92CFE 138680 -33110 -9600 held
 wait 0.5
-moveobject 92D04 139040 -33220 -9600 held
+moveobject 92CFE 138660 -33100 -9600 held
 wait 0.5
-moveobject 92D04 139020 -33210 -9600 held
-log CHECK ref 92D04 near 139020 -33210 -9600 30
+moveobject 92CFE 138640 -33090 -9600 held
+# Seen from above: on MGO the held bottle's reference sits on the ground (65 units down) while its 3D is held where
+# the bot put it; the 3D's own place is checked when it is let go, below.
+log CHECK ref 92CFE near 138640 -33090 -9600 30 flat
 wait 0.5
-moveobject 92D04 139020 -33210 -9600 held
-wait 0.5
-moveobject 92D04 139020 -33210 -9600 rest
-log CHECK logged WorldObject: 92D04 is being moved over there; holding it here and following
+moveobject 92CFE 138640 -33090 -9600 rest
+log CHECK logged WorldObject: 92CFE is being moved over there; holding it here and following
 wait 4
-# Where its 3D is drawn when it is let go, against where the bot put it: a plate whose reference moves but whose 3D stays behind
-# is not seen moving at all (the players' cup).
-log CHECK logged WorldObject: 92D04 was put down over there; handed back to physics here \(0 of its \d+ moves here rebuilt its 3D; its 3D is \d units from the last place it was put\)
+# Where its 3D is drawn when it is let go, against where the bot put it: an object whose reference moves but whose 3D
+# stays behind is not seen moving at all (the players' cup).
+log CHECK logged WorldObject: 92CFE was put down over there; handed back to physics here \(0 of its \d+ moves here rebuilt its 3D; its 3D is \d units from the last place it was put\)
 
 # An item one player moves or touches must stay usable for the other player.
-# The plate was just held and let go here; the player must still be able to take it.
-log -- the player takes the plate the bot let go of
-log DO papyrus ObjectReference Activate 92D04 14 b:false
+# The bottle was just held and let go here; the player must still be able to take it.
+log -- the player takes the bottle the bot let go of
+log DO papyrus ObjectReference Activate 92CFE 14 b:false
 wait 4
-log CHECK player has 31941
+log CHECK player has 2C35A
 # A placed object taken that is not a book is carried off by activation sync, not as a world object "taken".
 log CHECK absent WorldObject: .* taken here
 log CHECK game alive

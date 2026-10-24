@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Structs/GameId.h>
+#include <Games/Skyrim/DeathSentence.h>
 #include <Games/Skyrim/GameSound.h>
 
 struct World;
@@ -81,6 +82,8 @@ private:
     void SampleHeight(std::chrono::steady_clock::time_point aNow) noexcept;
     //! How the player went down, as the death card says it ("Lydia was slain by Bandit Chief using Iron War Axe").
     std::string DeathLine() const noexcept;
+    //! Who and what landed the blow that downed the player, with their names as they are now.
+    DeathSentence::Cause DowningCause() const noexcept;
     /**
      * @brief Make sure difficulty doesn't get changed while connected
      */
@@ -103,6 +106,8 @@ private:
         kRespawning, // fading out, respawning at m_respawnAt
     };
     DownState m_downState = DownState::kUp;
+    // The party members holding this downed player now, the newest last: the banner names the newest.
+    TiltedPhoques::Vector<uint32_t> m_revivers;
     std::chrono::steady_clock::time_point m_downedAt{};
     std::chrono::steady_clock::time_point m_respawnDeadline{};
     std::chrono::steady_clock::time_point m_respawnAt{};
@@ -127,6 +132,9 @@ private:
     std::array<std::pair<std::chrono::steady_clock::time_point, float>, 32> m_heights{};
     size_t m_nextHeight = 0;
     bool m_downFell = false;
+    // How the player went down, told once the game has told of the blow (RunRespawnUpdates); the death line is made from it later.
+    // Told only then, blows on the downed player could push that one out of DeathCause's few slots, and its attacker could be gone.
+    std::optional<DeathSentence::Cause> m_downingCause;
     int32_t m_serverDifficulty = 6;
     int32_t m_previousDifficulty = 6;
 
