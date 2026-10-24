@@ -6,6 +6,8 @@
 
 #include <World.h>
 #include <PatchCheck.h>
+#include <Services/CalendarService.h>
+#include <Interface/Menus/SleepWaitMenu.h>
 
 static bool g_RequestUnpauseAll{false};
 
@@ -128,6 +130,9 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
         spdlog::info("Menu queued: {}{} (connected {})", pName ? pName->AsAscii() : "?", apMenu->PausesGame() ? " [pauses]" : "", World::Get().GetTransport().IsConnected() ? "yes" : "no");
         if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Loading Menu") == 0)
             ++s_loadingScreensQueued;
+        // A sleep fades out a couple of seconds before the clock moves; the party fades with it.
+        if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Fader Menu") == 0)
+            CalendarService::OnFaderQueued();
 #ifdef SKYRIMVR
         // The in-headset dashboard is made at the main menu, where a pause costs nothing.
         // Made later, on the first update in the world, it stops the game for up to 1.5 s right after the save loads.
@@ -140,6 +145,15 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
     // if the menu is empty we let the real function handle it.
     if (!apMenu || !World::Get().GetTransport().IsConnected() || stubs::g_IsSoulsREActive)
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
+
+#ifdef SKYRIMVR
+    static const BSFixedString s_sleepWaitMenu("Sleep/Wait Menu");
+    if (SleepWaitHooksReady() && apSelf->FindMenuByName(s_sleepWaitMenu) == apMenu)
+    {
+        UnfreezeMenu(apMenu);
+        return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
+    }
+#endif
 
 #if 0
         if (auto* pName = apSelf->LookupMenuNameByInstance(apEntry))

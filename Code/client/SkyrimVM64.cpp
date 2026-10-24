@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 #include "TiltedOnlineApp.h"
 #include <Misc/GameVM.h>
+#include <Interface/Menus/SleepWaitMenu.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
 
@@ -24,7 +25,10 @@ int TP_MAKE_THISCALL(HookVMUpdate, GameVM, float a2)
 
 short TP_MAKE_THISCALL(HookMainLoop, Main)
 {
-    TP_EMPTY_HOOK_PLACEHOLDER
+#ifdef SKYRIMVR
+    UpdateSleepWatchControls();
+    RunDeferredSleepWaitAccept();
+#endif
 
     return TiltedPhoques::ThisCall(MainLoop, apThis);
 }
@@ -43,15 +47,16 @@ static TiltedPhoques::Initializer s_mainHooks(
         VMUpdate = cVMUpdate.Get();
         TP_HOOK(&VMUpdate, HookVMUpdate);
 
-#ifndef SKYRIMVR
-        // Both are empty placeholders, and neither address exists on VR.
+        // VR needs Main::Update (VRAddressOverrides) for the unpaused Sleep/Wait OK and the party's control lock;
+        // without it a granted sleep's OK button does nothing.
         POINTER_SKYRIMSE(TMainLoop, cMainLoop, 36564, 36564);
-        POINTER_SKYRIMSE(TVMDestructor, cVMDestructor, 40412, 40412);
-
         MainLoop = cMainLoop.Get();
-        VMDestructor = cVMDestructor.Get();
-
         TP_HOOK(&MainLoop, HookMainLoop);
+
+#ifndef SKYRIMVR
+        // An empty placeholder, and the address does not exist on VR.
+        POINTER_SKYRIMSE(TVMDestructor, cVMDestructor, 40412, 40412);
+        VMDestructor = cVMDestructor.Get();
         TP_HOOK(&VMDestructor, HookVMDestructor);
 #endif
     });

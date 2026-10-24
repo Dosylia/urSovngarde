@@ -15,10 +15,34 @@ uint32_t DateTime::GetNumberOfDaysByMonthIndex(int aIndex)
 
 void DateTime::Update(uint64_t aDeltaTick)
 {
-    m_timeModel.Time += GetDeltaTime(aDeltaTick);
+    AdvanceHours(GetDeltaTime(aDeltaTick));
+}
 
-    m_timeModel.Day += static_cast<uint32_t>(m_timeModel.Time / 24.f);
-    m_timeModel.Time = std::fmod(m_timeModel.Time, 24.f);
+void DateTime::AdvanceHours(float aHours)
+{
+    // Round in the clock's storage type before deciding the date carry, so rounding to 24 advances the day.
+    const float cHours = m_timeModel.Time + aHours;
+    const int64_t cDays = static_cast<int64_t>(std::floor(cHours / 24.0));
+    int64_t day = static_cast<int64_t>(m_timeModel.Day) + cDays;
+    m_timeModel.Time = static_cast<float>(cHours - cDays * 24.0);
+
+    while (day < 1)
+    {
+        if (m_timeModel.Month == 0)
+        {
+            if (m_timeModel.Year == 0)
+            {
+                day = 1;
+                m_timeModel.Time = 0.f;
+                break;
+            }
+            --m_timeModel.Year;
+            m_timeModel.Month = 12;
+        }
+        --m_timeModel.Month;
+        day += GetNumberOfDaysByMonthIndex(m_timeModel.Month);
+    }
+    m_timeModel.Day = static_cast<uint32_t>(day);
 
     while (m_timeModel.Day > GetNumberOfDaysByMonthIndex(m_timeModel.Month))
     {
@@ -35,12 +59,12 @@ float DateTime::GetDeltaTime(uint64_t aDeltaTick) const noexcept
     return (deltaSeconds * (m_timeModel.TimeScale * 0.00027777778f));
 }
 
-float DateTime::GetTimeInDays() const noexcept
+double DateTime::GetTimeInDays() const noexcept
 {
-    float totalDays = static_cast<float>(m_timeModel.Year) * 365.f;
+    double totalDays = static_cast<double>(m_timeModel.Year) * 365.0;
     for (uint32_t i = 0u; i < m_timeModel.Month; i++)
         totalDays += GetNumberOfDaysByMonthIndex(i);
     totalDays += m_timeModel.Day;
-    totalDays += (m_timeModel.Time / 24.f);
+    totalDays += (m_timeModel.Time / 24.0);
     return totalDays;
 }

@@ -7,6 +7,9 @@
 #include <Events/EquipmentChangeEvent.h>
 
 #include <World.h>
+#ifdef SKYRIMVR
+#include <Services/CalendarService.h>
+#endif
 
 #include <Games/Skyrim/Forms/TESAmmo.h>
 #include <AI/AIProcess.h>
@@ -161,6 +164,11 @@ void* TP_MAKE_THISCALL(EquipHook, EquipManager, Actor* apActor, TESForm* apItem,
         return nullptr;
 
     const auto pExtension = apActor->GetExtension();
+#ifdef SKYRIMVR
+    // SpellWheel and menus can consume items without going through PlayerControls.
+    if (CalendarService::AreSleepControlsLocked() && pExtension->IsLocalPlayer() && apItem->IsConsumable() && !ScopedEquipOverride::IsOverriden())
+        return nullptr;
+#endif
     if (pExtension->IsRemote())
     {
         spdlog::debug("Actor[{:X}]::Equip(), item form id: {:X}", apActor->formID, apItem->formID);
