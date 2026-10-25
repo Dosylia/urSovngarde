@@ -589,9 +589,21 @@ namespace
 // The kinds of reference a quest's scripts switch for the whole party: markers and other statics, activators (a siege's
 // catapults), containers, doors, trees, plants and furniture.
 // Actors, items, lights and temporary references are synced their own way, or not at all.
+// SkyrimTogether.esp's references, the players' map markers, are each game's own.
+// The same form in another game marks someone else, and moving one switches it off and on.
+bool IsOwnPluginReference(uint32_t aFormId) noexcept
+{
+    static const Mod* s_pPlugin = ModManager::Get()->GetByName("SkyrimTogether.esp");
+    if (!s_pPlugin || !s_pPlugin->IsLoaded())
+        return false;
+    if (s_pPlugin->IsLite())
+        return (aFormId >> 24) == 0xFE && ((aFormId >> 12) & 0xFFF) == s_pPlugin->liteId;
+    return (aFormId >> 24) == s_pPlugin->standardId;
+}
+
 bool IsSharedSwitchKind(const TESObjectREFR* apRef) noexcept
 {
-    if (!apRef || !apRef->baseForm || apRef->formID >= 0xFF000000)
+    if (!apRef || !apRef->baseForm || apRef->formID >= 0xFF000000 || IsOwnPluginReference(apRef->formID))
         return false;
     switch (static_cast<uint8_t>(apRef->baseForm->formType))
     {

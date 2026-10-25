@@ -1,0 +1,35 @@
+# A player's map marker is never relayed to the party as a switch of the leader's scripts.
+#
+#   python Tools\VR\live-check.py live-marker-not-relayed
+#   python Tools\VR\live-check.py --expect-fail live-marker-not-relayed     on a build without the fix: must be RED
+#
+# The markers (SkyrimTogether.esp, 0x005040 on) are each game's own: the same form in another game marks someone else.
+# Moving one switches it off and on in the game, and the leader's game sent that to the members as its scripts' switch.
+# So a member's marker for the leader went off whenever the leader's marker for that member moved.
+# Here: this game leads, the bot is a member. The bot walks out of sight, so this game's marker follows it, and back.
+# The bot must never get a switch of 5040.
+log live marker not relayed
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log REQUIRE bot logged as a member
+stay
+
+log -- the bot walks 4000 units east, out of sight: this game's marker is moved to it
+walk rel 4000 0 800
+wait 8
+log CHECK logged Player markers: \w+ follows player
+wait 3
+
+log -- back next to the player: the marker is put away
+walk rel -3800 0 800
+wait 8
+log CHECK logged Player markers: \w+ put away
+wait 4
+expect refenabled 5040 none
+
+log CHECK game alive
+wait 2
+log done
+stop

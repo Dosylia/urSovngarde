@@ -538,6 +538,27 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Open work
 
+- [ ] **Play session 2026-10-25 17:12 (PvP; player 1 on 779d7a82 + the menu hardening)**
+      - Player 1's game ended at 17:21:22 mid-fight (clashes with player 2's sword, player 2 at 22 health) with no
+        trace: no crash block or dump of ours, no Crash Logger file, no Windows error event or report; frames ran
+        until 17:21:21.93 (PhysicalCollisionVR's log), SteamVR saw the pipe break at 17:21:22.94, the server timed out
+        at 17:21:32. Our log ends 0.6 s earlier, since it is flushed once a second. The launcher never ends the game.
+        So the process ended past every handler: TerminateProcess or ExitProcess called inside it, a kill from
+        outside, or a stack overflow too deep for any handler. No evidence for a cause, so no fix. To know next time:
+        a line written straight to disk when the process ends itself (NtTerminateProcess on itself, with the caller),
+        and the log flushed at once for warnings and errors. Not done yet.
+      - Our player marker relayed to the party as a leader's switch: `Player markers: 8D005040 follows player 2 ...`
+        at 17:16:22.738, then `ReferenceEnable: 21 reference(s) ... (first 129:5040 off)` 27 ms later (MoveTo
+        switches the reference off and on). In the member's game the same form is its marker for the leader, so that
+        one was switched. Fixed on 10749cfa + this change (client only, FUS and MGO folders): `IsSharedSwitchKind`
+        leaves out SkyrimTogether.esp's references, on both the sending and the applying side. Rig:
+        `live-marker-not-relayed` (new; this game leads, the bot walks out of sight and back so the marker moves, and
+        must never get a switch of 5040; new bot check `refenabled <hex> none`) RED on 779d7a82 (5040 relayed off and
+        on three times), ok on the fix; `live-ref-enable-leader` still ok. To see in play: no `first 129:5040` in the
+        leader's `ReferenceEnable` lines, and the member's map shows the leader.
+      - Player 2's collected logs miss this session's `tp_client.log` (the zip's newest log ends at 09:49), though
+        `build.txt` was read from it. Not a sharing problem (spdlog opens with `_SH_DENYNO`); cause unknown.
+
 - [ ] **Play session 2026-10-24 afternoon** (both on v1.9.6-9-g29aee76d; player 1 leader, the Jagged Crown):
       - Quest stages reach the leader 30 s late: nearly every stage player 2 reached was held by player 1's game
         (`Holding member quest stage N for 2610B until no playing scene of it checks it`) and applied only by the 30 s

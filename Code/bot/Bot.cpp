@@ -3603,12 +3603,14 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
 
     if (what == "refenabled")
     {
-        // refenabled <hex> on|off: the latest switch of that reference the leader's game relayed here.
+        // refenabled <hex> on|off|none: the latest switch of that reference the leader's game relayed here, or none ever.
         uint32_t refId = 0;
-        if (acArgs.size() < 3 || !ParseHex(acArgs[1], refId) || (acArgs[2] != "on" && acArgs[2] != "off"))
+        if (acArgs.size() < 3 || !ParseHex(acArgs[1], refId) || (acArgs[2] != "on" && acArgs[2] != "off" && acArgs[2] != "none"))
             return std::nullopt;
         const auto cFound = m_refEnabled.find(refId & 0x00FFFFFF);
         aOutWhy = cFound == m_refEnabled.end() ? fmt::format("no switch of {:X} relayed here", refId) : fmt::format("{:X} last relayed {}", refId, cFound->second ? "on" : "off");
+        if (acArgs[2] == "none")
+            return cFound == m_refEnabled.end();
         return cFound != m_refEnabled.end() && cFound->second == (acArgs[2] == "on");
     }
 
