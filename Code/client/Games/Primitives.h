@@ -414,8 +414,15 @@ template <class T, class THandle = BSUntypedPointerHandle<>> struct BSPointerHan
     THandle handle{};
 };
 
+// The game's reader/writer lock: a writer sets 0x80000000 and its thread id, readers only add to the count.
+// It is taken through the game's own functions, since BSRecursiveLock's protocol does not mix with it.
 struct BSReadWriteLock
 {
     uint32_t uiWriterThread;
     volatile uint32_t uiLock;
+
+    void LockForRead() noexcept;
+    void UnlockForRead() noexcept;
+    void LockForWrite() noexcept;
+    void UnlockForWrite() noexcept;
 };

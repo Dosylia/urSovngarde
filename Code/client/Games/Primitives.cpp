@@ -49,6 +49,35 @@ void BSRecursiveLock::Lock()
     }
 }
 
+namespace
+{
+using TReadWriteLock = void(BSReadWriteLock* apLock);
+}
+
+void BSReadWriteLock::LockForRead() noexcept
+{
+    POINTER_SKYRIMSE(TReadWriteLock, s_lockForRead, 66976, 66976);
+    s_lockForRead.Get()(this);
+}
+
+void BSReadWriteLock::UnlockForRead() noexcept
+{
+    POINTER_SKYRIMSE(TReadWriteLock, s_unlockForRead, 66982, 66982);
+    s_unlockForRead.Get()(this);
+}
+
+void BSReadWriteLock::LockForWrite() noexcept
+{
+    POINTER_SKYRIMSE(TReadWriteLock, s_lockForWrite, 66977, 66977);
+    s_lockForWrite.Get()(this);
+}
+
+void BSReadWriteLock::UnlockForWrite() noexcept
+{
+    POINTER_SKYRIMSE(TReadWriteLock, s_unlockForWrite, 66983, 66983);
+    s_unlockForWrite.Get()(this);
+}
+
 void BSRecursiveLock::Unlock()
 {
     _mm_lfence();

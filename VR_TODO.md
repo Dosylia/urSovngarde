@@ -17,6 +17,29 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Waiting on a test or action
 
+- [!] **Freeze 2026-10-25 14:51: the autosave entering the Palace of the Kings never finished** (player 1, a98ad845;
+      fixed on a98ad845 + the ExtraDataList lock change, client only, FUS and MGO folders, client and server).
+      Seen live, with the frozen game's memory read (no debugger): the main thread waited in the save
+      (`BGSSaveLoadManager::ProcessEvents` > `Save`; `Autosave1_..._WindhelmPalaceoftheKings_...ess.tmp` stayed 0
+      bytes); the save waited for the background loader, and the loader spun in `BSReadWriteLock::LockForWrite`
+      (`+0xc4222b`) inside `TESObjectREFR::Load3D` of our player marker 8D005040, moved there 0.5 s before
+      (`Player markers: 8D005040 follows player 2 ..., whose body is here`). That marker's ExtraDataList lock read
+      writer 0, count 1, with no thread inside it: a count nobody would ever give back.
+      - Cause: our `ExtraDataList::GetByType` and `Add` locked the list with `BSRecursiveLock` (a spin lock: count
+        0 to 1), but the game's ExtraDataList lock is a `BSReadWriteLock` (read from the game's code: a writer sets
+        0x80000001 and its thread id, a reader adds 1 whenever 0x80000000 is clear). So game readers came in while we
+        held it, and when one came in between our unlock's `m_tid = 0` and its compare-exchange (1 to 0), the exchange
+        failed and our count stayed. The player markers read their marker's list every 2 s from our update thread,
+        while the game loads that marker's 3D on its loader thread. Upstream has the same code.
+      - Fix: ExtraDataList takes the game's own lock functions, `LockForRead`/`UnlockForRead` in `GetByType`,
+        `LockForWrite`/`UnlockForWrite` in `Add` (SE 66976, 66982, 66977, 66983; their VR addresses checked against
+        the game's code). `BSRecursiveLock` stays for the spin locks it matches (animation graph manager, cell, actor).
+      - Test: the race is microseconds wide, so no rig test makes it fail on demand; the evidence is the frozen game's
+        state and the game's lock code. TPTests 94 cases. Rig: `live-map-marker` 1 of 1 (a regression check, not
+        red/green): marker 8D005040 followed the bot, went on the map's list, came off and was put away, no freeze.
+        To see in play: no freeze after a load with the other player's marker near (a rare race, so only many loads
+        will tell).
+
 - [!] **Party sleep (contributed, merged as cc8c5ccf), hardened** (build b335f22, FUS folder, client and server; a
       protocol change: both players and the server need it). On a private server with `bEnableSleep=true`, a party
       member's sleep or wait moves everyone's clock and date; the rest of the party watches with their controls locked.

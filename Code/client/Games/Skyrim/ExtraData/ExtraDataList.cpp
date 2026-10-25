@@ -6,7 +6,7 @@ ExtraDataList* ExtraDataList::New() noexcept
 {
     ExtraDataList* pExtraDataList = Memory::Allocate<ExtraDataList>();
     pExtraDataList->data = nullptr;
-    pExtraDataList->lock.m_counter = pExtraDataList->lock.m_tid = 0;
+    pExtraDataList->lock.uiWriterThread = pExtraDataList->lock.uiLock = 0;
     pExtraDataList->bitfield = Memory::Allocate<ExtraDataList::Bitfield>();
     memset(pExtraDataList->bitfield, 0, 0x18);
     return pExtraDataList;
@@ -29,13 +29,14 @@ bool ExtraDataList::Contains(ExtraDataType aType) const
 
 BSExtraData* ExtraDataList::GetByType(ExtraDataType aType) const
 {
+    // A read under the game's own lock, so the game's writers, such as the 3D loader, wait for it and nothing else.
     if (!ScopedExtraDataOverride::IsOverriden())
-        lock.Lock();
+        lock.LockForRead();
 
     if (!Contains(aType))
     {
         if (!ScopedExtraDataOverride::IsOverriden())
-            lock.Unlock();
+            lock.UnlockForRead();
         return nullptr;
     }
 
@@ -46,7 +47,7 @@ BSExtraData* ExtraDataList::GetByType(ExtraDataType aType) const
     }
 
     if (!ScopedExtraDataOverride::IsOverriden())
-        lock.Unlock();
+        lock.UnlockForRead();
 
     return pEntry;
 }
@@ -56,12 +57,14 @@ bool ExtraDataList::Add(ExtraDataType aType, BSExtraData* apNewData)
     if (Contains(aType))
         return false;
 
-    BSScopedLock<BSRecursiveLock> _(lock);
+    lock.LockForWrite();
 
     BSExtraData* pNext = data;
     data = apNewData;
     apNewData->next = pNext;
     SetType(aType, false);
+
+    lock.UnlockForWrite();
 
     return true;
 }

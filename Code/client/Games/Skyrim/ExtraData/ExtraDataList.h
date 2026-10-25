@@ -43,5 +43,5 @@ struct ExtraDataList
     };
 
     Bitfield* bitfield{};
-    mutable BSRecursiveLock lock{};
+    mutable BSReadWriteLock lock{};
 };
