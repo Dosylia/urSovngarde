@@ -2,6 +2,7 @@
 #include "TiltedOnlineApp.h"
 #include <Misc/GameVM.h>
 #include <Interface/Menus/SleepWaitMenu.h>
+#include <Interface/Menus/SkillsMenu.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
 
@@ -14,10 +15,6 @@ TP_THIS_FUNCTION(TVMDestructor, uintptr_t, void);
 static TVMUpdate* VMUpdate = nullptr;
 static TMainLoop* MainLoop = nullptr;
 static TVMDestructor* VMDestructor = nullptr;
-
-#ifdef SKYRIMVR
-void RunDeferredSkillsTreeUpdate(); // Interface/Menus/SkillsMenu.cpp
-#endif
 
 int TP_MAKE_THISCALL(HookVMUpdate, GameVM, float a2)
 {
@@ -32,9 +29,7 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
 #ifdef SKYRIMVR
     UpdateSleepWatchControls();
     RunDeferredSleepWaitAccept();
-#endif
-
-#ifdef SKYRIMVR
+    UpdateSkillsMenuChecks();
     RunDeferredSkillsTreeUpdate();
 #endif
 

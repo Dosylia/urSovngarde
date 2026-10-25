@@ -15,7 +15,7 @@ constexpr uint32_t kIgnoreFade = 0x8000;
 TP_THIS_FUNCTION(TStatsProcessMessage, uint32_t, IMenu, UIMessage&);
 static TStatsProcessMessage* RealStatsProcessMessage;
 
-// The main thread check nopped below lets the menu's update run from the UI job, a worker thread while unpaused.
+// The main thread check, skipped below while the menu is unpaused, lets the menu's update run from the UI job, a worker thread while unpaused.
 // That update also moves the tree model (NiAVObject::Update on StatsMenu+0xC0) while the main thread draws it, so
 // stars and names blink. Off the main thread the update is kept and run at the start of the next main loop
 // (Main::Update, see SkyrimVM64.cpp), before anything draws.
@@ -86,16 +86,67 @@ static uint32_t HookStatsProcessMessage(IMenu* apThis, UIMessage& aMessage)
     return result;
 }
 
-// Nops a patch site only if it holds the instruction it was read from (SkyrimVR 1.4.15, TiltedEvolutionVR 5ab99be).
-static bool NopChecked(uint8_t* apSite, std::initializer_list<uint8_t> aExpected, const char* acpWhat)
+// The unpaused menu needs three of the game's checks skipped: the main-thread check, the update check and the
+// controls guard. They are skipped only while the server unpauses the menu (Gameplay:bUnpausedMenus); elsewhere the
+// menu runs exactly as in the game. Skipped for good, a paused menu's messages ran off the main thread too, as the
+// Sleep/Wait menu's did (7a4b2002). Each site's first two bytes are swapped in one aligned write, so a thread running
+// it sees either form whole: a jne (0F 85 rel32) becomes a short jump over its other four bytes, a je short two nops.
+struct SwitchedCheck
 {
-    if (std::memcmp(apSite, aExpected.begin(), aExpected.size()) != 0)
+    bool InCanProcess; // else in ProcessMessage
+    size_t Offset;
+    uint8_t Expected[6];
+    size_t Size;
+    uint16_t Skipped;
+    const char* What;
+    uint8_t* pSite;
+    uint16_t Kept;
+};
+
+// SE 51638 (StatsMenu::ProcessMessage) is VR 0x8ec3e0; the menu event handler's CanProcess is VR 0x8ed870.
+constexpr uintptr_t kStatsCanProcess = 0x8ED870;
+static SwitchedCheck s_checks[]{
+    // Fix for menu not appearing: jnz past the update when off the main thread.
+    {false, 0x91C, {0x0F, 0x85, 0x38, 0x09, 0x00, 0x00}, 6, 0x04EB, "main thread check"},
+    // Keep the menu updated.
+    {false, 0x109C, {0x74, 0x5F}, 2, 0x9090, "update check"},
+    // Fix for controls not working.
+    {true, 0x98, {0x0F, 0x85, 0x79, 0x01, 0x00, 0x00}, 6, 0x04EB, "controls guard"},
+};
+static bool s_checksReady = false;
+// Read by the menu queue on another thread.
+static std::atomic<bool> s_checksSkipped{false};
+
+static void SetChecksSkipped(bool aSkipped) noexcept
+{
+    for (SwitchedCheck& check : s_checks)
     {
-        spdlog::error("Skills menu: {} at {} is not the expected instruction, leaving it alone; the menu may misbehave while unpaused", acpWhat, fmt::ptr(apSite));
-        return false;
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(check.pSite, sizeof(uint16_t), PAGE_EXECUTE_READWRITE, &oldProtect))
+            continue;
+        InterlockedExchange16(reinterpret_cast<volatile SHORT*>(check.pSite), static_cast<SHORT>(aSkipped ? check.Skipped : check.Kept));
+        VirtualProtect(check.pSite, sizeof(uint16_t), oldProtect, &oldProtect);
+        FlushInstructionCache(GetCurrentProcess(), check.pSite, sizeof(uint16_t));
     }
-    TiltedPhoques::Nop(apSite, aExpected.size());
-    return true;
+    s_checksSkipped = aSkipped;
+    spdlog::info("Skills menu: {}", aSkipped ? "this server unpauses it, so its main-thread, update and controls checks are skipped" : "it pauses as in the game");
+}
+
+bool SkillsMenuCanRunUnpaused() noexcept
+{
+    return s_checksReady && s_checksSkipped;
+}
+
+// Called from the start of Main::Update. Changed only while no skills menu exists, so its code is not rewritten under a message.
+void UpdateSkillsMenuChecks()
+{
+    if (!s_checksReady || UnpausedMenusOnline() == s_checksSkipped.load())
+        return;
+
+    static const BSFixedString s_statsName("StatsMenu");
+    UI* pUI = UI::Get();
+    if (pUI && !pUI->FindMenuByName(s_statsName))
+        SetChecksSkipped(UnpausedMenusOnline());
 }
 #endif
 
@@ -105,20 +156,33 @@ static TiltedPhoques::Initializer s_skillsMenuInit(
         // https://github.com/Vermunds/SkyrimSoulsRE/blob/master/src/Menus/StatsMenuEx.cpp
         // Hoooks from souls RE
 #ifdef SKYRIMVR
-        // SE 51638 (StatsMenu::ProcessMessage) is VR 0x8ec3e0; the menu event handler's CanProcess is VR 0x8ed870.
         // VR offsets differ from AE's; each site is checked before it is patched.
         VersionDbPtr<uint8_t> ProcessMessage(51638);
         uint8_t* pProcessMessage = ProcessMessage.Get();
-        uint8_t* pCanProcess = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + 0x8ED870;
+        uint8_t* pCanProcess = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + kStatsCanProcess;
 
-        // Fix for menu not appearing: jnz past the update when off the main thread.
-        NopChecked(pProcessMessage + 0x91C, {0x0F, 0x85, 0x38, 0x09, 0x00, 0x00}, "main thread check");
-        // No freeze frame background, which VR never draws: or dword ptr [rsi+0x1C], 0x20.
-        NopChecked(pProcessMessage + 0xBB6, {0x83, 0x4E, 0x1C, 0x20}, "freeze frame flag write");
-        // Keep the menu updated.
-        NopChecked(pProcessMessage + 0x109C, {0x74, 0x5F}, "update check");
-        // Fix for controls not working.
-        NopChecked(pCanProcess + 0x98, {0x0F, 0x85, 0x79, 0x01, 0x00, 0x00}, "controls guard");
+        // No freeze frame background, which VR never draws: or dword ptr [rsi+0x1C], 0x20. Harmless paused, so for good.
+        constexpr uint8_t cFreezeFrameWrite[]{0x83, 0x4E, 0x1C, 0x20};
+        if (std::memcmp(pProcessMessage + 0xBB6, cFreezeFrameWrite, sizeof(cFreezeFrameWrite)) == 0)
+            TiltedPhoques::Nop(pProcessMessage + 0xBB6, sizeof(cFreezeFrameWrite));
+        else
+            spdlog::error("Skills menu: {} is not the freeze frame flag write, leaving it alone; the menu will be black while unpaused", fmt::ptr(pProcessMessage + 0xBB6));
+
+        // The switched checks: all three or none, and the menu pauses as in the game when any is not where it was read.
+        bool allFound = true;
+        for (SwitchedCheck& check : s_checks)
+        {
+            check.pSite = (check.InCanProcess ? pCanProcess : pProcessMessage) + check.Offset;
+            if (std::memcmp(check.pSite, check.Expected, check.Size) != 0)
+            {
+                spdlog::error("Skills menu: {} at {} is not the expected instruction; the menu keeps pausing", check.What, fmt::ptr(check.pSite));
+                allFound = false;
+            }
+            check.Kept = *reinterpret_cast<const uint16_t*>(check.pSite);
+        }
+        s_checksReady = allFound;
+        if (allFound)
+            spdlog::info("Skills menu: checks found; it pauses as in the game until a server unpauses it");
 
         RealStatsProcessMessage = reinterpret_cast<TStatsProcessMessage*>(pProcessMessage);
         TP_HOOK(&RealStatsProcessMessage, HookStatsProcessMessage);

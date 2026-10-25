@@ -8,6 +8,7 @@
 #include <PatchCheck.h>
 #include <Services/CalendarService.h>
 #include <Interface/Menus/SleepWaitMenu.h>
+#include <Interface/Menus/SkillsMenu.h>
 
 static bool g_RequestUnpauseAll{false};
 
@@ -198,9 +199,11 @@ constexpr uintptr_t kPlayerControlsCanProcess = 0x72DB00;
 TP_THIS_FUNCTION(TPlayerControlsCanProcess, bool, void);
 static TPlayerControlsCanProcess* RealPlayerControlsCanProcess;
 
+// The one hook on it: MinHook takes a single hook per address, and a second one is silently not installed.
+// So the party sleep's control lock (Menus/SleepWaitMenu.cpp) is asked here too.
 static bool HookPlayerControlsCanProcess(void* apControls)
 {
-    if (IsAllowListMenuOpenUnpaused())
+    if (IsAllowListMenuOpenUnpaused() || SleepWaitBlocksControls())
         return false;
 
     return TiltedPhoques::ThisCall(RealPlayerControlsCanProcess, apControls);
@@ -268,6 +271,9 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
     {
 #ifdef SKYRIMVR
         if (IsOptionalUnpausedMenu(item) && !UnpausedMenusOnline())
+            continue;
+        // Unpaused only once its checks are skipped (Menus/SkillsMenu.cpp); until then it pauses as in the game.
+        if (std::strcmp(item, "StatsMenu") == 0 && !SkillsMenuCanRunUnpaused())
             continue;
 #endif
         if (auto* pMenu = apSelf->FindMenuByName(item))
