@@ -79,6 +79,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -1941,8 +1943,13 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             {
                 RequestActionEvents actions{};
                 auto& performed = actions.Actions[m_replayTarget];
+                // In any case, as the game treats event names.
+                const auto isSkipped = [&skipped](const auto& acEventName)
+                {
+                    return std::ranges::equal(acEventName, skipped, [](const char aA, const char aB) { return std::tolower(uint8_t(aA)) == std::tolower(uint8_t(aB)); });
+                };
                 for (const auto& action : captured.Actions)
-                    if (skipped.empty() || _stricmp(action.EventName.c_str(), skipped.c_str()) != 0)
+                    if (skipped.empty() || !isSkipped(action.EventName))
                         performed.push_back(action);
                 for (auto& action : performed)
                 {
