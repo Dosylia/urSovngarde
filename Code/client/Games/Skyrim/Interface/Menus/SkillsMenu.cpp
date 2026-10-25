@@ -30,6 +30,9 @@ struct NiUpdateData
 
 static void (*RealTreeModelUpdate)(void*, NiUpdateData*);
 static std::mutex s_treeUpdateLock;
+// Between the menu's show and hide, changed and read under the lock: once the hide begins, no worker keeps the model,
+// which the hide may free.
+static bool s_statsShown = false;
 static void* s_pendingTreeModel = nullptr;
 static NiUpdateData s_pendingTreeData{};
 
@@ -41,14 +44,17 @@ static bool IsMainThread()
 
 static void HookTreeModelUpdate(void* apModel, NiUpdateData* apData)
 {
-    static const BSFixedString s_statsName("StatsMenu");
-    if (IsMainThread() || !IsMenuOpenUnpaused(s_statsName))
+    if (IsMainThread())
     {
         RealTreeModelUpdate(apModel, apData);
         return;
     }
 
+    // Off the main thread only because the main-thread check is skipped; the game itself never updates the model here.
+    // After the hide began it is dropped, not run: the model may be freed under it.
     std::scoped_lock lock(s_treeUpdateLock);
+    if (!s_statsShown)
+        return;
     s_pendingTreeModel = apModel;
     s_pendingTreeData = *apData;
 }
@@ -57,7 +63,7 @@ static void HookTreeModelUpdate(void* apModel, NiUpdateData* apData)
 void RunDeferredSkillsTreeUpdate()
 {
     std::scoped_lock lock(s_treeUpdateLock);
-    if (!s_pendingTreeModel)
+    if (!s_pendingTreeModel || !s_statsShown)
         return;
 
     RealTreeModelUpdate(s_pendingTreeModel, &s_pendingTreeData);
@@ -66,17 +72,26 @@ void RunDeferredSkillsTreeUpdate()
 
 static uint32_t HookStatsProcessMessage(IMenu* apThis, UIMessage& aMessage)
 {
-    const uint32_t result = TiltedPhoques::ThisCall(RealStatsProcessMessage, apThis, aMessage);
+    const bool cHiding = aMessage.eType == UIMessage::kHide || aMessage.eType == UIMessage::kForceHide;
 
-    if (aMessage.eType == UIMessage::kHide || aMessage.eType == UIMessage::kForceHide)
+    // Before the game handles it: a hide may free the model, and a worker must not keep it from here on.
+    if (aMessage.eType == UIMessage::kShow || cHiding)
     {
         std::scoped_lock lock(s_treeUpdateLock);
+        s_statsShown = !cHiding;
         s_pendingTreeModel = nullptr;
     }
 
-    if (!apThis->PausesGame())
+    const uint32_t result = TiltedPhoques::ThisCall(RealStatsProcessMessage, apThis, aMessage);
+
+    // Set while open, cleared on the way out, as MapMenu.cpp does: the model is not left exempt from the fade that removes it.
+    if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kStatsModel))
     {
-        if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kStatsModel))
+        if (cHiding)
+        {
+            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kIgnoreFade;
+        }
+        else if (!apThis->PausesGame())
         {
             *reinterpret_cast<float*>(pModel + kFadeNodeCurrentFade) = 1.f;
             *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) |= kIgnoreFade;
