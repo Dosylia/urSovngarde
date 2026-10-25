@@ -26,6 +26,8 @@ struct PartyService
         GameId CachedWeather{};
         // Stages each quest reached since it started, as relayed to the party, with when each was first relayed
         Map<GameId, Map<uint16_t, std::chrono::steady_clock::time_point>> QuestStages{};
+        // References the leader's scripts switched on (true) or off, the latest state of each (ObjectService::OnReferenceEnableRequest)
+        Map<GameId, bool> ReferenceEnabled{};
     };
 
     PartyService(World& aWorld, entt::dispatcher& aDispatcher) noexcept;

@@ -7,6 +7,9 @@
 #include <Games/ActorExtension.h>
 
 #include <World.h>
+#ifdef SKYRIMVR
+#include <Services/CalendarService.h>
+#endif
 
 TP_THIS_FUNCTION(TSpellCast, void, ActorMagicCaster, bool sbSuccess, int32_t auiTargetCount, MagicItem* apSpell);
 TP_THIS_FUNCTION(TInterruptCast, void, ActorMagicCaster, bool);
@@ -29,6 +32,15 @@ void TP_MAKE_THISCALL(HookSpellCast, ActorMagicCaster, bool abSuccess, int32_t a
     const ActorExtension* pCasterExtension = apThis->pCasterActor ? apThis->pCasterActor->GetExtension() : nullptr;
     if (pCasterExtension && pCasterExtension->IsRemote())
         return;
+
+#ifdef SKYRIMVR
+    if (CalendarService::AreSleepControlsLocked() && pCasterExtension && pCasterExtension->IsLocalPlayer())
+    {
+        // Catch a release/gesture racing the input lock; do not broadcast or finish the cast.
+        TiltedPhoques::ThisCall(RealInterruptCast, apThis, true);
+        return;
+    }
+#endif
 
     uint32_t targetFormId = 0;
 

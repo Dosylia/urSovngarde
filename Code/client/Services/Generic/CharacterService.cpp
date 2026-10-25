@@ -86,9 +86,9 @@
 #include <Forms/ActorValueInfo.h>
 #include <Games/TES.h>
 #include <AI/AIProcess.h>
+#include <Games/Skyrim/Interface/UI.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
-#include <Games/Skyrim/Interface/UI.h>
 
 #endif
 
@@ -412,6 +412,30 @@ void ReleaseAllGhosts() noexcept
     for (const auto& [ghost, copy] : s_ghosts)
         EnableGhost(ghost);
     s_ghosts.clear();
+}
+
+// A ghost disabled while its cell loads can get its 3D back from the game and fight, unknown to the server.
+// So every two seconds a loaded ghost that is enabled again is disabled again.
+// Only one with 3D that is not deleted and no longer loading is touched: disabling one the game is disposing of crashes (SkyrimVR.exe+0x714EB2).
+void RunGhostChecks() noexcept
+{
+    static std::chrono::steady_clock::time_point s_nextCheck{};
+    static TiltedPhoques::Map<uint32_t, uint32_t> s_redisabled; // ghost form id -> times disabled again
+    const auto cNow = std::chrono::steady_clock::now();
+    if (s_ghosts.empty() || cNow < s_nextCheck || IsProcessExiting())
+        return;
+    s_nextCheck = cNow + std::chrono::seconds(2);
+
+    for (const auto& [ghost, copy] : s_ghosts)
+    {
+        Actor* pGhost = Cast<Actor>(TESForm::GetById(ghost));
+        if (!pGhost || pGhost->IsDisabled() || !pGhost->GetNiNode() || pGhost->IsDeleted() || pGhost->IsStillLoading())
+            continue;
+        pGhost->Disable();
+        const uint32_t cTimes = ++s_redisabled[ghost];
+        if (cTimes == 1 || cTimes % 10 == 0)
+            spdlog::info("Ghost: reference {:X} was enabled again with its 3D while copy {:X} stands in; disabled again ({} times)", ghost, copy, cTimes);
+    }
 }
 //! The values a player's fresh copy starts with: visible, and health never below a quarter of its maximum.
 //! The server's stored values for a respawning player can be the negative health from the death.
@@ -896,6 +920,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
         RunWeaponTouch();
     }
     RunWaitingCopies();
+    RunGhostChecks();
     SpawnReveal::Tick();
     RunFollowerReclaims();
 
@@ -2280,8 +2305,13 @@ void CharacterService::OnNotifyDialogue(const NotifyDialogue& acMessage) noexcep
     }
 
     pActor->StopCurrentDialogue(true);
-    pActor->SpeakSound(acMessage.SoundFilename.c_str());
-    spdlog::info("Dialogue: {:X} (server id {:X}) says {}; played here", pActor->formID, acMessage.ServerId, acMessage.SoundFilename.c_str());
+    const float cAnswer = pActor->SpeakSound(acMessage.SoundFilename.c_str());
+    // How it was played, so that a line the player did not hear can be told apart from one never started.
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    const float cDistance = pPlayer ? glm::distance(static_cast<glm::vec3>(pActor->position), static_cast<glm::vec3>(pPlayer->position)) : -1.f;
+    const UI* pUI = UI::Get();
+    spdlog::info("Dialogue: {:X} (server id {:X}) says {}; played here (game's answer {:.2f}, {:.0f} units from the player, 3D {}, pause counter {})", pActor->formID,
+                 acMessage.ServerId, acMessage.SoundFilename.c_str(), cAnswer, cDistance, pActor->GetNiNode() ? "yes" : "no", pUI ? pUI->numPausesGame : 0);
 }
 
 void CharacterService::OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept

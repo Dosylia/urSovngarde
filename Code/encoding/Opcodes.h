@@ -66,6 +66,8 @@ enum ClientOpcode : unsigned char
     kReviveRequest,
     kSafePointRequest,
     kRequestActionEvents,
+    kRequestSleep,
+    kRequestReferenceEnable,
     kClientOpcodeMax
 };
 
@@ -135,5 +137,7 @@ enum ServerOpcode : unsigned char
     kNotifyArrowNocked,
     kNotifyDownedState,
     kNotifyActionEvents,
+    kNotifySleep,
+    kNotifyReferenceEnable,
     kServerOpcodeMax
 };

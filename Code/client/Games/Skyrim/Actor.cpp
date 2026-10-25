@@ -22,6 +22,7 @@
 #include <Events/HitEvent.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
+#include <Services/CalendarService.h>
 #endif
 #include <Events/RemoveSpellEvent.h>
 #include <Events/DroppedItemEvents.h>
@@ -1200,6 +1201,11 @@ static THitTarget* RealHitTarget = nullptr;
 // Our own clash keeps its block sound, sparks and buzz; a hit on his body goes through as before.
 void TP_MAKE_THISCALL(HookHitTarget, Actor, Actor* apTarget, void* apProjectile, bool aIsOffhand)
 {
+    // Physical hand tracking stays live while waiting for party sleep, including PLANCK weapon bodies.
+    // Those contacts must not turn a freely moving hand into an attack while controls are locked.
+    if (!apProjectile && CalendarService::AreSleepControlsLocked() && apThis == PlayerCharacter::Get())
+        return;
+
     if (apThis == PlayerCharacter::Get() && !apProjectile && apTarget)
     {
         const ActorExtension* pTarget = apTarget->GetExtension();
@@ -1588,11 +1594,11 @@ float TP_MAKE_THISCALL(HookSpeakSoundFunction, Actor, const char* apName, uint32
     return TiltedPhoques::ThisCall(RealSpeakSoundFunction, apThis, apName, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14);
 }
 
-void Actor::SpeakSound(const char* pFile)
+float Actor::SpeakSound(const char* pFile)
 {
     uint32_t handle[3]{};
     handle[0] = -1;
-    TiltedPhoques::ThisCall(RealSpeakSoundFunction, this, pFile, handle, 0, 0x32, 0, 0, 0, 0, 0, 0, 0, 1, 1);
+    return TiltedPhoques::ThisCall(RealSpeakSoundFunction, this, pFile, handle, 0, 0x32, 0, 0, 0, 0, 0, 0, 0, 1, 1);
 }
 
 char TP_MAKE_THISCALL(HookActorProcess, Actor, float aDeltaTime)

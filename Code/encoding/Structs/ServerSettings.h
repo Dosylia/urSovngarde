@@ -17,7 +17,8 @@ struct ServerSettings
     bool DeathSystemEnabled{};
     bool SyncPlayerCalendar{};
     bool AutoPartyJoin{};
-
+    // A sleep can be granted (bEnableSleep on a private server); clients only report combat then.
+    bool SleepEnabled{};
     // VR: more menus run unpaused online (skills, map; UI.cpp kOptionalUnpausedMenus), with the fixes that needs.
     bool UnpausedMenus{};
 };

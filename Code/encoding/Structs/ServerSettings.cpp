@@ -5,7 +5,8 @@ using TiltedPhoques::Serialization;
 
 bool ServerSettings::operator==(const ServerSettings& acRhs) const noexcept
 {
-    return Difficulty == acRhs.Difficulty && GreetingsEnabled == acRhs.GreetingsEnabled && PvpEnabled == acRhs.PvpEnabled && SyncPlayerHomes == acRhs.SyncPlayerHomes && DeathSystemEnabled == acRhs.DeathSystemEnabled && AutoPartyJoin == acRhs.AutoPartyJoin && UnpausedMenus == acRhs.UnpausedMenus;
+    return Difficulty == acRhs.Difficulty && GreetingsEnabled == acRhs.GreetingsEnabled && PvpEnabled == acRhs.PvpEnabled && SyncPlayerHomes == acRhs.SyncPlayerHomes && DeathSystemEnabled == acRhs.DeathSystemEnabled && SyncPlayerCalendar == acRhs.SyncPlayerCalendar && AutoPartyJoin == acRhs.AutoPartyJoin &&
+           SleepEnabled == acRhs.SleepEnabled && UnpausedMenus == acRhs.UnpausedMenus;
 }
 
 bool ServerSettings::operator!=(const ServerSettings& acRhs) const noexcept
@@ -22,6 +23,7 @@ void ServerSettings::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noe
     Serialization::WriteBool(aWriter, DeathSystemEnabled);
     Serialization::WriteBool(aWriter, SyncPlayerCalendar);
     Serialization::WriteBool(aWriter, AutoPartyJoin);
+    Serialization::WriteBool(aWriter, SleepEnabled);
     Serialization::WriteBool(aWriter, UnpausedMenus);
 }
 
@@ -34,5 +36,6 @@ void ServerSettings::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcep
     DeathSystemEnabled = Serialization::ReadBool(aReader);
     SyncPlayerCalendar = Serialization::ReadBool(aReader);
     AutoPartyJoin = Serialization::ReadBool(aReader);
+    SleepEnabled = Serialization::ReadBool(aReader);
     UnpausedMenus = Serialization::ReadBool(aReader);
 }

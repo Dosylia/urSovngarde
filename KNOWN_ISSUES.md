@@ -377,6 +377,20 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   `E:\FUS\mods\VR Address Library for SKSEVR` is 0.275.0 with every id from 0.158.0 kept at its old address
   (script: scratchpad `merge_addrlib.py`; the untouched 0.158.0 is beside it as `version-1-4-15-0.csv.0.158.0.bak`).
   Do not replace it with a plain newer release without updating Community Shaders to match.
+- **Community Shaders dropped VR on 2026-06-07** (commit c9d7c05, "chore: remove all VR support (#2475)"); its
+  author's answer on Discord: use a fork, CSX or Open Shaders. So no release from 1.7.0 on runs on VR, and none ever will.
+  Observed here (2026-10-25): 1.9.1 stops at start (`Failed to find the id within the address library: 69535`, a Light
+  Limit Fix hook no VR library has; 1.8.x has it too), 1.7.3 does not load (`couldn't load plugin ... (Error 1114)`,
+  with plain SkyrimVR.exe through SKSE too). 1.x also refuses to run without Engine Fixes 7.x (`EngineFixes.dll`).
+  The VR forks: Community Shaders Expanded (CSX, what MGO and now FUS use) and Open Shaders (alandtse's).
+- **FUS now runs MGO's shader setup (2026-10-25)**: Community Shaders Expanded csx3.18-VR (Nexus 166950) with its VR
+  shader cache and the AMD Performance preset, and Engine Fixes VR 7.7.1, all copied from `D:\MGO\mods`. The address
+  file is the merged one with 100997 and 74491 at the values MGO's 0.259.0 has (0.8.7 needed the old ones). The 0.8.7
+  set (core, seven `CS - ...` features, Engine Fixes 1.26) is switched off, not removed; the earlier mod list is
+  `modlist.txt.before-csx`, the earlier address file `version-1-4-15-0.csv.merged-0.275.0-cs087.bak`, the old shader
+  cache `E:\FUS\backup-cs087\ShaderCache`. Rig: the first start crashed at its first loading screen in the AMD driver
+  (`execute at 0x200000000`, a thread of `amdxx64.dll`) while CSX was still building its caches; the second start went
+  through four loading screens (exterior, inn, Dragonsreach, Whiterun) clean. Not yet played.
   Seen hit it on 2026-10-06 (19:41 and 19:43, twice out of two loads): his crash logger put 100997 at 0x1354D20, a
   plain newer library, which came with his Engine Fixes 7.10; Emma's file has it at 0x90D400.
 - **The clean-up on connect deleted the game's own temporary actors (fixed 2026-10-06).** On connect

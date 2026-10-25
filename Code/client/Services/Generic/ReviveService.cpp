@@ -64,11 +64,14 @@ ReviveService::ReviveService(World& aWorld, entt::dispatcher& aDispatcher, Trans
 
 void ReviveService::OnUpdate(const UpdateEvent&) noexcept
 {
+    const auto cNow = std::chrono::steady_clock::now();
+    if (!m_revivedChecks.empty())
+        LogRevivedCopies(cNow);
+
     if (m_downed.empty())
         return;
 
     // Ten times a second: the hold is seconds long, and each check is also one haptic tick.
-    const auto cNow = std::chrono::steady_clock::now();
     if (cNow < m_nextCheck)
         return;
     m_nextCheck = cNow + std::chrono::milliseconds(100);
@@ -136,6 +139,7 @@ void ReviveService::OnUpdate(const UpdateEvent&) noexcept
 void ReviveService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     m_downed.clear();
+    m_revivedChecks.clear();
     StopHolding();
 }
 
@@ -190,6 +194,7 @@ void ReviveService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
             Utils::ShowHudMessage(String("urSovngarde: you revived ") + who);
         else
             Utils::ShowHudMessage(String("urSovngarde: ") + NameOf(acMessage.ReviverId) + " revived " + who);
+        m_revivedChecks.push_back({acMessage.PlayerId, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
         break;
     case NotifyDownedState::kRespawned: spdlog::info("Revive: player {} '{}' respawned", acMessage.PlayerId, who.c_str()); break;
     case NotifyDownedState::kDied:
@@ -253,6 +258,35 @@ String ReviveService::NameOf(const uint32_t aPlayerId) const noexcept
     const auto& players = m_world.GetPartyService().GetPlayers();
     const auto cName = players.find(aPlayerId);
     return cName != players.end() ? cName->second : String("A party member");
+}
+
+// TEMPORARY: whether a revived party member's copy is up again here, for a copy seen still lying down after a revive.
+// The head's height above the copy's root says whether it stands (about 105) or lies (under 30).
+void ReviveService::LogRevivedCopies(const std::chrono::steady_clock::time_point aNow) noexcept
+{
+    for (auto it = m_revivedChecks.begin(); it != m_revivedChecks.end();)
+    {
+        if (aNow < it->second)
+        {
+            ++it;
+            continue;
+        }
+        const uint32_t cPlayerId = it->first;
+        it = m_revivedChecks.erase(it);
+        Actor* pCopy = FindCopy(cPlayerId);
+        if (!pCopy)
+        {
+            spdlog::info("Revive: player {} '{}' 5 s after the revive: no copy of them here", cPlayerId, NameOf(cPlayerId).c_str());
+            continue;
+        }
+#ifdef SKYRIMVR
+        const std::string cBody = VRBodySync::DescribeBody(pCopy);
+#else
+        const std::string cBody = "body not described on this build";
+#endif
+        spdlog::info("Revive: player {} '{}' 5 s after the revive, copy {:X} here: bleedout {}, dead {}; {}", cPlayerId, NameOf(cPlayerId).c_str(), pCopy->formID,
+                     pCopy->actorState.IsBleedingOut(), pCopy->IsDead(), cBody);
+    }
 }
 
 void ReviveService::StopHolding() noexcept

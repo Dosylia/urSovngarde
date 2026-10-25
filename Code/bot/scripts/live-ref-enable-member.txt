@@ -1,0 +1,40 @@
+# A member's game applies the references the party leader's scripts switched.
+#
+#   python Tools\VR\live-check.py live-ref-enable-member
+#   python Tools\VR\live-check.py --expect-fail live-ref-enable-member     on a build without the change: must be RED
+#
+# A siege's camps, barricades and catapults are switched by the siege quest's scripts, which only the leader's game runs.
+# Now the leader's switches reach the members, and a member's game switches its own reference the same way.
+# Here: the bot leads (this game drops its connection and comes back, and the bot keeps the party), this game is a member.
+# The bot switches the Stormcloak camp marker at Whiterun (8680C) off and then on; this game must follow both.
+# A run counts only when (REQUIRE) the bot did lead the party.
+party lead
+log live ref enable member
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+# "info] " is in the bot's own log line, not in its echo of this check.
+log REQUIRE bot logged info\] Leading the party
+
+log -- the leader's script switches the camp marker off, then on
+refenable 8680C off
+wait 4
+log CHECK ref 8680C disabled
+refenable 8680C on
+wait 4
+log CHECK ref 8680C enabled
+log CHECK logged ReferenceEnable: \d+ reference\(s\) the leader's scripts switched
+
+wait 2
+log CHECK game alive
+log done
+stop

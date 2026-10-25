@@ -650,7 +650,8 @@ void QuestService::OnQuestUpdate(const NotifyQuestUpdate& aUpdate) noexcept
     case NotifyQuestUpdate::StageUpdate:
         pQuest->ScriptSetStage(aUpdate.Stage);
         bResult = true;
-        spdlog::info("Remote quest updated: {:X}, stage: {}", formId, aUpdate.Stage);
+        // Whether the quest runs here: a stage set on a quest that cannot start here leaves its scripts unrun.
+        spdlog::info("Remote quest updated: {:X}, stage: {}; running here {}", formId, aUpdate.Stage, pQuest->IsEnabled() ? "yes" : "no");
         break;
     case NotifyQuestUpdate::Stopped:
         bResult = StopQuest(formId);
