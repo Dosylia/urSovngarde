@@ -13,6 +13,7 @@
 #include <Messages/PartyAcceptInviteRequest.h>
 #include <Messages/PartyLeaveRequest.h>
 #include <Messages/NotifyPartyJoined.h>
+#include <Messages/NotifyReferenceEnable.h>
 #include <Messages/NotifyPartyLeft.h>
 #include <Messages/PartyCreateRequest.h>
 #include <Messages/PartyChangeLeaderRequest.h>
@@ -456,4 +457,24 @@ void PartyService::SendPartyJoinedEvent(Party& aParty, Player* aPlayer) noexcept
     }
     spdlog::debug("[PartyService]: Sending party join event to player");
     aPlayer->Send(joinedMessage);
+
+    // A member who joins gets the references the leader's scripts have switched so far.
+    // Sent in parts, each well under what one message may hold (ReferenceEnableStates::kMax).
+    if (!joinedMessage.IsLeader && !aParty.ReferenceEnabled.empty())
+    {
+        constexpr size_t cPart = 4096;
+        NotifyReferenceEnable states{};
+        for (const auto& [id, enabled] : aParty.ReferenceEnabled)
+        {
+            states.Changes.push_back({id, enabled});
+            if (states.Changes.size() == cPart)
+            {
+                aPlayer->Send(states);
+                states.Changes.clear();
+            }
+        }
+        if (!states.Changes.empty())
+            aPlayer->Send(states);
+        spdlog::info("ReferenceEnable: {} reference(s) the leader switched sent to joining player {}", aParty.ReferenceEnabled.size(), aPlayer->GetId());
+    }
 }

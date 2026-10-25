@@ -555,10 +555,58 @@ TEST_CASE("Packets", "[encoding.packets]")
             REQUIRE(pRecv->Actions[7][1].EventName == "blockStart");
         }
     }
+
+    SECTION("RequestReferenceEnable and NotifyReferenceEnable")
+    {
+        const ReferenceEnableState camp{GameId(0, 0x8680C), true};
+        const ReferenceEnableState barricade{GameId(2, 0x8FA11), false};
+
+        {
+            Buffer buff(1000);
+            RequestReferenceEnable sendMessage;
+            sendMessage.Changes = {camp, barricade};
+
+            Buffer::Writer writer(&buff);
+            sendMessage.Serialize(writer);
+            Buffer::Reader reader(&buff);
+            auto pMessage = ClientMessageFactory{}.Extract(reader);
+            REQUIRE(pMessage);
+            REQUIRE(pMessage->GetOpcode() == sendMessage.GetOpcode());
+            REQUIRE(*CastUnique<RequestReferenceEnable>(std::move(pMessage)) == sendMessage);
+        }
+
+        {
+            Buffer buff(1000);
+            NotifyReferenceEnable sendMessage;
+            sendMessage.Changes = {barricade, camp};
+
+            Buffer::Writer writer(&buff);
+            sendMessage.Serialize(writer);
+            Buffer::Reader reader(&buff);
+            auto pMessage = ServerMessageFactory{}.Extract(reader);
+            REQUIRE(pMessage);
+            const auto pRecv = CastUnique<NotifyReferenceEnable>(std::move(pMessage));
+            REQUIRE(*pRecv == sendMessage);
+            // The order the switches happened in is kept.
+            REQUIRE(pRecv->Changes[0].Id == barricade.Id);
+            REQUIRE(pRecv->Changes[1].Enabled);
+        }
+    }
 }
 
 TEST_CASE("Damaged messages are dropped", "[encoding.damaged]")
 {
+    SECTION("A reference count no message holds")
+    {
+        Buffer buff(1000);
+        Buffer::Writer writer(&buff);
+        writer.WriteBits(kNotifyReferenceEnable, 8);
+        Serialization::WriteVarInt(writer, 1ull << 40);
+
+        Buffer::Reader reader(&buff);
+        REQUIRE(!ServerMessageFactory{}.Extract(reader));
+    }
+
     SECTION("An action count no message holds")
     {
         Buffer buff(1000);

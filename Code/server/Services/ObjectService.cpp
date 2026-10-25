@@ -14,6 +14,9 @@
 #include <Messages/AssignObjectsResponse.h>
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
+#include <Messages/RequestReferenceEnable.h>
+#include <Messages/NotifyReferenceEnable.h>
+#include <Services/PartyService.h>
 #include <Structs/DoorState.h>
 
 namespace
@@ -37,6 +40,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher)
     m_activateConnection = aDispatcher.sink<PacketEvent<ActivateRequest>>().connect<&ObjectService::OnActivate>(this);
     m_lockChangeConnection = aDispatcher.sink<PacketEvent<LockChangeRequest>>().connect<&ObjectService::OnLockChange>(this);
     m_scriptAnimationConnection = aDispatcher.sink<PacketEvent<ScriptAnimationRequest>>().connect<&ObjectService::OnScriptAnimationRequest>(this);
+    m_referenceEnableConnection = aDispatcher.sink<PacketEvent<RequestReferenceEnable>>().connect<&ObjectService::OnReferenceEnableRequest>(this);
 }
 
 // TODO(cosideci): the cell handling of objects need to be revamped.
@@ -224,5 +228,38 @@ void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRe
     for (Player* pPlayer : m_world.GetPlayerManager())
     {
         pPlayer->Send(message);
+    }
+}
+
+void ObjectService::OnReferenceEnableRequest(const PacketEvent<RequestReferenceEnable>& acMessage) noexcept
+{
+    // Only the party leader's game runs the quests whose scripts switch the world's references (a siege's camps and barricades).
+    // Its members run none of them, so they get the result from here; a member's own switches stay its own.
+    auto& partyService = m_world.GetPartyService();
+    PartyService::Party* pParty = partyService.GetPlayerParty(acMessage.pPlayer);
+    if (!pParty || !partyService.IsPlayerLeader(acMessage.pPlayer) || acMessage.Packet.Changes.empty())
+        return;
+
+    // Kept per party, so a member who joins later gets them too (PartyService::SendPartyJoinedEvent).
+    for (const auto& change : acMessage.Packet.Changes)
+        pParty->ReferenceEnabled[change.Id] = change.Enabled;
+
+    NotifyReferenceEnable notify{};
+    notify.Changes = acMessage.Packet.Changes;
+    for (Player* pMember : pParty->Members)
+    {
+        if (pMember != acMessage.pPlayer)
+            pMember->Send(notify);
+    }
+    // At most one line every 10 s, with how many came since the last.
+    static std::chrono::steady_clock::time_point s_nextLog{};
+    static size_t s_since = 0;
+    s_since += acMessage.Packet.Changes.size();
+    if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextLog)
+    {
+        s_nextLog = cNow + std::chrono::seconds(10);
+        spdlog::info("ReferenceEnable: {} reference(s) switched by the leader, player {}, relayed to {} member(s); the party keeps {}", s_since, acMessage.pPlayer->GetId(),
+                     pParty->Members.size() - 1, pParty->ReferenceEnabled.size());
+        s_since = 0;
     }
 }

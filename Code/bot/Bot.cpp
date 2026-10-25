@@ -35,6 +35,8 @@
 #include <Messages/NotifyWorldObjectMove.h>
 #include <Messages/ActivateRequest.h>
 #include <Messages/NotifyActivate.h>
+#include <Messages/RequestReferenceEnable.h>
+#include <Messages/NotifyReferenceEnable.h>
 #include <Messages/RequestWorldObjectMove.h>
 #include <Messages/RequestDroppedItemMove.h>
 #include <Messages/RequestDroppedItemAdd.h>
@@ -1295,6 +1297,17 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         return;
     }
 
+    if (opcode == NotifyReferenceEnable::Opcode)
+    {
+        const auto& message = static_cast<const NotifyReferenceEnable&>(acMessage);
+        for (const auto& change : message.Changes)
+        {
+            m_refEnabled[change.Id.BaseId] = change.Enabled;
+            spdlog::info("Reference {:X}:{:X} switched {} by the party leader, relayed here", change.Id.ModId, change.Id.BaseId, change.Enabled ? "on" : "off");
+        }
+        return;
+    }
+
     if (opcode == NotifyActivate::Opcode)
     {
         const auto& message = static_cast<const NotifyActivate&>(acMessage);
@@ -2395,6 +2408,22 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // "by me" sends it in this bot's own name; the game replays it on this bot's copy, and a game that sends the replay on sends it back here (see activationsback).
     // "by nobody" sends it in the name of an actor no game has, as a door opened by an NPC the receiving game has no copy of.
     // The server relays it to the players in that cell, the game among them.
+    // "refenable <hex> on|off": as party leader, tells the server a script here switched that Skyrim.esm reference.
+    if (name == "refenable")
+    {
+        uint32_t refId = 0;
+        if (args.size() < 2 || !ParseHex(args[0], refId) || (args[1] != "on" && args[1] != "off"))
+        {
+            spdlog::error("[script] refenable needs a hex reference and on or off");
+            return true;
+        }
+        RequestReferenceEnable request{};
+        request.Changes.push_back({GameId(m_skyrimModId, refId), args[1] == "on"});
+        SendMsg(request);
+        spdlog::info("[script] reference {:X} switched {} here, sent to the party", refId, args[1]);
+        return true;
+    }
+
     if (name == "activate")
     {
         uint32_t refId = 0;
@@ -3563,6 +3592,17 @@ std::optional<bool> Bot::Evaluate(const std::vector<std::string>& acArgs, std::s
         // mydrop: the server has sent this bot's own drop back.
         aOutWhy = m_drops.count(m_ownDrop) ? fmt::format("item {} is this bot's drop", m_ownDrop) : fmt::format("{} item(s) known, none of them this bot's", m_drops.size());
         return m_drops.count(m_ownDrop) != 0;
+    }
+
+    if (what == "refenabled")
+    {
+        // refenabled <hex> on|off: the latest switch of that reference the leader's game relayed here.
+        uint32_t refId = 0;
+        if (acArgs.size() < 3 || !ParseHex(acArgs[1], refId) || (acArgs[2] != "on" && acArgs[2] != "off"))
+            return std::nullopt;
+        const auto cFound = m_refEnabled.find(refId & 0x00FFFFFF);
+        aOutWhy = cFound == m_refEnabled.end() ? fmt::format("no switch of {:X} relayed here", refId) : fmt::format("{:X} last relayed {}", refId, cFound->second ? "on" : "off");
+        return cFound != m_refEnabled.end() && cFound->second == (acArgs[2] == "on");
     }
 
     if (what == "activations")

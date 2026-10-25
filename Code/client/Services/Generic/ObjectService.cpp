@@ -17,6 +17,10 @@
 #include <Messages/NotifyLockChange.h>
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
+#include <Messages/RequestReferenceEnable.h>
+#include <Messages/NotifyReferenceEnable.h>
+#include <Events/ReferenceEnableEvent.h>
+#include <Services/PartyService.h>
 #include <Structs/DoorState.h>
 
 #include <PlayerCharacter.h>
@@ -45,6 +49,9 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_assignObjectConnection = aDispatcher.sink<AssignObjectsResponse>().connect<&ObjectService::OnAssignObjectsResponse>(this);
     m_scriptAnimationConnection = aDispatcher.sink<ScriptAnimationEvent>().connect<&ObjectService::OnScriptAnimationEvent>(this);
     m_scriptAnimationNotifyConnection = aDispatcher.sink<NotifyScriptAnimation>().connect<&ObjectService::OnNotifyScriptAnimation>(this);
+    m_referenceEnableConnection = aDispatcher.sink<ReferenceEnableEvent>().connect<&ObjectService::OnReferenceEnableEvent>(this);
+    m_referenceEnableNotifyConnection = aDispatcher.sink<NotifyReferenceEnable>().connect<&ObjectService::OnNotifyReferenceEnable>(this);
+    m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
 
     EventDispatcherManager::Get()->activateEvent.RegisterSink(this);
 }
@@ -117,6 +124,8 @@ bool ShouldSyncObject(const TESObjectREFR* apObject, const Set<const TESObjectRE
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     // TODO(cosideci): clear object components
+    m_enableChanges.clear();
+    m_enableWaiting.clear();
 }
 
 void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
@@ -573,4 +582,136 @@ BSTEventResult ObjectService::OnEvent(const TESActivateEvent* acEvent, const Eve
 #endif
 
     return BSTEventResult::kOk;
+}
+
+namespace
+{
+// The kinds of reference a quest's scripts switch for the whole party: markers and other statics, activators (a siege's
+// catapults), containers, doors, trees, plants and furniture.
+// Actors, items, lights and temporary references are synced their own way, or not at all.
+bool IsSharedSwitchKind(const TESObjectREFR* apRef) noexcept
+{
+    if (!apRef || !apRef->baseForm || apRef->formID >= 0xFF000000)
+        return false;
+    switch (static_cast<uint8_t>(apRef->baseForm->formType))
+    {
+    case 24: // activator
+    case 25: // talking activator
+    case 28: // container
+    case 29: // door
+    case 34: // static, which the markers a quest's references hang from are
+    case 36: // movable static
+    case 38: // tree
+    case 39: // flora
+    case 40: // furniture
+        return true;
+    default: return false;
+    }
+}
+
+// At most one line per kind every 10 s, with how many switches went by since the last one.
+bool LogDue(std::chrono::steady_clock::time_point& aNext) noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < aNext)
+        return false;
+    aNext = cNow + std::chrono::seconds(10);
+    return true;
+}
+} // namespace
+
+void ObjectService::OnReferenceEnableEvent(const ReferenceEnableEvent& acEvent) noexcept
+{
+    // Only the leader's game runs the party's quests (a member cannot start a siege), so only its switches are shared.
+    // A member's own switches, including the ones it applies from the leader, stay its own.
+    if (!m_transport.IsConnected() || !m_world.GetPartyService().IsLeader())
+        return;
+    if (IsSharedSwitchKind(Cast<TESObjectREFR>(TESForm::GetById(acEvent.FormId))))
+        m_enableChanges.emplace_back(acEvent.FormId, acEvent.Enabled);
+}
+
+bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexcept
+{
+    auto* pRef = Cast<TESObjectREFR>(TESForm::GetById(aFormId));
+    if (!pRef)
+        return false;
+    // The leader sends only these kinds; another plugin at the same id here is left alone.
+    if (!IsSharedSwitchKind(pRef) || pRef->IsDeleted())
+        return true;
+    if (aEnabled && pRef->IsDisabled())
+        pRef->EnableImpl();
+    else if (!aEnabled && !pRef->IsDisabled())
+        pRef->Disable();
+    return true;
+}
+
+void ObjectService::OnNotifyReferenceEnable(const NotifyReferenceEnable& acMessage) noexcept
+{
+    size_t applied = 0;
+    for (const auto& change : acMessage.Changes)
+    {
+        const uint32_t cFormId = m_world.GetModSystem().GetGameId(change.Id);
+        if (!cFormId)
+            continue;
+        if (ApplyReferenceEnable(cFormId, change.Enabled))
+        {
+            ++applied;
+            m_enableWaiting.erase(cFormId);
+        }
+        else
+            m_enableWaiting[cFormId] = change.Enabled;
+    }
+
+    static std::chrono::steady_clock::time_point s_nextLog{};
+    static size_t s_since = 0;
+    s_since += acMessage.Changes.size();
+    if (LogDue(s_nextLog))
+    {
+        spdlog::info("ReferenceEnable: {} reference(s) the leader's scripts switched (first {:X}:{:X} {}), {} applied here now, {} waiting for their cell", s_since,
+                     acMessage.Changes.empty() ? 0 : acMessage.Changes[0].Id.ModId, acMessage.Changes.empty() ? 0 : acMessage.Changes[0].Id.BaseId,
+                     !acMessage.Changes.empty() && acMessage.Changes[0].Enabled ? "on" : "off", applied, m_enableWaiting.size());
+        s_since = 0;
+    }
+}
+
+void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
+{
+    if (!m_enableChanges.empty())
+    {
+        RequestReferenceEnable request{};
+        for (const auto& [formId, enabled] : m_enableChanges)
+        {
+            ReferenceEnableState state{};
+            if (m_world.GetModSystem().GetServerModId(formId, state.Id.ModId, state.Id.BaseId))
+            {
+                state.Enabled = enabled;
+                request.Changes.push_back(state);
+            }
+        }
+        m_enableChanges.clear();
+
+        if (!request.Changes.empty())
+        {
+            static std::chrono::steady_clock::time_point s_nextLog{};
+            static size_t s_since = 0;
+            s_since += request.Changes.size();
+            if (LogDue(s_nextLog))
+            {
+                spdlog::info("ReferenceEnable: {} reference(s) switched by this game's scripts sent to the party (first {:X}:{:X} {})", s_since, request.Changes[0].Id.ModId,
+                             request.Changes[0].Id.BaseId, request.Changes[0].Enabled ? "on" : "off");
+                s_since = 0;
+            }
+            m_transport.Send(request);
+        }
+    }
+
+    // References whose cell was not loaded when the leader's switch came are tried again every 2 s.
+    if (m_enableWaiting.empty())
+        return;
+    m_enableRetry -= acEvent.Delta;
+    if (m_enableRetry > 0.0)
+        return;
+    m_enableRetry = 2.0;
+    for (auto it = m_enableWaiting.begin(); it != m_enableWaiting.end();)
+        it = ApplyReferenceEnable(it->first, it->second) ? m_enableWaiting.erase(it) : std::next(it);
 }

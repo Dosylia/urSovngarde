@@ -536,6 +536,45 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         Done in build 210e55b (client, FUS): `Menu closing: <name>` for each menu asked to close (WS* HUD widgets left out).
         Rig: `live-menu-hold` RED on 29aee76d (no such line), ok on 210e55b; one line per real close. Not seen in play yet.
 
+- [ ] **Play session 2026-10-25 morning** (both on c4caf8a with the party-sleep merge; player 1 on CSX csx3.18-VR and
+      Engine Fixes 7.7.1 for the first time; Whiterun during the battle, then sleeping).
+      - Player 1's crash at 09:53:52, 15 s after arriving in Whiterun through Dragonsreach's door 16707: an access
+        violation in the game's Havok world step (`SkyrimVR.exe+0x1e05db`, bhkWorldM and ahkpWorld in registers, a
+        garbage pointer made of float data). No mod's code on the stack. Last night's freeze came right after the same
+        door into the same battle, with the old shaders, so the shader switch is not the common part. 33 ms before,
+        player 1's game had taken a spawn request for Ralof (sent back under a new server id 10 s after it was handed
+        away) and moved its unloaded reference into the cell (`MoveTo` in `OnCharacterSpawn`). Not proven to be linked.
+      - Player 1's stutters after the restart match the Sleep/Wait menu: 16 and 15 frames over 50 ms (p99 104 and
+        122 ms) in the two 30 s windows with the menu open, 0 (p99 34 ms) in the one between. The menu no longer pauses
+        while connected (party sleep), so the world runs the slept hours in a few seconds. Our update stayed at 0.6 ms
+        on average (6 ms at most) in those windows; the slow frames are the game's, as every NPC replans each hour.
+        Candidate change, not made: let the sleeper's menu pause as in the game (its world waits; our network keeps
+        running in a paused menu) while the confirmation still waits for the server's grant. The rig can confirm a
+        sleep (DevBench opens the menu, E confirms), but only for the menu's default hour: the arrow keys do not move
+        its hour slider in VR, so a long sleep in a busy town, and the stutter, cannot be reproduced there yet.
+      - The Civil War out of sync for player 2 (no camp, catapults or barricades; a bounty for fighting the guards;
+        every NPC fighting after player 1's crash): CWAttackCity (4F8BF) never ran in player 2's game. Every stage from
+        the leader arrived as `Remote quest updated: 4F8BF, stage: N; running here no` (35, 40, 50, 9000), and a stage
+        set on a quest that does not run does nothing. Both battle quests start only from a story event that carries
+        the city and the field commander (CWAttackCityStart 4F8C0, CWSiegeStart 7E32C); a plain start cannot fill their
+        City alias. Running them on the member would also run its 24 reinforcement spawns there, so they stay leader-only.
+        Fixed in f6e9063 (client and server, FUS and MGO; a PROTOCOL CHANGE, both players update): the party leader's game
+        relays the references its scripts switch on or off (TESObjectREFR::Enable, SE 19373, and Disable, vtable slot
+        0x8A on VR; statics and markers, activators, containers, doors, trees, flora, furniture; never actors, items,
+        lights or temporary references). The server keeps the latest state per party and sends it to a player who joins;
+        a member's game applies it, and retries references whose cell is not loaded yet every 2 s. Log lines:
+        `ReferenceEnable: N reference(s) switched by this game's scripts sent to the party` (leader),
+        `ReferenceEnable: N reference(s) the leader's scripts switched ..., M applied here now, K waiting for their cell`
+        (member). Rig: `live-ref-enable-leader` (a script call switches the Stormcloak camp marker 8680C; the bot gets
+        both switches) and `live-ref-enable-member` (the game drops its connection with F6 so the bot leads; the bot's
+        switch reaches the game) RED on 98527fd (the client's sending and applying switched off), ok on f6e9063.
+        Regressions `live-door-state` 17/17, `live-copy-removed` 4/4, TPTests 94/94. Not yet seen in play: a siege's
+        camps, barricades and catapults for player 2. The hostile faction (CWSoldierPlayerEnemyFaction 74A4F) reaches
+        NPCs the leader's game owns through the faction sync; NPCs player 2's game owns never get it (the bounty).
+      - CSX logs `Force clearing cache due to bDepthBufferCulling` at every load: on VR, with the game's depth-buffer
+        culling on, it empties the shaders in memory, which then load again from its disk cache in the background.
+        MGO runs the same values; not a stutter cause.
+
 - [ ] **Play session 2026-10-24 evening** (both on fa5e36c; player 1 leader and server; Windhelm, then the Battle for Whiterun).
       Build c4caf8a (client and server, FUS and MGO) carries the fixes below and the merged party-sleep PR, which changes
       the protocol: both players update before playing together.
@@ -608,8 +647,7 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 - [ ] **Playback session B: unreliable movement, actions on their own** (started 2026-10-24; a PROTOCOL CHANGE, to land
       with the door and quest ones). Session A (build 3d63d8e, in play since 2026-10-17 evening) shows the other player
       about 75 ms behind instead of 225, but movement and the VR pose still go reliably: one lost packet holds back
-      every later update. Upstream is never fetched again; its logic (23901108, 0a6784b8, a4a33744 in the toolbox's
-      mirror) is rewritten here. Work is split across sessions on the toolbox board.
+      every later update. Upstream is never fetched again; its logic (23901108, 0a6784b8, a4a33744) is rewritten here.
       - Encoding: `RequestActionEvents` / `NotifyActionEvents` (server id to actions in performed order, reliable);
         round trips in TPTests. Movement messages keep their shape; `ReferenceUpdate::ActionEvents` goes at the end.
       - Server: actions handled on their own (owner check, script cancel, current action, replay cache of the kept
@@ -678,7 +716,7 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       - SteamVR logs in launcher reports: done in the launcher (not committed): the last day's vrclient, vrserver,
         vrmonitor and vrcompositor logs, device ids and serials hidden, consent text updated in four languages.
         Still to do: the website's "What a report holds" needs the same addition once a launcher release carries
-        it (orders for the website session in the toolbox, `coordination/orders-website-privacy.md`).
+        it.
       - NPC left frozen outside when its owner goes indoors: an NPC that goes through a door or into another
         worldspace, out of a player's range, is removed for that player; a move that brings it back into range
         sends it to them again (`Character X moved from cell A to B, out of player Y's range; removed from their
@@ -686,8 +724,8 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         Build a7e1e02. Rig: `live-npc-indoors` (the bot's bear goes into Helgen's keep: gone from the player's
         screen; back out: there again) RED on 03d9deb, 5/5 on a7e1e02; `live-npc-away` 5/5, `live-teleport-far-loaded`
         5/5. Not seen in play.
-      - Silent startup deaths on player 2's PC: steps for Windows' crash dumps (WER LocalDumps) written in the
-        toolbox (`for-players/crash-dumps.md`), to send privately.
+      - Silent startup deaths on player 2's PC: steps for Windows' crash dumps (WER LocalDumps) written, to send
+        privately.
       - Map icons: if zooming in play shows the other player's icon, make the client force the map's regather.
         Waiting on that check in play (the checklist's "Map icons" line).
 
@@ -1105,10 +1143,10 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       blade can never make the PLANCK hit; look, temp-reuse, creatures and game-drops). `live-check.py` now gives
       INVALID (failed `log REQUIRE`, or the bot could not do a line's part), INCONCLUSIVE (SKIPPED is no longer a
       pass), RED / NOT RED (`--expect-fail` on a build without the fix), reads across a log rotation, and keeps every
-      run in the toolbox's `test-history/live.jsonl` with build, frame rate and network. Scripted swings now carry the
+      run in a history file with build, frame rate and network. Scripted swings now carry the
       controller's velocity. `live-world-object` samples the plate's 3D through the whole carry (`ref 92D04 3d steady
-      3`) and requires `0 of N moves rebuilt its 3D`; `live-defender` needs one log line per hit. The rules
-      (toolbox `rules/working.md`): red before the fix, REQUIRE the preconditions, report rig results as rig results.
+      3`) and requires `0 of N moves rebuilt its 3D`; `live-defender` needs one log line per hit. The rules:
+      red before the fix, REQUIRE the preconditions, report rig results as rig results.
       The rig's frame rate follows the desktop monitors (SteamVR's null headset draws into a desktop window): 60 Hz
       normally, 100 since one monitor went up on 2026-10-17 morning. HIGGS takes two physics steps a frame below 70
       fps (the players near 45, the rig at 60) and one above, so the weapon bodies read 85-100 units off at 100 fps and

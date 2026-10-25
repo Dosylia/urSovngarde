@@ -16,6 +16,7 @@
 #include <PlayerCharacter.h>
 #include <Events/ScriptAnimationEvent.h>
 #include <Events/LockChangeEvent.h>
+#include <Events/ReferenceEnableEvent.h>
 
 #include <ExtraData/ExtraDataList.h>
 #include <ExtraData/ExtraCharge.h>
@@ -1298,6 +1299,49 @@ void TP_MAKE_THISCALL(HookLockChange, TESObjectREFR)
     else
         World::Get().GetRunner().Trigger(LockChangeEvent(apThis->formID, false, 0));
 }
+
+#ifdef SKYRIMVR
+TP_THIS_FUNCTION(TReferenceEnable, void, TESObjectREFR, bool aResetInventory);
+TP_THIS_FUNCTION(TReferenceDisable, void, TESObjectREFR);
+static TReferenceEnable* RealReferenceEnable = nullptr;
+static TReferenceDisable* RealReferenceDisable = nullptr;
+
+// TESObjectREFR's Disable, after the slot VR adds for AttachWeapon (SE 0x89).
+constexpr size_t kDisableSlot = 0x8A;
+
+// A switch that changed the disabled flag is reported; ObjectService decides whether the party gets it.
+void ReportEnableChange(const TESObjectREFR* apRef, bool aWasDisabled) noexcept
+{
+    if (apRef && aWasDisabled != apRef->IsDisabled() && apRef->formID < 0xFF000000 && !IsProcessExiting())
+        World::Get().GetRunner().Trigger(ReferenceEnableEvent(apRef->formID, !apRef->IsDisabled()));
+}
+
+void TP_MAKE_THISCALL(HookReferenceEnable, TESObjectREFR, bool aResetInventory)
+{
+    const bool cWasDisabled = apThis->IsDisabled();
+    TiltedPhoques::ThisCall(RealReferenceEnable, apThis, aResetInventory);
+    ReportEnableChange(apThis, cWasDisabled);
+}
+
+void TP_MAKE_THISCALL(HookReferenceDisable, TESObjectREFR)
+{
+    const bool cWasDisabled = apThis->IsDisabled();
+    TiltedPhoques::ThisCall(RealReferenceDisable, apThis);
+    ReportEnableChange(apThis, cWasDisabled);
+}
+
+static TiltedPhoques::Initializer s_referenceEnableHooks(
+    []()
+    {
+        POINTER_SKYRIMSE(TReferenceEnable, s_referenceEnable, 19800, 19373);
+        VersionDbPtr<void*> refrVtable(235511);
+        RealReferenceEnable = s_referenceEnable.Get();
+        if (auto* pVtable = reinterpret_cast<void* const*>(refrVtable.Get()))
+            RealReferenceDisable = static_cast<TReferenceDisable*>(pVtable[kDisableSlot]);
+        TP_HOOK(&RealReferenceEnable, HookReferenceEnable);
+        TP_HOOK(&RealReferenceDisable, HookReferenceDisable);
+    });
+#endif
 
 static TiltedPhoques::Initializer s_objectReferencesHooks(
     []()

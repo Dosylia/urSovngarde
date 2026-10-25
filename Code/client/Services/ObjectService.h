@@ -15,6 +15,9 @@ struct CellChangeEvent;
 struct ScriptAnimationEvent;
 struct AssignObjectsResponse;
 struct NotifyScriptAnimation;
+struct ReferenceEnableEvent;
+struct NotifyReferenceEnable;
+struct UpdateEvent;
 
 /**
  * @brief Handles objects in the environment.
@@ -34,6 +37,10 @@ private:
     void OnLockChangeNotify(const NotifyLockChange&) noexcept;
     void OnScriptAnimationEvent(const ScriptAnimationEvent&) noexcept;
     void OnNotifyScriptAnimation(const NotifyScriptAnimation&) noexcept;
+    void OnReferenceEnableEvent(const ReferenceEnableEvent&) noexcept;
+    void OnNotifyReferenceEnable(const NotifyReferenceEnable&) noexcept;
+    void OnUpdate(const UpdateEvent&) noexcept;
+    bool ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexcept;
 
     BSTEventResult OnEvent(const TESActivateEvent*, const EventDispatcher<TESActivateEvent>*) override;
 
@@ -51,4 +58,13 @@ private:
     entt::scoped_connection m_assignObjectConnection;
     entt::scoped_connection m_scriptAnimationConnection;
     entt::scoped_connection m_scriptAnimationNotifyConnection;
+    entt::scoped_connection m_referenceEnableConnection;
+    entt::scoped_connection m_referenceEnableNotifyConnection;
+    entt::scoped_connection m_updateConnection;
+
+    // References this game's scripts switched while it leads the party, sent at the next update: form id and enabled, in order.
+    Vector<std::pair<uint32_t, bool>> m_enableChanges;
+    // The leader's switches for references not in this game yet (their cell not loaded), tried again every 2 s.
+    Map<uint32_t, bool> m_enableWaiting;
+    double m_enableRetry = 0.0;
 };

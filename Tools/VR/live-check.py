@@ -52,7 +52,7 @@ Checks:
                                                                           walk, on the spot or not)
 
 A line `log DO console <command>` runs that console command in the game at that point of the script, and
-`log DO key <name> <ms>` holds a key down in the game for that long (DevBench's keyboard input; `w` walks the player
+`log DO f6` presses F6, which connects or disconnects the game. `log DO key <name> <ms>` holds a key down in the game for that long (DevBench's keyboard input; `w` walks the player
 forward even in VR), `log DO look <degrees> <ms> [hold <ms>] [back]` turns the virtual headset that far over that time
 while both hands rest still at the sides (positive turns left; `back` returns it), and `log DO load last` loads the most recent save (while connected, which is the point of asking); `log DO load save <name>` loads that save. `log DO combat on` and
 `log DO combat off` switch combat AI (off is the run's default, so a creature a test spawns just stands there; on makes
@@ -81,7 +81,7 @@ units of it in the same worldspace or interior, `spot away <units>` when farther
 `log DO logmark` makes `logged`, `absent`, `atleast`, `fewer` and `distinct` count only the client lines written after it: a run's first lines can still describe the script before.
 `log CHECK ids reused <name>` passes when the game gave an actor of that name a form id under which this client had
 deleted a copy earlier in the session (what live-temp-reuse needs to have happened to mean anything).
-`log CHECK ref <hex> 3d` asks whether a reference's 3D is loaded; `ref <hex> 3d steady <seconds>` samples it the whole
+`log CHECK ref <hex> enabled|disabled` asks whether a reference is switched on or off. `log CHECK ref <hex> 3d` asks whether a reference's 3D is loaded; `ref <hex> 3d steady <seconds>` samples it the whole
 time (the driver waits; the bot's script goes on) and fails if any sample found it unloaded: an object that blinks.
 `log DO mark <name> player|copy|npc|ref <hex>|held left|right` notes where that thing is now.
 An actor is measured by its pelvis, where its body is drawn: a corpse's reference stays where it fell while its ragdoll is dragged.
@@ -709,6 +709,11 @@ class Run:
                 state = papyrus('ObjectReference', 'GetOpenState', words[1])
                 ok = state in ((1, 2) if words[2] == 'open' else (3, 4))
                 detail = 'door %s, GetOpenState %s (1 open, 2 opening, 3 closed, 4 closing)' % (words[1], state)
+            elif who == 'ref' and words[2] in ('enabled', 'disabled'):
+                # "ref <hex> enabled|disabled": a reference of the game's own is switched on, or off (IsDisabled).
+                disabled = papyrus('ObjectReference', 'IsDisabled', words[1])
+                ok = isinstance(disabled, bool) and disabled is (words[2] == 'disabled')
+                detail = 'reference %s, IsDisabled %s' % (words[1], disabled)
             elif who == 'ref' and words[2] in ('locked', 'unlocked'):
                 # "ref <hex> locked|unlocked": a door or container of the game's own is locked, or not.
                 locked = papyrus('ObjectReference', 'IsLocked', words[1])
@@ -1178,7 +1183,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO look .*|DO swing .*|DO load last|DO load save .*|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO logmark|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch (?:npc|copy) \d+|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO f6|DO look .*|DO swing .*|DO load last|DO load save .*|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO logmark|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch (?:npc|copy) \d+|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -1321,6 +1326,14 @@ class Run:
                     except Exception as e:
                         print('   FAIL  look: %s' % type(e).__name__, flush=True)
                         self.results.append((False, text.strip(), type(e).__name__))
+                elif text.strip() == 'DO f6':
+                    # "DO f6": presses F6, which connects or disconnects the game.
+                    # The client reads it with GetAsyncKeyState, which DevBench's keys do not reach, so it is pressed at the Windows level, as headless.ps1 does.
+                    import ctypes
+                    ctypes.windll.user32.keybd_event(0x75, 0, 0, 0)
+                    time.sleep(0.3)
+                    ctypes.windll.user32.keybd_event(0x75, 0, 2, 0)
+                    print('   (F6 pressed)', flush=True)
                 elif text.startswith('DO key '):
                     parts = text.split()
                     try:
