@@ -9,6 +9,7 @@
 #include <AI/Movement/PlayerControls.h>
 #include <PlayerCharacter.h>
 #include <Services/CalendarService.h>
+#include <PatchCheck.h>
 
 namespace
 {
@@ -19,7 +20,6 @@ constexpr uint8_t kMainThreadJump[]{0x0F, 0x85, 0xD4, 0x02, 0x00, 0x00};
 constexpr uintptr_t kOkCallback = 0x8EACA0;
 constexpr uintptr_t kSleepWaitStep = 0x6C2C00;
 constexpr uintptr_t kPlayerSleepWaitCalls[]{0x6BF425, 0x6BFDF5};
-constexpr uintptr_t kPlayerControlsCanProcess = 0x72DB00;
 constexpr uintptr_t kMeleeSwingMenuCheck = 0x6B93D9;
 constexpr uintptr_t kMainUpdate = 0x5BAB10;
 
@@ -49,11 +49,9 @@ void SetMainThreadCheckSkipped(bool aSkipped) noexcept
 
 using TOk = void(void*);
 using TSleepStep = void(void*);
-using TCanProcess = bool(void*);
 using TMenuOpen = bool(const UI*, const BSFixedString&);
 TOk* RealOk;
 TSleepStep* RealSleepStep;
-TCanProcess* RealCanProcess;
 TMenuOpen* RealMeleeMenuCheck;
 TP_THIS_FUNCTION(TProcessMessage, uint32_t, IMenu, UIMessage&);
 TProcessMessage* RealProcessMessage;
@@ -65,10 +63,11 @@ IMenu* GetOpenSleepMenu()
     return pUI && pUI->GetMenuOpen(s_name) ? pUI->FindMenuByName(s_name) : nullptr;
 }
 
+// Per input event, swing check and player update: the opening's recorded state (UI.cpp), not the menu object.
 bool IsUnpausedSleepOpen()
 {
-    const IMenu* pMenu = GetOpenSleepMenu();
-    return pMenu && !pMenu->PausesGame();
+    static const BSFixedString s_name("Sleep/Wait Menu");
+    return IsMenuOpenUnpaused(s_name);
 }
 
 uint32_t HookProcessMessage(IMenu* apMenu, UIMessage& aMessage)
@@ -106,11 +105,6 @@ void HookSleepStep(void* apPlayer)
         RealSleepStep(apPlayer);
 }
 
-bool HookCanProcess(void* apControls)
-{
-    return !CalendarService::AreSleepControlsLocked() && !IsUnpausedSleepOpen() && RealCanProcess(apControls);
-}
-
 bool HookMeleeMenuCheck(const UI* apUI, const BSFixedString& acName)
 {
     return CalendarService::AreSleepControlsLocked() || RealMeleeMenuCheck(apUI, acName) || IsUnpausedSleepOpen();
@@ -120,6 +114,11 @@ bool HookMeleeMenuCheck(const UI* apUI, const BSFixedString& acName)
 bool SleepWaitCanRunUnpaused() noexcept
 {
     return s_hooksReady && s_checkSkipped;
+}
+
+bool SleepWaitBlocksControls() noexcept
+{
+    return s_hooksReady && (CalendarService::AreSleepControlsLocked() || IsUnpausedSleepOpen());
 }
 
 uint64_t SleepWaitMenuGeneration()
@@ -215,15 +214,18 @@ static TiltedPhoques::Initializer s_sleepWaitHooks(
                 return;
             }
         }
-        if (*reinterpret_cast<const uint8_t*>(cExe + kMeleeSwingMenuCheck) != 0xE8)
+        // An E8 to another plugin's code is taken too (UI.cpp swaps the same call): swapped again, ours calls theirs.
+        const auto* pMeleeCheck = reinterpret_cast<const uint8_t*>(cExe + kMeleeSwingMenuCheck);
+        if (!PatchCheck::IsCall(pMeleeCheck))
+        {
+            spdlog::error("Sleep/Wait: {} is not the melee swing's menu check call ({}); leaving the menu paused", fmt::ptr(pMeleeCheck), PatchCheck::Bytes(pMeleeCheck, 5));
             return;
+        }
 
         RealOk = reinterpret_cast<TOk*>(cExe + kOkCallback);
         RealProcessMessage = reinterpret_cast<TProcessMessage*>(cExe + kProcessMessage);
-        RealCanProcess = reinterpret_cast<TCanProcess*>(cExe + kPlayerControlsCanProcess);
         TP_HOOK(&RealOk, HookOk);
         TP_HOOK(&RealProcessMessage, HookProcessMessage);
-        TP_HOOK(&RealCanProcess, HookCanProcess);
         for (const uintptr_t cCall : kPlayerSleepWaitCalls)
             TiltedPhoques::SwapCall(reinterpret_cast<uint8_t*>(cExe + cCall), RealSleepStep, &HookSleepStep);
         TiltedPhoques::SwapCall(reinterpret_cast<uint8_t*>(cExe + kMeleeSwingMenuCheck), RealMeleeMenuCheck, &HookMeleeMenuCheck);

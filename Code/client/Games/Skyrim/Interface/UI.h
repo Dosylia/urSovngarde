@@ -99,3 +99,14 @@ public:
 // intellisense is too dumb but the compiler knows.
 static_assert(sizeof(UI) == 0x1C8);
 static_assert(offsetof(UI, UI::numPausesGame) == 0x160);
+
+#ifdef SKYRIMVR
+// Admission policy for newly opened skills and map menus. Existing menus keep their flags until closed.
+bool UnpausedMenusOnline() noexcept;
+
+// Uses the open menu's flags, so its fixes survive disconnects and server setting changes.
+bool IsMenuOpenUnpaused(const BSFixedString& acName) noexcept;
+
+// Whether one of those menus is currently open without pausing, whatever the current server setting.
+bool IsOptionalMenuOpenUnpaused() noexcept;
+#endif

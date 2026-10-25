@@ -92,6 +92,12 @@ private:
     void RunBeastFormDetection() const noexcept;
     void RunPlaceUpdates() noexcept;
     void RunCrashPlaceNote() noexcept;
+#ifdef SKYRIMVR
+    /**
+     * @brief Take the world map away from a player who is losing health.
+     */
+    void RunMapCloseUpdates() noexcept;
+#endif
 
     void ToggleDeathSystem(bool aSet) noexcept;
 
@@ -149,6 +155,11 @@ private:
     uint32_t m_cachedMainSpellId = 0;
     uint32_t m_cachedSecondarySpellId = 0;
     uint32_t m_cachedPowerId = 0;
+
+#ifdef SKYRIMVR
+    // The health the last update saw. Negative until the first one, so that sample sets the baseline.
+    float m_lastHealth = -1.f;
+#endif
 
     // The last place sent for the public server page, and when to check again.
     String m_lastPlace;

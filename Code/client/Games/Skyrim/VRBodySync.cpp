@@ -3565,6 +3565,19 @@ bool HeadsetPose(glm::vec3& aPosition, glm::vec3& aForward, glm::vec3& aRight) n
     return true;
 }
 
+bool IsRigParked(const PlayerCharacter* apPlayer) noexcept
+{
+    // Measured: 5 units with the map shut, 107116 the frame after it opened. A play space is a room, so 200 is generous.
+    constexpr float cMaxPlaySpace = 200.f;
+
+    const NiTransform* pHmdTransform = HeadsetTransform();
+    if (!apPlayer || !pHmdTransform)
+        return false;
+
+    const glm::vec2 cOffset(pHmdTransform->translate.x - apPlayer->position.x, pHmdTransform->translate.y - apPlayer->position.y);
+    return glm::length(cOffset) > cMaxPlaySpace;
+}
+
 std::string DescribeBody(Actor* apActor) noexcept
 {
     // Every parent and bone is checked with IsReadable, so the answers are cached for this one description.

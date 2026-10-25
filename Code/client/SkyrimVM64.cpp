@@ -2,6 +2,7 @@
 #include "TiltedOnlineApp.h"
 #include <Misc/GameVM.h>
 #include <Interface/Menus/SleepWaitMenu.h>
+#include <Interface/Menus/SkillsMenu.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
 
@@ -28,6 +29,8 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
 #ifdef SKYRIMVR
     UpdateSleepWatchControls();
     RunDeferredSleepWaitAccept();
+    UpdateSkillsMenuChecks();
+    RunDeferredSkillsTreeUpdate();
 #endif
 
     return TiltedPhoques::ThisCall(MainLoop, apThis);

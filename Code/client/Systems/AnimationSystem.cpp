@@ -26,6 +26,7 @@
 #ifdef SKYRIMVR
 #include <PlayerCharacter.h>
 #include <Games/Skyrim/VRBodySync.h>
+#include <Interface/UI.h>
 #include <BSAnimationGraphManager.h>
 #include <Structs/AnimationGraphDescriptorManager.h>
 #include <Structs/AnimationGraphDescriptor.h>
@@ -327,7 +328,17 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
 
         VRPose pose{};
         float heading = apActor->rotation.z;
-        if (!VRBodySync::CaptureLocalPose(pPlayer, pose, heading))
+        // In the skills and map menus (unpaused online) the others see the body's standing animation, not the
+        // hands moving in the menu: no pose is sent. The map also parks the rig at its camera, and it is not home yet
+        // when the menu closes. The heading is held; UI.cpp blocks turning while one of these menus is open.
+        static float s_heldHeading = 0.f;
+        static bool s_hasHeldHeading = false;
+        if (IsOptionalMenuOpenUnpaused() || (UnpausedMenusOnline() && VRBodySync::IsRigParked(pPlayer)))
+        {
+            if (s_hasHeldHeading)
+                movement.Rotation.y = s_heldHeading;
+        }
+        else if (!VRBodySync::CaptureLocalPose(pPlayer, pose, heading))
         {
             // The other player then sees this body in the plain animation pose.
             // Logged so it can be told apart from a problem on the receiving side.
@@ -366,6 +377,8 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
                 direction -= turn / glm::two_pi<float>();
                 direction -= std::floor(direction);
             }
+            s_heldHeading = heading;
+            s_hasHeldHeading = true;
         }
         aUpdate.UpdatedVRPose = pose;
     }

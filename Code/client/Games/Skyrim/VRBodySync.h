@@ -125,6 +125,10 @@ float HeadsetAngleTo(const NiPoint3& acPosition) noexcept;
 //! False when the headset node cannot be read on this build.
 bool HeadsetPose(glm::vec3& aPosition, glm::vec3& aForward, glm::vec3& aRight) noexcept;
 
+//! Whether the game has moved the VR rig away from the player, as the world map does (to its camera, ~107000 units).
+//! Bounded by distance, not by the menu: the rig is not back yet when the map reports itself closed.
+bool IsRigParked(const PlayerCharacter* apPlayer) noexcept;
+
 //! TEMPORARY: one line about an actor's 3D for the invisible-copy diagnosis.
 //! It lists the root, its children, and the skeleton root's world scale and position.
 std::string DescribeBody(Actor* apActor) noexcept;

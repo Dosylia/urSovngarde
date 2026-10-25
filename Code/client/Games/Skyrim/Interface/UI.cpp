@@ -8,6 +8,7 @@
 #include <PatchCheck.h>
 #include <Services/CalendarService.h>
 #include <Interface/Menus/SleepWaitMenu.h>
+#include <Interface/Menus/SkillsMenu.h>
 
 static bool g_RequestUnpauseAll{false};
 
@@ -101,21 +102,151 @@ bool ReadableBytes(const void* apAddress, const size_t aBytes) noexcept
 
 static constexpr const char* kAllowList[] = {
     "TweenMenu",     "MagicMenu",     "InventoryMenu",
-#ifndef SKYRIMVR
-    // On VR the skills and level-up screen is black whenever it runs unpaused, so there it pauses the game like vanilla.
+    // On VR Menus/SkillsMenu.cpp keeps the skill tree from going black while unpaused.
     "StatsMenu",
-#endif
     // UnfreezeMenu gives a message box the flag the VR panel needs, so it can run unpaused and stay visible.
     "MessageBoxMenu",
-    "ContainerMenu", "FavoritesMenu", "Tutorial Menu", "Console"
+    "ContainerMenu", "FavoritesMenu", "Tutorial Menu", "Console",
+#ifdef SKYRIMVR
+    // Unpaused in VR only. Menus/MapMenu.cpp fixes what that breaks: fog, fade and laser pointer.
+    "MapMenu",
+#endif
     //"MapMenu", // MapMenu is disabled till we find a proper fix for first person.
     //"Journal Menu", // Journal menu, aka pause menu, is disabled until we find a fix for manual save crashing while unpaused.
 };
+
+#ifdef SKYRIMVR
+bool UnpausedMenusOnline() noexcept
+{
+    World& world = World::Get();
+    return world.GetTransport().IsConnected() && world.GetServerSettings().UnpausedMenus;
+}
+
+// Whether each menu that can run unpaused was, at its last opening: kAllowList, then the Sleep/Wait menu.
+// Recorded where the menu is queued (UI_AddToActiveQueue_Hook), after the decision, from its flags.
+// The checks below run per input event and per pose send on several threads. Reading the menu object there meant
+// walking menuMap without the UI's lock and reading flags of a menu another thread may be freeing as it closes.
+static constexpr const char* kSleepWaitMenuName = "Sleep/Wait Menu";
+static std::atomic<bool> s_openedUnpaused[std::size(kAllowList) + 1];
+
+static std::atomic<bool>* OpenedUnpausedFlag(const char* acpName) noexcept
+{
+    if (!acpName)
+        return nullptr;
+    for (size_t i = 0; i < std::size(kAllowList); ++i)
+        if (std::strcmp(acpName, kAllowList[i]) == 0)
+            return &s_openedUnpaused[i];
+    if (std::strcmp(acpName, kSleepWaitMenuName) == 0)
+        return &s_openedUnpaused[std::size(kAllowList)];
+    return nullptr;
+}
+
+bool IsMenuOpenUnpaused(const BSFixedString& acName) noexcept
+{
+    const std::atomic<bool>* pFlag = OpenedUnpausedFlag(acName.AsAscii());
+    if (!pFlag || !pFlag->load())
+        return false;
+    // The game's own IsMenuOpen, which takes the UI's lock. A flag left from an earlier opening counts only while open.
+    UI* pUI = UI::Get();
+    return pUI && pUI->GetMenuOpen(acName);
+}
+
+// The menus Gameplay:bUnpausedMenus decides about; the rest of kAllowList is unpaused either way.
+static constexpr const char* kOptionalUnpausedMenus[] = {"StatsMenu", "MapMenu"};
+
+static bool IsOptionalUnpausedMenu(const char* acpName)
+{
+    for (const char* pName : kOptionalUnpausedMenus)
+        if (std::strcmp(acpName, pName) == 0)
+            return true;
+    return false;
+}
+
+bool IsOptionalMenuOpenUnpaused() noexcept
+{
+    // Built on first use: the game's string table does not exist yet when static initializers run.
+    static const auto* s_names = []()
+    {
+        auto* pNames = new std::vector<BSFixedString>();
+        for (const char* pName : kOptionalUnpausedMenus)
+            pNames->emplace_back(pName);
+        return pNames;
+    }();
+
+    for (const auto& name : *s_names)
+        if (IsMenuOpenUnpaused(name))
+            return true;
+    return false;
+}
+
+// Built on first use: the game's string table does not exist yet when static initializers run.
+static bool IsAllowListMenuOpenUnpaused()
+{
+    static const auto* s_names = []()
+    {
+        auto* pNames = new std::vector<BSFixedString>();
+        for (const char* pName : kAllowList)
+            pNames->emplace_back(pName);
+        return pNames;
+    }();
+
+    // The flag first: the game's IsMenuOpen is asked only for a menu that was opened unpaused.
+    for (size_t i = 0; i < s_names->size(); ++i)
+    {
+        if (s_openedUnpaused[i].load() && IsMenuOpenUnpaused((*s_names)[i]))
+            return true;
+    }
+    return false;
+}
+
+// VR melee is physics driven: a hit lands when a swing is detected (player update). Paused, nothing moved; the menus
+// unpaused above leave it running, so swinging a drawn weapon in them hits. The swing detector already cancels the
+// swing while either of two menus is open (UI::IsMenuOpen at 0x1406B93BB and 0x1406B93D9); the second also reports these.
+constexpr uintptr_t kMeleeSwingMenuCheck = 0x6B93D9;
+
+using TIsMenuOpen = bool(const UI*, const BSFixedString&);
+static TIsMenuOpen* RealMeleeSwingMenuCheck;
+
+static bool HookMeleeSwingMenuCheck(const UI* apUI, const BSFixedString& acName)
+{
+    return RealMeleeSwingMenuCheck(apUI, acName) || IsAllowListMenuOpenUnpaused();
+}
+
+// PlayerControls' can-process check (0x14072DB00) fails while the game is paused, which is how a paused menu stops
+// gameplay input. The menus unpaused above still let some through (jump and sneak in all; walking and turning in
+// MapMenu). Fail it while one is open. Menu navigation is MenuControls, and the map's pan, zoom and rotate keep working.
+constexpr uintptr_t kPlayerControlsCanProcess = 0x72DB00;
+
+TP_THIS_FUNCTION(TPlayerControlsCanProcess, bool, void);
+static TPlayerControlsCanProcess* RealPlayerControlsCanProcess;
+
+// The one hook on it: MinHook takes a single hook per address, and a second one is silently not installed.
+// So the party sleep's control lock (Menus/SleepWaitMenu.cpp) is asked here too.
+static bool HookPlayerControlsCanProcess(void* apControls)
+{
+    if (IsAllowListMenuOpenUnpaused() || SleepWaitBlocksControls())
+        return false;
+
+    return TiltedPhoques::ThisCall(RealPlayerControlsCanProcess, apControls);
+}
+#endif
 
 static void* (*UI_AddToActiveQueue)(UI*, IMenu*, void*);
 
 // Counted where the game queues it, on whichever thread does; read by UI::LoadingScreensQueued.
 static std::atomic<uint32_t> s_loadingScreensQueued{0};
+
+// Before the game queues it, so the flag is current from the moment the menu counts as open.
+static void RecordMenuOpening(UI* apSelf, IMenu* apMenu) noexcept
+{
+#ifdef SKYRIMVR
+    if (!apMenu)
+        return;
+    const BSFixedString* pName = apSelf->LookupMenuNameByInstance(apMenu);
+    if (std::atomic<bool>* pFlag = OpenedUnpausedFlag(pName ? pName->AsAscii() : nullptr))
+        pFlag->store(!apMenu->PausesGame());
+#endif
+}
 
 static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundItem /*In reality a reference*/)
 {
@@ -124,6 +255,7 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
     if (apMenu)
     {
         const BSFixedString* pQueuedName = apSelf->LookupMenuNameByInstance(apMenu);
+        // Never one of the menus RecordMenuOpening tracks, and queued every frame: left out there too.
         if (pQueuedName && pQueuedName->AsAscii() && strncmp(pQueuedName->AsAscii(), "WS", 2) == 0)
             return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
         const BSFixedString* pName = apSelf->LookupMenuNameByInstance(apMenu);
@@ -144,14 +276,18 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
 
     // if the menu is empty we let the real function handle it.
     if (!apMenu || !World::Get().GetTransport().IsConnected() || stubs::g_IsSoulsREActive)
+    {
+        RecordMenuOpening(apSelf, apMenu);
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
+    }
 
 #ifdef SKYRIMVR
-    static const BSFixedString s_sleepWaitMenu("Sleep/Wait Menu");
+    static const BSFixedString s_sleepWaitMenu(kSleepWaitMenuName);
     // Only where the server lets a sleep pass time: elsewhere the menu pauses as in the game, and the sleep hooks stay idle.
     if (SleepWaitCanRunUnpaused() && apSelf->FindMenuByName(s_sleepWaitMenu) == apMenu)
     {
         UnfreezeMenu(apMenu);
+        RecordMenuOpening(apSelf, apMenu);
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
     }
 #endif
@@ -171,6 +307,13 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
     // NOTE(Force): could also compare by RTTI later on...
     for (const char* item : kAllowList)
     {
+#ifdef SKYRIMVR
+        if (IsOptionalUnpausedMenu(item) && !UnpausedMenusOnline())
+            continue;
+        // Unpaused only once its checks are skipped (Menus/SkillsMenu.cpp); until then it pauses as in the game.
+        if (std::strcmp(item, "StatsMenu") == 0 && !SkillsMenuCanRunUnpaused())
+            continue;
+#endif
         if (auto* pMenu = apSelf->FindMenuByName(item))
         {
             if (pMenu == apMenu)
@@ -187,6 +330,7 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
         }
     }
 
+    RecordMenuOpening(apSelf, apMenu);
     return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
 }
 
@@ -349,6 +493,21 @@ static TiltedPhoques::Initializer s_s(
         else
             spdlog::error("UI: {} is not the favorites menu's branch ({}), leaving it alone; favorites cannot be numbered while connected",
                           fmt::ptr(pFavorites), PatchCheck::Bytes(pFavorites, 2));
+
+#ifdef SKYRIMVR
+        {
+            const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            // An E8 to another plugin's code is taken too: swapped again, ours calls theirs.
+            auto* pMeleeCheck = reinterpret_cast<uint8_t*>(exe + kMeleeSwingMenuCheck);
+            if (PatchCheck::IsCall(pMeleeCheck))
+                TiltedPhoques::SwapCall(pMeleeCheck, RealMeleeSwingMenuCheck, &HookMeleeSwingMenuCheck);
+            else
+                spdlog::error("UI: {} is not the melee swing's menu check call ({}), leaving it alone; swings are not cancelled in unpaused menus",
+                              fmt::ptr(pMeleeCheck), PatchCheck::Bytes(pMeleeCheck, 5));
+            RealPlayerControlsCanProcess = reinterpret_cast<TPlayerControlsCanProcess*>(exe + kPlayerControlsCanProcess);
+            TP_HOOK(&RealPlayerControlsCanProcess, HookPlayerControlsCanProcess);
+        }
+#endif
 
         // Some experiments:
 #ifdef SKYRIMVR
