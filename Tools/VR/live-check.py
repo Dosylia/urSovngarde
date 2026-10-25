@@ -561,6 +561,9 @@ class Run:
         self.marks = {}
         # "CHECK bounty <faction> mark": faction -> the player's bounty with it then.
         self.bounty_marks = {}
+        # "CHECK health <actor> mark": actor -> its health then; "CHECK health <actor> lost <name>": name -> what it lost since.
+        self.health_marks = {}
+        self.losses = {}
 
     def subject(self, who):
         sid = self.bot_id if who == 'copy' else self.npc_id
@@ -770,6 +773,27 @@ class Run:
                     before = self.bounty_marks.get(words[1])
                     ok = isinstance(gold, (int, float)) and isinstance(before, (int, float)) and gold > before
                     detail = 'bounty with %s went from %s to %s' % (words[1], before, gold)
+            elif who == 'health' and words[2] in ('mark', 'lost'):
+                # "health <hex|placed> mark", then "health <hex|placed> lost <name>": the health that actor lost since the
+                # mark, kept as <name> for "lost <a> over <b>".
+                form = getattr(self, 'placed', None) if what == 'placed' else what
+                health = papyrus('Actor', 'GetActorValue', form, ['Health']) if form else 'ERR nothing placed'
+                if words[2] == 'mark':
+                    self.health_marks[what] = health
+                    ok = isinstance(health, (int, float))
+                    detail = '%s at %s health' % (what, health)
+                else:
+                    before = self.health_marks.get(what)
+                    known = isinstance(health, (int, float)) and isinstance(before, (int, float))
+                    self.losses[words[3]] = before - health if known else None
+                    ok = known and health < before
+                    detail = '%s went from %s to %s health' % (what, before, health)
+            elif who == 'lost':
+                # "lost <a> over <b> <low> <high>": the health lost as <a>, divided by that lost as <b>, is between low and high.
+                a, b = self.losses.get(words[1]), self.losses.get(words[3])
+                ratio = a / b if a and b else None
+                ok = ratio is not None and float(words[4]) <= ratio <= float(words[5])
+                detail = '%s lost %s, %s lost %s: %s' % (words[1], a, words[3], b, '%.3f' % ratio if ratio is not None else '?')
             elif who == 'gamehour':
                 # "gamehour away <hours>": the game clock (global 38) is not at that hour any more.
                 hour = papyrus('GlobalVariable', 'GetValue', '38')

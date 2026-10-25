@@ -6,6 +6,9 @@
 namespace GameplayFormulas
 {
 float CalculateRealDamage(Actor* apHittee, float aDamage, bool aKillMove) noexcept;
+// How much longer an enemy lasts and how much harder it hits against this many of the party's players nearby, this one included.
+float PartyEnemyHealth(uint32_t aPlayersNearby) noexcept;
+float PartyEnemyDamage(uint32_t aPlayersNearby) noexcept;
 }
 
 namespace Settings

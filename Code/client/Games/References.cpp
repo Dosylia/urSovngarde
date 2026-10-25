@@ -69,6 +69,20 @@ float CalculateRealDamage(Actor* apHittee, float aDamage, bool aKillMove) noexce
     return realDamage;
 }
 
+// Skyrim's fights are made for one player: the first entry is a player alone, and a party of more than four counts as four.
+constexpr float cPartyEnemyHealth[] = {1.f, 1.5f, 1.9f, 2.25f};
+constexpr float cPartyEnemyDamage[] = {1.f, 1.2f, 1.35f, 1.5f};
+
+float PartyEnemyHealth(const uint32_t aPlayersNearby) noexcept
+{
+    return cPartyEnemyHealth[std::clamp(aPlayersNearby, 1u, 4u) - 1];
+}
+
+float PartyEnemyDamage(const uint32_t aPlayersNearby) noexcept
+{
+    return cPartyEnemyDamage[std::clamp(aPlayersNearby, 1u, 4u) - 1];
+}
+
 } // namespace GameplayFormulas
 
 void FadeOutGame(bool aFadingOut, bool aBlackFade, float aFadeDuration, bool aRemainVisible, float aSecondsToFade) noexcept

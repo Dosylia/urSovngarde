@@ -24,6 +24,15 @@
 
 #include <Forms/TESGlobal.h>
 
+#include <World.h>
+#include <Components.h>
+#include <Actor.h>
+#include <PlayerCharacter.h>
+#include <Games/References.h>
+
+// A party member counts for the balance while their character is in this game within 3500 units (50 m).
+constexpr float cNearbyUnits = 3500.f;
+
 PartyService::PartyService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransportService) noexcept
     : m_world(aWorld)
     , m_transport(aTransportService)
@@ -100,6 +109,38 @@ void PartyService::OnUpdate(const UpdateEvent& acEvent) noexcept
         else
             ++itor;
     }
+
+    CountPlayersNearby();
+}
+
+void PartyService::CountPlayersNearby() noexcept
+{
+    uint32_t players = 1;
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (m_inParty && pPlayer)
+    {
+        auto view = m_world.view<FormIdComponent, PlayerComponent>();
+        for (const auto cEntity : view)
+        {
+            if (std::find(m_partyMembers.begin(), m_partyMembers.end(), view.get<PlayerComponent>(cEntity).Id) == m_partyMembers.end())
+                continue;
+            Actor* pCopy = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id));
+            if (pCopy && pCopy != pPlayer && pCopy->GetNiNode() && glm::distance(glm::vec3(pCopy->position), glm::vec3(pPlayer->position)) <= cNearbyUnits)
+                ++players;
+        }
+    }
+    SetPlayersNearby(players);
+}
+
+void PartyService::SetPlayersNearby(const uint32_t aPlayers) noexcept
+{
+    if (aPlayers == m_playersNearby)
+        return;
+
+    m_playersNearby = aPlayers;
+    const float cHealth = GameplayFormulas::PartyEnemyHealth(aPlayers);
+    spdlog::info("Balance: now {} of the party within 50 m, this one included; enemies take {:.0f}% of this player's damage (as with {:.0f}% health) and deal {:.0f}% to this player",
+                 aPlayers, 100.f / cHealth, 100.f * cHealth, 100.f * GameplayFormulas::PartyEnemyDamage(aPlayers));
 }
 
 void PartyService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
@@ -187,4 +228,5 @@ void PartyService::DestroyParty() noexcept
     m_isLeader = false;
     m_leaderPlayerId = -1;
     m_partyMembers.clear();
+    SetPlayersNearby(1);
 }

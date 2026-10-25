@@ -48,6 +48,17 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       revived player's copy stands up on the reviver's screen; read there `ReplayDiag: 'bleedOutStop' refused as an
       action on X; sent to its graph instead (not taken; IdleForceDefaultState taken)` and `Revive: player N '...' 5 s
       after the revive, copy X here: ... head H ...` (H about 105 standing, under 30 lying).
+- [!] **Party balance: enemies scale with the party's players nearby** (2026-10-25; client only, no protocol change;
+      deployed to the FUS folder on player 2's PC). Counting this player and every party member within 50 m (3500
+      units), enemies take 1/1.5, 1/1.9, 1/2.25 of this player's damage (as with 150%, 190%, 225% health) and deal
+      120%, 135%, 150% to this player; more than four players count as four (`GameplayFormulas::PartyEnemyHealth`,
+      `PartyEnemyDamage`, applied in `HookDamageActor`; counted once a second in `PartyService`). No actor value
+      changes, so nothing of it reaches a save; hits between players and between NPCs, followers included, stay as they
+      are. Each game scales only its own player's hits and the hits on its own player, so until every player has the
+      build, only theirs are scaled. Rig: `live-party-balance` 1 of 1: with the bot near, the player's Fire Storm on an
+      NPC did 62.3 against 93.4 alone (0.667), an NPC's on the player 448.3 against 373.3 (1.201). To see in play:
+      `Balance: now 2 of the party within 50 m, ...` when the other player comes near and `now 1 ...` when they leave;
+      fights tougher without enemies feeling like sponges; the numbers to tune, if any.
 - [!] **The menu redesign** (the in-headset menu, UI only, no protocol change; 2026-10-24). Deployed to both tools
       folders on player 2's PC (`UI`; the old menu is in `UI.old-20261024-105922`) and runs with the v1.9.6 client.
       Framed buttons that light up under the laser and answer a press; a status chip (not connected, connecting, or

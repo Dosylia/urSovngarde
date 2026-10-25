@@ -26,6 +26,8 @@ struct PartyService
     [[nodiscard]] uint32_t GetLeaderPlayerId() const noexcept { return m_leaderPlayerId; }
 
     const Vector<uint32_t>& GetPartyMembers() const noexcept { return m_partyMembers; }
+    //! The party's players within 50 m of this one, this one included: what enemies are scaled to (GameplayFormulas::PartyEnemyHealth).
+    [[nodiscard]] uint32_t GetPlayersNearby() const noexcept { return m_playersNearby; }
     const Map<uint32_t, String>& GetPlayers() const noexcept { return m_players; }
     Map<uint32_t, uint64_t>& GetInvitations() noexcept { return m_invitations; }
 
@@ -47,6 +49,8 @@ protected:
 
 private:
     void DestroyParty() noexcept;
+    void CountPlayersNearby() noexcept;
+    void SetPlayersNearby(uint32_t aPlayers) noexcept;
 
     Map<uint32_t, String> m_players;
     Map<uint32_t, uint64_t> m_invitations;
@@ -56,6 +60,7 @@ private:
     bool m_isLeader = false;
     uint32_t m_leaderPlayerId;
     Vector<uint32_t> m_partyMembers;
+    uint32_t m_playersNearby = 1;
 
     World& m_world;
     TransportService& m_transport;

@@ -1231,12 +1231,25 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
     if (apHitter)
         World::Get().GetRunner().Trigger(HitEvent(apHitter->formID, apThis->formID));
 
+    const auto* pExHittee = apThis->GetExtension();
+
+    // Against a party, enemies last longer and hit harder, by how many of its players are near this one.
+    // The longer life is dealt as less damage from this player, so no actor value changes and none of it reaches a save.
+    // Each game scales only its own player's hits on NPCs and NPCs' hits on its own player; hits between players, and between NPCs, followers included, stay as they are.
+    if (const uint32_t cPlayersNearby = World::Get().GetPartyService().GetPlayersNearby(); cPlayersNearby > 1 && apHitter)
+    {
+        const auto* pExScaledHitter = apHitter->GetExtension();
+        if (pExScaledHitter->IsLocalPlayer() && !pExHittee->IsPlayer())
+            aDamage /= GameplayFormulas::PartyEnemyHealth(cPlayersNearby);
+        else if (pExHittee->IsLocalPlayer() && !pExScaledHitter->IsPlayer())
+            aDamage *= GameplayFormulas::PartyEnemyDamage(cPlayersNearby);
+    }
+
     float realDamage = GameplayFormulas::CalculateRealDamage(apThis, aDamage, aKillMove);
 
     float currentHealth = apThis->GetActorValue(ActorValueInfo::kHealth);
     bool wouldKill = (currentHealth - realDamage) <= 0.f;
 
-    const auto* pExHittee = apThis->GetExtension();
     if (pExHittee->IsLocalPlayer())
     {
         if (!World::Get().GetServerSettings().PvpEnabled)

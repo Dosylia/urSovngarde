@@ -1,0 +1,75 @@
+# Against a party, enemies last longer and hit harder, by the party's players within 50 m of this one (PartyService).
+#
+#   python Tools\VR\live-check.py live-party-balance
+#
+# The game's player and the bot are one party. A Fire Storm (7A82B) from the player hits an NPC this game owns, and one
+# from the NPC hits the player; both are measured with the bot's character next to the player and again with it far away.
+# With two players near, the player's spell does 1/1.5 of what it does alone (as if the NPC had 150% health), and the
+# NPC's does 1.2 times as much.
+# Fire Storm bursts around its caster: aimed spells cast by script missed in the rig (the player's goes where the hand
+# points). Its damage falls off with distance, so the NPC is restrained and put back before each burst.
+# Neither regains health by itself (HealRate 0), or the player's 1% a second of 2000 shows as a smaller loss.
+# The player's HealRate stays 0 until the game is closed.
+log live party balance
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+log DO god off
+log DO combat off
+log -- an NPC this game owns, at 1000 health, and the player at 2000; neither comes back by itself
+log DO place A2C8E
+wait 6
+log DO papyrus Actor SetActorValue placed s:Health f:1000
+log DO papyrus Actor ForceActorValue placed s:HealRate f:0
+log DO papyrus Actor SetRestrained placed b:true
+log DO papyrus Actor SetActorValue 14 s:Health f:2000
+log DO papyrus Actor ForceActorValue 14 s:HealRate f:0
+wait 2
+
+log -- the bot next to the player: two of the party within 50 m
+infront 400
+wait 4
+log REQUIRE logged Balance: now 2 of the party within 50 m
+log DO papyrus ObjectReference MoveTo placed 14 f:0 f:150 f:0 b:false
+log DO papyrus Actor RestoreActorValue placed s:Health f:10000
+log DO papyrus Actor RestoreActorValue 14 s:Health f:10000
+wait 2
+log CHECK health placed mark
+log DO papyrus Spell Cast 7A82B 14 14
+wait 2
+log CHECK health placed lost player-near
+log DO papyrus ObjectReference MoveTo placed 14 f:0 f:150 f:0 b:false
+wait 2
+log CHECK health 14 mark
+log DO papyrus Spell Cast 7A82B placed placed
+wait 2
+log CHECK health 14 lost npc-near
+
+log -- the bot far away: the player alone
+teleport away
+wait 6
+log REQUIRE logged Balance: now 1 of the party within 50 m
+log DO papyrus ObjectReference MoveTo placed 14 f:0 f:150 f:0 b:false
+log DO papyrus Actor RestoreActorValue placed s:Health f:10000
+log DO papyrus Actor RestoreActorValue 14 s:Health f:10000
+wait 2
+log CHECK health placed mark
+log DO papyrus Spell Cast 7A82B 14 14
+wait 2
+log CHECK health placed lost player-alone
+log DO papyrus ObjectReference MoveTo placed 14 f:0 f:150 f:0 b:false
+wait 2
+log CHECK health 14 mark
+log DO papyrus Spell Cast 7A82B placed placed
+wait 2
+log CHECK health 14 lost npc-alone
+
+log CHECK lost player-near over player-alone 0.6 0.73
+log CHECK lost npc-near over npc-alone 1.1 1.32
+log DO combat on
+teleport back
+wait 3
+log CHECK game alive
+log done
+stop
