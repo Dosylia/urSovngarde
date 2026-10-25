@@ -83,16 +83,20 @@ static uint32_t HookStatsProcessMessage(IMenu* apThis, UIMessage& aMessage)
         s_pendingTreeModel = nullptr;
     }
 
+    // Cleared on the way out, as MapMenu.cpp does: the model is not left exempt from the fade that removes it.
+    // Before the game handles the hide, which may free the model.
+    if (cHiding)
+    {
+        if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kStatsModel))
+            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kIgnoreFade;
+    }
+
     const uint32_t result = TiltedPhoques::ThisCall(RealStatsProcessMessage, apThis, aMessage);
 
-    // Set while open, cleared on the way out, as MapMenu.cpp does: the model is not left exempt from the fade that removes it.
-    if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kStatsModel))
+    // Set while open unpaused.
+    if (!cHiding && !apThis->PausesGame())
     {
-        if (cHiding)
-        {
-            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kIgnoreFade;
-        }
-        else if (!apThis->PausesGame())
+        if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kStatsModel))
         {
             *reinterpret_cast<float*>(pModel + kFadeNodeCurrentFade) = 1.f;
             *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) |= kIgnoreFade;

@@ -17,6 +17,25 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Waiting on a test or action
 
+- [!] **Unpaused skills and map menus (contributed, merged as 779d7a82), hardened** (build 779d7a82 + the hardening,
+      FUS and MGO folders, client and server; a protocol change: `ServerSettings` gained `UnpausedMenus`, so both
+      players and the server need it). With `Gameplay:bUnpausedMenus=true` (off by default) the skills menu and the
+      world map do not pause the game while connected. While connected, every menu that runs unpaused (inventory,
+      favorites, container, message boxes, tutorials, console, and these two) blocks walking, turning, jumping,
+      sneaking and melee swings, setting on or off: decided so, as a paused menu would.
+      - Hardening: the map's four hooks and the laser update it calls are byte-checked first (prologues read from the
+        running game); on other bytes none is installed and the map pauses as in the game (`Map menu: code found; ...`
+        or `Map menu: ... is not the expected code`). The laser call and the frame-parity revert run only while the map
+        is open unpaused, as the sky-job skip already did. Both menus clear their model's kIgnoreFade before the game
+        handles the hide, which may free the model.
+      - Rig: setting off: both menus open paused (no `runs unpaused` line). Setting on: 3 map and 3 skills openings,
+        each closed with Escape or a bare kHide, all ran unpaused at 60 fps and the game kept running. Before the
+        hardening, on the merged code: 10 of 10 the same, with the skill tree and the map drawn right in pictures.
+        The 2026-10-18 map-close freeze (2 of 2, a bare kHide, Community Shaders 0.8.7) no longer reproduces on CSX.
+        Not tested: the map closing when health drops, the controls block, the other player's view, fast travel from
+        the map, a headset (the laser). To see in play, with the setting on: open both menus while the other player
+        moves; neither freezes on close; the map closes when you are hit.
+
 - [!] **Freeze 2026-10-25 14:51: the autosave entering the Palace of the Kings never finished** (player 1, a98ad845;
       fixed on a98ad845 + the ExtraDataList lock change, client only, FUS and MGO folders, client and server).
       Seen live, with the frozen game's memory read (no debugger): the main thread waited in the save

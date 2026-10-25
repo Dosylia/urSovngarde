@@ -9,6 +9,7 @@
 #include <Services/CalendarService.h>
 #include <Interface/Menus/SleepWaitMenu.h>
 #include <Interface/Menus/SkillsMenu.h>
+#include <Interface/Menus/MapMenu.h>
 
 static bool g_RequestUnpauseAll{false};
 
@@ -312,6 +313,9 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
             continue;
         // Unpaused only once its checks are skipped (Menus/SkillsMenu.cpp); until then it pauses as in the game.
         if (std::strcmp(item, "StatsMenu") == 0 && !SkillsMenuCanRunUnpaused())
+            continue;
+        // Unpaused only with its hooks in place (Menus/MapMenu.cpp); without them it pauses as in the game.
+        if (std::strcmp(item, "MapMenu") == 0 && !MapMenuCanRunUnpaused())
             continue;
 #endif
         if (auto* pMenu = apSelf->FindMenuByName(item))

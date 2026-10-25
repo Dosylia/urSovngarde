@@ -3,6 +3,7 @@
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Interface/UI.h>
 #include <Games/Memory.h>
+#include <PatchCheck.h>
 
 // Online the map is opened from TweenMenu, which UI.cpp's kAllowList unpauses, so the frame after the map opens
 // still runs the game's unpaused updates (offline that frame is already paused). Two things go wrong in it:
@@ -26,6 +27,20 @@ static TMainUpdateSky* RealMainUpdateSky;
 // Written by the thread that processes UI messages, read from the client's update on the VM worker pool.
 static std::atomic<bool> s_mapOpen{false};
 static std::atomic<bool> s_closeRequested{false};
+// Set once every hooked or called function was found as read; until then the map pauses as in the game.
+static bool s_hooksReady = false;
+
+bool MapMenuCanRunUnpaused() noexcept
+{
+    return s_hooksReady;
+}
+
+// The map is open, and was opened unpaused (UI.cpp records it at the opening).
+static bool IsMapOpenUnpaused() noexcept
+{
+    static const BSFixedString s_mapName("MapMenu");
+    return s_mapOpen && IsMenuOpenUnpaused(s_mapName);
+}
 
 // The UIMessageQueue singleton, not in the address table. All 148 callers of AddMessage (id 13631) that load
 // `this` right before the call load it from this one global (SkyrimVR 1.4.15).
@@ -89,19 +104,23 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
     if (aMessage.eType == UIMessage::kShow || cHiding)
         s_closeRequested.store(false, std::memory_order_relaxed);
 
+    // Cleared on the way out, so the cached model does not stay exempt from the fade that removes it.
+    // Before the game handles the hide, while the model is surely there.
+    if (cHiding)
+    {
+        if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kMenuModel))
+            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kIgnoreFade;
+    }
+
     const uint32_t result = TiltedPhoques::ThisCall(RealMapProcessMessage, apThis, aMessage);
 
-    // Set while open, cleared on the way out, so the cached model does not stay exempt from the fade that removes it.
-    if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kMenuModel))
+    // Set while open unpaused.
+    if (s_mapOpen && !apThis->PausesGame())
     {
-        if (s_mapOpen && !apThis->PausesGame())
+        if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kMenuModel))
         {
             *reinterpret_cast<float*>(pModel + kFadeNodeCurrentFade) = 1.f;
             *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) |= kIgnoreFade;
-        }
-        else if (cHiding)
-        {
-            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kIgnoreFade;
         }
     }
 
@@ -110,8 +129,7 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
 
 static void HookMainUpdateSky(void* apMain)
 {
-    static const BSFixedString s_mapName("MapMenu");
-    if (s_mapOpen && IsMenuOpenUnpaused(s_mapName))
+    if (IsMapOpenUnpaused())
         return;
 
     TiltedPhoques::ThisCall(RealMainUpdateSky, apMain);
@@ -134,7 +152,7 @@ static void HookPlayerMapModeUpdate(void* apPlayer, float aDelta, float aRealDel
     TiltedPhoques::ThisCall(RealPlayerMapModeUpdate, apPlayer, aDelta, aRealDelta);
 
     const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    if (s_mapOpen && *reinterpret_cast<const uint8_t*>(exe + kMainPausedByte) == 0)
+    if (*reinterpret_cast<const uint8_t*>(exe + kMainPausedByte) == 0 && IsMapOpenUnpaused())
         TiltedPhoques::ThisCall(MapPointerUpdate, apPlayer, aDelta);
 
     // From the player update, inside Main::Loop, the phase the player's own cancel is posted from.
@@ -159,7 +177,7 @@ static void HookMapWorldUpdate(float aDelta)
     RealMapWorldUpdate(aDelta);
 
     // The flip is conditional inside the map update, so only revert one that happened.
-    if (*pParity != parityBefore && *reinterpret_cast<const uint8_t*>(exe + kMainPausedByte) == 0)
+    if (*pParity != parityBefore && *reinterpret_cast<const uint8_t*>(exe + kMainPausedByte) == 0 && IsMapOpenUnpaused())
         *pParity = parityBefore;
 }
 #endif
@@ -180,6 +198,25 @@ static TiltedPhoques::Initializer s_init(
 
 #ifdef SKYRIMVR
         const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+        // Every function hooked or called here starts as read from SkyrimVR 1.4.15; on other bytes the map pauses as in the game.
+        bool allFound = true;
+        const auto expect = [&](uintptr_t aOffset, std::initializer_list<uint8_t> acExpected, const char* acpWhat)
+        {
+            const auto* pSite = reinterpret_cast<const uint8_t*>(exe + aOffset);
+            if (PatchCheck::Is(pSite, acExpected))
+                return;
+            spdlog::error("Map menu: {} at {} is not the expected code ({}); the map keeps pausing", acpWhat, fmt::ptr(pSite), PatchCheck::Bytes(pSite, acExpected.size()));
+            allFound = false;
+        };
+        expect(kMapProcessMessage, {0x48, 0x8B, 0xC4, 0x55, 0x53, 0x56, 0x57}, "the map's ProcessMessage");
+        expect(kMainUpdateSkyJob, {0x80, 0x79, 0x0E, 0x00, 0x75, 0x20}, "the main loop's sky job");
+        expect(kPlayerMapModeUpdate, {0x48, 0x8B, 0xC4, 0x53, 0x48, 0x81, 0xEC, 0xC0, 0x00, 0x00, 0x00}, "the player's map mode update");
+        expect(kMapPointerUpdate, {0x48, 0x8B, 0xC4, 0x55, 0x57, 0x41, 0x56}, "the map's laser update");
+        expect(kMapWorldUpdate, {0x48, 0x83, 0xEC, 0x38, 0x48, 0x8B, 0x05}, "the map's world update");
+        if (!allFound)
+            return;
+
         RealMapProcessMessage = reinterpret_cast<TMapProcessMessage*>(exe + kMapProcessMessage);
         TP_HOOK(&RealMapProcessMessage, HookMapProcessMessage);
         RealMainUpdateSky = reinterpret_cast<TMainUpdateSky*>(exe + kMainUpdateSkyJob);
@@ -189,5 +226,8 @@ static TiltedPhoques::Initializer s_init(
         TP_HOOK(&RealPlayerMapModeUpdate, HookPlayerMapModeUpdate);
         RealMapWorldUpdate = reinterpret_cast<TMapWorldUpdate*>(exe + kMapWorldUpdate);
         TP_HOOK(&RealMapWorldUpdate, HookMapWorldUpdate);
+
+        s_hooksReady = true;
+        spdlog::info("Map menu: code found; it pauses as in the game until a server unpauses it");
 #endif
     });

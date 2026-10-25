@@ -28,4 +28,7 @@ struct MapMenu final : public IMenu, public BSTEventSink<MenuOpenCloseEvent>, pu
  * looking at the world instead. See MapMenu.cpp for how and when it is carried out, and PlayerService for what asks.
  */
 void CloseMapMenu() noexcept;
+
+// True once the map's hooks are in place: only then may it be shown unpaused.
+bool MapMenuCanRunUnpaused() noexcept;
 #endif
