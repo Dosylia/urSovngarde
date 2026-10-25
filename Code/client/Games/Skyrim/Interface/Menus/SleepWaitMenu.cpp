@@ -9,6 +9,7 @@
 #include <AI/Movement/PlayerControls.h>
 #include <PlayerCharacter.h>
 #include <Services/CalendarService.h>
+#include <PatchCheck.h>
 
 namespace
 {
@@ -62,10 +63,11 @@ IMenu* GetOpenSleepMenu()
     return pUI && pUI->GetMenuOpen(s_name) ? pUI->FindMenuByName(s_name) : nullptr;
 }
 
+// Per input event, swing check and player update: the opening's recorded state (UI.cpp), not the menu object.
 bool IsUnpausedSleepOpen()
 {
-    const IMenu* pMenu = GetOpenSleepMenu();
-    return pMenu && !pMenu->PausesGame();
+    static const BSFixedString s_name("Sleep/Wait Menu");
+    return IsMenuOpenUnpaused(s_name);
 }
 
 uint32_t HookProcessMessage(IMenu* apMenu, UIMessage& aMessage)
@@ -212,8 +214,13 @@ static TiltedPhoques::Initializer s_sleepWaitHooks(
                 return;
             }
         }
-        if (*reinterpret_cast<const uint8_t*>(cExe + kMeleeSwingMenuCheck) != 0xE8)
+        // An E8 to another plugin's code is taken too (UI.cpp swaps the same call): swapped again, ours calls theirs.
+        const auto* pMeleeCheck = reinterpret_cast<const uint8_t*>(cExe + kMeleeSwingMenuCheck);
+        if (!PatchCheck::IsCall(pMeleeCheck))
+        {
+            spdlog::error("Sleep/Wait: {} is not the melee swing's menu check call ({}); leaving the menu paused", fmt::ptr(pMeleeCheck), PatchCheck::Bytes(pMeleeCheck, 5));
             return;
+        }
 
         RealOk = reinterpret_cast<TOk*>(cExe + kOkCallback);
         RealProcessMessage = reinterpret_cast<TProcessMessage*>(cExe + kProcessMessage);

@@ -3,6 +3,7 @@
 
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Interface/UI.h>
+#include <PatchCheck.h>
 
 // VR draws the skill tree as a 3D model in the world scene (StatsMenu+0xC0, a BSFadeNode that fades out between 500
 // and 1000 units). Tree view moves it about 3000 units away. Paused, the fade update never runs; unpaused the model
@@ -195,13 +196,23 @@ static TiltedPhoques::Initializer s_skillsMenuInit(
             }
             check.Kept = *reinterpret_cast<const uint16_t*>(check.pSite);
         }
+
+        // Without the deferred tree update an unpaused tree would be updated on a worker while drawn, so it is needed too.
+        auto* pTreeUpdateCall = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + kTreeModelUpdateCall;
+        if (PatchCheck::IsCall(pTreeUpdateCall))
+            TiltedPhoques::SwapCall(pTreeUpdateCall, RealTreeModelUpdate, &HookTreeModelUpdate);
+        else
+        {
+            spdlog::error("Skills menu: {} is not the tree model's update call ({}); the menu keeps pausing", fmt::ptr(pTreeUpdateCall), PatchCheck::Bytes(pTreeUpdateCall, 5));
+            allFound = false;
+        }
+
         s_checksReady = allFound;
         if (allFound)
             spdlog::info("Skills menu: checks found; it pauses as in the game until a server unpauses it");
 
         RealStatsProcessMessage = reinterpret_cast<TStatsProcessMessage*>(pProcessMessage);
         TP_HOOK(&RealStatsProcessMessage, HookStatsProcessMessage);
-        TiltedPhoques::SwapCall(reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + kTreeModelUpdateCall, RealTreeModelUpdate, &HookTreeModelUpdate);
 #else
         // Fix for menu not appearing
         VersionDbPtr<uint8_t> ProcessMessage(52510);
