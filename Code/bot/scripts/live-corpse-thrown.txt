@@ -28,7 +28,6 @@ log -- the game throws the body; its reference stays where it died
 log DO papyrus ObjectReference ApplyHavokImpulse placed f:1 f:0 f:0.6 f:4000
 wait 8
 expect movedfrommark base:753CB >= 150
-log CHECK logged BodyDiag: body \w+ root
 
 wait 3
 log CHECK game alive

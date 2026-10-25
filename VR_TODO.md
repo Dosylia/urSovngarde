@@ -515,12 +515,49 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         still get its bones) RED on 5fee1f4 (bones stopped 7167 ms before the check), ok on fa5e36c (94 ms).
         `live-corpse-thrown` ok on both: in the rig a thrown body's reference follows it, so the reported-position
         part is backed by the play log only. Regression `live-corpse-place` ok. Not seen in play yet.
-        TEMPORARY `BodyDiag` lines (where the 3D root lies against the pelvis while a body is dragged, once a second)
-        stay for one session, then go: if the hand still looks too high, they tell whether the root lags the pelvis.
+        The TEMPORARY `BodyDiag` lines answered in the evening session (22 lines over both games' drags): the 3D root
+        stays 0-5 units below the pelvis and at most 7 beside it, so a lagging root is not a cause. Removed in c4caf8a.
       - Player 2 stuck in a menu after switching to Discord (15:07): nothing of ours in the log then; the log records
         menus opening but not closing, so it cannot say which one stuck. A `Menu closed` line would tell next time.
         Done in build 210e55b (client, FUS): `Menu closing: <name>` for each menu asked to close (WS* HUD widgets left out).
         Rig: `live-menu-hold` RED on 29aee76d (no such line), ok on 210e55b; one line per real close. Not seen in play yet.
+
+- [ ] **Play session 2026-10-24 evening** (both on fa5e36c; player 1 leader and server; Windhelm, then the Battle for Whiterun).
+      Build c4caf8a (client and server, FUS and MGO) carries the fixes below and the merged party-sleep PR, which changes
+      the protocol: both players update before playing together.
+      - Player 1's game froze at 20:03:30 on the loading screen into the Whiterun battle: the main thread waited inside
+        the game's own code during its first draw. The freeze dump could not say on what: it held 1 stack of 151 threads.
+        Past 3.5 MB a small dump is written again with only the writing thread's stack, and for a freeze that is the
+        watchdog's. Fixed in c4caf8a: the freeze dump keeps every stack. Rig: the game's main thread suspended 35 s;
+        on fa5e36c the dump held 1 of 254 stacks (RED), on ae27a6d 265 of 265, the main thread's readable. Cause of the
+        freeze itself unknown: the next freeze dump answers it. Memory was not the limit (100 GB of commit free).
+      - Player 2's game leaked threads: 220 at 19:13, 4915 at 20:05 (about 120 a minute; the afternoon too, 228 to 537).
+        Player 1's stayed near 160. The newest of them, sampled at 19:53 and 20:03, wait inside DynDOLOD.DLL. Player 2
+        runs DynDOLOD.DLL v3.0.32, player 1 v3.0.43. To try: player 2 on v3.0.43, then read `Health: ... threads`.
+      - Player 2: heap corruption reported 2 s after a failed reconnect (20:05:48), then a Windows crash report at
+        20:06:40. Player 1's rig games report the same code often and keep running. Open question: did the game crash,
+        or was it closed after player 1's freeze?
+      - Two Ice Wraiths (19:24): reference 7AAC1 rolled as an Ice Wraith in player 1's game and a Snowy Sabre Cat in
+        player 2's (the owner's). Player 1's game made it a ghost and disabled it as its cell loaded (19:23:20.235); the
+        game built its 3D again 0.27 s later, and it fought for 80 s unknown to the server. About 17 such ghosts in the
+        day's logs lived on 9-148 s; every ghost not rebuilt was removed at 5 s. Fixed in c4caf8a: every 2 s a ghost
+        with 3D that is enabled again is disabled again (`Ghost: reference X was enabled again ...; disabled again`).
+        No rig test (the bot cannot own a world creature under another base); backed by the logs only. To see in play:
+        that line, and no `OnSubtitleEvent: server id not found` for a creature. If ghosts still fight without the
+        line, they are flagged disabled with their 3D, and disabling again does nothing.
+      - The sliding at 19:27 on player 2's screen was the Ice Wraith copy (SlideDiag's frozen moves start and stop with
+        it), not the refugee: player 1's game has no descriptor for its graph (494650d31516034), so it sends empty
+        animation variables. Not a regression. A replacer from the capture in `logs\behaviours\IceWraith_...` is
+        possible, but its graph has no Speed variable: waiting on a decision, and one live look afterwards.
+      - Moving a lantern by hand showed nothing on the other side (19:28, outdoors east of Windhelm): neither game
+        logged a world-object move. Which lantern, and what kind of object, is not known; no change.
+      - Ulfric's talk not heard by player 2 (19:31): all eleven lines reached player 2's game and were started there;
+        player 2 had the journal and console open (the game paused) from 19:31:15 to 19:31:36. Whether sound came out
+        is not logged. Done in c4caf8a: `played here (game's answer A, D units from the player, 3D yes/no, pause counter N)`.
+      - Catapults of the Whiterun siege missing for player 2 (19:54): vanilla (CWCatapult), initially disabled and enabled
+        only by the CWSiege quest's scripts, which run in the leader's game alone. No message carries a script-enabled
+        object's state: a missing feature (a protocol change), not a bug. Done in c4caf8a, to confirm: `Remote quest
+        updated: X, stage: N; running here yes/no`. The siege camp and barricades are probably missing for player 2 too.
 
 - [ ] **Review fixes, doors, ownership, transport** (from the reviews of the last two commits and of playback session B,
       2026-10-24; build b5963dd, client and server in the FUS folders, not MGO yet; the PickedUp flag and the decode guard

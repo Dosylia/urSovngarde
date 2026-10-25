@@ -1027,7 +1027,8 @@ DWORD WINAPI WatchdogMain(LPVOID) noexcept
         {
             const auto cPath = TiltedPhoques::GetPath() / "logs" / "freeze.small.dmp";
             DWORD error = 0;
-            if (const uint64_t cSize = SmallDump::Write(cPath, nullptr, nullptr, error))
+            // No size target: past it only the writing thread's stack is kept, and that is this watchdog's.
+            if (const uint64_t cSize = SmallDump::Write(cPath, nullptr, nullptr, error, nullptr, UINT64_MAX))
                 spdlog::error("FreezeWatchdog: every thread's stack written to logs\\freeze.small.dmp ({} KB)", cSize / 1024);
             else
                 spdlog::error("FreezeWatchdog: the freeze dump could not be written (error {:#x})", error);

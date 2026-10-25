@@ -1594,11 +1594,11 @@ float TP_MAKE_THISCALL(HookSpeakSoundFunction, Actor, const char* apName, uint32
     return TiltedPhoques::ThisCall(RealSpeakSoundFunction, apThis, apName, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14);
 }
 
-void Actor::SpeakSound(const char* pFile)
+float Actor::SpeakSound(const char* pFile)
 {
     uint32_t handle[3]{};
     handle[0] = -1;
-    TiltedPhoques::ThisCall(RealSpeakSoundFunction, this, pFile, handle, 0, 0x32, 0, 0, 0, 0, 0, 0, 0, 1, 1);
+    return TiltedPhoques::ThisCall(RealSpeakSoundFunction, this, pFile, handle, 0, 0x32, 0, 0, 0, 0, 0, 0, 0, 1, 1);
 }
 
 char TP_MAKE_THISCALL(HookActorProcess, Actor, float aDeltaTime)
