@@ -1,0 +1,39 @@
+# A downed player's copy must get up on the other player's game once the player is revived.
+#
+#   python Tools\VR\live-check.py live-revive-copy
+#   python Tools\VR\live-check.py --expect-fail live-revive-copy     on a build without the fix: must be RED
+#
+# A player reported that after a revive the other player still saw them lying down (v1.9.6, 2026-10-24).
+# The bot draws no copy, so the game's player goes down while the bot records it, the bot revives it and records on,
+# and then plays the recording as its own character: the game's copy of the bot goes down and is revived.
+#
+# A run counts only when (REQUIRE): the recording holds the owner's get-up, and the copy lay down at some point.
+# It is then judged on the copy being on its feet at the end.
+log live revive copy
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the game's player goes down while the bot records it
+log DO console player.damageav health 100000
+capture other 8
+log -- the bot revives it and records on through the get-up
+revive other
+capture other 10 keep
+expect downstate other revived
+log CHECK logged PlayerService: revived by player
+log REQUIRE bot logged Captured action names of \w+: .*\bbleedOutStop\b
+
+log -- the bot plays the recording as its own character; the game's copy of it goes down and gets up
+log DO watch copy 24
+replay me
+wait 3
+log SHOT after of copy
+log REQUIRE copy went down
+log CHECK copy standing
+log CHECK game alive
+# The game checks the copy only once its 24 s watch is over: the copy must still be there.
+wait 20
+log done
+stop

@@ -1,0 +1,48 @@
+# A revived player's copy that refuses the get-up must still stand up on the other game.
+#
+#   python Tools\VR\live-check.py live-revive-copy-stuck
+#
+# In play the reviver's game refused the copy's "bleedOutStop", as an action and as a graph event, and the copy lay
+# on the floor for 50 s while its player stood. The copy then gets "IdleForceDefaultState", which takes its graph
+# back to standing from any state (AnimationSystem). live-revive-copy covers the plain case, where the copy takes it.
+# The game's player goes down and is revived while the bot records it; the bot then replays the recording twice.
+# Without "bleedOutStart" the copy stays up and refuses the "bleedOutStop" that follows, which runs the code path.
+# Without "bleedOutStop" the copy stays down, and the default state event alone must stand it up.
+log live revive copy stuck
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the game's player goes down while the bot records it
+log DO console player.damageav health 100000
+capture other 8
+log -- the bot revives it and records on through the get-up
+revive other
+capture other 10 keep
+expect downstate other revived
+log REQUIRE bot logged Captured action names of \w+: .*\bbleedOutStop\b
+
+log -- without bleedOutStart: the copy refuses the bleedOutStop that comes, and gets the default state event
+log DO logmark
+replay me 1 skip bleedOutStart
+wait 3
+log CHECK logged ReplayDiag: 'bleedOutStop' refused as an action on \w+; sent to its graph instead \(not taken; IdleForceDefaultState taken\)
+log CHECK copy standing
+wait 10
+
+log -- without bleedOutStop: the copy stays down until the default state event stands it up
+replay me 1 skip bleedOutStop
+wait 3
+log SHOT down of copy
+log DO sleep 8
+log REQUIRE copy down
+log DO papyrus Debug SendAnimationEvent global copy s:IdleForceDefaultState
+log DO sleep 3
+log CHECK copy standing
+log SHOT up of copy
+log CHECK game alive
+# The game works through the lines above long after the bot printed them: the copy must still be there.
+wait 40
+log done
+stop

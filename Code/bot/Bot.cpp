@@ -1725,11 +1725,13 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "capture <who> <seconds>" records the movement stream the server relays for one character: "other" (the first
+    // "capture <who> <seconds> [keep]" records the movement stream the server relays for one character: "other" (the first
     // other player), "npc" (the first NPC this bot has a copy of) or a hex server id. Kept in memory for "replay".
+    // With "keep" it adds to the recording before, on its clock, so one recording can span a command run in between.
     if (name == "capture")
     {
         const float seconds = (!args.empty() && args[0] == "base") ? arg(2, 10.f) : arg(1, 10.f);
+        const bool keep = !args.empty() && args.back() == "keep";
         if (aFirstTick)
         {
             m_captureId = kNoId;
@@ -1788,14 +1790,18 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             for (const auto& actor : m_actors)
                 if (actor.ServerId == m_captureId)
                     m_captureBase = actor.Base;
-            m_capture.clear();
-            m_captureStart = now;
+            if (!keep || m_capture.empty())
+            {
+                m_capture.clear();
+                m_captureStart = now;
+            }
+            m_captureUntil = now + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(seconds));
             m_capturing = true;
-            spdlog::info("Capturing the movement of {:X} for {:.0f} s", m_captureId, seconds);
+            spdlog::info("Capturing the movement of {:X} for {:.0f} s{}", m_captureId, seconds, keep ? ", added to the recording before" : "");
         }
         if (m_captureId == kNoId)
             return true;
-        if (Seconds(now - m_captureStart) < seconds)
+        if (now < m_captureUntil)
             return false;
 
         m_capturing = false;
@@ -1850,14 +1856,16 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "replay [me|npc] [times] [noactions]" sends the captured stream back as this bot's own character, or as the NPC it
+    // "replay [me|npc] [times] [noactions|skip <event>]" sends the captured stream back as this bot's own character, or as the NPC it
     // owns, at the pace it arrived and starting from where that body stands now. With "noactions", only movement, variables
     // and pose go out: the recording's own moveStart cannot start a copy that something else should have started.
+    // With "skip <event>", the actions of that name are left out, as a copy that refused that one action.
     if (name == "replay")
     {
         const bool asNpc = !args.empty() && args[0] == "npc";
         const int times = std::max(1, static_cast<int>(arg(1, 1.f)));
         const bool noActions = args.size() > 2 && args[2] == "noactions";
+        const std::string skipped = args.size() > 3 && args[2] == "skip" ? args[3] : std::string();
         if (aFirstTick)
         {
             m_replayTarget = kNoId;
@@ -1883,8 +1891,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (!asNpc)
                 m_lastReplayedPose = {};
             const auto updates = std::count_if(m_capture.begin(), m_capture.end(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
-            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f}){}", updates, m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z,
-                         noActions ? ", without their actions" : "");
+            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f}){}{}", updates, m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z,
+                         noActions ? ", without their actions" : "", skipped.empty() ? std::string() : ", without its " + skipped);
         }
         if (m_replayTarget == kNoId)
             return true;
@@ -1920,13 +1928,16 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             {
                 RequestActionEvents actions{};
                 auto& performed = actions.Actions[m_replayTarget];
-                performed = captured.Actions;
+                for (const auto& action : captured.Actions)
+                    if (skipped.empty() || _stricmp(action.EventName.c_str(), skipped.c_str()) != 0)
+                        performed.push_back(action);
                 for (auto& action : performed)
                 {
                     action.ActorId = m_replayTarget;
                     action.Tick = cTick;
                 }
-                SendMsg(actions);
+                if (!performed.empty())
+                    SendMsg(actions);
             }
 
             if (captured.HasUpdate)

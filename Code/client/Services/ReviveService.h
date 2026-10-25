@@ -34,6 +34,8 @@ private:
     int TouchingHand(Actor* apCopy, bool aHeld, float& aDistance) const noexcept;
     String NameOf(uint32_t aPlayerId) const noexcept;
     void StopHolding() noexcept;
+    //! TEMPORARY: how the copies of party members revived 5 s ago stand here, for a report of a copy still down after a revive.
+    void LogRevivedCopies(std::chrono::steady_clock::time_point aNow) noexcept;
 
     World& m_world;
     TransportService& m_transport;
@@ -46,6 +48,8 @@ private:
     std::chrono::steady_clock::time_point m_holdSince{};
     bool m_asked{false};
     std::chrono::steady_clock::time_point m_nextCheck{};
+    //! TEMPORARY: revived party members whose copy is looked at once the time comes (LogRevivedCopies).
+    Vector<std::pair<uint32_t, std::chrono::steady_clock::time_point>> m_revivedChecks;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_disconnectedConnection;

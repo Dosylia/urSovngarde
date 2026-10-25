@@ -34,6 +34,20 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         To see in play: sleep 8 hours with the other player near; both clocks and dates move, the other player's
         controls come back at the end, and nobody's game crashes or hangs in the menu.
 
+- [!] **A revived player's copy still lying down on the other game** (a player's report on the v1.9.6 release,
+      2026-10-24). The reviver's log shows it: after the second revive (21:45:16) `ReplayDiag: refused 'bleedOutStop'
+      on FF000C97`, and the copy's hands stayed at floor height (z -5 to 12, the owner's 55 to 70) for 50 s, until the
+      copy left. The fallback that sends a refused `bleedOutStop` to the copy's graph left player copies out, and its
+      graph event is never taken in our logs (eight times since 2026-10-14, all NPC copies, all `not taken`). Now a
+      player's copy whose graph refuses it too gets `IdleForceDefaultState`, which takes the graph back to standing
+      from any state (AnimationSystem); the watching game also logs each revived party member's copy 5 s after the
+      revive (TEMPORARY). Rig on cc8c5cc with the fix: `live-revive-copy-stuck` (new) 1 of 1: a copy that refused
+      `bleedOutStop` logged `not taken; IdleForceDefaultState taken` and stood; a copy left down (pelvis 26 units over
+      its feet, still so 8 s later) stood (64) after the event alone. `live-revive-copy` (new, the plain case) 2 of 2.
+      Not reproduced in the rig: how the copy in play went down although it refused `bleedOutStart`. To see in play: a
+      revived player's copy stands up on the reviver's screen; read there `ReplayDiag: 'bleedOutStop' refused as an
+      action on X; sent to its graph instead (not taken; IdleForceDefaultState taken)` and `Revive: player N '...' 5 s
+      after the revive, copy X here: ... head H ...` (H about 105 standing, under 30 lying).
 - [!] **The menu redesign** (the in-headset menu, UI only, no protocol change; 2026-10-24). Deployed to both tools
       folders on player 2's PC (`UI`; the old menu is in `UI.old-20261024-105922`) and runs with the v1.9.6 client.
       Framed buttons that light up under the laser and answer a press; a status chip (not connected, connecting, or
@@ -327,8 +341,8 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       To read in a session: `PlayerService: safe point in cell ...` (where they are made), `RespawnPlayer: at the safe
       point in cell ...`, the server's `Revive: ... respawning at the party leader's safe point`, `Revive: holding a
       hand on player ..., N units from its body` (the 50-unit reach is a guess), `the revived player is up; health N`.
-      Open: whether a downed player's copy shows the bleedout pose on the other side; whether a VR player who died
-      ragdolled gets stuck now that the respawn does not knock it; a safe point in an interior (not tested in the rig).
+      Open: whether a VR player who died ragdolled gets stuck now that the respawn does not knock it; a safe point in an
+      interior (not tested in the rig).
       Not done: the revive gesture (options first, as the owner asked).
       Review fixes (2026-10-17, ce86908): a downed player who leaves the party or the server is announced to the members
       told it was down (`NotifyDownedState::kLeft`; before, they kept trying to revive it); a respawn this game starts

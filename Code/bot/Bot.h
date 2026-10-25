@@ -362,6 +362,7 @@ private:
     uint32_t m_captureId{};
     bool m_capturing{false};
     Clock::time_point m_captureStart{};
+    Clock::time_point m_captureUntil{};
     size_t m_replayIndex{};
     //! The tick of the last replayed message: each one gets a later tick, or the game drops the second of a pair as a duplicate.
     uint64_t m_lastReplayTick{};

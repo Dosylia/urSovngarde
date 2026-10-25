@@ -125,14 +125,22 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
 
         // The game can refuse "bleedOutStop" as an action, which leaves the copy down while its owner is up again.
         // Sending the graph event itself takes the copy out of the pose, as on the owner's side.
-        if (!result && !cPlayerCopy && !first.EventName.empty() && _stricmp(first.EventName.c_str(), "bleedOutStop") == 0)
+        // A player's copy can refuse the graph event too and lie on after its owner is revived.
+        // "IdleForceDefaultState" puts its graph back to standing from whatever state it is in.
+        if (!result && !first.EventName.empty() && _stricmp(first.EventName.c_str(), "bleedOutStop") == 0)
         {
             BSFixedString event("bleedOutStop");
             const bool cSent = apActor->SendAnimationEvent(&event);
+            const char* cpOutcome = cSent ? "taken" : "not taken";
+            if (!cSent && cPlayerCopy)
+            {
+                BSFixedString reset("IdleForceDefaultState");
+                cpOutcome = apActor->SendAnimationEvent(&reset) ? "not taken; IdleForceDefaultState taken" : "not taken; IdleForceDefaultState not taken either";
+            }
             // The copy's own state before the owner's was written over it: what the game judged the action on.
             spdlog::info("ReplayDiag: 'bleedOutStop' refused as an action on {:X}; sent to its graph instead ({}); before it the copy had life state {}, knock state {}, "
                          "health {:.0f}; the owner's life state {}",
-                         apActor->formID, cSent ? "taken" : "not taken", (cOwnStateBefore >> 21) & 0xF, (cOwnStateBefore >> 25) & 0x7,
+                         apActor->formID, cpOutcome, (cOwnStateBefore >> 21) & 0xF, (cOwnStateBefore >> 25) & 0x7,
                          apActor->GetActorValue(ActorValueInfo::kHealth), (first.State1 >> 21) & 0xF);
         }
 
