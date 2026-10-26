@@ -2404,6 +2404,13 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         update.UpdatedMovement.Flying = m_npcFlying;
         update.UpdatedMovement.CellId = m_cell;
         update.UpdatedMovement.WorldSpaceId = m_worldSpace;
+        // "npcmove <dx> <dy> <dz> cell <hex>": the NPC alone goes into that interior cell of Skyrim.esm, as a follower through a door.
+        uint32_t interiorId = 0;
+        if (args.size() > 4 && args[3] == "cell" && ParseHex(args[4], interiorId))
+        {
+            update.UpdatedMovement.CellId = GameId{m_skyrimModId, interiorId & 0x00FFFFFF};
+            update.UpdatedMovement.WorldSpaceId = GameId{};
+        }
         // Reliable, unlike a stream of movement: this one step is all the test sends, and no later one would make it good.
         SendMsg(message);
         spdlog::info("[script] NPC {:X} moved to ({:.0f}, {:.0f}, {:.0f})", npcId, m_npcPosition.x, m_npcPosition.y, m_npcPosition.z);

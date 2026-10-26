@@ -693,11 +693,27 @@ void CharacterService::UpdateViewsAfterMove(const Player* apOwner, const entt::e
 
         if (cWasInRange)
         {
+            // A reference of the game's own goes through the door in that player's game too, first.
+            // Left where its copy last stood, it stays there in their world, as it last moved (a follower left swimming in a lake).
+            const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(aEntity);
+            if (pFormIdComponent)
+            {
+                const auto& cPosition = m_world.get<MovementComponent>(aEntity).Position;
+                NotifyActorTeleport teleport{};
+                teleport.FormId = pFormIdComponent->Id;
+                teleport.WorldSpaceId = acNow.WorldSpaceId;
+                teleport.CellId = acNow.Cell;
+                teleport.Position.x = cPosition.x;
+                teleport.Position.y = cPosition.y;
+                teleport.Position.z = cPosition.z;
+                pPlayer->Send(teleport);
+            }
+
             NotifyRemoveCharacter removeMessage;
             removeMessage.ServerId = cServerId;
             pPlayer->Send(removeMessage);
-            spdlog::info("CellRange: character {:X} moved from cell {:X} to {:X}, out of player {:X}'s range; removed from their view", cServerId, acBefore.Cell.BaseId,
-                         acNow.Cell.BaseId, pPlayer->GetId());
+            spdlog::info("CellRange: character {:X} moved from cell {:X} to {:X}, out of player {:X}'s range; removed from their view{}", cServerId, acBefore.Cell.BaseId,
+                         acNow.Cell.BaseId, pPlayer->GetId(), pFormIdComponent ? ", its reference there moved through the door too" : "");
         }
         else
         {

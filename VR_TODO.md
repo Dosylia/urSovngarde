@@ -571,12 +571,20 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         counts for each kind (the defender's own, or the attacker's report), so that one does. At 18:51 (a dodge on
         player 2's side, no damage), player 1's game registered no arrow hit at all: one hit of 11 from 18:50:40 to
         18:52:30.
-      - Lydia (player 1's follower) stuck swimming on player 2's screen (18:46): in player 1's game she was in water
-        from 18:45, trying to draw her weapon 30 times a second (`ActionFlood: ... WeapEquip ... refused`). No line
-        logs a copy's swimming, so its start and end are not known. When player 1 went inside, the server took her out
-        of player 2's view (`CellRange: character 10008E moved from cell 9884 to 15277`), player 2's own Lydia ran
-        on unsynced (`OnSubtitleEvent: server id not found for form id A2C94`, 18:47:52), and a spawn of her came back
-        at 18:48:48: the "copy of Lydia".
+      - Lydia (player 1's follower) stuck swimming on player 2's screen, and a second Lydia outside while player 1 was
+        in the fort. Player 1 swam to the fort's secret entrance with her and went in at 18:47:05 (FortNeugrad01);
+        the server took her out of player 2's view (`CellRange: character 10008E moved from cell 9884 to 15277`,
+        18:47:08). Her copy there was player 2's own Lydia (a reference of the game's own), and removing a copy only
+        hands such a reference back, where it stands: player 2's Lydia stayed in the lake by the door, in the swim it
+        last had, unsynced (`OnSubtitleEvent: server id not found for form id A2C94`, 18:47:52), until her spawn
+        took her back at 18:48:48, when player 1 came out underwater. After that her copy was not swimming (state
+        0x81 at 18:51:39 and 18:52:53). Rig: a copy walked into the lake swims and stops on the shore, so the swim
+        itself is followed. Fixed (server, FUS and MGO folders): when a character goes through a door out of a
+        player's range, a reference of the game's own is first moved there in that player's game (NotifyActorTeleport,
+        then the removal; `CellRange: ... removed from their view, its reference there moved through the door too`).
+        Rig: `live-copy-through-door` (new; the bot leads, takes Ralof 2BF9E beside the player, then takes him alone
+        into Helgen keep with the new bot option `npcmove ... cell <hex>`) RED on b7e842c2 (Ralof left in the player's
+        cell), ok with the fix (`Successfully teleported actor, form id: 2BF9E, world space: 0, cell: 5DE24`).
       - Player 2's screen dark red (18:54, picture), gone after player 2 loaded elsewhere once player 1 had left.
         Nothing in either log explains it. The leader's weather is forced on members every frame and never logged;
         a weather from player 1's game is the lead. Next: log the weather a leader sends and a member is given.

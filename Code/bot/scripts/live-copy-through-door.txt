@@ -1,0 +1,45 @@
+# A persistent NPC its owner takes through a door goes through it in this game too, not left behind where its copy stood.
+#
+#   python Tools\VR\live-check.py live-copy-through-door
+#   python Tools\VR\live-check.py --expect-fail live-copy-through-door     on a build without the fix: must be RED
+#
+# A player went into a fort with Lydia following; in the other player's game Lydia stayed in the lake by the door,
+# still swimming, and was seen as a second Lydia outside. The server took her out of that player's view and nothing
+# moved that game's own Lydia, the reference her copy was.
+# Here the bot takes Ralof (2BF9E, a reference of Skyrim.esm) as its NPC beside the player, so this game's own Ralof
+# becomes the copy; then Ralof alone goes into Helgen keep's interior (5DE24), as a follower going through a door.
+# The bot leads the party (this game drops its connection and comes back), or this game, as leader, would claim Ralof.
+# A run counts only when (REQUIRE) the bot did lead, and this game's Ralof first stood by the player as the copy.
+party lead
+log live copy through door
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+# "info] " is in the bot's own log line, not in its echo of this check.
+log REQUIRE bot logged info\] Leading the party
+stay
+
+log -- the bot's Ralof beside the player: this game's own Ralof is the copy
+npc 2BF9E
+waitfor owned == 1 20
+wait 8
+log REQUIRE ref 2BF9E near player 1500
+
+log -- Ralof goes into Helgen keep, as a follower through a door, the bot staying outside
+npcmove 0 0 0 cell 5DE24
+wait 8
+log CHECK ref 2BF9E cell other
+log CHECK logged Successfully teleported actor, form id: 2BF9E
+log CHECK game alive
+wait 2
+log done
+stop
