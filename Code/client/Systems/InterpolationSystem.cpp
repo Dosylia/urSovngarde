@@ -458,6 +458,20 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     if (!apActor)
         return;
 
+    // A copy swims as its own animation has it, not as its owner says: one line each time that starts or stops here.
+    {
+        static TiltedPhoques::Map<uint32_t, bool> s_swimming;
+        const bool cSwimming = apActor->actorState.IsSwimming();
+        if (auto it = s_swimming.find(apActor->formID); it == s_swimming.end())
+            s_swimming[apActor->formID] = cSwimming;
+        else if (it->second != cSwimming)
+        {
+            it.value() = cSwimming;
+            spdlog::info("SwimDiag: copy {:X} {} swimming here at height {:.0f}; its owner has it at height {:.0f}", apActor->formID, cSwimming ? "starts" : "stops",
+                         apActor->position.z, position.z);
+        }
+    }
+
     // A dying body falls with its own ragdoll, and a downed one has to be able to get back up where it fell.
     // Forcing either to follow its owner's position pulls the body away from the animation playing on it.
     if (apActor->actorState.IsDying() || apActor->actorState.IsBleedingOut())

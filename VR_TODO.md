@@ -538,6 +538,52 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Open work
 
+- [ ] **Play session 2026-10-26 18:25 (both on aad1262c + the get-up and lock change; player 1 leads; PvP on)**
+      - The unpaused skills and map menus paused: the FUS server's `config\STServer.ini` had `bUnpausedMenus=false`
+        (the default). Set to true there on 2026-10-26; it takes effect at the server's next start.
+      - Changed on 92ff338d (client only, FUS folder): a PvP hit is counted once. Arrows and spells: the defender's
+        own replayed projectile decides; the attacker's report of it is dropped while a projectile of that player
+        launched here less than 3 s ago may be in flight (`PvP: a hit of N from player P not taken: its projectile is
+        replayed here, and that copy's hit decides`). Melee: the attacker's report, weighed by the defender's rule, as
+        before; the attacker's copy's own hits here (its sword body touching this player, once a second while it
+        rests there) no longer count (`PvP: player copy X hit this player here: ...; not taken, melee is its own
+        game's report`). Those copy hits downed player 2 at 18:39:57 (31 of them, 11 to 19 each, from 18:38:59).
+        Also logged now: each blow of another player on an actor here (`Death sync: player P's blow of N on this
+        game's NPC X: health A to B[, in no cell here][, no 3D here]`), the weather a leader sends and a member is
+        given (`Weather: ...`), and a copy's swimming starting or stopping (`SwimDiag: ...`). Rig, regression only:
+        `live-defender` 24 of 24 (the bot's melee reports land or are blocked as before), `live-clash` 10 of 10; the
+        weather line showed. The bot cannot launch a projectile, and no rig run makes a copy's sword body hit the
+        player, so neither changed half has a red run. To see in play: an arrow that hits takes one hit's health, not
+        two; a dodged arrow takes none; no `player copy ... hit this player here: ...; not taken` downs anyone.
+      - Dead NPCs standing, different ones in each game (18:37). Player 1 landed 27 killing blows (18:36:08 to
+        18:37:06) on FF00137D, the stand-in for player 2's bandit CC591 (server id 4C; it rolled another leveled pick
+        in player 1's game, so player 1's own CC591 is disabled: `Ghost: reference CC591 rolled as ...`). Each blow
+        reached player 2's game (`PvP: a hit of 16 from player 1 on server id 4C received; it is actor CC591 here`)
+        and was applied, yet the bandit never died there: player 2's game reported no death all session. At 18:40:51
+        it handed the bandit off at worldspace 0, cell 0, (0, 0, 0): not placed in its world. Player 1, the leader,
+        cannot claim a ghost (its own reference is disabled), so the copy stood at 1 health. Not known yet: the bandit's
+        health in player 2's game, which no line gives. Next: log the owner's side of a remote blow on its own NPC
+        (health before and after, its cell and 3D), then fix where it fails.
+      - Arrows count twice when they hit: player 2's game replays player 1's arrow as a projectile, and its hit on
+        player 2 there is applied (`PvP: this game hit us with player copy FF0012F8: 1 hit(s), 64 damage ... (not
+        weighed by the defender's rule)`); player 1's own hit report then lands too (`Defender's rule: a hit of 20
+        from player 1 lands`). The same holds for a copy's spells and sword body. Decision needed: which game's hit
+        counts for each kind (the defender's own, or the attacker's report), so that one does. At 18:51 (a dodge on
+        player 2's side, no damage), player 1's game registered no arrow hit at all: one hit of 11 from 18:50:40 to
+        18:52:30.
+      - Lydia (player 1's follower) stuck swimming on player 2's screen (18:46): in player 1's game she was in water
+        from 18:45, trying to draw her weapon 30 times a second (`ActionFlood: ... WeapEquip ... refused`). No line
+        logs a copy's swimming, so its start and end are not known. When player 1 went inside, the server took her out
+        of player 2's view (`CellRange: character 10008E moved from cell 9884 to 15277`), player 2's own Lydia ran
+        on unsynced (`OnSubtitleEvent: server id not found for form id A2C94`, 18:47:52), and a spawn of her came back
+        at 18:48:48: the "copy of Lydia".
+      - Player 2's screen dark red (18:54, picture), gone after player 2 loaded elsewhere once player 1 had left.
+        Nothing in either log explains it. The leader's weather is forced on members every frame and never logged;
+        a weather from player 1's game is the lead. Next: log the weather a leader sends and a member is given.
+      - Player 1's game ended on quitting (18:55:15, after the journal and the console): no crash block, dump, Crash
+        Logger file or Windows error. Like 2026-10-25 17:21; no session has ever logged an `Exit:` line, so a quit
+        and a crash on quitting look the same.
+
 - [ ] **Play session 2026-10-25 19:15 (Fort Neugrad; both on 10749cfa + the marker fix; player 1 leads)**
       - Ralof lay on the floor for player 2 for 97 s while up in the leader's game (19:42:53 to 19:44:30). Player 2's
         log: knocked into his own ragdoll, `GetUpBegin` sent after 1.5 s queued (taken, knock state 6), then the

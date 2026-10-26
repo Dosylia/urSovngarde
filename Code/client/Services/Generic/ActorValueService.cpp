@@ -17,6 +17,7 @@
 #include <Events/ClashEvent.h>
 #include <PlayerCharacter.h>
 #include <Games/Skyrim/DeathCause.h>
+#include <Services/PvpProjectiles.h>
 
 #include <Messages/NotifyActorValueChanges.h>
 #include <Messages/RequestActorValueChanges.h>
@@ -67,6 +68,16 @@ static void SayNpcCopyKeptUp(Actor* apActor, float aHealth) noexcept
         s_said.clear();
     if (s_said.insert(apActor->formID).second)
         spdlog::info("Death sync: NPC copy {:X} kept at {:.0f} health instead of {:.0f}; its owner's game decides whether it dies", apActor->formID, kNpcCopyHealthFloor, aHealth);
+}
+
+// The form id of player aPlayerId's copy in this game, or 0 when it has none.
+static uint32_t PlayerCopyFormId(uint32_t aPlayerId) noexcept
+{
+    auto view = World::Get().view<PlayerComponent, FormIdComponent>();
+    for (const auto cEntity : view)
+        if (view.get<PlayerComponent>(cEntity).Id == aPlayerId)
+            return view.get<FormIdComponent>(cEntity).Id;
+    return 0;
 }
 
 void ActorValueService::CreateActorValuesComponent(const entt::entity aEntity, Actor* apActor) noexcept
@@ -419,15 +430,19 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
         Actor* pActor = Utils::GetByServerId<Actor>(acMessage.Id);
         if (pActor && pActor == PlayerCharacter::Get())
         {
+            // A ranged hit: that player's projectile is replayed here, and its hit or miss here decides (the defender's own copy).
+            if (const uint32_t cCopy = PlayerCopyFormId(acMessage.AttackerPlayerId); cCopy && PvpProjectiles::Recent(cCopy))
+            {
+                spdlog::info("PvP: a hit of {:.0f} from player {} not taken: its projectile is replayed here, and that copy's hit decides", -acMessage.DeltaHealth,
+                             acMessage.AttackerPlayerId);
+                return;
+            }
             NotifyHealthChangeBroadcast held = acMessage;
             if (!held.Tick)
                 held.Tick = m_transport.GetClock().GetCurrentTick();
             m_heldHits.push_back(held);
             return;
         }
-        // TEMPORARY diagnostic: says where another player's hit goes when it does not land on this player.
-        spdlog::info("PvP: a hit of {:.0f} from player {} on server id {:X} received; it is {} here, not this player", -acMessage.DeltaHealth, acMessage.AttackerPlayerId,
-                     acMessage.Id, pActor ? fmt::format("actor {:X}", pActor->formID) : std::string("no actor"));
     }
 #endif
     ApplyHealthChange(acMessage);
@@ -442,7 +457,8 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
         return;
     }
 
-    float newHealth = pActor->GetActorValue(ActorValueInfo::kHealth) + acMessage.DeltaHealth;
+    const float cHealthBefore = pActor->GetActorValue(ActorValueInfo::kHealth);
+    float newHealth = cHealthBefore + acMessage.DeltaHealth;
 
     // A player's copy is essential and goes down at zero, but only its owner's game decides when that player is down.
     // So the copy keeps a margin above zero, enough to take another hit.
@@ -466,6 +482,16 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
         DeathCause::RecordPlayerHit(acMessage.AttackerPlayerId);
 
     const float health = pActor->GetActorValue(ActorValueInfo::kHealth);
+
+    // Another player's blow on an actor other than this player: what it did here, so that one that never kills can be told apart.
+    if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId && pActor != PlayerCharacter::Get())
+    {
+        const ActorExtension* pExtension = pActor->GetExtension();
+        spdlog::info("Death sync: player {}'s blow of {:.0f} on {} {:X}: health {:.0f} to {:.0f}{}{}{}", acMessage.AttackerPlayerId, -acMessage.DeltaHealth,
+                     !pExtension ? "actor" : pExtension->IsRemotePlayer() ? "player copy" : pExtension->IsRemote() ? "NPC copy" : "this game's NPC", pActor->formID, cHealthBefore,
+                     health, pActor->IsDead() ? ", already dead" : "", pActor->parentCell ? "" : ", in no cell here", pActor->GetNiNode() ? "" : ", no 3D here");
+    }
+
     if (!pActor->IsDead() && health <= 0.f)
     {
         ActorExtension* pExtension = pActor->GetExtension();

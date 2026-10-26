@@ -17,6 +17,7 @@
 #include <Forms/TESAmmo.h>
 #include <Games/ActorExtension.h>
 #include <Games/Skyrim/Interface/UI.h>
+#include <Services/PvpProjectiles.h>
 
 CombatService::CombatService(World& aWorld, TransportService& aTransport, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
@@ -175,6 +176,10 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
     BSPointerHandle<Projectile> result;
 
     Projectile::Launch(&result, launchData);
+
+    // Another player's projectile: its hit or miss here decides their ranged hit on this player (the defender's own copy).
+    if (m_world.all_of<PlayerComponent>(*remoteIt))
+        PvpProjectiles::NoteLaunched(formIdComponent.Id);
 
     // Pairs with the sender's "Projectile launch" line: what this side actually launched for a remote shooter.
     spdlog::info("Remote projectile launched: shooter {:X}, base {:X}, weapon {:X}, ammo {:X}, spell {:X}, handle {}", formIdComponent.Id, cProjectileBaseId, cFromWeaponId, cFromAmmoId,

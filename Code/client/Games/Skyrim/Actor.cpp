@@ -66,6 +66,7 @@
 
 #include <ModCompat/BehaviorVar.h>
 #include <PerfScope.h>
+#include <Services/PvpProjectiles.h>
 
 namespace
 {
@@ -1259,23 +1260,30 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
                 return false;
         }
 
-        // TEMPORARY: logs this game's own hits on this player from another player's copy (its sword body, its spells).
-        // No defender's rule weighs these hits. Summed per second, because a concentration spell hits each frame.
+        // Another player's copy hitting this player here.
+        // Their arrows and spells are replayed here, and the replayed projectile's hit decides (the defender's own copy).
+        // Their melee is their game's report, weighed by the defender's rule; their weapon body touching this player here is not a hit.
+        // Summed per second, because a concentration spell hits each frame and a resting blade touches each second.
         if (const ActorExtension* pHitterExtension = apHitter ? apHitter->GetExtension() : nullptr; pHitterExtension && pHitterExtension->IsRemotePlayer())
         {
-            static float s_damage = 0.f;
-            static uint32_t s_hits = 0;
-            static auto s_since = std::chrono::steady_clock::now();
-            s_damage += realDamage;
-            ++s_hits;
-            if (const auto cNow = std::chrono::steady_clock::now(); cNow - s_since >= std::chrono::seconds(1))
+            const bool cRanged = PvpProjectiles::Recent(apHitter->formID);
+            static float s_damage[2]{};
+            static uint32_t s_hits[2]{};
+            static std::chrono::steady_clock::time_point s_since[2]{std::chrono::steady_clock::now(), std::chrono::steady_clock::now()};
+            const size_t cKind = cRanged ? 1 : 0;
+            s_damage[cKind] += realDamage;
+            ++s_hits[cKind];
+            if (const auto cNow = std::chrono::steady_clock::now(); cNow - s_since[cKind] >= std::chrono::seconds(1))
             {
-                spdlog::info("PvP: this game hit us with player copy {:X}: {} hit(s), {:.0f} damage since the last such line {} ms ago (not weighed by the defender's rule)", apHitter->formID,
-                             s_hits, s_damage, std::chrono::duration_cast<std::chrono::milliseconds>(cNow - s_since).count());
-                s_damage = 0.f;
-                s_hits = 0;
-                s_since = cNow;
+                spdlog::info("PvP: player copy {:X} hit this player here: {} hit(s), {:.0f} damage since the last such line {} ms ago; {}", apHitter->formID, s_hits[cKind],
+                             s_damage[cKind], std::chrono::duration_cast<std::chrono::milliseconds>(cNow - s_since[cKind]).count(),
+                             cRanged ? "taken, its projectile decides here" : "not taken, melee is its own game's report");
+                s_damage[cKind] = 0.f;
+                s_hits[cKind] = 0;
+                s_since[cKind] = cNow;
             }
+            if (!cRanged)
+                return false;
         }
 
         World::Get().GetRunner().Trigger(HealthChangeEvent(apThis->formID, -realDamage));

@@ -136,6 +136,8 @@ void WeatherService::OnWeatherChange(const NotifyWeatherChange& acMessage) noexc
 
     Sky::Get()->ForceWeather(pWeather);
 
+    if (weatherId != m_cachedWeatherId)
+        spdlog::info("Weather: the party leader's weather {:X} forced here", weatherId);
     m_cachedWeatherId = weatherId;
 }
 
@@ -178,6 +180,7 @@ void WeatherService::RunWeatherUpdates(const double acDelta) noexcept
         }
 
         m_transport.Send(request);
+        spdlog::info("Weather: {:X} here; sent to the party as its leader's", pWeather->formID);
     }
     else
     {
@@ -188,7 +191,10 @@ void WeatherService::RunWeatherUpdates(const double acDelta) noexcept
 void WeatherService::ToggleGameWeatherSystem(bool aToggle) noexcept
 {
     if (aToggle)
+    {
         Sky::Get()->ReleaseWeatherOverride();
+        spdlog::info("Weather: the game's own again, no leader's forced here");
+    }
     else
         m_transport.Send(RequestCurrentWeather());
 

@@ -27,6 +27,9 @@ struct ActorState : IMovementState
     }
     bool IsDeadOrDying() const noexcept { return IsDying() || IsDead(); }
 
+    //! Bit 10 of flags1 (CommonLibVR ActorState1 swimming).
+    bool IsSwimming() const noexcept { return ((flags1 >> 10) & 1) != 0; }
+
     //! KNOCK_STATE_ENUM, bits 25-27 of flags1 (CommonLibVR ActorState1).
     //! Anything but normal (0) is a body thrown down, lying in its ragdoll, or getting up.
     bool IsKnockedDown() const noexcept { return (flags1 & 0xE000000) != 0; }
