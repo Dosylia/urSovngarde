@@ -538,6 +538,28 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ## Open work
 
+- [ ] **Play session 2026-10-25 19:15 (Fort Neugrad; both on 10749cfa + the marker fix; player 1 leads)**
+      - Ralof lay on the floor for player 2 for 97 s while up in the leader's game (19:42:53 to 19:44:30). Player 2's
+        log: knocked into his own ragdoll, `GetUpBegin` sent after 1.5 s queued (taken, knock state 6), then the
+        owner's `bleedOutStop` came (`refused as an action ...; sent to its graph instead (not taken)`), the get-up was
+        queued again (knock state 5), and the copy's recovery had already used its one get-up. Fixed (not yet seen in
+        play): the get-up is sent again each time the copy waits 1.5 s queued once more, three times at most
+        (`... sent it 'GetUpBegin' (taken, try N)`). Rig, regression checks only (the rig cannot ragdoll a copy just
+        as its owner's bleedout ends, so no red run): `live-copy-knockdown`, `live-copy-bleedout` and
+        `live-door-join-locked` ok on aad1262c + these changes (FUS and MGO folders, client and server); the new
+        `Lock:` lines showed in the last one.
+      - A door not unlocked for player 2 (19:49): every door player 1 picked and opened (5D57D, 5DA84, 5D394, 25274)
+        was already unlocked on player 2's side when its opening arrived (no `and unlocked: it was locked here`), so the
+        lock relay worked for those. Player 2 picked a lock at 19:49:49 for 21 s; no log names the object, and the lock
+        relay logged nothing at all. Now it does: `Lock: X unlocked here (level N); sent to the players in cell ...`,
+        `Lock: X unlocked in another game; done here` / `already so here`. Also fixed from the code: a lock applied from
+        another game was sent back by the game's own lock change, and for a lock (not an unlock) the two games then
+        passed it to and fro without end; it is no longer sent back (within 2 s), and one already so is left alone.
+      - The prison's cell doors missing for player 2 (19:40): no reference switch reached player 2 from 19:39:16 to
+        19:41:54; batches at 19:38:22 and 19:38:48 switched 5 and 1 references there, unnamed. Now a member's game
+        logs each door, container, activator and furniture it switches as the leader's game has it
+        (`ReferenceEnable: X (base Y, form type T) switched off here, ...`). Next time the line names them.
+
 - [ ] **Play session 2026-10-25 17:12 (PvP; player 1 on 779d7a82 + the menu hardening)**
       - Player 1's game ended at 17:21:22 mid-fight (clashes with player 2's sword, player 2 at 22 health) with no
         trace: no crash block or dump of ours, no Crash Logger file, no Windows error event or report; frames ran

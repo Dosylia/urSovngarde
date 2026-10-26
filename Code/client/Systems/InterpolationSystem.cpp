@@ -50,7 +50,7 @@ struct Down
 {
     std::chrono::steady_clock::time_point Since;
     std::chrono::steady_clock::time_point QueuedSince;
-    bool SentGetUp;
+    uint32_t GetUpsSent;
     bool SaidLong;
 };
 TiltedPhoques::Map<uint32_t, Down> s_down;
@@ -475,7 +475,7 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         const auto it = s_down.find(apActor->formID);
         if (cKnockedNpc && it == s_down.end())
         {
-            s_down[apActor->formID] = Down{cNow, {}, false, false};
+            s_down[apActor->formID] = Down{cNow, {}, 0, false};
             spdlog::info("KnockDown: NPC copy {:X} lies in its own ragdoll (knock state {}); it stays where it fell until it gets up", apActor->formID, cKnockState);
         }
         else if (cKnockedNpc)
@@ -483,18 +483,22 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
             // Here the owner is no longer bleeding out (that returned above), so the copy should get up too.
             // A copy that fell into its own bleedout has the owner's life state written over it, and its queued get-up then never starts.
             // The graph's own get-up event starts it (live-copy-bleedout).
+            // A get-up can fall back into the queue, as when the owner's bleedOutStop comes while it plays.
+            // So it is sent again each time it waits queued that long once more, a few times at most.
+            constexpr uint32_t cMaxGetUps = 3;
             Down& down = it.value();
             if (cKnockState != cKnockQueued)
                 down.QueuedSince = {};
             else if (down.QueuedSince == std::chrono::steady_clock::time_point{})
                 down.QueuedSince = cNow;
-            else if (!down.SentGetUp && cNow - down.QueuedSince > 1500ms)
+            else if (down.GetUpsSent < cMaxGetUps && cNow - down.QueuedSince > 1500ms)
             {
-                down.SentGetUp = true;
+                ++down.GetUpsSent;
                 BSFixedString event("GetUpBegin");
                 const bool cTaken = apActor->SendAnimationEvent(&event);
-                spdlog::info("KnockDown: NPC copy {:X} waited {} ms with its get-up queued; sent it 'GetUpBegin' ({})", apActor->formID,
-                             std::chrono::duration_cast<std::chrono::milliseconds>(cNow - down.QueuedSince).count(), cTaken ? "taken" : "not taken");
+                spdlog::info("KnockDown: NPC copy {:X} waited {} ms with its get-up queued; sent it 'GetUpBegin' ({}, try {})", apActor->formID,
+                             std::chrono::duration_cast<std::chrono::milliseconds>(cNow - down.QueuedSince).count(), cTaken ? "taken" : "not taken", down.GetUpsSent);
+                down.QueuedSince = {};
             }
             if (!down.SaidLong && cNow - down.Since > 15s)
             {

@@ -464,6 +464,15 @@ void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept
     if (!m_transport.IsConnected())
         return;
 
+    // A lock set from another game comes back here through the game's own lock change; sent back, two games would pass it to and fro.
+    if (const auto it = m_lockFromOtherGame.find(acEvent.FormId); it != m_lockFromOtherGame.end())
+    {
+        const bool cEcho = it->second.first == acEvent.IsLocked && std::chrono::steady_clock::now() - it->second.second < std::chrono::seconds(2);
+        m_lockFromOtherGame.erase(it);
+        if (cEcho)
+            return;
+    }
+
     LockChangeRequest request;
 
     if (!m_world.GetModSystem().GetServerModId(acEvent.FormId, request.Id))
@@ -491,6 +500,8 @@ void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept
     request.LockLevel = acEvent.LockLevel;
 
     m_transport.Send(request);
+    spdlog::info("Lock: {:X} {} here (level {}); sent to the players in cell {:X}:{:X}", pObject->formID, acEvent.IsLocked ? "locked" : "unlocked", acEvent.LockLevel,
+                 request.CellId.ModId, request.CellId.BaseId);
 }
 
 void ObjectService::OnLockChangeNotify(const NotifyLockChange& acMessage) noexcept
@@ -511,11 +522,14 @@ void ObjectService::OnLockChangeNotify(const NotifyLockChange& acMessage) noexce
 
     auto* pLock = pObject->GetLock();
 
-    if(!acMessage.IsLocked)
+    // Already as the other game has it.
+    const bool cLockedHere = pLock && pLock->IsLocked();
+    if (cLockedHere == acMessage.IsLocked && (!cLockedHere || pLock->lockLevel == acMessage.LockLevel))
     {
-        if (!pLock || !pLock->IsLocked())
-            return;
+        spdlog::info("Lock: {:X} {} in another game; already so here", pObject->formID, acMessage.IsLocked ? "locked" : "unlocked");
+        return;
     }
+    spdlog::info("Lock: {:X} {} in another game; done here", pObject->formID, acMessage.IsLocked ? "locked" : "unlocked");
 
     if (!pLock && acMessage.IsLocked)
     {
@@ -529,6 +543,7 @@ void ObjectService::OnLockChangeNotify(const NotifyLockChange& acMessage) noexce
 
     pLock->lockLevel = acMessage.LockLevel;
     pLock->SetLock(acMessage.IsLocked);
+    m_lockFromOtherGame[pObject->formID] = {acMessage.IsLocked, std::chrono::steady_clock::now()};
     pObject->LockChange();
 }
 
@@ -650,9 +665,19 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
     // The leader sends only these kinds; another plugin at the same id here is left alone.
     if (!IsSharedSwitchKind(pRef) || pRef->IsDeleted())
         return true;
-    if (aEnabled && pRef->IsDisabled())
+    if (aEnabled == !pRef->IsDisabled())
+        return true;
+
+    // A door, container, activator or furniture that comes or goes is one a player can see missing.
+    // Markers and statics switch by the hundred and are left out.
+    const auto cType = static_cast<uint8_t>(pRef->baseForm->formType);
+    if (cType == 24 || cType == 25 || cType == 28 || cType == 29 || cType == 40)
+        spdlog::info("ReferenceEnable: {:X} (base {:X}, form type {}) switched {} here, as the leader's game has it", pRef->formID, pRef->baseForm->formID, cType,
+                     aEnabled ? "on" : "off");
+
+    if (aEnabled)
         pRef->EnableImpl();
-    else if (!aEnabled && !pRef->IsDisabled())
+    else
         pRef->Disable();
     return true;
 }

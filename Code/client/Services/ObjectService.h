@@ -67,4 +67,6 @@ private:
     // The leader's switches for references not in this game yet (their cell not loaded), tried again every 2 s.
     Map<uint32_t, bool> m_enableWaiting;
     double m_enableRetry = 0.0;
+    // Locks set here as another game had them, by form id, and when: the game's lock change they cause is not sent back.
+    Map<uint32_t, std::pair<bool, std::chrono::steady_clock::time_point>> m_lockFromOtherGame;
 };
