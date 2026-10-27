@@ -1,0 +1,51 @@
+# A door used in another game moves here once and all the way: no snap, no open-close-open flicker.
+#
+#   python Tools\VR\live-check.py live-door-motion
+#
+# The door's open state is sampled about twenty times a second ("DO record ... ref") while the other player opens it,
+# opens it again (a second use that arrives while it already moves), and closes it. Each use must show its moving state
+# (opening or closing) and end where the other game left it, without turning back on the way.
+# Helgen keep's jail door F8239: the drawn twin of live-door-state's 9B0A5, which the test save has disabled, and a
+# disabled door has no 3D to animate, so it jumps to its new state. It leaves the player in Helgen's keep: run it last, after a fresh start.
+log live door motion
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- the player into Helgen's keep, next to the door; the bot into its cell
+log DO console player.moveto 9B0A5
+wait 12
+cell 5DE24
+wait 4
+log DO papyrus ObjectReference SetOpen F8239 b:false
+wait 6
+log REQUIRE ref F8239 closed
+wait 2
+
+log -- opened in another game, and the same opening again while it moves
+log DO record opening ref F8239 7
+wait 1
+activate F8239 by nobody 3
+wait 1
+activate F8239 by nobody 3
+wait 7
+log CHECK door opening once open
+
+log -- closed in another game
+log DO record closing ref F8239 7
+wait 1
+activate F8239 by nobody 1
+wait 8
+log CHECK door closing once closed
+report
+wait 2
+log CHECK desync all
+log CHECK smooth all
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

@@ -35,6 +35,8 @@
 #include <Messages/NotifyWorldObjectMove.h>
 #include <Messages/ActivateRequest.h>
 #include <Messages/NotifyActivate.h>
+#include <Messages/NotifyLockChange.h>
+#include <Structs/DoorState.h>
 #include <Messages/RequestReferenceEnable.h>
 #include <Messages/NotifyReferenceEnable.h>
 #include <Messages/RequestWorldObjectMove.h>
@@ -817,6 +819,37 @@ void Bot::SendDeath(const bool aDead) noexcept
     spdlog::info("Death state {} sent", aDead ? "dead" : "alive");
 }
 
+void Bot::SendNpcLife(KnownActor& aNpc, const bool aDead, const float aHealth) noexcept
+{
+    RequestDeathStateChange death{};
+    death.Id = aNpc.ServerId;
+    death.OwnershipEpoch = aNpc.OwnershipEpoch;
+    death.IsDead = aDead;
+
+    RequestActorValueChanges values{};
+    values.Id = aNpc.ServerId;
+    values.OwnershipEpoch = aNpc.OwnershipEpoch;
+    values.Values[kHealth] = aHealth;
+
+    // Dying, the health reaches zero first; coming back, the death state goes first.
+    if (aDead)
+    {
+        SendMsg(values);
+        SendMsg(death);
+    }
+    else
+    {
+        SendMsg(death);
+        SendMsg(values);
+    }
+
+    aNpc.Dead = aDead;
+    aNpc.Health = aHealth;
+    aNpc.HealthKnown = true;
+    aNpc.LastChange = Clock::now();
+    spdlog::info("[script] NPC {:X} is now {} at health {:.0f} (epoch {})", aNpc.ServerId, aDead ? "dead" : "alive", aHealth, aNpc.OwnershipEpoch);
+}
+
 void Bot::SendHit(const uint32_t aTargetId, const float aDelta, const uint64_t aTick) noexcept
 {
     if (!m_hasCharacter || aTargetId == kNoId)
@@ -1169,6 +1202,12 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         actor.Dead = message.IsDead;
         actor.LastChange = Clock::now();
         Record(Collect::Death, fmt::format("death {:X} dead={}", message.Id, message.IsDead));
+        if (m_capturing && message.Id == m_captureId && message.IsDead)
+        {
+            const auto cAtMs = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - m_captureStart).count());
+            m_capture.push_back({cAtMs, false, {}, {}, true});
+            spdlog::info("Captured the death of {:X}, {} ms into the recording", message.Id, cAtMs);
+        }
         return;
     }
 
@@ -1316,11 +1355,22 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         ++m_activations;
         spdlog::info("Activation of {:X}:{:X} relayed here, by server id {:X}, from state {}", message.Id.ModId, message.Id.BaseId, message.ActivatorId,
                      message.PreActivationOpenState);
+        if (const uint8_t cAfter = DoorState::AfterActivation(message.PreActivationOpenState); cAfter && message.Id.ModId == m_skyrimModId)
+            m_doorStates[message.Id.BaseId] = cAfter;
         if (message.ActivatorId == m_serverId)
         {
             ++m_activationsBack;
             spdlog::warn("Activation of {:X}:{:X} came back in this bot's own name", message.Id.ModId, message.Id.BaseId);
         }
+        return;
+    }
+
+    if (opcode == NotifyLockChange::Opcode)
+    {
+        const auto& message = static_cast<const NotifyLockChange&>(acMessage);
+        if (message.Id.ModId == m_skyrimModId)
+            m_locks[message.Id.BaseId] = message.IsLocked;
+        spdlog::info("Lock of {:X}:{:X} {} in another game, relayed here", message.Id.ModId, message.Id.BaseId, message.IsLocked ? "locked" : "unlocked");
         return;
     }
 
@@ -1875,6 +1925,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // owns, at the pace it arrived and starting from where that body stands now. With "noactions", only movement, variables
     // and pose go out: the recording's own moveStart cannot start a copy that something else should have started.
     // With "skip <event>", the actions of that name are left out, as a copy that refused that one action.
+    // A death the recording holds kills the NPC it is played on at the same moment (live-death-replay).
     if (name == "replay")
     {
         const bool asNpc = !args.empty() && args[0] == "npc";
@@ -1959,6 +2010,11 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
                 if (!performed.empty())
                     SendMsg(actions);
             }
+
+            // The recorded actor died here: so does the NPC it is played on, as its owner's game would report it.
+            if (captured.Died && asNpc)
+                if (KnownActor* pNpc = FindActor(m_replayTarget))
+                    SendNpcLife(*pNpc, true, 0.f);
 
             if (captured.HasUpdate)
             {
@@ -2477,7 +2533,29 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             ParseFloat(args[3], state);
         request.PreActivationOpenState = static_cast<uint8_t>(state);
         SendMsg(request);
+        if (const uint8_t cAfter = DoorState::AfterActivation(request.PreActivationOpenState))
+            m_doorStates[refId] = cAfter;
         spdlog::info("[script] activation of {:X} sent in the name of {:X}, in cell {:X}", refId, otherId, m_cell.BaseId);
+        return true;
+    }
+
+    // "report": what this bot knows of the world, one "[report]" line each, for live-check's desync scan (CHECK desync, told).
+    // Every NPC with its reference (Skyrim.esm, or none), life and where its owner last had it; every door state and lock it knows.
+    if (name == "report")
+    {
+        for (const auto& actor : m_actors)
+        {
+            if (actor.IsPlayer)
+                continue;
+            const std::string cRef = actor.Ref.ModId == m_skyrimModId && actor.Ref.BaseId ? fmt::format("{:X}", actor.Ref.BaseId) : std::string("none");
+            const std::string cAt = actor.PositionKnown ? fmt::format("{:.0f} {:.0f} {:.0f}", actor.Position.x, actor.Position.y, actor.Position.z) : std::string("unknown");
+            spdlog::info("[report] actor {:X} ref {} {} {} at {}", actor.ServerId, cRef, actor.Dead ? "dead" : "alive", actor.OwnedByUs ? "ours" : "theirs", cAt);
+        }
+        for (const auto& [refId, state] : m_doorStates)
+            spdlog::info("[report] door {:X} {}", refId, state == DoorState::kOpen || state == DoorState::kOpening ? "open" : "closed");
+        for (const auto& [refId, locked] : m_locks)
+            spdlog::info("[report] lock {:X} {}", refId, locked ? "locked" : "unlocked");
+        spdlog::info("[report] end");
         return true;
     }
 
@@ -3008,35 +3086,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
 
         const bool dead = args[0] == "dead";
-        const float health = arg(1, dead ? 0.f : 100.f);
-
-        RequestDeathStateChange death{};
-        death.Id = pNpc->ServerId;
-        death.OwnershipEpoch = pNpc->OwnershipEpoch;
-        death.IsDead = dead;
-
-        RequestActorValueChanges values{};
-        values.Id = pNpc->ServerId;
-        values.OwnershipEpoch = pNpc->OwnershipEpoch;
-        values.Values[kHealth] = health;
-
-        // Dying, the health reaches zero first; coming back, the death state goes first.
-        if (dead)
-        {
-            SendMsg(values);
-            SendMsg(death);
-        }
-        else
-        {
-            SendMsg(death);
-            SendMsg(values);
-        }
-
-        pNpc->Dead = dead;
-        pNpc->Health = health;
-        pNpc->HealthKnown = true;
-        pNpc->LastChange = Clock::now();
-        spdlog::info("[script] NPC {:X} is now {} at health {:.0f} (epoch {})", pNpc->ServerId, dead ? "dead" : "alive", health, pNpc->OwnershipEpoch);
+        SendNpcLife(*pNpc, dead, arg(1, dead ? 0.f : 100.f));
         return true;
     }
 

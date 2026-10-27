@@ -1,0 +1,39 @@
+# A lever pulled in another game moves its bridge here, once and all the way; a lever pulled here reaches the other player.
+#
+#   python Tools\VR\live-check.py live-lever-bridge
+#
+# Mistwatch's retractable bridge 917F7 and its lever 91804 stand one cell west of the rig's start (33,-9, BAEA).
+# A lever's use is replayed on the user's copy here, and the lever's own script moves the bridge in each game.
+# The bridge's open state (1 out, 3 retracted) is sampled about twenty times a second ("DO record ... ref"): each pull
+# must show it moving (2 or 4) and end at the other end, with no turn back on the way.
+# First the bot pulls the lever (the other player in another game); then this game's own player pulls it.
+log live lever bridge
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log REQUIRE player cell BAE9
+log DO papyrus ObjectReference GetOpenState 917F7
+wait 3
+
+log -- pulled in another game: the bridge moves here
+log DO record pulled-there ref 917F7 10
+activate 91804 by me 0 cell BAEA
+wait 11
+log CHECK door pulled-there once toggled
+
+log -- pulled here: the bridge moves back, and the other player is told of the pull
+log DO record pulled-here ref 917F7 10
+log DO papyrus ObjectReference Activate 91804 14 b:false
+wait 11
+log CHECK door pulled-here once toggled
+log CHECK bot logged info\] Activation of 0:91804 relayed here
+log CHECK smooth all
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

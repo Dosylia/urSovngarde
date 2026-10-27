@@ -1,0 +1,44 @@
+# A protected NPC's copy dies when its owner's NPC dies, and stays dead when this game takes it over.
+#
+#   python Tools\VR\live-check.py live-death-protected
+#   python Tools\VR\live-check.py --expect-fail live-death-protected     on a build that kills a copy with no killer: must be RED
+#
+# Found by live-death-copy's first run (2026-10-26): the owner's death arrived and the game killed its copy of Lydia
+# (`set dead by its owner (now dead: false)`), but a protected NPC dies only by a player's hand, so the copy lay down alive.
+# When the game took her over later it told the server `is now alive`, and the dead NPC lived again for everyone.
+# Followers, many named NPCs and some guards are protected. RED on 206a1d36 (2 of 2); fixed by 10b98ee5, whose
+# live-protected-copy-dies checks the death alone: this one also checks the hand-over after it.
+log live death protected
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a Lydia of this bot's, alive and on her feet (protected, not essential)
+log DO papyrus ActorBase SetEssential A2C8E b:false
+npc temp A2C8E
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc alive
+log REQUIRE npc standing
+# The checks above take the driver a few seconds, while this script goes on: the death waits for them.
+wait 6
+log DO logmark
+
+log -- the owner's Lydia dies
+npclife dead 0
+wait 8
+log CHECK npc dead
+report
+wait 2
+log CHECK desync all
+
+log -- the bot lets her go: this game takes her over, and she must stay dead
+release any
+wait 12
+log CHECK npc dead
+log CHECK absent Death sync: local actor \w+ is now alive
+wait 4
+log CHECK game alive
+log done
+stop

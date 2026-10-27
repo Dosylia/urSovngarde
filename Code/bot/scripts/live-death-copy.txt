@@ -1,0 +1,40 @@
+# A copy of another game's NPC dies when its owner says so, falls at once, and lies where the owner's body lies, with nothing jumping.
+#
+#   python Tools\VR\live-check.py live-death-copy
+#
+# The bot owns a human (Aspiring Mage, Skyrim.esm 753CB) and kills it (npclife dead), as an owner's game reports a death;
+# the game's copy has to follow. A protected NPC is live-death-protected.
+# Checked: the copy is dead; it was down within 1.5 s of the death arriving (sampled every few hundred ms); the client logged
+# no jank (a corpse moved more than 40 units, a copy dead before its owner's word, a point jump...); the bot's report matches the game.
+log live death copy
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a human of this bot's, alive and on its feet
+npc temp 753CB
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc alive
+log REQUIRE npc standing
+# The checks above take the driver a few seconds, while this script goes on: the death waits for them.
+wait 6
+log DO logmark
+
+log -- the owner's NPC dies; the copy is watched while the death arrives
+log DO watch npc 10
+wait 2
+npclife dead 0
+wait 12
+log REQUIRE npc went down
+log CHECK npc dead
+log CHECK npc fell within 1500
+report
+wait 2
+log CHECK desync all
+log CHECK smooth all
+wait 4
+log CHECK game alive
+log done
+stop

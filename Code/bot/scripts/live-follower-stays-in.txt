@@ -1,0 +1,51 @@
+# A persistent NPC its owner takes indoors stays indoors in this game: no copy left outside, no second one walking home.
+#
+#   python Tools\VR\live-check.py live-follower-stays-in
+#
+# Players saw a follower (Lydia) stay outside, or walk home, in the other player's game while her owner took her into a
+# building. live-copy-through-door checks the moment she goes in; this checks the half minute after: this game's own
+# reference must stay in the other cell, and the desync scan must find no duplicate of her drawn here.
+# As there: the bot takes Ralof (2BF9E) as its NPC beside the player, leads the party, and sends him into Helgen keep (5DE24).
+party lead
+log live follower stays in
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+stay
+
+log -- the bot's Ralof beside the player: this game's own Ralof is the copy
+npc 2BF9E
+waitfor owned == 1 20
+wait 8
+log REQUIRE ref 2BF9E near player 1500
+
+log -- Ralof goes into Helgen keep, as a follower through a door, the bot staying outside
+npcmove 0 0 0 cell 5DE24
+wait 8
+log REQUIRE ref 2BF9E cell other
+
+log -- for half a minute he must stay in there in this game, and nothing of him outside
+wait 10
+log CHECK ref 2BF9E cell other
+wait 10
+log CHECK ref 2BF9E cell other
+report
+wait 2
+log CHECK desync all
+wait 10
+log CHECK ref 2BF9E cell other
+log CHECK smooth all
+log CHECK game alive
+wait 2
+log done
+stop

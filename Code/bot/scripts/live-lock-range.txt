@@ -1,0 +1,41 @@
+# A lock changed in this game reaches every player who has the door's cell loaded, not only those in that very cell.
+#
+#   python Tools\VR\live-check.py live-lock-range
+#   python Tools\VR\live-check.py --expect-fail live-lock-range     on a build whose server sends a lock to that cell alone: must be RED
+#
+# The server passes a lock change only to the players in the door's own cell, while a door's use reaches everyone with that
+# cell loaded (sync audit, 2026-10-26: in a civil war fight, player 2's game sent about 260 lock changes and received none).
+# Here the player and the bot stand in the rig's start cell (Tamriel 34,-9, BAE9); Mistwatch's door 3F558 is one cell west
+# (33,-9, BAEA). A script in this game locks it, then unlocks it again.
+log live lock range
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log REQUIRE player cell BAE9
+wait 2
+
+log -- a script in this game locks the door one cell over
+log DO papyrus ObjectReference Lock 3F558 b:true b:false
+wait 5
+log REQUIRE ref 3F558 locked
+report
+wait 2
+log CHECK told lock 3F558 locked
+
+log -- and unlocks it again
+log DO papyrus ObjectReference Lock 3F558 b:false b:false
+wait 5
+log REQUIRE ref 3F558 unlocked
+report
+wait 2
+log CHECK told lock 3F558 unlocked
+log CHECK desync all
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

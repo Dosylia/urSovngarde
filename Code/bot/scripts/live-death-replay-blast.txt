@@ -1,0 +1,51 @@
+# How a death in a fight looks on the other player's screen: the original thrown by a blast, its copy only told it died.
+#
+#   python Tools\VR\live-check.py live-death-replay-blast
+#
+# As live-death-replay, but the original dies by the player's Fire Storm (7A82B), which throws its ragdoll, as a fight's
+# blows and spells do. The copy gets the recording and the death, but no blast: it falls where it stands.
+# The checks say how far apart the two bodies come to rest and how differently they lie: what the other player sees
+# differ from the owner's screen in a fight (sync audit, 2026-10-26: corpses shifted 68 to 220 units after landing).
+log live death replay blast
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO god on
+
+log -- the original: a mage this game runs, 150 units ahead, low on health
+log DO place 753CB
+wait 8
+log DO papyrus Actor SetRestrained placed b:true
+log DO papyrus Actor ForceActorValue placed s:Health f:10
+wait 3
+
+log -- a Fire Storm kills it while this game samples it and the bot records what this game sends of it
+log DO record original placed 12
+log DO sleep 2
+log DO papyrus Spell Cast 7A82B 14 14
+capture newest 12
+log REQUIRE bot logged info\] Captured the death of
+log SHOT original of placed
+
+log -- the copy: a mage of the bot's own plays the recording, and this game shows it as a copy
+npc captured
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc standing
+wait 4
+log DO record copy npc 14
+replay npc
+wait 6
+log SHOT copy of npc
+log CHECK npc dead
+log CHECK fall copy like original 700
+log CHECK pose copy like original 30
+log CHECK place copy like original 100
+log CHECK still copy 30
+log CHECK smooth all
+wait 4
+log CHECK game alive
+log DO god off
+log done
+stop

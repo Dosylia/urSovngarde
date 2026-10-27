@@ -182,6 +182,8 @@ private:
     void KeepReplayedPose(const VRPose& acPose) noexcept;
     void SendHealth(float aHealth) noexcept;
     void SendDeath(bool aDead) noexcept;
+    //! An NPC this bot owns dies or comes back to life, as its owner's game reports it (death state and health).
+    void SendNpcLife(KnownActor& aNpc, bool aDead, float aHealth) noexcept;
     void SendHit(uint32_t aTargetId, float aDelta, uint64_t aTick = 0) noexcept;
     void SendEquip(uint32_t aBaseId, uint32_t aSlot, bool aUnequip, bool aSpell) noexcept;
 
@@ -340,6 +342,10 @@ private:
     uint32_t m_activations{}; //!< every activation relayed to this bot, whoever did it
     //! The latest switch relayed to this bot for each reference the party leader's scripts switched (Skyrim.esm base id), for "refenabled".
     std::map<uint32_t, bool> m_refEnabled;
+    //! Each Skyrim.esm door's state after its last use (DoorState), relayed here or sent by this bot, for "report".
+    std::map<uint32_t, uint8_t> m_doorStates;
+    //! Each Skyrim.esm reference's lock as another game last set it, for "report".
+    std::map<uint32_t, bool> m_locks;
     std::vector<std::pair<uint32_t, std::string>> m_names; // player id -> username
 
     size_t m_pc = 0;
@@ -359,6 +365,8 @@ private:
         bool HasUpdate{false};
         ReferenceUpdate Update{};
         TiltedPhoques::Vector<ActionEvent> Actions{};
+        //! The captured actor died at that time; "replay npc" kills the NPC it plays on at the same moment.
+        bool Died{false};
     };
     std::vector<CapturedUpdate> m_capture;
     uint32_t m_captureId{};

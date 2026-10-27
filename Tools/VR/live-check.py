@@ -2,6 +2,7 @@
 
     python Tools/VR/live-check.py live-copy [live-npc ...]
     python Tools/VR/live-check.py --all            every script in ALL, in that order
+    python Tools/VR/live-check.py --sync           the sync and animation set (SYNC; Tools/VR/README-rig-checks.md)
     python Tools/VR/live-check.py --expect-fail live-x   on a build without the fix live-x guards: it must fail
     powershell -File Tools/VR/run-live.ps1         the same, with the game brought up before and down after
 
@@ -75,6 +76,21 @@ game's IsEquipped does not count it); `lefthand|righthand <hex>` asks which weap
 `log CHECK distinct <most> <regular expression with one group>` passes when the client has logged at least one and
 at most that many different values of the group since the script began.
 `log CHECK absent <regular expression>` passes when the client has written no such line since the script began.
+`log CHECK smooth all|<kind> ...|except <kind> ...` passes when the client logged none of those kinds of jank since the script
+began (JANK: corpse-jump, died-early, point-jump, getup-jump, stuck-down, refused, no-reports, ragdoll-apart, door-differs, copy-lost-3d).
+After every script the jank it found is printed and kept in the history, judged or not.
+The bot's script line `report` prints what the bot knows of the world. `log CHECK desync all` compares its last report with the game:
+each NPC copy's life and place, no placed reference of the game's own drawn beside its copy, and each door and lock the bot knows.
+`log CHECK told door <hex> open|closed` and `told lock <hex> locked|unlocked` pass when the bot's last report has it so: what
+this game did reached the other player.
+`log CHECK npc fell within <ms>` times the fall from this game applying the owner's death to the first `DO watch npc` sample with the body down.
+`log DO record <name> copy|npc|placed|player|ref <hex> <seconds>` samples in the background while the script goes on: a body's
+pelvis and height (its whole body in the last 2 s), or any other reference's open state. Checks on recordings:
+`pose <b> like <a> <units>` (resting poses), `fall <b> within <ms>` and `fall <b> like <a> <ms>` (from its death in this game to
+down), `place <b> like <a> <units>` (where it came to rest against where it stood), `still <a> <units>` (no jump once down), and
+`door <a> once open|closed|toggled` (one movement to that end, no flicker; only doors show their moving state).
+After a run, logs/live-report.html shows every script's verdict, checks, jank and screenshots. Tools/VR/README-rig-checks.md
+says how these fit together and what to know before writing a test with them.
 `log CHECK spot mark` notes where the player stands; `spot back <units>` passes when the player is within that many
 units of it in the same worldspace or interior, `spot away <units>` when farther or elsewhere.
 `log CHECK logged <regular expression>` passes when the client has written a matching line since the script began.
@@ -110,7 +126,7 @@ Each result in the history carries the modlist and the Mod Organizer profile it 
 
 Checks are asked while the script carries on, so a script puts a wait after each group of them.
 """
-import io, json, math, os, re, shutil, subprocess, sys, time, urllib.request
+import io, json, math, os, re, shutil, subprocess, sys, threading, time, urllib.request
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RELEASE = os.path.join(ROOT, 'build', 'windows', 'x64', 'release')
@@ -139,6 +155,11 @@ ALL = ['live-copy', 'live-npc', 'live-dropmove', 'live-look', 'live-walk', 'live
        'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-range', 'live-npc-indoors', 'live-npc-grace-outdoors', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead', 'live-load-soak', 'live-door-state']
 # live-door-state is last: it leaves the player in Helgen's keep, where the bot of any later script finds nobody.
 # live-npc-grace, live-door-join and live-door-join-locked leave the player there too, so they are not in the list: run each by name after a fresh `headless.ps1 up`.
+# The sync and animation set (--sync, Tools/VR/README-rig-checks.md): deaths, bodies, locks, levers, followers and doors.
+# Some fail on purpose on today's build, each on a known bug its header names. live-door-motion leaves the player in
+# Helgen's keep, so it is last; live-door-script does too, so it runs by name after a fresh `headless.ps1 up`.
+SYNC = ['live-death-copy', 'live-death-protected', 'live-death-replay', 'live-death-replay-blast', 'live-lock-range', 'live-lever-bridge',
+        'live-follower-stays-in', 'live-door-motion']
 # Not in the list, run by name: live-seeker-copy-remote and live-seeker-copy-local (the two halves that showed the
 # crash of live-copy-abandon needs a copy and its original together).
 
@@ -215,6 +236,138 @@ def latest_blade_centre(lines, copy_form):
         if m and (not copy_form or m.group(1).upper() == copy_form.upper()):
             centre = tuple(float(m.group(i)) for i in (2, 3, 4))
     return centre
+
+
+# What looks wrong on screen, from the client's own diagnostics: a kind, its line, and the size (units) from which it shows.
+# Read after every script (the "jank" line) and judged by "CHECK smooth".
+JANK = [
+    ('corpse-jump', r"CorpseDiag: \w+'s ragdoll lay (?P<size>\d+) units from where its owner's corpse is; moved there", 40),
+    ('died-early', r"CorpseDiag: \w+ is dead here, but its owner's game has not said it died", 0),
+    ('point-jump', r'JumpDiag: a buffered point was (?P<size>\d+) units from the one before it', 0),
+    ('getup-jump', r'KnockDown: NPC copy \w+ is up again after \d+ ms, (?P<size>\d+) units from where its owner has it', 40),
+    ('stuck-down', r'KnockDown: NPC copy \w+ still lies after 15 s', 0),
+    ('refused', r"ReplayDiag: refused '", 0),
+    ('no-reports', r'QuietStop: copy \w+ had no report for', 0),
+    ('ragdoll-apart', r"VRRagdoll: actor \w+: its ragdoll's model-to-world .* is not where the copy is", 0),
+    ('door-differs', r'Door \w+: .* here it is in state \d+; left as it is', 0),
+    # A copy that lost its 3D while its actor stays is torn down and made again: a body near the player vanishes and reappears.
+    ('copy-lost-3d', r'CopyGone: \w+ removed as remote; the actor is still there, no 3D', 0),
+]
+
+
+def jank(lines, kinds=None):
+    """The jank among these client lines: kind -> (how many, the largest size, the first such line)."""
+    found = {}
+    for kind, pattern, least in JANK:
+        if kinds and kind not in kinds:
+            continue
+        rx = re.compile(pattern)
+        for l in lines:
+            m = rx.search(l)
+            size = int(m.group('size')) if m and 'size' in rx.groupindex else 0
+            if not m or size < least:
+                continue
+            count, largest, first = found.get(kind, (0, 0, l))
+            found[kind] = (count + 1, max(largest, size), first)
+    return found
+
+
+def jank_text(found):
+    return ', '.join('%s %d%s' % (kind, count, (' (up to %d units)' % largest) if largest else '') for kind, (count, largest, _) in found.items()) or 'none'
+
+
+# The nodes "DO record" samples on an actor: enough to tell how a body stands, falls and lies.
+BODY_NODES = {'pelvis': 'NPC Pelvis [Pelv]', 'head': 'NPC Head [Head]', 'lhand': 'NPC L Hand [LHnd]', 'rhand': 'NPC R Hand [RHnd]',
+              'lfoot': 'NPC L Foot [Lft ]', 'rfoot': 'NPC R Foot [Rft ]'}
+
+
+class Recording:
+    """What "DO record" samples in the background while the script goes on: (seconds since the epoch, sample) pairs.
+    An actor's sample is where its nodes are; any other reference's is its open state (a door's or a bridge's, 1 to 4).
+    DevBench answers about 27 Papyrus calls a second, one per game frame. So a body is sampled by its pelvis and its
+    reference's height (4 calls, about 6 a second) until the last 2 s, which read all of BODY_NODES for its resting pose."""
+
+    def __init__(self, form, seconds):
+        self.form = form
+        self.body = papyrus_global('NetImmerse', 'GetNodeWorldPositionZ', [{'form': '0x' + form}, BODY_NODES['pelvis'], False]) not in (None, 0, 0.0)
+        # Only a door shows its moving state (opening, closing); a bridge or gate run by a lever goes from one end to the other.
+        base = None if self.body else papyrus('ObjectReference', 'GetBaseObject', form)
+        self.door = isinstance(base, dict) and papyrus('Form', 'GetType', base.get('formId', '').replace('0x', '')) == 29
+        self.samples = []
+        self.thread = threading.Thread(target=self.sample, args=(seconds,), daemon=True)
+        self.thread.start()
+
+    def sample(self, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            at = time.time()
+            if self.body:
+                nodes = {}
+                for key, node in BODY_NODES.items() if at >= end - 2.0 else [('pelvis', BODY_NODES['pelvis'])]:
+                    xyz = [papyrus_global('NetImmerse', 'GetNodeWorldPosition' + axis, [{'form': '0x' + self.form}, node, False]) for axis in 'XYZ']
+                    nodes[key] = tuple(xyz) if all(isinstance(v, (int, float)) for v in xyz) and any(xyz) else None
+                if len(nodes) == 1:
+                    ground = papyrus('ObjectReference', 'GetPositionZ', self.form)
+                    nodes['ground'] = ground if isinstance(ground, (int, float)) else None
+                if nodes['pelvis']:
+                    self.samples.append((at, nodes))
+            else:
+                state = papyrus('ObjectReference', 'GetOpenState', self.form)
+                if isinstance(state, int):
+                    self.samples.append((at, state))
+                time.sleep(0.05)
+
+    def done(self):
+        """The samples, once the sampling is over (a check waits for it)."""
+        self.thread.join()
+        return self.samples
+
+
+def body_height(nodes):
+    """How high the pelvis is above the lower foot, or above its reference (where it stands) in a quick sample:
+    about 60 on its feet, under 40 down, under 25 lying flat."""
+    feet = [nodes[key][2] for key in ('lfoot', 'rfoot') if nodes.get(key)]
+    if feet:
+        return nodes['pelvis'][2] - min(feet)
+    return nodes['pelvis'][2] - nodes['ground'] if nodes.get('ground') is not None else None
+
+
+def pose_signature(nodes):
+    """How a body is laid out, whichever way it faces: the distance between each two of its sampled nodes."""
+    keys = [key for key in BODY_NODES if nodes.get(key)]
+    return {(a, b): math.dist(nodes[a], nodes[b]) for i, a in enumerate(keys) for b in keys[i + 1:]}
+
+
+def resting_pose(samples):
+    """The pose a body came to rest in: the node distances averaged over its last whole-body samples."""
+    last = [nodes for at, nodes in samples if 'head' in nodes]
+    signatures = [pose_signature(nodes) for nodes in last]
+    pairs = set.intersection(*(set(s) for s in signatures)) if signatures else set()
+    return {pair: sum(s[pair] for s in signatures) / len(signatures) for pair in pairs}
+
+
+def death_time(form, lines):
+    """When this game killed that actor: its owner's death applied to a copy, or this game's own actor's death."""
+    found = None
+    for l in lines:
+        if re.search(r'Death sync: (remote actor %s set dead by its owner|local actor %s is now dead)' % (form, form), l, re.I):
+            found = log_time(l)
+    return found
+
+
+def fall_delay(recording, lines):
+    """Seconds from that actor's death in this game to its first sample with the body down, or a reason it has none."""
+    died = death_time(recording.form, lines)
+    if died is None:
+        return None, 'no death of %s in the log' % recording.form
+    down = next((at for at, nodes in recording.done() if at >= died - 0.1 and (body_height(nodes) or 99) < 40.0), None)
+    return (down - died, '') if down is not None else (None, '%s never down in its samples after its death' % recording.form)
+
+
+def log_time(line):
+    """When the client wrote a line, in seconds since the epoch, or None."""
+    m = re.match(r'\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.(\d{3})\]', line)
+    return time.mktime(time.strptime(m.group(1), '%Y-%m-%d %H:%M:%S')) + int(m.group(2)) / 1000.0 if m else None
 
 
 def session_lines():
@@ -557,6 +710,10 @@ class Run:
         self.bot_lines = []
         # The NPC copy's pose samples from "DO watch npc": (seconds since the start, pelvis x y z, body height).
         self.watch = []
+        self.watch_start = 0.0
+        self.watch_form = None
+        # "DO record <name> ...": name -> Recording, for "pose", "fall", "place", "still" and "door ... once".
+        self.records = {}
         # "DO mark": name -> (what it is, where it was).
         self.marks = {}
         # "CHECK bounty <faction> mark": faction -> the player's bounty with it then.
@@ -573,6 +730,27 @@ class Run:
         if not form:
             return None, 'the game logged no spawn for server id %s' % sid
         return form, None
+
+    def report(self):
+        """The bot's last "report": actors (server id -> (Skyrim.esm reference or None, dead, "ours" or "theirs", position or None)),
+        doors (reference -> open) and locks (reference -> locked); three Nones before the bot has given one."""
+        block, last = None, None
+        for line in self.bot_lines:
+            m = re.search(r'\[report\] (.*)$', line.rstrip())
+            if not m:
+                continue
+            words = m.group(1).split()
+            block = block or ({}, {}, {})
+            if words[0] == 'end':
+                last, block = block, None
+            elif words[0] == 'actor' and len(words) >= 8:
+                at = tuple(float(v) for v in words[7:10]) if words[7] != 'unknown' else None
+                block[0][words[1].upper()] = (None if words[3] == 'none' else words[3].upper(), words[4] == 'dead', words[5], at)
+            elif words[0] == 'door':
+                block[1][words[1].upper()] = words[2] == 'open'
+            elif words[0] == 'lock':
+                block[2][words[1].upper()] = words[2] == 'locked'
+        return last or (None, None, None)
 
     def thing(self, words):
         """What "DO mark" names, as a fixed reference: ('player',), ('actor', form) or ('ref', form), or a reason it has none."""
@@ -805,6 +983,145 @@ class Run:
                 hits = [l for l in session_lines()[self.log_from:] if rx.search(l)]
                 ok = len(hits) < int(words[1])
                 detail = '%d lines' % len(hits)
+            elif who == 'smooth':
+                # "smooth all | smooth <kind> ... | smooth except <kind> ...": the client logged no jank of those kinds (JANK) since the script began.
+                kinds = [kind for kind, _, _ in JANK]
+                if what == 'except':
+                    kinds = [kind for kind in kinds if kind not in words[2:]]
+                elif what != 'all':
+                    kinds = words[1:]
+                found = jank(session_lines()[self.log_from:], kinds)
+                ok = not found
+                detail = jank_text(found) + ('; first: ' + next(iter(found.values()))[2][35:200].strip() if found else '')
+            elif who in ('pose', 'fall', 'place', 'still', 'door') and what not in self.records:
+                detail = 'nothing was recorded as %s ("DO record")' % what
+            elif who == 'pose':
+                # "pose <b> like <a> <units>": the body recorded as b came to rest laid out as a did: the distances between its
+                # sampled nodes (BODY_NODES, whichever way it faces) differ by at most that much on average.
+                other = self.records.get(words[3])
+                mine, theirs = (resting_pose(r.done()) if r and r.body and r.done() else None for r in (self.records[what], other))
+                if not mine or not theirs:
+                    detail = 'no resting pose for %s' % (what if not mine else words[3])
+                else:
+                    diffs = sorted(((abs(mine[p] - theirs[p]), p) for p in mine if p in theirs), reverse=True)
+                    mean = sum(d for d, _ in diffs) / len(diffs)
+                    ok = mean <= float(words[4])
+                    pelvis = [self.records[name].done()[-1][1]['pelvis'] for name in (what, words[3])]
+                    detail = 'node distances differ by %.0f units on average (limit %s); most: %s; pelvis %s at %s, %s at %s' % (
+                        mean, words[4], ', '.join('%s-%s %.0f' % (a, b, d) for d, (a, b) in diffs[:3]),
+                        what, '(%.0f, %.0f, %.0f)' % pelvis[0], words[3], '(%.0f, %.0f, %.0f)' % pelvis[1])
+            elif who == 'fall':
+                # "fall <b> within <ms>": the body recorded as b was down that soon after this game killed it.
+                # "fall <b> like <a> <ms>": it took at most that much longer, or shorter, than a's from death to down.
+                lines = session_lines()[self.log_from:]
+                mine, why = fall_delay(self.records[what], lines)
+                if words[2] == 'within':
+                    ok = mine is not None and mine * 1000 <= float(words[3])
+                    detail = why or '%s down %.0f ms after its death (limit %s)' % (what, mine * 1000, words[3])
+                else:
+                    theirs, why_theirs = fall_delay(self.records[words[3]], lines) if words[3] in self.records else (None, 'nothing recorded as ' + words[3])
+                    ok = mine is not None and theirs is not None and abs(mine - theirs) * 1000 <= float(words[4])
+                    detail = why or why_theirs or '%s down %.0f ms after its death, %s %.0f ms (limit %s apart)' % (what, mine * 1000, words[3], theirs * 1000, words[4])
+            elif who == 'place':
+                # "place <b> like <a> <units>": the body recorded as b came to rest as far, and the same way, from where it stood as a did.
+                found = {}
+                for name in (what, words[3]):
+                    samples = self.records[name].done() if name in self.records else []
+                    if len(samples) >= 2 and self.records[name].body:
+                        first, last = samples[0][1]['pelvis'], samples[-1][1]['pelvis']
+                        found[name] = (last[0] - first[0], last[1] - first[1])
+                if len(found) < 2:
+                    detail = 'no samples for %s' % ' or '.join(n for n in (what, words[3]) if n not in found)
+                else:
+                    apart = math.dist(found[what], found[words[3]])
+                    ok = apart <= float(words[4])
+                    detail = '%s came to rest %.0f units from where %s would have (it moved %.0f, %s %.0f; limit %s)' % (
+                        what, apart, words[3], math.hypot(*found[what]), words[3], math.hypot(*found[words[3]]), words[4])
+            elif who == 'still':
+                # "still <a> <units>": once the body recorded as a had been down 1.5 s, its pelvis never moved more than that between
+                # two samples: no corpse jump, pop or slide after it landed.
+                samples = self.records[what].done()
+                down = next((at for at, nodes in samples if (body_height(nodes) or 99) < 40.0), None)
+                after = [nodes['pelvis'] for at, nodes in samples if down is not None and at >= down + 1.5]
+                steps = [math.dist(a, b) for a, b in zip(after, after[1:])]
+                if down is None:
+                    detail = '%s never went down in its samples' % what
+                elif not steps:
+                    ok, detail = None, 'SKIPPED: fewer than two samples after %s landed' % what
+                else:
+                    ok = max(steps) <= float(words[2])
+                    detail = 'after landing, its pelvis moved at most %.0f units between two samples (limit %s, %d samples)' % (max(steps), words[2], len(after))
+            elif who == 'door':
+                # "door <a> once open|closed|toggled": the reference recorded as a went to that end once (toggled: the other end
+                # from where it started), through its moving state, with no turn back on the way (open, closing, open: a
+                # flicker) and without jumping over it (a snap). Doors, and bridges and gates that open like one.
+                samples = self.records[what].done()
+                states = [state for i, (_, state) in enumerate(samples) if i == 0 or state != samples[i - 1][1]]
+                wanted = words[3] if words[3] != 'toggled' else ('closed' if states and states[0] in (1, 2) else 'open')
+                end, moving = (1, 2) if wanted == 'open' else (3, 4)
+                if not states:
+                    detail = 'no open state read for %s' % what
+                else:
+                    turned = any(states[i] in (2, 4) and states[i + 1] not in ((1,) if states[i] == 2 else (3,)) for i in range(len(states) - 1))
+                    # Without a moving state (not a door), going back and forth shows as more than one change.
+                    turned = turned or (not self.records[what].door and len(states) > 2)
+                    snapped = self.records[what].door and moving not in states and states[0] != end
+                    ok = states[-1] == end and not turned and not snapped
+                    detail = 'states %s (1 open, 2 opening, 3 closed, 4 closing) over %.1f s, %d samples%s%s' % (
+                        ' > '.join(str(s) for s in states), samples[-1][0] - samples[0][0], len(samples), '; it turned back' if turned else '', '; it snapped over its moving state' if snapped else '')
+            elif who == 'desync':
+                # "desync all": the bot's last "report" against this game.
+                # Each copy of the bot's NPCs is alive or dead as the bot has it, and within 200 units of where the bot has it (a body: its pelvis, 150).
+                # No placed reference of this game's own is drawn beside its copy (a duplicate), and each door and lock is as the bot knows it.
+                # The NPCs this game runs are left out: what the bot holds of them is only what this game last sent.
+                actors, doors, locks = self.report()
+                if actors is None:
+                    detail = 'no "report" from the bot to compare'
+                else:
+                    wrong, compared = [], 0
+                    for sid, (ref, dead, owner, at) in actors.items():
+                        form = form_of_server_id(sid) if owner == 'ours' else None
+                        if not form:
+                            continue
+                        compared += 1
+                        here_dead = papyrus('Actor', 'IsDead', form)
+                        if isinstance(here_dead, bool) and here_dead != dead:
+                            wrong.append('actor %s (server id %s) is %s here, %s at its owner' % (form, sid, 'dead' if here_dead else 'alive', 'dead' if dead else 'alive'))
+                        pose = body_pose(form) if dead else None
+                        here = pose[0] if pose else position(form)
+                        if at and here and math.dist(at, here) > (150.0 if dead else 200.0):
+                            wrong.append('actor %s is %.0f units from where its owner has it' % (form, math.dist(at, here)))
+                        if ref and ref.upper() != form.upper() and papyrus('ObjectReference', 'IsEnabled', ref) is True and papyrus('ObjectReference', 'Is3DLoaded', ref) is True:
+                            wrong.append('reference %s of this game is drawn beside its copy %s: a duplicate' % (ref, form))
+                    # A door counts whether or not it is drawn: a disabled or unloaded door keeps its state for when it is.
+                    for ref, is_open in doors.items():
+                        state = papyrus('ObjectReference', 'GetOpenState', ref)
+                        if state not in (1, 2, 3, 4):
+                            continue
+                        compared += 1
+                        if (state in (1, 2)) != is_open:
+                            wrong.append('door %s is %s here, %s for the other player' % (ref, 'open' if state in (1, 2) else 'closed', 'open' if is_open else 'closed'))
+                    for ref, locked in locks.items():
+                        compared += 1
+                        here_locked = papyrus('ObjectReference', 'IsLocked', ref)
+                        if isinstance(here_locked, bool) and here_locked != locked:
+                            wrong.append('reference %s is %s here, %s for the other player' % (ref, 'locked' if here_locked else 'unlocked', 'locked' if locked else 'unlocked'))
+                    ok = not wrong
+                    detail = ('%d things compared, %d differ: ' % (compared, len(wrong)) + '; '.join(wrong)) if wrong else '%d things compared, all the same' % compared
+            elif who == 'told':
+                # "told door <hex> open|closed", "told lock <hex> locked|unlocked": the bot's last "report" has that reference so.
+                # What this game did to it reached the other player.
+                _, doors, locks = self.report()
+                if doors is None:
+                    detail = 'no "report" from the bot to read'
+                elif what == 'door':
+                    known = doors.get(words[2].upper())
+                    ok = known is not None and known == (words[3] == 'open')
+                    detail = 'door %s: %s for the other player' % (words[2], 'never told' if known is None else 'open' if known else 'closed')
+                else:
+                    known = locks.get(words[2].upper())
+                    ok = known is not None and known == (words[3] == 'locked')
+                    detail = 'lock %s: %s for the other player' % (words[2], 'never told' if known is None else 'locked' if known else 'unlocked')
             elif who == 'absent':
                 # "absent <regular expression>": the client has written no such line since the script began.
                 rx = re.compile(' '.join(words[1:]))
@@ -1112,6 +1429,28 @@ class Run:
                         height = sorted(heights)[len(heights) // 2]
                         ok = height >= 45.0 if what == 'standing' else height < 25.0 if what == 'lying' else height < 40.0
                         detail = 'actor %s, pelvis %.0f units above its lower foot (readings %s)' % (form, height, ', '.join('%.0f' % h for h in heights))
+                elif what == 'fell' and words[2:3] == ['within']:
+                    # "npc fell within <ms>": from this game applying its owner's death ("set dead by its owner") to the first
+                    # "DO watch npc" sample with the body down (under 40 units). Samples come every few hundred ms, so the time is that coarse.
+                    limit = float(words[3])
+                    applied = None
+                    # The copy that was watched: a copy torn down and made again since has another form id.
+                    watched = self.watch_form or form
+                    for l in session_lines()[self.log_from:]:
+                        if re.search(r'Death sync: remote actor %s set dead by its owner' % watched, l, re.I):
+                            applied = log_time(l)
+                    times = [(self.watch_start + t, h) for t, _, h, _ in self.watch]
+                    early = [at for at, h in times if h < 40.0 and applied and at < applied - 0.1]
+                    down = next((at for at, h in times if h < 40.0 and applied and at >= applied - 0.1), None)
+                    if applied is None:
+                        detail = 'actor %s: no "set dead by its owner" line, so no death to time' % form
+                    elif early:
+                        detail = 'actor %s was down %.0f ms before its owner\'s death was applied here' % (form, (applied - early[0]) * 1000)
+                    elif down is None:
+                        detail = 'actor %s: no sample with the body down after its owner\'s death was applied here' % form
+                    else:
+                        ok = (down - applied) * 1000 <= limit
+                        detail = 'actor %s was down %.0f ms after its owner\'s death was applied here (limit %.0f; %d samples)' % (form, (down - applied) * 1000, limit, len(times))
                 elif what == 'went' and words[2:3] == ['down']:
                     # "npc went down": two "DO watch npc" samples in a row with the body under 25 units high.
                     # The precondition of a downed-copy test: a copy that never lay down proves nothing about getting up.
@@ -1207,7 +1546,7 @@ class Run:
             m = re.search(r'NPC registered as actor ([0-9A-Fa-f]+)', line)
             if m:
                 self.npc_id = m.group(1)
-            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO f6|DO look .*|DO swing .*|DO load last|DO load save .*|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO logmark|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch (?:npc|copy) \d+|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
+            m = re.search(r'\[script\] (CHECK .*|REQUIRE .*|DO face .*|DO console .*|DO key .*|DO f6|DO look .*|DO swing .*|DO load last|DO load save .*|DO server restart.*|DO sleep \d+|DO papyrus .*|DO pickup own|DO logmark|DO place .*|DO drop .*|DO grab .*|DO grip both \d+|DO release (?:left|right)|DO reach .*|DO hold .*|DO walk .*|DO bring .*|DO sample .*|DO watch (?:npc|copy) \d+|DO record .*|DO mark .*|DO menu .*|DO god on|DO god off|DO combat on|DO combat off|SHOT .*|--.*|done)$', line.rstrip())
             if m:
                 text = m.group(1)
                 if text.startswith('CHECK '):
@@ -1677,6 +2016,19 @@ class Run:
                         if at and me:
                             print('   (npc at (%.0f, %.0f, %.0f), %.0f from the player)' % (at[0], at[1], at[2], math.dist(at, me)), flush=True)
                         time.sleep(0.5)
+                elif text.startswith('DO record '):
+                    # "DO record <name> copy|npc|placed|player|ref <hex> <seconds>": samples that actor's body (or that reference's
+                    # open state) in the background for that long, while the script goes on; the checks that name it wait for the end.
+                    words = text.split()
+                    name, who = words[2], words[3]
+                    form = words[4] if who == 'ref' else getattr(self, 'placed', None) if who == 'placed' else '14' if who == 'player' else self.subject(who)[0]
+                    seconds = float(words[-1])
+                    if form:
+                        self.records[name] = Recording(form, seconds)
+                        print('   (recording %s: %s %s for %.0f s, %s)' % (name, who, form, seconds, 'its body' if self.records[name].body else 'its open state'), flush=True)
+                    else:
+                        print('   FAIL  record %s: no %s to sample' % (name, who), flush=True)
+                        self.results.append((False, text.strip(), 'no %s to sample' % who))
                 elif text.startswith('DO watch npc ') or text.startswith('DO watch copy '):
                     # "DO watch npc|copy <seconds>": that copy's pelvis, body height (body_pose) and reference, sampled for that long and kept for
                     # "npc|copy went down" and "npc slide below". Put it before the bot's "replay", which goes on meanwhile.
@@ -1685,6 +2037,8 @@ class Run:
                     form, why = self.subject(who)
                     self.watch = []
                     t0 = time.time()
+                    self.watch_start = t0
+                    self.watch_form = form
                     while form and time.time() - t0 < seconds:
                         pose = body_pose(form)
                         if pose:
@@ -1802,6 +2156,8 @@ class Run:
                         elif words[2] == 'drop':
                             ref = dropped_ref()
                             target = position(ref) if ref else None
+                        elif words[2] == 'placed':
+                            target = position(self.placed) if getattr(self, 'placed', None) else None
                         else:
                             form, _ = self.subject(words[2])
                             target = position(form) if form else None
@@ -1827,6 +2183,9 @@ class Run:
         for problem in health_problems(session_lines()[self.log_start:]):
             self.results.append((False, 'health: ' + problem, 'logged during this script'))
             print('   FAIL  health: %s' % problem, flush=True)
+        # What looked wrong on screen while it ran, after every script: reported here, judged only by "CHECK smooth".
+        self.jank = jank(session_lines()[self.log_start:])
+        print('   jank: %s' % jank_text(self.jank), flush=True)
         # The bot's own checks ("expect ..."), which the game is not asked about: its verdict is the last word of its log.
         # Without this a script that only uses them -- live-sender, the real game as the sender -- read as "not run".
         with io.open(os.path.join(RELEASE, 'logs', self.script + '-bot.log'), encoding='utf-8', errors='replace') as f:
@@ -1895,6 +2254,30 @@ def verdict(run, results, expect_fail):
     return 'ok', 'ok'
 
 
+def write_report(rows, setup):
+    """One page for a person to look over after a run: each script's verdict, checks, jank and SHOT pictures.
+    Written next to the pictures (logs/live-report.html) and replaced by the next run."""
+    import html
+    logs = os.path.join(RELEASE, 'logs')
+    out = ['<!doctype html><meta charset="utf-8"><title>Rig run</title><style>'
+           'body{font:14px system-ui,sans-serif;margin:24px;max-width:1100px}h2{margin:28px 0 6px}.ok{color:#26703c}.bad{color:#a32020}'
+           'table{border-collapse:collapse}td{padding:2px 10px 2px 0;vertical-align:top}img{max-width:340px;margin:4px 8px 4px 0}</style>',
+           '<h1>Rig run %s</h1><p>Modlist %s, profile %s</p>' % (html.escape(time.strftime('%Y-%m-%d %H:%M')), html.escape(setup[0]), html.escape(setup[1]))]
+    for name, kind, note, results, jank_line, shots in rows:
+        out.append('<h2>%s <span class="%s">%s</span></h2><p>jank: %s</p><table>' % (html.escape(name), 'ok' if kind in ('ok', 'red') else 'bad', html.escape(note), html.escape(jank_line)))
+        for ok, text, detail in results:
+            mark = 'skip' if ok is None else 'pass' if ok else 'FAIL'
+            out.append('<tr><td class="%s">%s</td><td>%s</td><td>%s</td></tr>' % ('ok' if ok else 'bad' if ok is False else '', mark, html.escape(text), html.escape(str(detail)[:300])))
+        out.append('</table>')
+        for path in shots:
+            rel = os.path.relpath(path, logs).replace(os.sep, '/')
+            out.append('<a href="%s"><img src="%s" alt="%s"></a>' % (html.escape(rel), html.escape(rel), html.escape(os.path.basename(path))))
+    path = os.path.join(logs, 'live-report.html')
+    with io.open(path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(out))
+    return path
+
+
 def run_conditions(lines):
     """The rig's frame rate and the bot's network during a run, kept with its result."""
     fps = sorted(int(m.group(1)) for m in (re.search(r'Perf last 30 s: .*\((\d+) fps\)', l) for l in lines) if m)
@@ -1910,7 +2293,7 @@ def main():
     # --expect-fail: the build in the game is one without the fix the scripts guard; each must fail to count as a test.
     expect_fail = '--expect-fail' in args
     args = [a for a in args if a != '--expect-fail']
-    scripts = ALL if (not args or args == ['--all']) else args
+    scripts = ALL if (not args or args == ['--all']) else SYNC if args == ['--sync'] else args
     try:
         state = tool('inspect', {'kind': 'state'})
     except Exception as e:
@@ -1937,6 +2320,7 @@ def main():
     total = 0
     table = []
     shots = []
+    report_rows = []
     print('Modlist %s, profile %s' % SETUP, flush=True)
     # The game's start-up, its load and its connection, before any script: what the client could not find on this setup,
     # and the SKSE plugins that did not load (a test without one does not stand for the players' game).
@@ -1971,10 +2355,11 @@ def main():
         lines = session_lines()
         fps, network = run_conditions(lines[getattr(run, 'log_start', 0):])
         record({'time': started, 'script': name, 'build': client_build(lines), 'verdict': kind, 'expect_fail': expect_fail,
-                'fps': fps, 'network': network, 'invalid': run.invalid,
+                'fps': fps, 'network': network, 'invalid': run.invalid, 'jank': {kind: count for kind, (count, _, _) in getattr(run, 'jank', {}).items()},
                 'checks': [{'result': 'skip' if ok is None else ('pass' if ok else 'fail'), 'check': text, 'detail': str(detail)[:300]}
                            for ok, text, detail in results]})
         table.append((name, len(results), len(bad), note))
+        report_rows.append((name, kind, note, results, jank_text(getattr(run, 'jank', {})), run.shots))
         time.sleep(6)  # let the server finish removing the bot before the next one joins
 
     print('\n%-20s %6s %6s  %s' % ('script', 'checks', 'failed', ''))
@@ -1984,6 +2369,7 @@ def main():
     print('history: ' + HISTORY)
     for path in shots:
         print('screenshot: ' + path)
+    print('report: ' + write_report(report_rows, SETUP))
     return 1 if failed else 0
 
 

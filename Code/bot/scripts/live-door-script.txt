@@ -1,0 +1,42 @@
+# A door a script opens in this game opens for the other player too.
+#
+#   python Tools\VR\live-check.py live-door-script
+#   python Tools\VR\live-check.py --expect-fail live-door-script     on a build that sends only a door's use: must be RED
+#
+# Only an actor's use of a door is sent; a script's SetOpen is not (sync audit, 2026-10-26).
+# In the civil war, quest scripts open and close most doors, so the other player keeps them as they were.
+# Here Helgen keep's door 9B0A5 (not a load door): closed by the other player first, then opened by a script in this game,
+# with the bot in the same cell. It leaves the player in Helgen's keep, like live-door-state: run it last.
+log live door script
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- the player into Helgen's keep, next to the door; the bot into its cell
+log DO console player.moveto 9B0A5
+wait 12
+cell 5DE24
+wait 4
+
+log -- the other player shuts the door, so both games start from the same state
+activate 9B0A5 by nobody 1
+wait 5
+log REQUIRE ref 9B0A5 closed
+wait 2
+
+log -- a script in this game opens it
+log DO papyrus ObjectReference SetOpen 9B0A5 b:true
+wait 6
+log REQUIRE ref 9B0A5 open
+report
+wait 2
+log CHECK told door 9B0A5 open
+log CHECK desync all
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

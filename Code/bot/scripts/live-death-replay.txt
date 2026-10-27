@@ -1,0 +1,56 @@
+# How an NPC's death looks on the other player's screen against how it looks on its owner's, side by side in one game.
+#
+#   python Tools\VR\live-check.py live-death-replay
+#
+# The rig has one game, so the original and its copy are made to happen in it one after the other:
+# 1. This game places an Aspiring Mage (753CB), which it runs, and kills it while sampling its body ("DO record original")
+#    and while the bot records what this game sends of it (movement, actions and the moment of death).
+# 2. The bot brings a mage of its own and plays that recording on it, death included ("replay npc"). This game shows it
+#    as a copy, which is what the other player saw of the original; its body is sampled too ("DO record copy").
+# The copy must fall as soon after its death as the original did, lie laid out alike, come to rest as far from where it
+# stood, and lie still once down. Both die by Kill() here, so they should match; live-death-replay-blast kills the
+# original with a blast, as in a fight, and shows how far the copy then is from it.
+log live death replay
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO god on
+
+log -- the original: a mage this game runs, 150 units ahead
+log DO place 753CB
+wait 8
+log DO papyrus Actor SetRestrained placed b:true
+wait 3
+
+log -- it dies while this game samples it and the bot records what this game sends of it
+log DO record original placed 12
+log DO sleep 2
+log DO papyrus Actor Kill placed 14
+capture newest 12
+log REQUIRE bot logged info\] Captured the death of
+log SHOT original of placed
+
+log -- the copy: a mage of the bot's own plays the recording, and this game shows it as a copy
+npc captured
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc standing
+wait 4
+log DO record copy npc 14
+replay npc
+wait 6
+log SHOT copy of npc
+log CHECK npc dead
+log CHECK fall copy within 1500
+log CHECK fall copy like original 700
+log CHECK pose copy like original 30
+log CHECK place copy like original 100
+log CHECK still copy 30
+log CHECK still original 30
+log CHECK smooth all
+wait 4
+log CHECK game alive
+log DO god off
+log done
+stop
