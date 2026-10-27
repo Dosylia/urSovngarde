@@ -85,14 +85,15 @@ TEST_CASE("a hit keeps when it happened", "[clash]")
     REQUIRE(back2 == notify);
 }
 
-TEST_CASE("a claim says whether it is for the claimant's own follower", "[clash]")
+TEST_CASE("a claim says whether it is for the claimant's own follower, or for a killing blow", "[clash]")
 {
-    for (const bool follower : {false, true})
+    for (const int kind : {0, 1, 2})
     {
         RequestOwnershipClaim claim{};
         claim.ServerId = 0x1A;
         claim.ExpectedOwnershipEpoch = 3;
-        claim.Follower = follower;
+        claim.Follower = kind == 1;
+        claim.KillingBlow = kind == 2;
         Buffer buffer(32);
         Buffer::Writer writer(&buffer);
         claim.SerializeRaw(writer);

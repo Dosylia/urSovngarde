@@ -59,7 +59,9 @@ struct CharacterService
 
     static void DeleteTempActor(const uint32_t aFormId) noexcept;
 
-    bool RequestOwnership(uint32_t aFormId, uint32_t aServerId, entt::entity aEntity) const noexcept;
+    bool RequestOwnership(uint32_t aFormId, uint32_t aServerId, entt::entity aEntity, bool aKillingBlow = false) const noexcept;
+    // This player's killing blow on another player's protected NPC: asks for it, and kills it once it is this game's.
+    void ClaimForKillingBlow(Actor* apActor) noexcept;
     // Brings the server's copy of an actor's inventory in line with this game's, one entry at a time.
     void SendInventoryDifference(Actor* apActor, uint32_t aServerId, uint32_t aOwnershipEpoch, const Inventory& acServerInventory) const noexcept;
 
@@ -132,6 +134,9 @@ private:
     World& m_world;
     entt::dispatcher& m_dispatcher;
     TransportService& m_transport;
+
+    // Protected NPCs this player landed a killing blow on, by server id, until when they are killed once this game owns them.
+    TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> m_killingBlows;
 
     float m_cachedExperience = 0.f;
 

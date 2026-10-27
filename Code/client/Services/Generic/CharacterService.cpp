@@ -48,6 +48,7 @@
 #include <Messages/RequestInventoryChanges.h>
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
+#include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/RequestActionEvents.h>
@@ -242,6 +243,36 @@ TESNPC* BaseForCopy(World& aWorld, const CharacterSpawnRequest& acMessage) noexc
         return pBase;
     }
     return pPick ? pPick : pBase;
+}
+
+// An NPC dead in this game that its owner's game has alive: a death that game never saw, kept by its save.
+// It is one killed behind a stand-in, or in a cell the other game did not have, or after its last save.
+// Stood up here, it is a dead soldier walking again, a different one in each game.
+// So a generic one stays dead here, as it lies; a unique one follows its owner, since a quest may have brought it back.
+bool IsDeadAgainstOwner(Actor* apActor, bool aDeadAtOwner) noexcept
+{
+    if (aDeadAtOwner || !apActor || !apActor->IsDead())
+        return false;
+    if (apActor->GetExtension() && apActor->GetExtension()->IsPlayer())
+        return false;
+    const auto* pBase = Cast<TESNPC>(apActor->baseForm);
+    return pBase && !pBase->actorData.IsUnique();
+}
+
+// Its owner is sent a killing blow, the way this player's own killing blow on a copy goes, so that it dies there too.
+// It goes straight to the server: a body is not one of this game's tracked actors, so a HealthChangeEvent finds no entity.
+void SendKillingBlowToOwner(TransportService& aTransport, const Actor* apActor, uint32_t aServerId) noexcept
+{
+    if (aServerId == 0)
+        return;
+    constexpr float cKillingBlow = 100000.f;
+    RequestHealthChangeBroadcast request{};
+    request.Id = aServerId;
+    request.DeltaHealth = -cKillingBlow;
+    request.Tick = aTransport.GetClock().GetCurrentTick();
+    aTransport.Send(request);
+    spdlog::info("DeathWins: {:X} (server id {:X}) is dead here but alive in its owner's game; kept dead here, and its owner is sent a killing blow", apActor->formID,
+                 aServerId);
 }
 
 // Spawns the owner's creature and turns the local one into a ghost.
@@ -669,6 +700,11 @@ void CharacterService::ReconcileActorData(
         // The owner would then find it again as a new actor, so it keeps its local death and the death sync reports it.
         else if (aIsLocalOwner)
             spdlog::warn("Keeping actor {:X} dead although the server has it alive", apActor->formID);
+        else if (IsDeadAgainstOwner(apActor, false))
+        {
+            const auto* pRemote = m_world.try_get<RemoteComponent>(aEntity);
+            SendKillingBlowToOwner(m_transport, apActor, pRemote ? pRemote->Id : 0);
+        }
         else
             apActor->Respawn();
     }
@@ -737,7 +773,7 @@ void CharacterService::SendInventoryDifference(Actor* apActor, const uint32_t aS
     spdlog::info("Follower {:X}: the server's copy of her inventory put right ({} kinds of item added there, {} taken away)", apActor->formID, added, removed);
 }
 
-bool CharacterService::RequestOwnership(const uint32_t aFormId, const uint32_t aServerId, const entt::entity aEntity) const noexcept
+bool CharacterService::RequestOwnership(const uint32_t aFormId, const uint32_t aServerId, const entt::entity aEntity, const bool aKillingBlow) const noexcept
 {
     Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
     if (!pActor)
@@ -768,11 +804,32 @@ bool CharacterService::RequestOwnership(const uint32_t aFormId, const uint32_t a
     request.ExpectedOwnershipEpoch = pRemoteComponent->OwnershipEpoch;
     // The server lets a player claim their own follower whoever leads the party (see CanClaimOwnership).
     request.Follower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
+    request.KillingBlow = aKillingBlow;
 
     if (!m_transport.Send(request))
         return false;
 
     return true;
+}
+
+void CharacterService::ClaimForKillingBlow(Actor* apActor) noexcept
+{
+    constexpr auto cKillWithin = std::chrono::seconds(3);
+
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [&view, apActor](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == apActor->formID; });
+    if (it == view.end())
+        return;
+
+    const uint32_t cServerId = view.get<RemoteComponent>(*it).Id;
+    const auto cNow = std::chrono::steady_clock::now();
+    if (const auto pending = m_killingBlows.find(cServerId); pending != m_killingBlows.end() && cNow < pending->second)
+        return;
+
+    if (!RequestOwnership(apActor->formID, cServerId, *it, true))
+        return;
+    m_killingBlows[cServerId] = cNow + cKillWithin;
+    spdlog::info("KillingBlow: {:X} (server id {:X}) is protected, so its owner's game cannot let this player kill it; asked for it, to kill it here", apActor->formID, cServerId);
 }
 
 void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
@@ -1191,7 +1248,9 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
 
         // The owner has another kind of creature here (the response carries the owner's base): a copy stands in for it.
         // The copy is set up through the deferred path a temporary actor takes; the local reference becomes a ghost.
-        if (const BaseMatch match = CompareBase(m_world, pActor, acMessage.BaseId, false); match.Foreign && match.pOwnerBase)
+        // Not for a body here that is alive at its owner (IsDeadAgainstOwner): it stays a body, see ReconcileActorData.
+        if (const BaseMatch match = CompareBase(m_world, pActor, acMessage.BaseId, false);
+            match.Foreign && match.pOwnerBase && !IsDeadAgainstOwner(pActor, acMessage.IsDead))
         {
             if (Actor* pCopy = StandInForForeignCreature(pActor, match.pOwnerBase))
             {
@@ -1361,7 +1420,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
                         // A death is broadcast to all, but a copy with a stale epoch drops it (ownership transfers are range-filtered).
                         // The spawn is then the only place that still carries the death.
-                        if (pActor->IsDead() != acMessage.IsDead)
+                        if (IsDeadAgainstOwner(pActor, acMessage.IsDead))
+                            SendKillingBlowToOwner(m_transport, pActor, acMessage.ServerId);
+                        else if (pActor->IsDead() != acMessage.IsDead)
                         {
                             spdlog::info("Character {:X} came back {} and this copy had it the other way; correcting", acMessage.ServerId, acMessage.IsDead ? "dead" : "alive");
                             acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
@@ -1410,6 +1471,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
     Actor* pActor = nullptr;
 
     std::optional<entt::entity> entity;
+
+    // This game's own reference of it is dead, and the owner's alive (IsDeadAgainstOwner): it stays a body here.
+    bool deadHere = false;
 
     // One of this game's own actors, coming back from the player it was given to. See s_handedAway.
     if (acMessage.FormId == GameId{})
@@ -1518,9 +1582,12 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
             entity = m_world.create();
         }
 
+        // A body here that is alive in its owner's game stays this game's body, not a living stand-in.
+        deadHere = IsDeadAgainstOwner(pActor, acMessage.IsDead);
+
         // Another kind of creature than the owner's: a copy of the owner's stands in, the local one becomes a ghost.
         // The local reference keeps its own entity (a bare FormIdComponent that ProcessNewEntity skips).
-        if (const BaseMatch match = CompareBase(m_world, pActor, acMessage.BaseId, false); match.Foreign && match.pOwnerBase)
+        if (const BaseMatch match = CompareBase(m_world, pActor, acMessage.BaseId, false); match.Foreign && match.pOwnerBase && !deadHere)
         {
             if (Actor* pCopy = StandInForForeignCreature(pActor, match.pOwnerBase))
             {
@@ -1578,7 +1645,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
     // A body that is to be dead is killed once it has its 3D, by the WaitingFor3D step below.
     // Killed before that, it dies with nothing played, and that step then finds it dead and leaves it standing.
-    if (pActor->IsDead() != acMessage.IsDead && (!acMessage.IsDead || pActor->GetNiNode()))
+    if (deadHere)
+        SendKillingBlowToOwner(m_transport, pActor, acMessage.ServerId);
+    else if (pActor->IsDead() != acMessage.IsDead && (!acMessage.IsDead || pActor->GetNiNode()))
         acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
 
     spdlog::info("Spawn Request Is summon {}", acMessage.IsPlayerSummon);
@@ -1590,7 +1659,8 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
     }
 
     // Static references arrive with their own locally rolled leveled pick; conform to the owner's.
-    if (acMessage.FormId != GameId{})
+    // Not a body that stays dead here: the rebuild re-rolls the reference, which brings it back.
+    if (acMessage.FormId != GameId{} && !deadHere)
         ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId, &acMessage.InventoryContent);
 
     auto& newRemote = m_world.emplace_or_replace<RemoteComponent>(*entity, acMessage.ServerId, pActor->formID, acMessage.OwnershipEpoch);
@@ -1833,6 +1903,20 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         spdlog::info("Gained ownership of actor {:X} (form {:X}) at epoch {}", acMessage.ServerId, pActor ? pActor->formID : 0, acMessage.OwnershipEpoch);
         if (cMyFollower)
             SendInventoryDifference(pActor, acMessage.ServerId, acMessage.OwnershipEpoch, acMessage.CurrentActorData.InitialInventory);
+
+        // Asked for after this player's killing blow (ClaimForKillingBlow): it dies here, with this player as the killer.
+        if (const auto blow = m_killingBlows.find(acMessage.ServerId); blow != m_killingBlows.end())
+        {
+            const bool cInTime = std::chrono::steady_clock::now() < blow->second;
+            m_killingBlows.erase(blow);
+            if (cInTime && !pActor->IsDead())
+            {
+                pActor->Kill(PlayerCharacter::Get());
+                spdlog::info("KillingBlow: {:X} (server id {:X}) killed here by this player, its killer (now dead: {})", pActor->formID, acMessage.ServerId, pActor->IsDead());
+            }
+            else
+                spdlog::info("KillingBlow: {:X} (server id {:X}) came too late or already dead; kept as it is", pActor->formID, acMessage.ServerId);
+        }
         return;
     }
 
@@ -3721,7 +3805,8 @@ void CharacterService::RunRemoteUpdates() noexcept
         if (waitingFor3D.SpawnRequest.IsPlayer)
             spdlog::info("Player copy {:X} came with its weapon {}", pActor->formID, waitingFor3D.SpawnRequest.IsWeaponDrawn ? "drawn" : "sheathed");
 
-        if (pActor->IsDead() != waitingFor3D.SpawnRequest.IsDead)
+        // A body here that is alive at its owner stays a body (IsDeadAgainstOwner); its owner was sent the killing blow at the spawn.
+        if (pActor->IsDead() != waitingFor3D.SpawnRequest.IsDead && !IsDeadAgainstOwner(pActor, waitingFor3D.SpawnRequest.IsDead))
         {
             if (waitingFor3D.SpawnRequest.IsDead)
                 spdlog::info("Character {:X} ({:X}) came dead; killed now that it has its 3D", waitingFor3D.SpawnRequest.ServerId, pActor->formID);

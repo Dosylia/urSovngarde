@@ -1,0 +1,33 @@
+# Another player's killing blow on an NPC this game owns kills it here, and the death goes back to the other players.
+#
+#   python Tools\VR\live-check.py live-owner-blow
+#
+# In play the leader hit a bandit the other game owned 27 times, each a killing blow on its copy, and the owner's game
+# never killed it: the copy stood at 1 health, a dead NPC standing.
+# Here this game places a Lydia (its own, so it owns her), and the bot, as the other player, hits her for more than her health.
+log live owner blow
+waitfor connected 45
+collect death
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- a Lydia this game owns, beside the player, neither essential nor protected, as a bandit
+log DO papyrus ActorBase SetEssential A2C8E b:false
+log DO papyrus ActorBase SetProtected A2C8E b:false
+log DO papyrus ActorBase IsEssential A2C8E
+log DO papyrus ActorBase IsProtected A2C8E
+log DO place A2C8E
+wait 8
+
+log -- the bot's blow on her, as another player's: more than her health
+hit base:A2C8E -2000
+wait 4
+log CHECK logged Death sync: player \d+'s blow of 2000 on this game's NPC
+log CHECK logged Death sync: health broadcast killed actor
+log CHECK logged Death sync: local actor \w+ is now dead, telling the server
+log CHECK game alive
+wait 2
+log done
+stop

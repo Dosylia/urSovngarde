@@ -1,0 +1,40 @@
+# This player's killing blow on another player's protected NPC kills it: this game takes it over and kills it, as its killer.
+#
+#   python Tools\VR\live-check.py live-protected-kill
+#   python Tools\VR\live-check.py --expect-fail live-protected-kill     on a build without the fix: must be RED
+#
+# The game lets only its own player kill a protected NPC, so in its owner's game another player's killing blow only
+# put it down. Now the killer's game asks for the NPC, and once it owns it, kills it with its own player as the killer:
+# the bounty, the crime and the quest's credit are the killer's, in the killer's game.
+# Here the bot owns a Lydia whose base this game has protected, at 5 health; the player's Fireball is the killing blow.
+log live protected kill
+waitfor connected 45
+collect death
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- Lydia's base protected, not essential, in this game
+log DO papyrus ActorBase SetEssential A2C8E b:false
+log DO papyrus ActorBase SetProtected A2C8E b:true
+
+log -- a Lydia the bot owns, at 5 health: this game holds her copy
+npc temp A2C8E
+waitfor owned == 1 20
+wait 8
+npclife alive 5
+wait 4
+log CHECK npc alive
+
+log -- the player faces her and casts a Fireball at her (Spell.Cast, there is no sword arm without a controller)
+log DO face npc
+log DO papyrus Spell Cast 1C789 14 npc
+wait 6
+log CHECK npc dead
+log CHECK logged KillingBlow: \w+ \(server id \w+\) killed here by this player
+log CHECK logged Death sync: local actor \w+ is now dead, telling the server
+log CHECK game alive
+wait 2
+log done
+stop

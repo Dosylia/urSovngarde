@@ -562,8 +562,47 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         and was applied, yet the bandit never died there: player 2's game reported no death all session. At 18:40:51
         it handed the bandit off at worldspace 0, cell 0, (0, 0, 0): not placed in its world. Player 1, the leader,
         cannot claim a ghost (its own reference is disabled), so the copy stood at 1 health. Not known yet: the bandit's
-        health in player 2's game, which no line gives. Next: log the owner's side of a remote blow on its own NPC
-        (health before and after, its cell and 3D), then fix where it fails.
+        health in player 2's game, which no line gave. In the whole session only 2 NPCs died in their owner's game
+        (both in the fort, while player 2 was outside, so not applied there: `a death for server id ... arrived and
+        was not applied: no copy of that character here`; the server then dropped them, so in player 2's world they
+        live on). Not one `NPC X health corrected from ... to its owner's ...` line on either side, though an owner
+        sends an NPC's health on every change and a copy is corrected when 25 or more apart: so the bandit's health
+        in player 2's game never moved far from the copy's 1, or never reached player 1. No epoch drops anywhere.
+        Rig (`live-owner-blow`, new): another player's killing blow on an NPC this game owns kills it here and the
+        death goes back (`health 438 to -1562`, `health broadcast killed actor`, `local actor ... is now dead`), so
+        the owner's path works. With the NPC protected (Lydia's base, as placed), the same blow leaves it alive,
+        going down at -30 health. The engine's rule (KillImpl, SE 36872, VR 0x14060C340): it first recomputes the
+        actor's essential and protected flags (flags2 bits 18 and 19) from its base (ACBS bits 1 and 11) and its quest
+        aliases (VR 0x1405D9410), then asks SE 36247 (VR 0x1405D9520) whether the attacker may kill it: never when
+        essential, and when protected only when the attacker is this game's player (a teammate's kill is counted as
+        the player's first). Our Kill passes no attacker, so it is refused (rig: at full health too), and so is
+        Papyrus Kill naming the other player's copy. Lifting flags2 around the call does nothing (recomputed first).
+        Same cause, and a bug today: a copy of a protected (or essential) NPC does not die when its owner reports the
+        death (rig: `set dead by its owner (now dead: false)`, the copy goes down instead), so an NPC protected by its
+        base or a quest that its owner's player kills stays standing in the other games. Not seen in play logs yet
+        (154 copy deaths, all generic).
+        Fixed (PROTOCOL CHANGE: the ownership claim gains KillingBlow; both players update client and server): a copy
+        dies on its owner's word even when protected or essential (a hook on SE 36247 says yes while our Kill runs on a
+        copy); and this player's killing blow on another player's protected, not essential NPC makes this game claim it
+        (the server grants it at once, leader or not, temporary or not; not another player's follower) and kill it with
+        this player as the killer, so the bounty, crime and quest credit are the killer's, in the killer's game
+        (`KillingBlow: X (server id S) killed here by this player`). Build 14b3d55 (dirty, on 206a1d36), deployed to FUS
+        and MGO, client and server. Rig: `live-protected-copy-dies` RED on d6b97f6 (`now dead: false`), green on
+        14b3d55; `live-protected-kill` (the player's Fireball as the killing blow on the bot's protected Lydia at 5
+        health) RED on d6b97f6 (kept at 1 health), green on 14b3d55. TPTests 94/94. Not seen in play yet. To see: a
+        protected NPC (a named townsperson) the other player kills dies in both games, and a bounty, if any, is theirs.
+        Next session: the new `Death sync: player P's blow of N on this game's NPC X: health A to B[, in no cell
+        here][, no 3D here]` lines on the owner's side.
+        `live-hit-npc` casts 12FCD, which is Flames, not a Firebolt, and no longer lands in the rig (its bot check
+        fails); Fireball 1C789 after `DO face npc` lands. Not changed yet.
+        Fixed, death wins (both games' saves disagree on who is dead, the cause of the standing ones seen after
+        reconnecting into cells cleared the day before): a generic (not unique) NPC dead here that its owner's game
+        has alive stays a body here, is not replaced by a living stand-in, and its owner is sent a killing blow
+        (`DeathWins: X (server id S) is dead here but alive in its owner's game`). Unique NPCs still follow their
+        owner. Build d6b97f6 (dirty, on 206a1d36). Rig: `live-dead-stays-dead` (the Mistwatch bandit 45A3F, dead in
+        the test save, registered alive by the bot while the game was offline): RED on the build before (the body
+        stood up again), green on d6b97f6 (stays dead, the bot gets the -100000 blow); `live-owner-blow` ok.
+        Not seen in play yet. To see: no NPC killed earlier gets up when the other player arrives or reconnects.
       - Arrows count twice when they hit: player 2's game replays player 1's arrow as a projectile, and its hit on
         player 2 there is applied (`PvP: this game hit us with player copy FF0012F8: 1 hit(s), 64 damage ... (not
         weighed by the defender's rule)`); player 1's own hit report then lands too (`Defender's rule: a hit of 20

@@ -246,7 +246,9 @@ struct Actor : TESObjectREFR
     void GenerateMagicCasters() noexcept;
     void DispelAllSpells(bool aNow = false) noexcept;
     void Reset() noexcept;
-    void Kill() noexcept;
+    //! Kills it; a copy dies even when protected or essential, since its owner's game decided.
+    //! A protected NPC this game owns dies only with this game's player as the killer.
+    void Kill(Actor* apKiller = nullptr) noexcept;
     void Respawn() noexcept;
     void PickUpObject(TESObjectREFR* apObject, int32_t aCount, bool aUnk1, float aUnk2) noexcept;
     void DropObject(TESBoundObject* apObject, ExtraDataList* apExtraData, int32_t aCount, NiPoint3* apLocation, NiPoint3* apRotation) noexcept;
@@ -266,6 +268,7 @@ struct Actor : TESObjectREFR
         IS_A_MOUNT = 1 << 1,
         IS_COMMANDED_ACTOR = 1 << 16,
         IS_ESSENTIAL = 1 << 18,
+        IS_PROTECTED = 1 << 19,
     };
 
     // flags1
@@ -285,6 +288,9 @@ struct Actor : TESObjectREFR
             flags2 &= ~ActorFlags::IS_ESSENTIAL;
     }
 
+    //! Protected by its base or a quest: only this game's player can kill it, others put it down.
+    //! The game sets it again from the base and the quests before each kill.
+    bool IsProtected() const noexcept { return flags2 & ActorFlags::IS_PROTECTED; }
     bool IsCommandedActor() const noexcept { return flags2 & ActorFlags::IS_COMMANDED_ACTOR; }
     //! This game's player's follower (Actor::boolBits kPlayerTeammate, bit 26; flags1 is boolBits).
     bool IsPlayerTeammate() const noexcept { return (flags1 & (1u << 26)) != 0; }

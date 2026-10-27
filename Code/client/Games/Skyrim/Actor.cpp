@@ -29,6 +29,7 @@
 
 #include <Games/TES.h>
 #include <World.h>
+#include <Services/CharacterService.h>
 #include <Services/PapyrusService.h>
 
 #include <Forms/ActorValueInfo.h>
@@ -1030,7 +1031,24 @@ bool Actor::IsDragon() const noexcept
     return false;
 }
 
-void Actor::Kill() noexcept
+#ifdef SKYRIMVR
+// The copy Kill is killing on its owner's word, on this thread: the game's "may this attacker kill it?" then says yes.
+// The game lets only its own player kill a protected NPC, and never an essential one; the owner's game decided already.
+thread_local const Actor* t_killedOnOwnersWord = nullptr;
+
+// Actor::CanBeKilledBy (SE 36247, VR 0x1405D9520), asked by KillImpl and by the damage functions.
+TP_THIS_FUNCTION(TCanBeKilledBy, bool, Actor, Actor* apAttacker);
+static TCanBeKilledBy* RealCanBeKilledBy = nullptr;
+
+bool TP_MAKE_THISCALL(HookCanBeKilledBy, Actor, Actor* apAttacker)
+{
+    if (apThis && apThis == t_killedOnOwnersWord)
+        return true;
+    return TiltedPhoques::ThisCall(RealCanBeKilledBy, apThis, apAttacker);
+}
+#endif
+
+void Actor::Kill(Actor* apKiller) noexcept
 {
     // Never kill players
     ActorExtension* pExtension = GetExtension();
@@ -1044,17 +1062,23 @@ void Actor::Kill() noexcept
         g_forceAnimation = true;
 
 #ifdef SKYRIMVR
+    // A copy dies on its owner's word even when protected or essential (see HookCanBeKilledBy).
+    const Actor* pKilledBefore = t_killedOnOwnersWord;
+    if (pExtension->IsRemote())
+        t_killedOnOwnersWord = this;
+
     // Call KillImpl (SE 36872) by address rather than through the virtual, whose VR slot is unverified.
     TP_THIS_FUNCTION(TKillImpl, void, Actor, Actor* apAttacker, float aDamage, bool aSendEvent, bool aRagdollInstant);
     POINTER_SKYRIMSE(TKillImpl, s_killImpl, 0, 36872);
-    TiltedPhoques::ThisCall(s_killImpl, this, nullptr, 100.f, true, true);
+    TiltedPhoques::ThisCall(s_killImpl, this, apKiller, 100.f, true, true);
 
+    t_killedOnOwnersWord = pKilledBefore;
     if (forceAnimation)
         g_forceAnimation = false;
     return;
 #endif
     // TODO: these args are kind of bogus of course
-    KillImpl(nullptr, 100.f, true, true);
+    KillImpl(apKiller, 100.f, true, true);
 
     if (forceAnimation)
         g_forceAnimation = false;
@@ -1338,6 +1362,10 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
             {
                 apThis->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, 1.f);
                 spdlog::info("Death sync: this player's blow on NPC copy {:X} sent to its owner; the copy is kept at 1 health until its owner says it died", apThis->formID);
+                // A protected NPC dies only by its own game's player, so its owner's game only puts it down.
+                // This game asks for it instead, and kills it once it owns it, with this player as the killer.
+                if (apThis->IsProtected() && !apThis->IsEssential())
+                    World::Get().GetCharacterService().ClaimForKillingBlow(apThis);
                 return false;
             }
             return TiltedPhoques::ThisCall(RealDamageActor, apThis, aDamage, apHitter, aKillMove);
@@ -1758,6 +1786,8 @@ static TiltedPhoques::Initializer s_actorHooks(
         // Character::HitTarget, the same function PLANCK calls for a melee hit (VR 0x631AF0).
         POINTER_SKYRIMSE(THitTarget, s_hitTarget, 37673, 37673);
         RealHitTarget = s_hitTarget.Get();
+        POINTER_SKYRIMSE(TCanBeKilledBy, s_canBeKilledBy, 0, 36247);
+        RealCanBeKilledBy = s_canBeKilledBy.Get();
 #endif
         RealApplyActorEffect = s_applyActorEffect.Get();
         RealRegenAttributes = s_regenAttributes.Get();
@@ -1781,6 +1811,7 @@ static TiltedPhoques::Initializer s_actorHooks(
         TP_HOOK(&RealDamageActor, HookDamageActor);
 #ifdef SKYRIMVR
         TP_HOOK(&RealHitTarget, HookHitTarget);
+        TP_HOOK(&RealCanBeKilledBy, HookCanBeKilledBy);
 #endif
         TP_HOOK(&RealApplyActorEffect, HookApplyActorEffect);
         TP_HOOK(&RealRegenAttributes, HookRegenAttributes);

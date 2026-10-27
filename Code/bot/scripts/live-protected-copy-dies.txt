@@ -1,0 +1,36 @@
+# A copy of a protected NPC dies when its owner's game reports the death.
+#
+#   python Tools\VR\live-check.py live-protected-copy-dies
+#   python Tools\VR\live-check.py --expect-fail live-protected-copy-dies     on a build without the fix: must be RED
+#
+# The game lets only its own player kill a protected NPC (one protected by its base or by a quest).
+# A copy dies on its owner's word with no killer, so a protected one went down instead: when its owner's player killed
+# it, it stayed standing in the other games.
+# Here the bot owns a Lydia whose base this game has protected, and reports her dead.
+log live protected copy dies
+waitfor connected 45
+collect death
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- Lydia's base protected, not essential, in this game
+log DO papyrus ActorBase SetEssential A2C8E b:false
+log DO papyrus ActorBase SetProtected A2C8E b:true
+
+log -- a Lydia the bot owns: this game holds her copy
+npc temp A2C8E
+waitfor owned == 1 20
+wait 8
+log CHECK npc alive
+
+log -- her owner reports her dead
+npclife dead 0
+wait 6
+log CHECK npc dead
+log CHECK absent Death sync: remote actor \w+ set dead by its owner \(now dead: false\)
+log CHECK game alive
+wait 2
+log done
+stop

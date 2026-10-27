@@ -53,7 +53,8 @@ protected:
         LeaderClaim,
         Mount,
         Relinquish,
-        OwnerUnavailable
+        OwnerUnavailable,
+        KillingBlow
     };
 
     void OnUpdate(const UpdateEvent& acEvent) const noexcept;

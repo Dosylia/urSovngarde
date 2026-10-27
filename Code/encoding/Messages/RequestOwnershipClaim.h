@@ -18,11 +18,15 @@ struct RequestOwnershipClaim final : ClientMessage
 
     bool operator==(const RequestOwnershipClaim& achRhs) const noexcept
     {
-        return ServerId == achRhs.ServerId && ExpectedOwnershipEpoch == achRhs.ExpectedOwnershipEpoch && Follower == achRhs.Follower && GetOpcode() == achRhs.GetOpcode();
+        return ServerId == achRhs.ServerId && ExpectedOwnershipEpoch == achRhs.ExpectedOwnershipEpoch && Follower == achRhs.Follower && KillingBlow == achRhs.KillingBlow &&
+               GetOpcode() == achRhs.GetOpcode();
     }
 
     uint32_t ServerId{};
     uint32_t ExpectedOwnershipEpoch{};
     //! The actor is the claimant's follower: it goes to the claimant, leader or not, and nobody else can claim it meanwhile.
     bool Follower{};
+    //! The claimant's player landed a killing blow on this protected NPC: it goes to the claimant, leader or not, whose game kills it.
+    //! The game lets only its own player kill a protected NPC, so only the killer's game can.
+    bool KillingBlow{};
 };

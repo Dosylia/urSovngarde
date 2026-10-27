@@ -497,6 +497,14 @@ void CharacterService::OnOwnershipClaimRequest(const PacketEvent<RequestOwnershi
     const auto& message = acMessage.Packet;
     const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
 
+    // A killing blow's claim goes at once: the killer's game is waiting to kill it.
+    if (message.KillingBlow)
+    {
+        if (CanClaimOwnership(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::KillingBlow))
+            TransferOwnership(acMessage.pPlayer, cEntity, OwnershipTransferReason::KillingBlow);
+        return;
+    }
+
     if (!CanClaimOwnership(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim, message.Follower))
         return;
 
@@ -1044,6 +1052,8 @@ const char* CharacterService::GetOwnershipTransferReasonName(const OwnershipTran
         return "owner relinquished control";
     case OwnershipTransferReason::OwnerUnavailable:
         return "owner became unavailable";
+    case OwnershipTransferReason::KillingBlow:
+        return "killing blow on a protected NPC";
     }
 
     return "unknown reason";
@@ -1062,7 +1072,8 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
         return false;
     }
     // A temporary actor (no form id on the server) can be claimed only as a dead body, so others can drag it.
-    if (!m_world.try_get<FormIdComponent>(aEntity) && !view.get<CharacterComponent>(*it).IsDead())
+    // Or for a killing blow, which makes it one.
+    if (!m_world.try_get<FormIdComponent>(aEntity) && !view.get<CharacterComponent>(*it).IsDead() && aReason != OwnershipTransferReason::KillingBlow)
     {
         spdlog::info("Rejected {} from player {:X} because actor {:X} is temporary and alive", pReasonName, apPlayer->GetId(), serverId);
         return false;
@@ -1104,6 +1115,11 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
     if (characterComponent.IsDragon() && pCurrentOwner && pCurrentOwner != apPlayer)
         if (const auto* pMovement = m_world.try_get<MovementComponent>(aEntity); pMovement && pMovement->Flying)
             return reject("it is a dragon flying in its owner's game");
+
+    // A player's killing blow on a protected NPC: the game lets only its own player kill one, so it goes to the killer's game.
+    // Party or not, leader or not; another player's follower was refused above.
+    if (aReason == OwnershipTransferReason::KillingBlow)
+        return characterComponent.IsDead() ? reject("it is already dead") : true;
 
     // A dead body goes to whoever grabs it, party or not, since only the owner sends its bones.
     // The epoch check above settles two players grabbing at once.
