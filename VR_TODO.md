@@ -489,6 +489,8 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       `EngineFixesVR.ini`, as on the host since 2026-09-30. His crash at 21:34 (`SkyrimVR.exe+0x93CE11` while loading
       a save, KNOWN_ISSUES section 6) took a freed form from a `tbb::concurrent_hash_map` node (R8: key 0x12F6, the
       stale pointer as value), the layout of Engine Fixes VR's form cache; the game's own form map looks different.
+      Twice more on 2026-10-26 and 2026-10-27 (v1.9.6, both at the start of a loading screen, KNOWN_ISSUES section 6):
+      still waiting on that setting, or on word that it is already off.
 - [!] **Player 2's update:** DynDOLOD DLL NG Alpha-43 (Nexus 97720, replacing his `DynDOLOD DLL NG` files) and the host's
       combined VR Address Library file (`E:\FUS\mods\VR Address Library for SKSEVR\SKSE\Plugins\version-1-4-15-0.csv`;
       his lacks id 19363, so Alpha-43 refuses to load, and a plain newer library crashes Community Shaders, KNOWN_ISSUES

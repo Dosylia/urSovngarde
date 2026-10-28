@@ -216,6 +216,11 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     recently used forms", `mods\Engine Fixes VR\skse\plugins\EngineFixesVR.ini`, with `TreeLODReferenceCaching`
     depending on it). The test: both players set both to false and play as usual; these crashes should stop. Our
     side is guarded regardless (`IsLiveGameObject`).
+  - Player 2 again, twice, on the release v1.9.6 (reports `20261027-030540-0b6895fe`, `20261028-025910-98a9a599`):
+    2026-10-26 20:04 2 ms into the loading screen of a door in Riverwood (form `FF001191`, `R8 0x3392BFE0`), and
+    2026-10-27 19:58 55 ms into loading a save in Whiterun (form `FF00127A`, `R8 0x33DA3FE0`, the freed memory reused
+    by a `BGSEntryPointPerkEntry`). Neither form appears anywhere in our logs; `RecentDeletes` cleared our deletions.
+    EngineFixesVR and PapyrusTweaks loaded; whether his `FormCaching` is off is not in the report.
   - Suspects, unproven: EngineFixesVR form caching (a stale id-to-form cache entry would hand out exactly this
     pointer), PapyrusTweaks (loaded on both machines). Whether co-op makes it more frequent is open: Emma's came 0.44 s
     after spawning a batch of the other player's actors.
