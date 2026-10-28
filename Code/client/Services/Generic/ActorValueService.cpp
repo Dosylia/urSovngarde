@@ -4,6 +4,7 @@
 #include <Services/ActorValueService.h>
 #include <World.h>
 #include <Forms/ActorValueInfo.h>
+#include <Forms/TESNPC.h>
 #include <Games/References.h>
 #include <Components.h>
 #include <Systems/InterpolationSystem.h>
@@ -244,7 +245,28 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
     std::optional<uint32_t> serverIdRes = Utils::GetServerId(*hitteeIt);
     if (!serverIdRes.has_value())
     {
-        spdlog::error("{}: failed to find server id", __FUNCTION__);
+        // Named, once per actor every 10 s with what it missed meanwhile: a fight logged this ten times a second, saying nobody.
+        struct Unsent
+        {
+            std::chrono::steady_clock::time_point Next{};
+            uint32_t Count{};
+            float Delta{};
+        };
+        static TiltedPhoques::Map<uint32_t, Unsent> s_unsent;
+        if (s_unsent.size() > 256)
+            s_unsent.clear();
+        auto& unsent = s_unsent[acEvent.HitteeId];
+        ++unsent.Count;
+        unsent.Delta += acEvent.DeltaHealth;
+        if (const auto cNow = std::chrono::steady_clock::now(); cNow >= unsent.Next)
+        {
+            const auto* pActor = Cast<Actor>(TESForm::GetById(acEvent.HitteeId));
+            const auto* pBase = pActor ? Cast<TESNPC>(pActor->baseForm) : nullptr;
+            spdlog::warn("Health change of {:X} ('{}', base {:X}) not sent: it has no server id{}; {} change(s), {:.1f} health in all, since the last such line",
+                         acEvent.HitteeId, pBase ? pBase->fullName.value.AsAscii() : "?", pBase ? pBase->formID : 0,
+                         m_world.all_of<WaitingForAssignmentComponent>(*hitteeIt) ? ", its assignment is still pending" : " and none is pending", unsent.Count, unsent.Delta);
+            unsent = Unsent{cNow + std::chrono::seconds(10)};
+        }
         return;
     }
 

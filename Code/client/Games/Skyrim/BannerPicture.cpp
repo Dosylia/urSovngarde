@@ -645,8 +645,18 @@ Picture Line(const std::wstring& acText, const uint32_t aRgb, const int aTextHei
     Canvas canvas(kWidth * kSupersample, kLineHeight * kSupersample);
     if (!canvas.IsValid())
         return {};
-    const float cHeight = static_cast<float>(aTextHeight * kWidth / 1024);
-    Write(canvas, FindFont(kHandwriting), acText, cHeight, kWidth * 0.5f, kLineHeight * 0.5f, cHeight / 8.f, 255, false);
+    // A line too long for the picture is written smaller until it fits; written as asked, both its ends were cut off.
+    constexpr float cRoom = kWidth * 0.92f;
+    const Font* pFont = FindFont(kHandwriting);
+    float height = static_cast<float>(aTextHeight * kWidth / 1024);
+    for (int i = 0; i < 8; ++i)
+    {
+        const float cWidth = Measure(pFont, acText, height, height / 8.f);
+        if (cWidth <= cRoom)
+            break;
+        height *= cRoom / cWidth;
+    }
+    Write(canvas, pFont, acText, height, kWidth * 0.5f, kLineHeight * 0.5f, height / 8.f, 255, false);
     return Colour(Cover(canvas, kWidth, kLineHeight), kWidth, kLineHeight, aRgb, kLineBand);
 }
 

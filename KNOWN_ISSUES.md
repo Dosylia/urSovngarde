@@ -239,6 +239,12 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     (`live-spawn-burst`, 2026-10-03 02:25). One or two copies left behind (a Seeker, a bear, the bot's character, in
     either owner's hands): clean in about fifteen trips. So it is the number of copies, not the kind, and not who
     runs them: `live-copies-left-3` crashes in a fresh session, `live-copies-left-2` does not.
+  - Player 2, 2026-10-28 18:29 on 10b98ee5, with no loading screen: a Havok island waking (`FOIslandActivationListener`,
+    `SkyrimVR.exe+0x5EBA71` returning from SE 36492) met a `bhkBlendCollisionObject` whose actor was freed, 2 ms after five
+    copies were made at once on a grid change; the freed actor lay between two copies deleted 6 to 7 min earlier. Report
+    20261028-172952-37821e78. His dump: a Character the game destroyed (form id zeroed, memory back on a free list),
+    last where a fight had been 4 cells back; 44 s before, this game had let four copies it made there go as
+    "removed as untracked; the actor is still there, no 3D", which the game then destroys itself.
   - **PLANCK is part of it.** The same `live-copies-left-3` run with PLANCK switched off passed (2026-10-03 03:00;
     `modlist.txt` backed up as `modlist.txt.bak-20261003-planck` and restored). PLANCK gives creature bones physics
     bodies (`activeragdoll.dll`); what the crash meets is a body of a creature skeleton whose owner is gone.

@@ -569,6 +569,30 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       moved there (`CorpseDiag`), the jump seen in play (68 to 220 units); again 76 units on 317f7ce1. It fell 0 to 1.4 s after its death, the
       original 0 to 0.1 s; resting poses differed by 18 to 33 units. Proposals: the sync audit (the corpse's pose sent
       once it rests; the fall streamed).
+- [ ] **Play session 2026-10-28 18:01 (player 1 on 43e6a70, player 2 on 10b98ee5; about 30 min, a fight with archers)**
+      - No sync bug seen. The only one: the revive banner ("<name> is reviving you") was cut off at both ends with a
+        long name. Fixed: a banner line too long for its picture is written smaller until it fits (`BannerPicture::Line`).
+        TPTests `[banner]` new case red before (1466 lit pixels in the outer 40 columns), green after; the revive line
+        drawn in the game's font fits with margins. Build ff7f9c8 then c158a0b (dirty, on 87ea449f), deployed to
+        FUS and MGO, client. Not seen in play yet.
+      - Player 2 crashed at 18:29:41, 27 min in, at Lost Knife Hideout (report 20261028-172952-37821e78): a Havok island
+        waking up (`FOIslandActivationListener`, a Steel Arrow on the stack) met a ragdoll body
+        (`bhkBlendCollisionObject`) whose actor was freed (SE 36492 called on it, its vtable read -1). The family of
+        KNOWN_ISSUES "Crash within a second of travelling away from copies this client made", without a loading screen:
+        2 ms after this game had made five copies at once on a grid change. The freed actor (0x279507000) sits between two
+        copies this game had deleted 6 to 7 minutes before; not in `RecentDeletes`' last 28. Our own risk beside it:
+        `CopyFreedHeld` (a copy freed after 60 s with the game still holding it), twice 36 s before the crash, 72 times
+        in his log, 10 times in player 1's session. His dump: the freed object is a Character the game destroyed (form
+        type 62, form id zeroed, its first word a free-list link), last at (86484, -46113), where the 18:26 fight was, 4
+        cells from the crash. At 18:28:57 this game had let four copies it made in that fight go as "removed as
+        untracked; the actor is still there, no 3D" (FF000D7E, FF000D7C, FF00099F, FF000839): the game destroys those
+        itself, so `RecentDeletes` never lists them. Which of the four is not in the dump. The log folder he sent was an
+        old one (10-20 to 10-23, v1.9.6-3).
+      - Player 1: `ActorValueService::OnHealthChange: failed to find server id` 1948 times, about 10 a second in the
+        fight (18:10 to 18:12), against 7 in an older session: a health change (most likely regeneration) of an actor
+        with no server id yet. Nothing seen on screen. Now named: `Health change of X ('name', base B) not sent: it has
+        no server id[, its assignment is still pending]; N change(s) ... since the last such line`, once per actor every
+        10 s (build c158a0b, deployed to FUS and MGO). Next session: read those lines.
 - [ ] **Play session 2026-10-26 18:25 (both on aad1262c + the get-up and lock change; player 1 leads; PvP on)**
       - The unpaused skills and map menus paused: the FUS server's `config\STServer.ini` had `bUnpausedMenus=false`
         (the default). Set to true there on 2026-10-26; it takes effect at the server's next start.
