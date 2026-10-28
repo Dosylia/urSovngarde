@@ -588,6 +588,15 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         untracked; the actor is still there, no 3D" (FF000D7E, FF000D7C, FF00099F, FF000839): the game destroys those
         itself, so `RecentDeletes` never lists them. Which of the four is not in the dump. The log folder he sent was an
         old one (10-20 to 10-23, v1.9.6-3).
+      - Player 1 froze twice on closing the unpaused map (19:47, 19:57; player 2 reported a map problem too, no report
+        on the hub after 18:29). Fixed: the unpaused map's and skills menu's close is handled on the main thread, the
+        menu pausing for that frame (KNOWN_ISSUES "Freeze on closing the unpaused map"). Rig `live-map-close` (each
+        menu closed 3 times by Escape and 3 times by a bare hide, the rig's server with bUnpausedMenus=true): RED on the
+        diagnostics-only build (the map's close handled on a worker 6 of 6, as in play), green on ed073e5 (dirty, on
+        fea1f64c; every close on the main thread, the menu pausing, no freeze, the game running after); TPTests 95.
+        Deployed to FUS and MGO, client. Not seen in play yet; not tested: fast travel from the map (its close comes one
+        frame later now), and the map closing when hit. To see: open and close the map and the skills menu many times,
+        fast travel from the map; no freeze. The show is still handled on a worker.
       - Player 1: `ActorValueService::OnHealthChange: failed to find server id` 1948 times, about 10 a second in the
         fight (18:10 to 18:12), against 7 in an older session: a health change (most likely regeneration) of an actor
         with no server id yet. Nothing seen on screen. Now named: `Health change of X ('name', base B) not sent: it has

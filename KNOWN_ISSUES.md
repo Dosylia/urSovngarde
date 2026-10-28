@@ -225,6 +225,20 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     pointer), PapyrusTweaks (loaded on both machines). Whether co-op makes it more frequent is open: Emma's came 0.44 s
     after spawning a batch of the other player's actors.
 
+- **Freeze on closing the unpaused map: the game drew one group of render passes forever -- fixed 2026-10-28.**
+  Player 1, twice in 10 minutes (19:47 and 19:57, 2 of 6 map closes), the game frozen right after the map closed. The
+  main thread ran at 100% CPU inside one frame's batch rendering (`SkyrimVR.exe+0x130BB6F`, the loop asking "render the
+  next pass group" while it returns true; `+0x1349092`, SE 100849; `BSRenderPass::DrawGeometry`), on the same first
+  group for minutes; pause counter 0, only the HUD open.
+  - Cause: unpaused, the UI handles the map (and the skills menu) on a worker thread while the main thread draws; the
+    close frees the menu's 3D under the draw. Paused, as in the game, both are handled on the main thread (every paused
+    close in the logs was posted on the main thread, every unpaused one on a worker).
+  - Fix: a close of the unpaused map or skills menu asked off the main thread is held; at the start of the next frame
+    the main thread makes the menu pause through the game's own `UI::SetPausesGame` (VR 0x140F1BF80, byte-checked;
+    it moves the pause counter with the menu's pause flag, which the game decrements by when the menu goes) and posts
+    the close itself, so that frame runs paused and the close is handled on the main thread.
+  - Still on a worker: the show (`Map menu: show handled on thread X (not the main thread ...)`), which builds the
+    menu's 3D. No freeze or crash has been tied to it.
 - **Crash within a second of travelling away from copies this client made -- open.** `SkyrimVR.exe+0x3AC1A8`
   (`FOCollisionListener`, a virtual call on freed memory), `+0x2EEF6A` (`HasKeyword` on a freed object) or
   `VCRUNTIME140.dll+0x504F` (a cast on the value 1), 0.5 to 0.9 s after arriving through a loading screen. In each the

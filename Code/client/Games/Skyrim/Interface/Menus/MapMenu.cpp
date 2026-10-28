@@ -95,6 +95,15 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
 {
     const bool cHiding = aMessage.eType == UIMessage::kHide || aMessage.eType == UIMessage::kForceHide;
 
+    // Which thread shows and takes down the map against the one that draws it: the hide frees the map's 3D.
+    if (aMessage.eType == UIMessage::kShow || cHiding)
+    {
+        const uint32_t cThread = GetCurrentThreadId();
+        const uint32_t cMain = GameMainThreadId();
+        spdlog::info("Map menu: {} handled on thread {} ({}), the map {}", aMessage.eType == UIMessage::kShow ? "show" : "hide", cThread,
+                     cThread == cMain ? "the main thread" : fmt::format("not the main thread {}", cMain), apThis->PausesGame() ? "pausing" : "unpaused");
+    }
+
     if (aMessage.eType == UIMessage::kShow)
         s_mapOpen = true;
     else if (cHiding)

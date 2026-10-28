@@ -78,6 +78,11 @@ static uint32_t HookStatsProcessMessage(IMenu* apThis, UIMessage& aMessage)
     // Before the game handles it: a hide may free the model, and a worker must not keep it from here on.
     if (aMessage.eType == UIMessage::kShow || cHiding)
     {
+        // Which thread shows and takes down the menu against the one that draws it (UnpausedMenusOnMainLoop).
+        const uint32_t cThread = GetCurrentThreadId();
+        const uint32_t cMain = GameMainThreadId();
+        spdlog::info("Skills menu: {} handled on thread {} ({}), the menu {}", cHiding ? "hide" : "show", cThread,
+                     cThread == cMain ? "the main thread" : fmt::format("not the main thread {}", cMain), apThis->PausesGame() ? "pausing" : "unpaused");
         std::scoped_lock lock(s_treeUpdateLock);
         s_statsShown = !cHiding;
         s_pendingTreeModel = nullptr;

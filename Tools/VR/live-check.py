@@ -67,6 +67,7 @@ The bot's script does not stop while the driver is busy with that, so its own `w
 `log DO sleep <seconds>` makes the driver itself wait before it reads the next line.
 `log DO server restart after console <command>` runs that command while the server is down (the game offline).
 `log DO menu <seconds> <menu name> [shot <name>]` keeps a menu open that long (the driver waits; the bot's script does not), with `shot` taking a SHOT picture of it halfway.
+`log DO menu open|close <menu name>` does one half only, so a key (`DO key escape 200`, the game's Cancel) can close it.
 `log DO pickup own` has the player pick up the newest item this game dropped itself.
 `log DO papyrus <Script> <Function> <self>|global [form ...]` calls a native function on a reference, or a global one (ids in hex; a number as n:<value>,
 a float as f:<value>, a bool as b:true or b:false, a string as s:<text>).
@@ -1757,6 +1758,15 @@ class Run:
                         self.results.append((False, text.strip(), str(e)))
                 elif text.startswith('DO sleep '):
                     time.sleep(int(text.split()[2]))
+                elif text.startswith('DO menu open ') or text.startswith('DO menu close '):
+                    # "DO menu open|close <menu name>": only that half, so something else can close it (a key: the game's Cancel).
+                    words = text.split(None, 3)
+                    try:
+                        tool('menu', {'action': words[2], 'name': words[3]})
+                        print('   (menu %s: %s)' % (words[3], words[2]), flush=True)
+                    except Exception as e:
+                        print('   FAIL  menu %s %s: %s' % (words[2], words[3], e), flush=True)
+                        self.results.append((False, text.strip(), str(e)))
                 elif text.startswith('DO menu '):
                     # "DO menu <seconds> <menu name> [shot <name>]": open a menu, keep it open, close it again (DevBench's menu tool).
                     # With "shot", a SHOT picture of the open menu is taken halfway through.

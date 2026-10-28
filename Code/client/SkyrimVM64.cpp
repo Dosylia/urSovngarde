@@ -3,6 +3,7 @@
 #include <Misc/GameVM.h>
 #include <Interface/Menus/SleepWaitMenu.h>
 #include <Interface/Menus/SkillsMenu.h>
+#include <Interface/UI.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
 
@@ -27,6 +28,7 @@ int TP_MAKE_THISCALL(HookVMUpdate, GameVM, float a2)
 short TP_MAKE_THISCALL(HookMainLoop, Main)
 {
 #ifdef SKYRIMVR
+    UnpausedMenusOnMainLoop();
     UpdateSleepWatchControls();
     RunDeferredSleepWaitAccept();
     UpdateSkillsMenuChecks();
