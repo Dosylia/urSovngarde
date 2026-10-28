@@ -206,12 +206,18 @@ void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage
     if (acMessage.Packet.IsLocked)
         s_doorStates.erase(acMessage.Packet.Id);
 
+    // Outdoors, every player who has the reference's cell loaded gets it, not only those in that very cell (as OnActivate).
+    // The sender's game changed the lock, so the reference is within the sender's loaded grid.
+    const CellIdComponent& cSenderCell = acMessage.pPlayer->GetCellComponent();
     for (Player* pPlayer : m_world.GetPlayerManager())
     {
         if (pPlayer == acMessage.pPlayer)
             continue;
 
-        if (pPlayer->GetCellComponent().Cell == acMessage.Packet.CellId)
+        const CellIdComponent& cCell = pPlayer->GetCellComponent();
+        const bool cSameCell = cCell.Cell == acMessage.Packet.CellId;
+        const bool cLoadedThere = !cSenderCell.IsInInteriorCell() && !cCell.IsInInteriorCell() && cSenderCell.IsInRange(cCell, false);
+        if (cSameCell || cLoadedThere)
             pPlayer->Send(notifyLockChange);
     }
 }

@@ -544,23 +544,29 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       protected-NPC item: a copy of a protected or essential NPC now dies on its owner's word). On 206a1d36 the rig's
       `live-death-protected` (Lydia) failed 2 of 2: the copy stayed alive (`now dead: false`), and once this game took
       her over it sent `Death sync: local actor X is now alive`, so she lived again for everyone. That test also checks
-      the hand-over, which `live-protected-copy-dies` does not; not run on 10b98ee5 yet. `live-death-copy` (an
+      the hand-over, which `live-protected-copy-dies` does not. Ok on 317f7ce1 (2026-10-28), hand-over included. `live-death-copy` (an
       unprotected human) is ok on 206a1d36.
 - [ ] **A dead copy near the player lost its 3D and was made again** (rig, `live-death-copy`, once in 3 runs,
       2026-10-26): 4 s after the copy died, `CopyGone: X removed as remote; the actor is still there, no 3D`, then
       `Announcing this cell again` and a new copy spawned dead: the body vanishes and reappears. Its pelvis was 15 units
       below its feet in the samples before. Cause unknown.
-- [ ] **Doors and locks from the sync audit (2026-10-26), now with rig tests that fail on 206a1d36:**
-      `live-door-script`: a door a script opens (`SetOpen`) is never sent (2 of 2); `live-lock-range`: a lock change
-      reaches only players in the door's very cell, not those one cell over (2 of 2). Proposals: the sync audit
-      document (party leader in charge of doors; locks relayed like door use).
-- [ ] **A lever pulled by the other player does not move its bridge in this game** (rig, `live-lever-bridge`, 2 of 2,
-      2026-10-27, on 206a1d36). The lever's use arrives and is replayed on the user's copy (Mistwatch's lever 91804,
-      one cell over); the bridge 917F7 does not move and nothing is logged. Likely: the lever's script reacts only to
-      the player. A pull by this game's own player moves the bridge and reaches the other player. Not fixed.
+- [x] **A lock change reached only players in the door's very cell** (sync audit 2026-10-26; rig `live-lock-range`).
+      Fixed (server only, no protocol change): `ObjectService::OnLockChange` relays a lock outdoors to every player near
+      the sender, as a door's use (`OnActivate`). `live-lock-range` RED on 317f7ce1 (the bot never told of lock 3F558
+      one cell over), green on 43e6a70 (dirty, on 317f7ce1; deployed to FUS and MGO, client and server). Not seen in
+      play yet. To see: a lockpicked or script-locked door one cell away is locked or unlocked for the other player too.
+- [ ] **A door a script opens (`SetOpen`) is never sent** (sync audit 2026-10-26; rig `live-door-script`, failed on
+      206a1d36 2 of 2 and on 43e6a70: door 9B0A5 open here, closed for the other player, and no door line in the
+      client log). In the civil war, quest scripts open and close most doors. Decision needed on the design (the sync
+      audit's proposal: the party leader's game in charge of doors).
+- [x] **"A lever pulled by the other player does not move its bridge"** was the test's timing, not a bug: the bridge
+      jumps from one end to the other, and the recording started with the pull, so its first sample came after the
+      jump. With each recording started 2 s before its pull, `live-lever-bridge` is ok on 43e6a70 (other player's
+      pull 3 > 1 here, this player's 1 > 3 and told to the other player). Nothing changed in the lever's path since
+      206a1d36.
 - [ ] **A copy's body is shifted after it lands** (rig, `live-death-replay`, 3 of 4 runs, 2026-10-27): replayed beside
       its original in one game, the copy's ragdoll lay 69 to 108 units from where its owner's corpse lies and was
-      moved there (`CorpseDiag`), the jump seen in play (68 to 220 units). It fell 0 to 1.4 s after its death, the
+      moved there (`CorpseDiag`), the jump seen in play (68 to 220 units); again 76 units on 317f7ce1. It fell 0 to 1.4 s after its death, the
       original 0 to 0.1 s; resting poses differed by 18 to 33 units. Proposals: the sync audit (the corpse's pose sent
       once it rests; the fall streamed).
 - [ ] **Play session 2026-10-26 18:25 (both on aad1262c + the get-up and lock change; player 1 leads; PvP on)**
