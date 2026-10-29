@@ -21,4 +21,5 @@ bool SkillsMenuCanRunUnpaused() noexcept;
 // Called from the start of Main::Update (SkyrimVM64.cpp).
 void UpdateSkillsMenuChecks();
 void RunDeferredSkillsTreeUpdate();
+void ReleaseClosedSkillsTrees();
 #endif

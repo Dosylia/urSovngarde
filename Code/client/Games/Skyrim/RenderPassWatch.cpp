@@ -3,6 +3,7 @@
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Interface/UI.h>
 #include <Interface/Menus/MapMenu.h>
+#include <PatchCheck.h>
 
 #include <intrin.h>
 
@@ -272,6 +273,108 @@ uint64_t HookRegister(void* apRenderer, uint8_t* apPass, const uint64_t a3, cons
     s_lastInserts[SlotOf(apPass)] = LastInsert{apPass, apRenderer, cCaller, GetCurrentThreadId(), MainLoopFrame()};
     return cResult;
 }
+
+// The draw of one list (VR 0x141349270), on the main thread: the renderer, its technique, the list's index in the technique's group.
+// It finds the group in the renderer's hash map, then follows the list from that group's head until a pass with no next.
+// Passes put on twice can also close a loop of several (the two controller models after a map close), which the insert check above misses.
+// So each list is checked as the draw finds it, and the link that closes a loop is cut before the draw follows it.
+constexpr uintptr_t kDrawList = 0x1349270;
+constexpr size_t kRendererGroups = 0x8;
+constexpr size_t kRendererMapCapacity = 0x2C;
+constexpr size_t kRendererMapEnd = 0x38;
+constexpr size_t kRendererMap = 0x48;
+// A group is five list heads and a mask, 0x30 bytes.
+constexpr size_t kGroupHeads = 6;
+
+using TDrawList = uint64_t(void*, uint32_t*, int32_t*, uint64_t, uint32_t);
+TDrawList* s_realDrawList = nullptr;
+
+std::atomic<uint32_t> s_cutLoops{0};
+
+uint8_t* NextOf(const uint8_t* apPass) noexcept
+{
+    return *reinterpret_cast<uint8_t* const*>(apPass + kPassNext);
+}
+
+// The list head the draw starts from, found the way the draw finds it (technique not in the map: group 0).
+uint8_t** DrawnListHead(uint8_t* apRenderer, const uint32_t aTechnique, const int32_t aList) noexcept
+{
+    uint32_t group = 0;
+    if (auto* pEntry = *reinterpret_cast<uint8_t**>(apRenderer + kRendererMap))
+    {
+        const uint32_t cCapacity = *reinterpret_cast<const uint32_t*>(apRenderer + kRendererMapCapacity);
+        pEntry += static_cast<size_t>(aTechnique & (cCapacity - 1)) << 4;
+        if (*reinterpret_cast<uint8_t**>(pEntry + 8))
+        {
+            const auto* pEnd = *reinterpret_cast<uint8_t**>(apRenderer + kRendererMapEnd);
+            do
+            {
+                if (*reinterpret_cast<const uint32_t*>(pEntry) == aTechnique)
+                {
+                    group = *reinterpret_cast<const uint32_t*>(pEntry + 4);
+                    break;
+                }
+                pEntry = *reinterpret_cast<uint8_t**>(pEntry + 8);
+            } while (pEntry != pEnd);
+        }
+    }
+    return *reinterpret_cast<uint8_t***>(apRenderer + kRendererGroups) + group * kGroupHeads + aList;
+}
+
+// Brent's loop finding, no allocation: an ordinary list is walked about twice, a looping one cut where its last pass leads back.
+void CutLoop(void* apRenderer, uint8_t** appHead, const uint32_t aTechnique, const int32_t aList) noexcept
+{
+    uint8_t* pSlow = *appHead;
+    if (!pSlow)
+        return;
+    uint8_t* pFast = NextOf(pSlow);
+    size_t power = 1;
+    size_t length = 1;
+    while (pFast && pFast != pSlow)
+    {
+        if (power == length)
+        {
+            pSlow = pFast;
+            power *= 2;
+            length = 0;
+        }
+        pFast = NextOf(pFast);
+        ++length;
+    }
+    if (!pFast)
+        return;
+
+    // The loop is length passes long: its first pass is where two walks that far apart meet.
+    pSlow = pFast = *appHead;
+    for (size_t i = 0; i < length; ++i)
+        pFast = NextOf(pFast);
+    size_t before = 0;
+    while (pSlow != pFast)
+    {
+        pSlow = NextOf(pSlow);
+        pFast = NextOf(pFast);
+        ++before;
+    }
+    uint8_t* pLast = pSlow;
+    for (size_t i = 1; i < length; ++i)
+        pLast = NextOf(pLast);
+    *reinterpret_cast<uint8_t**>(pLast + kPassNext) = nullptr;
+
+    // Every one counts; the first twenty are told in full, then one in five hundred.
+    const uint32_t cCount = ++s_cutLoops;
+    if (cCount > 20 && cCount % 500 != 0)
+        return;
+    spdlog::error("RenderPassWatch: pass {} ('{}') led back to pass {} ('{}') in renderer {}'s list (technique {:#x}, list {}): a loop of {} passes, {} after the head; "
+                  "cut before the draw, number {}; frame {}, the map {}",
+                  fmt::ptr(pLast), GeometryName(pLast), fmt::ptr(pSlow), GeometryName(pSlow), fmt::ptr(apRenderer), aTechnique, aList, length, before, cCount, MainLoopFrame(),
+                  MapMenuShown() ? "shown" : "not shown");
+}
+
+uint64_t HookDrawList(void* apRenderer, uint32_t* apTechnique, int32_t* apList, const uint64_t a4, const uint32_t aFlags)
+{
+    CutLoop(apRenderer, DrawnListHead(static_cast<uint8_t*>(apRenderer), *apTechnique, *apList), *apTechnique, *apList);
+    return s_realDrawList(apRenderer, apTechnique, apList, a4, aFlags);
+}
 } // namespace
 
 static TiltedPhoques::Initializer s_renderPassWatch(
@@ -298,5 +401,20 @@ static TiltedPhoques::Initializer s_renderPassWatch(
         pVtable[2] = reinterpret_cast<void*>(&HookRegister<2>);
         VirtualProtect(&pVtable[1], 2 * sizeof(void*), oldProtect, &oldProtect);
         spdlog::info("RenderPassWatch: BSBatchRenderer's register functions watched (they were {} and {})", Where(s_realRegister[0]), Where(s_realRegister[1]));
+    });
+
+static TiltedPhoques::Initializer s_drawListCheck(
+    []()
+    {
+        const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        const auto* pDraw = reinterpret_cast<const uint8_t*>(exe + kDrawList);
+        if (!PatchCheck::Is(pDraw, {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10}))
+        {
+            spdlog::error("RenderPassWatch: the list draw at {} is not the expected code ({}); lists are not checked for loops", fmt::ptr(pDraw), PatchCheck::Bytes(pDraw, 10));
+            return;
+        }
+        s_realDrawList = reinterpret_cast<TDrawList*>(exe + kDrawList);
+        TP_HOOK(&s_realDrawList, HookDrawList);
+        spdlog::info("RenderPassWatch: each list is checked for a loop before it is drawn");
     });
 #endif

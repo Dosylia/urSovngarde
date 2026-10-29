@@ -639,6 +639,40 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
           still holds pass P from frame N` (any pass, any list), with the stack that added to the stale list. Nothing
           in the rig (no false alarm either). Next session: open and close the map as before; any such line, or a
           self-link line (it now gives the frame of the pass's earlier insert), names the list the game left undrawn.
+        - 2026-10-29 18:36, player 2 alone, on 9c536680, about 20 closes: 13 self-links of the pointer, each put back
+          by the watch, then a freeze at 18:37:58. Every self-link came 1 to 3 ms after `Map menu: hide handled on
+          thread X (not the main thread ...)`, in the close frame only (1393 frames with the pointer drawn once, 6
+          twice, all at closes); both inserts from `SkyrimVR.exe+0x1308c9d`, one worker thread, one renderer, one
+          frame; no `still holds` line. The freeze (full dump): the main thread in the same list draw
+          (`+0x1349270`, at `+0x1349513`), the list a loop of two, `RIGHT_oculus_quest2_controller_right` and
+          `LEFT_oculus_quest2_controller_left`, which the insert check (one pass on itself) cannot see. Scene graph
+          sound (each with one parent, under `PlayerWorldNode`). So in the close frame the same passes go on one list
+          twice; the pointer and both controllers, all under `PlayerWorldNode`; what accumulates them twice is not
+          known yet. Changed in build 07bafd1 (client, FUS folder, on 9c536680; not run in the rig): the list draw itself (`0x141349270`, entry checked) finds
+          the list head as the game does and cuts any loop before drawing (`RenderPassWatch: pass P ('name') led back
+          to pass Q ... cut before the draw`). Every pass stays drawn once; the map's close is unchanged. To see in
+          play: 30 to 40 closes, no freeze; read the `led back` and self-link lines. Also seen: a short flicker at
+          each close, as if a menu opened for a moment; player 2 sees it offline and in co-op, so it is the game's.
+        - 2026-10-29 19:06, player 2 alone, on 07bafd1, many closes: no freeze; 20 pointer self-links put back and 13
+          loops of the two controllers cut before the draw (`led back`), each one a freeze before. Offline (19:13:05
+          to 19:13:15) the map's show ran on the main thread but its hide still on a worker, so "a paused menu closes
+          on the main thread" does not hold. Then a crash at 19:26:26 closing the unpaused skills menu: the main
+          thread in the draw (`SkyrimVR+0x134a403` > `CommunityShaders.dll+0x388984`, a read at 0x10), 3 ms after
+          `Skills menu: hide handled on thread X (not the main thread ...)`. The pass being drawn (a `BSEffectShader`
+          one, as the tree's stars and lines) had a freed shader property (vtable 0). So the hide on the worker freed
+          the tree while the main thread drew it. Changed in build 00060aa (client, FUS folder, on 9c536680; not run in the rig): an unpaused hide takes a
+          reference of ours on the tree model (StatsMenu+0xC0), and the start of Main::Update lets it go once ours is
+          the last for two frame starts, so the model is destroyed on the main thread (`Skills menu: its tree model
+          ... held at the unpaused close` / `... let go on the main thread, N frames after the close`). To see in
+          play: open and close the skills menu many times online, no crash; read those two lines.
+        - 2026-10-29 19:46, player 2 alone, on 00060aa: 85 skills menu closes online, no crash; each tree held and
+          let go on the main thread, 3 to 14 frames after the close, never still kept by the game. 65 map closes, no
+          freeze; 20 pointer self-links put back, no controller loop this time. Seen fixed by player 2; not yet
+          seen by player 1.
+        - 2026-10-29 19:13:55, the same session: a confirmation box over the open map, then a 31 s loading screen
+          (the watchdog's sample: the game's load, DynDOLOD and vrmapmarkers on the stack, none of ours), then the
+          main menu. No `SaveLoad:` line for it, so which file is not known; the next load (Quicksave0, from the
+          main menu) was fine. Cause unknown.
       - Player 1: `ActorValueService::OnHealthChange: failed to find server id` 1948 times, about 10 a second in the
         fight (18:10 to 18:12), against 7 in an older session: a health change (most likely regeneration) of an actor
         with no server id yet. Nothing seen on screen. Now named: `Health change of X ('name', base B) not sent: it has

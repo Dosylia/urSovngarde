@@ -33,6 +33,7 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
     RunDeferredSleepWaitAccept();
     UpdateSkillsMenuChecks();
     RunDeferredSkillsTreeUpdate();
+    ReleaseClosedSkillsTrees();
 #endif
 
     return TiltedPhoques::ThisCall(MainLoop, apThis);

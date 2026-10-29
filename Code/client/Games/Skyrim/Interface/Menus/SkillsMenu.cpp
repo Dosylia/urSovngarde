@@ -71,6 +71,56 @@ void RunDeferredSkillsTreeUpdate()
     s_pendingTreeModel = nullptr;
 }
 
+// Unpaused, the hide runs on a worker and frees the tree model while the main thread draws its passes, which drew a freed one (a crash in the draw).
+// So an unpaused hide takes a reference of ours on the model, and only the main thread lets it go, at the start of a frame, when nothing draws.
+struct ClosedTree
+{
+    NiRefObject* pModel;
+    uint32_t FramesAlone; // frame starts with ours the last reference
+    uint32_t FramesHeld;
+};
+static std::vector<ClosedTree> s_closedTrees; // under s_treeUpdateLock
+
+static void HoldClosedTree(uint8_t* apModel)
+{
+    auto* pModel = reinterpret_cast<NiRefObject*>(apModel);
+    if (std::any_of(s_closedTrees.begin(), s_closedTrees.end(), [pModel](const ClosedTree& acTree) { return acTree.pModel == pModel; }))
+        return;
+    pModel->IncRef();
+    s_closedTrees.push_back({pModel, 0, 0});
+    spdlog::info("Skills menu: its tree model {} held at the unpaused close, to be let go on the main thread", fmt::ptr(pModel));
+}
+
+// Called from the start of Main::Update.
+void ReleaseClosedSkillsTrees()
+{
+    // Let go outside the lock: the model's destruction must not run under a lock the menu's hooks take.
+    std::vector<NiRefObject*> released;
+    {
+        std::scoped_lock lock(s_treeUpdateLock);
+        for (auto it = s_closedTrees.begin(); it != s_closedTrees.end();)
+        {
+            // Ours the last for two frame starts: the frame that drew it is over, so it goes here.
+            // Still kept by the game after about ten seconds, or the menu shown again: only ours is dropped.
+            ClosedTree& tree = *it;
+            ++tree.FramesHeld;
+            tree.FramesAlone = tree.pModel->refCount == 1 ? tree.FramesAlone + 1 : 0;
+            const bool cAlone = tree.FramesAlone >= 2;
+            if (!cAlone && !(tree.pModel->refCount > 1 && (s_statsShown || tree.FramesHeld > 900)))
+            {
+                ++it;
+                continue;
+            }
+            spdlog::info("Skills menu: its tree model {} let go on the main thread, {} frames after the close{}", fmt::ptr(tree.pModel), tree.FramesHeld,
+                         cAlone ? "" : ", still kept by the game");
+            released.push_back(tree.pModel);
+            it = s_closedTrees.erase(it);
+        }
+    }
+    for (NiRefObject* pModel : released)
+        pModel->DecRef();
+}
+
 static uint32_t HookStatsProcessMessage(IMenu* apThis, UIMessage& aMessage)
 {
     const bool cHiding = aMessage.eType == UIMessage::kHide || aMessage.eType == UIMessage::kForceHide;
@@ -86,6 +136,9 @@ static uint32_t HookStatsProcessMessage(IMenu* apThis, UIMessage& aMessage)
         std::scoped_lock lock(s_treeUpdateLock);
         s_statsShown = !cHiding;
         s_pendingTreeModel = nullptr;
+        if (cHiding && !apThis->PausesGame())
+            if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kStatsModel))
+                HoldClosedTree(pModel);
     }
 
     // Cleared on the way out, as MapMenu.cpp does: the model is not left exempt from the fade that removes it.
