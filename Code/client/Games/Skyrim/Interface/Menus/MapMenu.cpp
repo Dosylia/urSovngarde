@@ -19,6 +19,7 @@ constexpr size_t kMenuModel = 0x48;
 constexpr size_t kFadeNodeCurrentFade = 0x158;
 constexpr size_t kAvObjectFlags = 0x10C;
 constexpr uint32_t kIgnoreFade = 0x8000;
+constexpr uint32_t kHidden = 0x1;
 
 TP_THIS_FUNCTION(TMapProcessMessage, uint32_t, IMenu, UIMessage&);
 TP_THIS_FUNCTION(TMainUpdateSky, void, void);
@@ -27,6 +28,8 @@ static TMainUpdateSky* RealMainUpdateSky;
 // Written by the thread that processes UI messages, read from the client's update on the VM worker pool.
 static std::atomic<bool> s_mapOpen{false};
 static std::atomic<bool> s_closeRequested{false};
+// The map's model this code hid at an unpaused close; only that model is shown again.
+static std::atomic<uint8_t*> s_modelHiddenOnClose{nullptr};
 // Set once every hooked or called function was found as read; until then the map pauses as in the game.
 static bool s_hooksReady = false;
 
@@ -123,10 +126,37 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
     if (cHiding)
     {
         if (auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kMenuModel))
-            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kIgnoreFade;
+        {
+            auto* pFlags = reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags);
+            *pFlags &= ~kIgnoreFade;
+
+            // The world keeps running after an unpaused close, so the panels would fade out slowly from the fade held at 1 below.
+            // Hidden at once instead; the next show takes the flag off again.
+            if (!apThis->PausesGame() && !(*pFlags & kHidden))
+            {
+                *pFlags |= kHidden;
+                s_modelHiddenOnClose.store(pModel, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    // Taken off before the game shows the map, so its show finds the model as it was.
+    if (aMessage.eType == UIMessage::kShow)
+    {
+        auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kMenuModel);
+        if (pModel && s_modelHiddenOnClose.exchange(nullptr, std::memory_order_relaxed) == pModel)
+            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kHidden;
     }
 
     const uint32_t result = TiltedPhoques::ThisCall(RealMapProcessMessage, apThis, aMessage);
+
+    // Or after, when the model is only back in place once shown.
+    if (aMessage.eType == UIMessage::kShow)
+    {
+        auto* pModel = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(apThis) + kMenuModel);
+        if (pModel && s_modelHiddenOnClose.exchange(nullptr, std::memory_order_relaxed) == pModel)
+            *reinterpret_cast<uint32_t*>(pModel + kAvObjectFlags) &= ~kHidden;
+    }
 
     // Set while open unpaused.
     if (s_mapOpen && !apThis->PausesGame())

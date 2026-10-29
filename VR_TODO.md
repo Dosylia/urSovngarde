@@ -622,6 +622,14 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         reproduce it (NOT RED on the build without the guard; frame times unchanged with it). Build deployed to FUS and
         MGO, client. Next session: open and close the map and the skills menu, with message boxes and fast travel;
         then read `RenderPassWatch:` lines in both logs (each one names who put the pointer on twice).
+        - 2026-10-29 08:04, player 1 alone, 5 closes: no self-link logged, no freeze. Seen: after each close the map's
+          panels (legend, markers) stayed on screen for about 2 s, where the HUD's own panels show. Ours: while the map
+          is open unpaused, `MapMenu.cpp` holds the panels' fade at 1; after the close the world runs on and they fade
+          out from 1. Every freeze came within a second of a close, inside that window. Changed in build 6980a69
+          (client, FUS folder, on ce0e10ea): an unpaused close hides the panels' model at once (`kHidden`), and the
+          next show takes the flag off that model only. Not tested in the rig (it cannot see the panels). To see in
+          play: the panels go with the map; the map opened again offline and online still shows them; still no
+          freeze, and `RenderPassWatch:` lines read after the session.
       - Player 1: `ActorValueService::OnHealthChange: failed to find server id` 1948 times, about 10 a second in the
         fight (18:10 to 18:12), against 7 in an older session: a health change (most likely regeneration) of an actor
         with no server id yet. Nothing seen on screen. Now named: `Health change of X ('name', base B) not sent: it has
