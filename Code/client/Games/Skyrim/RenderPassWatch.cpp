@@ -67,6 +67,98 @@ std::string Where(const void* apAddress) noexcept
     return fmt::format("{}", apAddress);
 }
 
+// The game's functions are not in our image's unwind table, so RtlCaptureStackBackTrace stops at the first one.
+// The game's own table (SkyrimVR 1.4.15's exception directory) is in our image at its own RVA and is searched here.
+constexpr uintptr_t kGameUnwindTable = 0x36F4000;
+constexpr size_t kGameUnwindEntries = 0x15B058 / sizeof(RUNTIME_FUNCTION);
+constexpr DWORD kGameCodeEnd = 0x1580000;
+uintptr_t s_exe = 0;
+bool s_gameUnwindTable = false;
+
+const RUNTIME_FUNCTION* GameFunctionEntry(const DWORD64 aPc) noexcept
+{
+    const DWORD64 cRva = aPc - s_exe;
+    if (aPc < s_exe || cRva >= kGameCodeEnd)
+        return nullptr;
+    const auto* pEntries = reinterpret_cast<const RUNTIME_FUNCTION*>(s_exe + kGameUnwindTable);
+    size_t low = 0;
+    size_t high = kGameUnwindEntries;
+    while (low < high)
+    {
+        const size_t cMiddle = (low + high) / 2;
+        if (cRva < pEntries[cMiddle].BeginAddress)
+            high = cMiddle;
+        else if (cRva >= pEntries[cMiddle].EndAddress)
+            low = cMiddle + 1;
+        else
+            return &pEntries[cMiddle];
+    }
+    return nullptr;
+}
+
+// The table is used only if it reads as one: entries in order, each inside the game's code.
+void CheckGameUnwindTable() noexcept
+{
+    s_exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto* pEntries = reinterpret_cast<const RUNTIME_FUNCTION*>(s_exe + kGameUnwindTable);
+    for (size_t i = 0; i < 64; ++i)
+    {
+        if (pEntries[i].BeginAddress >= pEntries[i].EndAddress || pEntries[i].EndAddress > kGameCodeEnd ||
+            (i && pEntries[i].BeginAddress < pEntries[i - 1].EndAddress))
+        {
+            spdlog::error("RenderPassWatch: the game's unwind table does not read as one (entry {}); stacks stop at the first game frame", i);
+            return;
+        }
+    }
+    s_gameUnwindTable = true;
+}
+
+// The return addresses from the caller's caller up, through game and plugin frames alike.
+__declspec(noinline) USHORT CaptureStack(void** apFrames, const USHORT aMax) noexcept
+{
+    if (!s_gameUnwindTable)
+        return RtlCaptureStackBackTrace(2, aMax, apFrames, nullptr);
+
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    USHORT depth = 0;
+    int skip = 1;
+    __try
+    {
+        while (depth < aMax && context.Rip)
+        {
+            DWORD64 imageBase = 0;
+            auto* pEntry = RtlLookupFunctionEntry(context.Rip, &imageBase, nullptr);
+            if (!pEntry)
+            {
+                pEntry = const_cast<RUNTIME_FUNCTION*>(GameFunctionEntry(context.Rip));
+                imageBase = s_exe;
+            }
+            if (pEntry)
+            {
+                void* pHandlerData = nullptr;
+                DWORD64 establisherFrame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, context.Rip, pEntry, &context, &pHandlerData, &establisherFrame, nullptr);
+            }
+            else
+            {
+                // A leaf function: its return address is on top of the stack.
+                context.Rip = *reinterpret_cast<const DWORD64*>(context.Rsp);
+                context.Rsp += 8;
+            }
+            if (!context.Rip)
+                break;
+            if (skip-- > 0)
+                continue;
+            apFrames[depth++] = reinterpret_cast<void*>(context.Rip);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+    return depth;
+}
+
 std::string GeometryName(const uint8_t* apPass) noexcept
 {
     if (!Readable(apPass + kPassGeometry, 8))
@@ -133,21 +225,184 @@ struct PointerInsert
     const void* Renderer;
     uint32_t Thread;
     size_t Slot;
-    void* Frames[14];
+    void* Frames[24];
     USHORT Depth;
 };
 
-std::string StackOf(const PointerInsert& acInsert) noexcept
+std::string StackOf(void* const* apFrames, const USHORT aDepth) noexcept
 {
     std::string stack;
-    for (USHORT i = 0; i < acInsert.Depth; ++i)
-        stack += (i ? " < " : "") + Where(acInsert.Frames[i]);
+    for (USHORT i = 0; i < aDepth; ++i)
+        stack += (i ? " < " : "") + Where(apFrames[i]);
     return stack;
+}
+
+std::string StackOf(const PointerInsert& acInsert) noexcept
+{
+    return StackOf(acInsert.Frames, acInsert.Depth);
+}
+
+// A full stack costs a few microseconds, so the laser's are taken only in the frames right after a map close, where
+// every double insert came, and for the lines told once.
+bool NearMapClose() noexcept
+{
+    const uint64_t cHide = MapMenuLastHideFrame();
+    const uint64_t cFrame = MainLoopFrame();
+    return cHide && cFrame >= cHide && cFrame - cHide <= 3;
+}
+
+// What fed the laser to each accumulator in the current frame: the culler's appends, with where the laser hung then,
+// and the walks that turn an accumulator's array into passes on its renderer.
+// Together they tell an object culled twice from an array walked twice.
+// Taken by the render threads that append, walk and insert the laser.
+std::mutex s_pointerLock;
+
+constexpr size_t kAccumulatorRenderer = 0x158;
+constexpr size_t kAccumulatorCount = 0xD0;
+constexpr size_t kAccumulatorStart = 0xD8;
+constexpr size_t kObjectParent = 0x30;
+
+struct FeedRecord
+{
+    uint32_t Thread;
+    uint32_t Start;
+    uint32_t Count;
+    const char* Parents[6];
+    void* Frames[24];
+    USHORT Depth;
+};
+
+struct AccumulatorFeed
+{
+    const void* Accumulator;
+    const void* Renderer;
+    bool Culler;
+    uint32_t Appends;
+    FeedRecord AppendRecords[3];
+    uint32_t Walks;
+    FeedRecord WalkRecords[3];
+};
+
+AccumulatorFeed s_feeds[8]{};
+size_t s_feedCount = 0;
+uint64_t s_feedFrame = 0;
+std::atomic<uint64_t> s_pointerAppendFrame{0};
+
+// Called under s_pointerLock.
+AccumulatorFeed* FeedOf(const void* apAccumulator, const bool acCreate, const bool acCuller = false) noexcept
+{
+    const uint64_t cFrame = MainLoopFrame();
+    if (cFrame != s_feedFrame)
+    {
+        s_feedFrame = cFrame;
+        s_feedCount = 0;
+    }
+    for (size_t i = 0; i < s_feedCount; ++i)
+        if (s_feeds[i].Accumulator == apAccumulator)
+            return &s_feeds[i];
+    if (!acCreate || s_feedCount == std::size(s_feeds))
+        return nullptr;
+    AccumulatorFeed& feed = s_feeds[s_feedCount++];
+    feed = AccumulatorFeed{apAccumulator, acCuller ? nullptr : *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(apAccumulator) + kAccumulatorRenderer), acCuller};
+    return &feed;
+}
+
+std::string ParentsOf(const FeedRecord& acRecord) noexcept
+{
+    std::string parents;
+    for (const char* pName : acRecord.Parents)
+        if (pName)
+            parents += fmt::format("{}'{}'", parents.empty() ? "" : " < ", pName);
+    return parents;
+}
+
+void LogFeed(const AccumulatorFeed& acFeed) noexcept
+{
+    if (acFeed.Culler)
+    {
+        spdlog::warn("RenderPassWatch:   visible list {} this frame: the laser put on it {} time(s)", acFeed.Accumulator, acFeed.Appends);
+        for (uint32_t i = 0; i < std::min<uint32_t>(acFeed.Appends, 3); ++i)
+        {
+            const FeedRecord& record = acFeed.AppendRecords[i];
+            spdlog::warn("RenderPassWatch:     visit {} on thread {}, under {}: {}", i + 1, record.Thread, ParentsOf(record), StackOf(record.Frames, record.Depth));
+        }
+        return;
+    }
+    spdlog::warn("RenderPassWatch:   accumulator {} (renderer {}) this frame: the laser appended {} time(s), its array walked {} time(s)", acFeed.Accumulator,
+                 acFeed.Renderer, acFeed.Appends, acFeed.Walks);
+    for (uint32_t i = 0; i < std::min<uint32_t>(acFeed.Appends, 3); ++i)
+    {
+        const FeedRecord& record = acFeed.AppendRecords[i];
+        spdlog::warn("RenderPassWatch:     append {} on thread {}, under {}: {}", i + 1, record.Thread, ParentsOf(record), StackOf(record.Frames, record.Depth));
+    }
+    for (uint32_t i = 0; i < std::min<uint32_t>(acFeed.Walks, 3); ++i)
+    {
+        const FeedRecord& record = acFeed.WalkRecords[i];
+        spdlog::warn("RenderPassWatch:     walk {} on thread {}, from entry {} of {}: {}", i + 1, record.Thread, record.Start, record.Count,
+                     StackOf(record.Frames, record.Depth));
+    }
+}
+
+void TracePointerAppend(const void* apAccumulator, const uint8_t* apGeometry, const bool acCuller = false) noexcept
+{
+    FeedRecord record{GetCurrentThreadId()};
+    if (NearMapClose())
+        record.Depth = CaptureStack(record.Frames, static_cast<USHORT>(std::size(record.Frames)));
+    const auto* pParent = *reinterpret_cast<const uint8_t* const*>(apGeometry + kObjectParent);
+    for (size_t i = 0; pParent && i < std::size(record.Parents); ++i)
+    {
+        record.Parents[i] = *reinterpret_cast<const char* const*>(pParent + kObjectName);
+        pParent = *reinterpret_cast<const uint8_t* const*>(pParent + kObjectParent);
+    }
+
+    std::scoped_lock lock(s_pointerLock);
+    s_pointerAppendFrame = MainLoopFrame();
+
+    // Each culler and accumulator the laser goes through is told once, the normal paths to compare a double insert with.
+    static const void* s_seen[16]{};
+    static size_t s_seenCount = 0;
+    if (std::find(s_seen, s_seen + s_seenCount, apAccumulator) == s_seen + s_seenCount && s_seenCount < std::size(s_seen))
+    {
+        s_seen[s_seenCount++] = apAccumulator;
+        if (!record.Depth)
+            record.Depth = CaptureStack(record.Frames, static_cast<USHORT>(std::size(record.Frames)));
+        spdlog::info("RenderPassWatch: the VR pointer first {} {} on thread {} (main thread {}), under {}: {}", acCuller ? "put on visible list" : "appended to accumulator",
+                     apAccumulator, record.Thread, GameMainThreadId(), ParentsOf(record), StackOf(record.Frames, record.Depth));
+    }
+
+    AccumulatorFeed* pFeed = FeedOf(apAccumulator, true, acCuller);
+    if (!pFeed)
+        return;
+    if (pFeed->Appends < std::size(pFeed->AppendRecords))
+        pFeed->AppendRecords[pFeed->Appends] = record;
+    ++pFeed->Appends;
+}
+
+void TracePointerWalk(const void* apAccumulator) noexcept
+{
+    // Only the accumulators the laser went to this frame.
+    if (s_pointerAppendFrame.load(std::memory_order_relaxed) != MainLoopFrame())
+        return;
+
+    const auto* pAccumulator = static_cast<const uint8_t*>(apAccumulator);
+    FeedRecord record{GetCurrentThreadId(), *reinterpret_cast<const uint32_t*>(pAccumulator + kAccumulatorStart),
+                      *reinterpret_cast<const uint32_t*>(pAccumulator + kAccumulatorCount)};
+
+    std::scoped_lock lock(s_pointerLock);
+    AccumulatorFeed* pFeed = FeedOf(apAccumulator, false);
+    if (!pFeed)
+        return;
+    if (pFeed->Walks < std::size(pFeed->WalkRecords))
+    {
+        if (NearMapClose())
+            record.Depth = CaptureStack(record.Frames, static_cast<USHORT>(std::size(record.Frames)));
+        pFeed->WalkRecords[pFeed->Walks] = record;
+    }
+    ++pFeed->Walks;
 }
 
 // Each laser pass's first insert in one main loop frame, to name what puts it on a list a second time before the
 // list is drawn, which a list it is already on turns into a loop. Inserts come from the render threads.
-std::mutex s_pointerLock;
 uint64_t s_pointerFrame = 0;
 PointerInsert s_pointerInserts[4]{};
 size_t s_pointerPasses = 0;
@@ -162,7 +417,8 @@ size_t s_pointerThreadCount = 0;
 void TracePointerInsert(const void* apRenderer, const uint8_t* apPass, const size_t aSlot, const void* apNextBefore) noexcept
 {
     PointerInsert insert{apPass, 1, apRenderer, GetCurrentThreadId(), aSlot, {}, 0};
-    insert.Depth = RtlCaptureStackBackTrace(2, static_cast<DWORD>(std::size(insert.Frames)), insert.Frames, nullptr);
+    if (NearMapClose())
+        insert.Depth = CaptureStack(insert.Frames, static_cast<USHORT>(std::size(insert.Frames)));
     const uint64_t cFrame = MainLoopFrame();
 
     std::scoped_lock lock(s_pointerLock);
@@ -171,6 +427,8 @@ void TracePointerInsert(const void* apRenderer, const uint8_t* apPass, const siz
         s_pointerThreadCount < std::size(s_pointerThreads))
     {
         s_pointerThreads[s_pointerThreadCount++] = insert.Thread;
+        if (!insert.Depth)
+            insert.Depth = CaptureStack(insert.Frames, static_cast<USHORT>(std::size(insert.Frames)));
         spdlog::info("RenderPassWatch: the VR pointer's pass {} put on a list from thread {} (main thread {}), renderer {}, slot {}, frame {}, its link before {}; "
                      "the map {}: {}",
                      fmt::ptr(apPass), insert.Thread, GameMainThreadId(), fmt::ptr(apRenderer), aSlot, cFrame, apNextBefore, MapMenuShown() ? "shown" : "not shown",
@@ -208,6 +466,11 @@ void TracePointerInsert(const void* apRenderer, const uint8_t* apPass, const siz
                          pFirst->Count, cCount, MapMenuShown() ? "shown" : "not shown");
             spdlog::warn("RenderPassWatch:   first: renderer {}, slot {}, thread {}: {}", fmt::ptr(pFirst->Renderer), pFirst->Slot, pFirst->Thread, StackOf(*pFirst));
             spdlog::warn("RenderPassWatch:   this: renderer {}, slot {}, thread {}: {}", fmt::ptr(insert.Renderer), insert.Slot, insert.Thread, StackOf(insert));
+            // Every accumulator and culler the laser went through this frame, that renderer's among them.
+            for (size_t i = 0; s_feedFrame == cFrame && i < s_feedCount; ++i)
+                LogFeed(s_feeds[i]);
+            if (s_feedFrame != cFrame || !s_feedCount)
+                spdlog::warn("RenderPassWatch:   no append of the laser was seen this frame");
         }
     }
 
@@ -375,6 +638,40 @@ uint64_t HookDrawList(void* apRenderer, uint32_t* apTechnique, int32_t* apList, 
     CutLoop(apRenderer, DrawnListHead(static_cast<uint8_t*>(apRenderer), *apTechnique, *apList), *apTechnique, *apList);
     return s_realDrawList(apRenderer, apTechnique, apList, a4, aFlags);
 }
+
+// The add to a culler's visible list (VR 0x140D9A990, the list at culler+0x128, through which every culler's append goes),
+// the append of an object to an accumulator (VR 0x141308570, which in some accumulators registers its passes at once),
+// and the walk of an accumulator's array that registers each object's passes on its renderer (VR 0x1413087D0).
+constexpr uintptr_t kCullerAppend = 0xD9A990;
+constexpr uintptr_t kAccumulatorAppend = 0x1308570;
+constexpr uintptr_t kAccumulatorWalk = 0x13087D0;
+
+using TCullerAppend = uint64_t(void*, uint8_t*);
+using TAccumulatorAppend = uint64_t(void*, uint8_t*, uint64_t);
+using TAccumulatorWalk = uint64_t(void*);
+TCullerAppend* s_realCullerAppend = nullptr;
+TAccumulatorAppend* s_realAppend = nullptr;
+TAccumulatorWalk* s_realWalk = nullptr;
+
+uint64_t HookCullerAppend(void* apVisibleList, uint8_t* apGeometry)
+{
+    if (apGeometry && *reinterpret_cast<const char* const*>(apGeometry + kObjectName) == PointerName())
+        TracePointerAppend(apVisibleList, apGeometry, true);
+    return s_realCullerAppend(apVisibleList, apGeometry);
+}
+
+uint64_t HookAccumulatorAppend(void* apAccumulator, uint8_t* apGeometry, const uint64_t aExtra)
+{
+    if (apGeometry && *reinterpret_cast<const char* const*>(apGeometry + kObjectName) == PointerName())
+        TracePointerAppend(apAccumulator, apGeometry);
+    return s_realAppend(apAccumulator, apGeometry, aExtra);
+}
+
+uint64_t HookAccumulatorWalk(void* apAccumulator)
+{
+    TracePointerWalk(apAccumulator);
+    return s_realWalk(apAccumulator);
+}
 } // namespace
 
 static TiltedPhoques::Initializer s_renderPassWatch(
@@ -416,5 +713,32 @@ static TiltedPhoques::Initializer s_drawListCheck(
         s_realDrawList = reinterpret_cast<TDrawList*>(exe + kDrawList);
         TP_HOOK(&s_realDrawList, HookDrawList);
         spdlog::info("RenderPassWatch: each list is checked for a loop before it is drawn");
+    });
+
+static TiltedPhoques::Initializer s_accumulatorTrace(
+    []()
+    {
+        CheckGameUnwindTable();
+
+        const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        const auto* pCullerAppend = reinterpret_cast<const uint8_t*>(exe + kCullerAppend);
+        const auto* pAppend = reinterpret_cast<const uint8_t*>(exe + kAccumulatorAppend);
+        const auto* pWalk = reinterpret_cast<const uint8_t*>(exe + kAccumulatorWalk);
+        if (!PatchCheck::Is(pCullerAppend, {0x40, 0x57, 0x48, 0x83, 0xEC, 0x40, 0x48, 0xC7, 0x44}) ||
+            !PatchCheck::Is(pAppend, {0x40, 0x56, 0x57, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x40}) ||
+            !PatchCheck::Is(pWalk, {0x40, 0x53, 0x57, 0x41, 0x54, 0x41, 0x56, 0x41, 0x57}))
+        {
+            spdlog::error("RenderPassWatch: the culler's append ({}), the accumulator's append ({}) or its walk ({}) is not the expected code; what feeds the laser "
+                          "is not traced",
+                          PatchCheck::Bytes(pCullerAppend, 9), PatchCheck::Bytes(pAppend, 9), PatchCheck::Bytes(pWalk, 9));
+            return;
+        }
+        s_realCullerAppend = reinterpret_cast<TCullerAppend*>(exe + kCullerAppend);
+        TP_HOOK(&s_realCullerAppend, HookCullerAppend);
+        s_realAppend = reinterpret_cast<TAccumulatorAppend*>(exe + kAccumulatorAppend);
+        TP_HOOK(&s_realAppend, HookAccumulatorAppend);
+        s_realWalk = reinterpret_cast<TAccumulatorWalk*>(exe + kAccumulatorWalk);
+        TP_HOOK(&s_realWalk, HookAccumulatorWalk);
+        spdlog::info("RenderPassWatch: what feeds the laser to each accumulator is traced; full stacks {}", s_gameUnwindTable ? "on" : "off");
     });
 #endif

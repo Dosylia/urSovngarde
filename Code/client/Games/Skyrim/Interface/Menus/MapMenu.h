@@ -34,4 +34,7 @@ bool MapMenuCanRunUnpaused() noexcept;
 
 // Whether the map is shown: between the game's show and hide of it, whatever thread handled them.
 bool MapMenuShown() noexcept;
+
+// The main loop frame the map's last hide began in, 0 before any.
+uint64_t MapMenuLastHideFrame() noexcept;
 #endif

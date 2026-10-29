@@ -43,6 +43,13 @@ bool MapMenuShown() noexcept
     return s_mapOpen.load(std::memory_order_relaxed);
 }
 
+static std::atomic<uint64_t> s_lastHideFrame{0};
+
+uint64_t MapMenuLastHideFrame() noexcept
+{
+    return s_lastHideFrame.load(std::memory_order_relaxed);
+}
+
 // The map is open, and was opened unpaused (UI.cpp records it at the opening).
 static bool IsMapOpenUnpaused() noexcept
 {
@@ -108,14 +115,18 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
     {
         const uint32_t cThread = GetCurrentThreadId();
         const uint32_t cMain = GameMainThreadId();
-        spdlog::info("Map menu: {} handled on thread {} ({}), the map {}", aMessage.eType == UIMessage::kShow ? "show" : "hide", cThread,
-                     cThread == cMain ? "the main thread" : fmt::format("not the main thread {}", cMain), apThis->PausesGame() ? "pausing" : "unpaused");
+        spdlog::info("Map menu: {} handled on thread {} ({}), the map {}, frame {}", aMessage.eType == UIMessage::kShow ? "show" : "hide", cThread,
+                     cThread == cMain ? "the main thread" : fmt::format("not the main thread {}", cMain), apThis->PausesGame() ? "pausing" : "unpaused",
+                     MainLoopFrame());
     }
 
     if (aMessage.eType == UIMessage::kShow)
         s_mapOpen = true;
     else if (cHiding)
+    {
         s_mapOpen = false;
+        s_lastHideFrame.store(MainLoopFrame(), std::memory_order_relaxed);
+    }
 
     // A request that arrived as the map was going down must not shut the next one the instant it opens.
     if (aMessage.eType == UIMessage::kShow || cHiding)
@@ -149,6 +160,9 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
     }
 
     const uint32_t result = TiltedPhoques::ThisCall(RealMapProcessMessage, apThis, aMessage);
+
+    if (cHiding)
+        spdlog::info("Map menu: hide done on thread {}, frame {}", GetCurrentThreadId(), MainLoopFrame());
 
     // Or after, when the model is only back in place once shown.
     if (aMessage.eType == UIMessage::kShow)

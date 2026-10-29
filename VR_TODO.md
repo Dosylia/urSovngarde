@@ -673,6 +673,21 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
           (the watchdog's sample: the game's load, DynDOLOD and vrmapmarkers on the stack, none of ours), then the
           main menu. No `SaveLoad:` line for it, so which file is not known; the next load (Quicksave0, from the
           main menu) was fine. Cause unknown.
+        - The 17:30 rig note above is wrong for play: there the same pass goes on one list twice in the close frame.
+          Read off the game: `+0x1308c9d` is inside the accumulator's register (`0x1413089A0`): it asks the
+          object's shader for its passes and puts each on the accumulator's renderer. On that worker path the
+          accumulator's append (`0x141308570`) registers at once; it is fed by the walk (`0x140D9A190`) of a
+          culler's visible list (`culler+0x128`), and every culler adds to that list through `0x140D9A990`. In
+          the rig the laser goes: a cull job walks the scene to it (`UIPointerNode` < `PlayerWorldNode` <
+          `ObjectLODRoot` < `shadow scene node`), the occlusion culler's append puts it on its visible list, a
+          second job walks the list into the accumulator. So a double insert means the laser was on one visible
+          list twice (culled twice) or a list was walked twice; which one, and from where, is what build 50a22d0
+          (client, FUS folder, on 523b9f1d) tells. Each double insert now prints every visible list, accumulator
+          and walk the laser went through that frame, each with its parents at that moment and a full stack
+          (through the game's own unwind table; taken only in the 3 frames after a map hide, so no cost
+          otherwise); `Map menu: hide done on thread X, frame N` marks each close. Rig, `live-map-pointer` 4 runs:
+          every hook in place, no jank, the normal paths logged once; it never double-inserts, so the answer
+          needs play. Next session: 30 to 40 map closes online; then read the `put on a list again` blocks.
       - Player 1: `ActorValueService::OnHealthChange: failed to find server id` 1948 times, about 10 a second in the
         fight (18:10 to 18:12), against 7 in an older session: a health change (most likely regeneration) of an actor
         with no server id yet. Nothing seen on screen. Now named: `Health change of X ('name', base B) not sent: it has
