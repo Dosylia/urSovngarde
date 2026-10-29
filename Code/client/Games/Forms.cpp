@@ -8,13 +8,62 @@
 
 #include <SaveLoad.h>
 #include <Games/Overrides.h>
+#include <CrashHandler.h>
+
+// Returns the first word at this address, or 0 if reading it faults.
+// The caller wraps it in CrashGuard so the crash handler treats a fault in here as expected.
+static uintptr_t ReadFirstWord(const void* apAddress) noexcept
+{
+    __try
+    {
+        return *static_cast<const uintptr_t*>(apAddress);
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
+    {
+        return 0;
+    }
+}
+
+//! Whether a pointer from a form lookup is still a real game object: readable, with its vtable inside the game image.
+//! Freed memory reused for anything else fails this at once.
+//! The read is guarded instead of checked with VirtualQuery, which costs about 10 ms per call on the game's large heap.
+bool IsLiveGameObject(const TESForm* apForm) noexcept
+{
+    if (!apForm)
+        return false;
+
+    static const auto s_image = []
+    {
+        const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        const auto* pDos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        const auto* pNt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + pDos->e_lfanew);
+        return std::pair<uintptr_t, uintptr_t>{base, base + pNt->OptionalHeader.SizeOfImage};
+    }();
+
+    CrashGuard::Enter();
+    const uintptr_t vtable = ReadFirstWord(apForm);
+    CrashGuard::Leave();
+
+    return vtable >= s_image.first && vtable < s_image.second;
+}
 
 TESForm* TESForm::GetById(const uint32_t aId)
 {
     using TGetFormById = TESForm*(uint32_t);
     POINTER_SKYRIMSE(TGetFormById, getFormById, 14617, 14617);
 
-    return getFormById.Get()(aId);
+    TESForm* pForm = getFormById.Get()(aId);
+    // The lookup can hand out a freed form: with Engine Fixes' form cache a temporary form's id stays mapped to memory
+    // used for something else since, and casting that faults. So only a live game object is returned.
+    if (pForm && !IsLiveGameObject(pForm))
+    {
+        static std::atomic<uint32_t> s_freed{0};
+        const uint32_t cCount = ++s_freed;
+        if (cCount <= 20 || cCount % 500 == 0)
+            spdlog::warn("Form lookup: {:X} resolved to freed memory at {}; treated as no form ({} so far)", aId, fmt::ptr(pForm), cCount);
+        return nullptr;
+    }
+    return pForm;
 }
 
 void TESNPC::Serialize(String* apSaveBuffer) const noexcept

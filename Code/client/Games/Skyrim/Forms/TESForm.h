@@ -49,6 +49,7 @@ struct TESForm : BaseFormComponent
         STILL_LOADING = 1 << 0x15,
     };
 
+    // Null for an id the game does not know, and for one it maps to freed memory (IsLiveGameObject).
     static TESForm* GetById(uint32_t aId);
 
     virtual void sub_4();
@@ -137,3 +138,6 @@ struct TESForm : BaseFormComponent
 };
 
 static_assert(sizeof(TESForm) == 0x20);
+
+//! Whether a pointer from a form lookup is still a real game object: readable, with its vtable inside the game image.
+bool IsLiveGameObject(const TESForm* apForm) noexcept;

@@ -569,6 +569,19 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       moved there (`CorpseDiag`), the jump seen in play (68 to 220 units); again 76 units on 317f7ce1. It fell 0 to 1.4 s after its death, the
       original 0 to 0.1 s; resting poses differed by 18 to 33 units. Proposals: the sync audit (the corpse's pose sent
       once it rests; the fall streamed).
+- [ ] **Public reports 2026-10-29 (v1.9.6, two players together in Whiterun, Quest 3 and Quest 2)**
+      - `VCRUNTIME140.dll+0x5052` in our `AnimationSystem::Update` (a copy's action target looked up by id came back as
+        freed memory): fixed for all our lookups, `TESForm::GetById` returns null for one that is not a live game object
+        (KNOWN_ISSUES section 6). TPTests 95; rig smoke `live-death-copy`, `live-protected-kill` ok, no lookup refused
+        there. Deployed to FUS and MGO, client. Reaches public players only with a release.
+      - `SkyrimVR.exe+0xD8A96D` (SE 74377), Dragonsreach: a virtual call on freed memory 19 ms after Irileth's copy
+        (owned by the other game) used the door 16707 by itself here and was unloaded (`Activation of 16707 by 1A67F,
+        another game's actor, not sent`, then `Actor removed, form id: 1A67F`). Not ours by the crash handler (none of
+        our deletions); a copy walking through a load door on its own is the lead. Open.
+      - `SkyrimVR.exe+0x117B10` (SE 11308), Whiterun, the other player: a garbage pointer (0x3F8CCCCD00000001) under
+        Skjor's sword, under a second after Skjor loaded. Open; needs that player's
+        `crash_UTC_2026-10-29_01-46-45.small.dmp`.
+      - `skyrimvrtools.dll+0x71B5`: the known load during our death sequence.
 - [ ] **Play session 2026-10-28 18:01 (player 1 on 43e6a70, player 2 on 10b98ee5; about 30 min, a fight with archers)**
       - No sync bug seen. The only one: the revive banner ("<name> is reviving you") was cut off at both ends with a
         long name. Fixed: a banner line too long for its picture is written smaller until it fits (`BannerPicture::Line`).

@@ -341,43 +341,6 @@ struct WaitingCopy
 
 TiltedPhoques::Vector<WaitingCopy> s_waitingCopies;
 
-// Returns the first word at this address, or 0 if reading it faults.
-// The caller wraps it in CrashGuard so the crash handler treats a fault in here as expected.
-uintptr_t ReadFirstWord(const void* apAddress) noexcept
-{
-    __try
-    {
-        return *static_cast<const uintptr_t*>(apAddress);
-    }
-    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
-    {
-        return 0;
-    }
-}
-
-//! Whether a pointer from a form lookup is still a real game object: readable, with its vtable inside the game image.
-//! Freed memory reused for anything else fails this at once.
-//! The read is guarded instead of checked with VirtualQuery, which costs about 10 ms per call on the game's large heap.
-bool IsLiveGameObject(const TESForm* apForm) noexcept
-{
-    if (!apForm)
-        return false;
-
-    static const auto s_image = []
-    {
-        const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-        const auto* pDos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-        const auto* pNt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + pDos->e_lfanew);
-        return std::pair<uintptr_t, uintptr_t>{base, base + pNt->OptionalHeader.SizeOfImage};
-    }();
-
-    CrashGuard::Enter();
-    const uintptr_t vtable = ReadFirstWord(apForm);
-    CrashGuard::Leave();
-
-    return vtable >= s_image.first && vtable < s_image.second;
-}
-
 uint32_t OutstandingHandles(const Actor* apActor) noexcept
 {
     return static_cast<uint32_t>(apActor->handleRefObject.refCount) & 0x3FF;

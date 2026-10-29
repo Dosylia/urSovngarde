@@ -221,6 +221,11 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     2026-10-27 19:58 55 ms into loading a save in Whiterun (form `FF00127A`, `R8 0x33DA3FE0`, the freed memory reused
     by a `BGSEntryPointPerkEntry`). Neither form appears anywhere in our logs; `RecentDeletes` cleared our deletions.
     EngineFixesVR and PapyrusTweaks loaded; whether his `FormCaching` is off is not in the report.
+  - The same freed form handed to our own code (report 20261029-014627-07f76b46, v1.9.6, another pair of players):
+    `VCRUNTIME140.dll+0x5052` reading the type info before a zero vtable, from `AnimationSystem::Update+0x168` (named with
+    the release's PDB): `Cast<TESObjectREFR>(TESForm::GetById(targetId))` on the target of a copy's replayed action.
+    Our side now guarded everywhere: `TESForm::GetById` returns null for a form whose vtable is not in the game image
+    (`IsLiveGameObject`, moved there from one spawn path) and logs `Form lookup: X resolved to freed memory`.
   - Suspects, unproven: EngineFixesVR form caching (a stale id-to-form cache entry would hand out exactly this
     pointer), PapyrusTweaks (loaded on both machines). Whether co-op makes it more frequent is open: Emma's came 0.44 s
     after spawning a batch of the other player's actors.
