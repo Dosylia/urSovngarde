@@ -342,80 +342,24 @@ using TCallback = void(void*, const BSFixedString*, uint32_t, void*);
 static TCallback* UIMessageQueue__AddMessage_Real;
 
 #ifdef SKYRIMVR
-// The skills menu and the map run unpaused while connected, so the UI handles them on a worker thread while the main
-// thread draws, where the game, which pauses them, handles them on the main thread. Their close frees their 3D, and
-// freed under the draw, the main thread drew one group of render passes forever (a frozen game, 2 of 6 map closes).
-// So a close asked on another thread is held, and the main thread, at the start of its next frame, makes the menu
-// pause as the game does and posts the close itself: that frame runs paused, and the UI takes the menu down on the
-// main thread. The game's pause counter goes back down when the menu goes, by the same pause flag.
-static constexpr const char* kHeldCloseMenus[] = {"StatsMenu", "MapMenu"};
-
-struct HeldClose
-{
-    std::atomic<bool> Held{false};
-    std::atomic<uint32_t> Type{0};
-    std::atomic<void*> Queue{nullptr};
-    std::atomic<void*> Data{nullptr};
-};
-static HeldClose s_heldCloses[std::size(kHeldCloseMenus)];
+// Recorded by the main loop at the start of each frame, on the main thread, the one that draws.
 static std::atomic<uint32_t> s_mainThreadId{0};
-
-// UI::SetPausesGame (VR 0x140F1BF80, not in the address table): sets or clears an open menu's pause flag, moves the
-// game's pause counter with it and announces the change, as the game does when it removes a pausing menu.
-using TUISetPausesGame = void(UI*, const BSFixedString*, bool);
-static TUISetPausesGame* s_uiSetPausesGame = nullptr;
+static std::atomic<uint64_t> s_mainLoopFrame{0};
 
 uint32_t GameMainThreadId() noexcept
 {
     return s_mainThreadId.load(std::memory_order_relaxed);
 }
 
-// From UIMessageQueue__AddMessage, before the message is queued: true when the close is held for the main thread.
-static bool HoldUnpausedMenuClose(void* apQueue, const BSFixedString* apName, const uint32_t aType, void* apData) noexcept
+uint64_t MainLoopFrame() noexcept
 {
-    if (!s_uiSetPausesGame || !apName || !apName->AsAscii())
-        return false;
-    const uint32_t cMain = s_mainThreadId.load(std::memory_order_relaxed);
-    const uint32_t cThread = GetCurrentThreadId();
-    if (cMain == 0 || cThread == cMain)
-        return false;
-    for (size_t i = 0; i < std::size(kHeldCloseMenus); ++i)
-    {
-        if (std::strcmp(apName->AsAscii(), kHeldCloseMenus[i]) != 0)
-            continue;
-        // Only a menu opened unpaused; the flag alone, no UI lock taken here.
-        const std::atomic<bool>* pOpenedUnpaused = OpenedUnpausedFlag(kHeldCloseMenus[i]);
-        if (!pOpenedUnpaused || !pOpenedUnpaused->load())
-            return false;
-        HeldClose& held = s_heldCloses[i];
-        held.Type.store(aType);
-        held.Queue.store(apQueue);
-        held.Data.store(apData);
-        held.Held.store(true);
-        spdlog::info("Unpaused menu: the close of {} asked on thread {} is held for the main thread {}, which takes it down paused", kHeldCloseMenus[i],
-                     cThread, cMain);
-        return true;
-    }
-    return false;
+    return s_mainLoopFrame.load(std::memory_order_relaxed);
 }
 
 void UnpausedMenusOnMainLoop() noexcept
 {
     s_mainThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
-    for (size_t i = 0; i < std::size(kHeldCloseMenus); ++i)
-    {
-        HeldClose& held = s_heldCloses[i];
-        if (!held.Held.exchange(false))
-            continue;
-        // Made here, on the main thread, where the game's string table is up.
-        static const BSFixedString s_names[] = {BSFixedString(kHeldCloseMenus[0]), BSFixedString(kHeldCloseMenus[1])};
-        UI* pUI = UI::Get();
-        const bool cOpen = pUI && pUI->GetMenuOpen(s_names[i]);
-        if (cOpen)
-            s_uiSetPausesGame(pUI, &s_names[i], true);
-        spdlog::info("Unpaused menu: {} {}; its close posted from the main thread", kHeldCloseMenus[i], cOpen ? "pauses for its close" : "is no longer open");
-        UIMessageQueue__AddMessage_Real(held.Queue.load(), &s_names[i], held.Type.load(), held.Data.load());
-    }
+    s_mainLoopFrame.fetch_add(1, std::memory_order_relaxed);
 }
 #endif
 
@@ -429,11 +373,6 @@ void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI
     if ((a3 == UIMessage::kHide || a3 == UIMessage::kForceHide) && a2 && a2->AsAscii() && strncmp(a2->AsAscii(), "WS", 2) != 0)
         spdlog::info("Menu closing: {}{}", a2->AsAscii(), a3 == UIMessage::kForceHide ? " (forced)" : "");
 
-#ifdef SKYRIMVR
-    // The unpaused skills menu and map are taken down on the main thread (HoldUnpausedMenuClose).
-    if ((a3 == UIMessage::kHide || a3 == UIMessage::kForceHide) && HoldUnpausedMenuClose(a1, a2, a3, a4))
-        return;
-#endif
 
     // An empty message box opens at the main menu and after every save load, pausing the world; that show is dropped.
     if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "MessageBoxMenu") == 0)
@@ -606,15 +545,6 @@ static TiltedPhoques::Initializer s_s(
                 UIMessageQueue__AddMessage_Real = s_addMessage.Get();
                 TP_HOOK(&UIMessageQueue__AddMessage_Real, UIMessageQueue__AddMessage);
                 spdlog::info("UI message queue hooked for the message box diagnostic");
-#ifdef SKYRIMVR
-                // Called, not hooked: its start as read from SkyrimVR 1.4.15, or the closes are left where the game asks them.
-                const auto* pSetPauses = reinterpret_cast<const uint8_t*>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) + 0xF1BF80);
-                if (PatchCheck::Is(pSetPauses, {0x48, 0x8B, 0xC4, 0x56, 0x57, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x50}))
-                    s_uiSetPausesGame = reinterpret_cast<TUISetPausesGame*>(const_cast<uint8_t*>(pSetPauses));
-                else
-                    spdlog::error("Unpaused menu: UI::SetPausesGame at {} is not the expected code ({}); the skills menu and map close where the game asks",
-                                  fmt::ptr(pSetPauses), PatchCheck::Bytes(pSetPauses, 11));
-#endif
             }
             else
                 spdlog::warn("UI message queue: id 13631 not resolved, message box diagnostic off");

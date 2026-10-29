@@ -1,0 +1,108 @@
+# The VR pointer is never put twice on the list of things the game draws, with the map open unpaused and a message box
+# over it, as in the two freezes of 2026-10-28.
+#
+#   python Tools\VR\live-check.py live-map-pointer        (the rig's server with Gameplay:bUnpausedMenus=true)
+#   python Tools\VR\live-check.py --expect-fail live-map-pointer     on a build without the fix: must be RED
+#
+# Put on its list twice, a pass links to itself, and the game draws it forever: both freezes stopped in that loop, on
+# the UI pointer, right after the map closed (a message box and the pointer had come up over the map).
+# The client's RenderPassWatch logs every pass put on a list a second time, with where both inserts came from.
+# Here, ten times: the map opens unpaused, a message box comes up over it, the box is accepted, the map is closed.
+log live map pointer
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key e 200
+log DO sleep 1
+log DO key escape 200
+wait 9
+log REQUIRE logged Menu opened while connected: MapMenu \(runs unpaused\)
+log REQUIRE logged Menu queued: MessageBoxMenu
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key e 200
+log DO sleep 1
+log DO key escape 200
+wait 9
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key e 200
+log DO sleep 1
+log DO key escape 200
+wait 9
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key e 200
+log DO sleep 1
+log DO key escape 200
+wait 9
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key e 200
+log DO sleep 1
+log DO key escape 200
+wait 9
+
+log -- five more, the map closed while the box is still up
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key escape 200
+log DO sleep 1
+log DO key e 200
+wait 9
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key escape 200
+log DO sleep 1
+log DO key e 200
+wait 9
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key escape 200
+log DO sleep 1
+log DO key e 200
+wait 9
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key escape 200
+log DO sleep 1
+log DO key e 200
+wait 9
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key escape 200
+log DO sleep 1
+log DO key e 200
+wait 9
+
+log CHECK absent RenderPassWatch: pass
+log CHECK absent FreezeWatchdog: no frame of ours
+log CHECK game alive
+wait 3
+log done
+stop

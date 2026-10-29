@@ -225,20 +225,22 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     pointer), PapyrusTweaks (loaded on both machines). Whether co-op makes it more frequent is open: Emma's came 0.44 s
     after spawning a batch of the other player's actors.
 
-- **Freeze on closing the unpaused map: the game drew one group of render passes forever -- fixed 2026-10-28.**
-  Player 1, twice in 10 minutes (19:47 and 19:57, 2 of 6 map closes), the game frozen right after the map closed. The
-  main thread ran at 100% CPU inside one frame's batch rendering (`SkyrimVR.exe+0x130BB6F`, the loop asking "render the
-  next pass group" while it returns true; `+0x1349092`, SE 100849; `BSRenderPass::DrawGeometry`), on the same first
-  group for minutes; pause counter 0, only the HUD open.
-  - Cause: unpaused, the UI handles the map (and the skills menu) on a worker thread while the main thread draws; the
-    close frees the menu's 3D under the draw. Paused, as in the game, both are handled on the main thread (every paused
-    close in the logs was posted on the main thread, every unpaused one on a worker).
-  - Fix: a close of the unpaused map or skills menu asked off the main thread is held; at the start of the next frame
-    the main thread makes the menu pause through the game's own `UI::SetPausesGame` (VR 0x140F1BF80, byte-checked;
-    it moves the pause counter with the menu's pause flag, which the game decrements by when the menu goes) and posts
-    the close itself, so that frame runs paused and the close is handled on the main thread.
-  - Still on a worker: the show (`Map menu: show handled on thread X (not the main thread ...)`), which builds the
-    menu's 3D. No freeze or crash has been tied to it.
+- **Freeze after closing the unpaused map: the game draws the VR pointer forever -- open, guarded.** Player 1 twice
+  on 2026-10-28 (19:47, 19:57), player 2 once (19:59), each within a second of closing the map, which runs unpaused
+  online (Gameplay:bUnpausedMenus). The main thread ran at 100% CPU in one frame's draw loop (VR 0x141349500, inside
+  `+0x130BB6F`): it draws a pass and follows its next link (+0x30). Player 2's full dump: the pass of "UI Pointer
+  Geometry" (the VR laser, PlayerCharacter+0x440) linked to itself. A pass links to itself when it is put on its list
+  twice (BSBatchRenderer's register functions, vtable 0x141906E88 slots 1 and 2: the head insert, and the sorted insert,
+  which stops on it). What puts the pointer on twice is not known yet.
+  - Ruled out as the direct cause: our map laser call (0x1406B8980) only moves the pointer and updates its bounds; it
+    does not put it on a list. Seen with the map unpaused: its show and close are handled on a worker thread, the
+    main thread drawing meanwhile (paused, the game handles both on the main thread). Holding the close for the main
+    thread (a065abe1) rested on the close freeing the map's 3D, which the dump does not show, so it was taken out again.
+  - Guard and diagnosis: `RenderPassWatch` checks every insert; a pass that ends up linked to itself gets its link put
+    back (the list stays whole, the frame ends) and is logged with both inserts' callers, threads and frame and
+    whether the map is shown (`RenderPassWatch: pass ... put on renderer ...'s list a second time`). No cost seen in
+    the rig's frame times. The rig does not reproduce it: `live-map-pointer` (the map with a message box and the
+    pointer over it, closed ten times) passes with and without the watch.
 - **Crash within a second of travelling away from copies this client made -- open.** `SkyrimVR.exe+0x3AC1A8`
   (`FOCollisionListener`, a virtual call on freed memory), `+0x2EEF6A` (`HasKeyword` on a freed object) or
   `VCRUNTIME140.dll+0x504F` (a cast on the value 1), 0.5 to 0.9 s after arriving through a loading screen. In each the

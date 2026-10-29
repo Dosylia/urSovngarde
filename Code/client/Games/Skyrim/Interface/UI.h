@@ -110,10 +110,12 @@ bool IsMenuOpenUnpaused(const BSFixedString& acName) noexcept;
 // Whether one of those menus is currently open without pausing, whatever the current server setting.
 bool IsOptionalMenuOpenUnpaused() noexcept;
 
-// Called by the main loop on the main thread at the start of each frame: records that thread, and takes down the
-// unpaused skills or map menu whose close was asked on another thread (see UIMessageQueue__AddMessage).
+// Called by the main loop on the main thread at the start of each frame: records that thread and counts the frame.
 void UnpausedMenusOnMainLoop() noexcept;
 
 // The game's main thread, the one that draws; 0 before the first frame.
 uint32_t GameMainThreadId() noexcept;
+
+// How many frames the main loop has begun.
+uint64_t MainLoopFrame() noexcept;
 #endif

@@ -31,4 +31,7 @@ void CloseMapMenu() noexcept;
 
 // True once the map's hooks are in place: only then may it be shown unpaused.
 bool MapMenuCanRunUnpaused() noexcept;
+
+// Whether the map is shown: between the game's show and hide of it, whatever thread handled them.
+bool MapMenuShown() noexcept;
 #endif

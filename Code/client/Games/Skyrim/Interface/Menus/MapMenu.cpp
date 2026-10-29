@@ -35,6 +35,11 @@ bool MapMenuCanRunUnpaused() noexcept
     return s_hooksReady;
 }
 
+bool MapMenuShown() noexcept
+{
+    return s_mapOpen.load(std::memory_order_relaxed);
+}
+
 // The map is open, and was opened unpaused (UI.cpp records it at the opening).
 static bool IsMapOpenUnpaused() noexcept
 {
