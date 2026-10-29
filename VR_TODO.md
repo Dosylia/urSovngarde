@@ -630,6 +630,15 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
           next show takes the flag off that model only. Not tested in the rig (it cannot see the panels). To see in
           play: the panels go with the map; the map opened again offline and online still shows them; still no
           freeze, and `RenderPassWatch:` lines read after the session.
+        - 2026-10-29 17:30, rig, `live-map-pointer` three times (ok, no freeze, as always) with more of the watch:
+          the laser is drawn only while the map is open, as three passes a frame on three lists (two put there from
+          game worker threads, one from the main thread). The game takes them fresh from a pool every frame, link
+          empty, and never put the same one on twice in a frame. So a pass linking to itself means one recycled
+          while its list from an earlier frame was never drawn and emptied; we do not put the laser on twice.
+          Build 2281e5e (client, FUS folder, on 66a82ad3) logs that directly: `RenderPassWatch: renderer R's list
+          still holds pass P from frame N` (any pass, any list), with the stack that added to the stale list. Nothing
+          in the rig (no false alarm either). Next session: open and close the map as before; any such line, or a
+          self-link line (it now gives the frame of the pass's earlier insert), names the list the game left undrawn.
       - Player 1: `ActorValueService::OnHealthChange: failed to find server id` 1948 times, about 10 a second in the
         fight (18:10 to 18:12), against 7 in an older session: a health change (most likely regeneration) of an actor
         with no server id yet. Nothing seen on screen. Now named: `Health change of X ('name', base B) not sent: it has
