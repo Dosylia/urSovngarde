@@ -230,6 +230,14 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     pointer), PapyrusTweaks (loaded on both machines). Whether co-op makes it more frequent is open: Emma's came 0.44 s
     after spawning a batch of the other player's actors.
 
+- **Crash when the other player's NPC walks through a load door by itself in your game (v1.9.6) -- fixed since
+  build 1a569f4, not released.**
+  Report `…-21843b8f` (2026-10-29 01:43 UTC, Dragonsreach): `SkyrimVR.exe+0xD8A96D` (SE 74377), the game's find-node-by-name (VR
+  0x140D8A900) making a virtual call on a freed 3D root, from a job thread with an NPC's `MovementControllerNPC` on the
+  stack. 0.5 s before, this game's AI had walked the other game's Irileth copy through door 16707 and the game unloaded
+  it. Since 1a569f4 `HookActivate` refuses a copy's own load door use (`DoorCopy:` line, `live-door-copy-load`). The
+  crash itself is not reproduced. The owner's own door use is still replayed on its copy, which unloads it the same way.
+
 - **Freeze after closing the unpaused map: the game draws the VR pointer forever -- open, guarded.** Player 1 twice
   on 2026-10-28 (19:47, 19:57), player 2 once (19:59), each within a second of closing the map, which runs unpaused
   online (Gameplay:bUnpausedMenus). The main thread ran at 100% CPU in one frame's draw loop (VR 0x141349500, inside

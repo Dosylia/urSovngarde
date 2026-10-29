@@ -577,9 +577,22 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
       - `SkyrimVR.exe+0xD8A96D` (SE 74377), Dragonsreach: a virtual call on freed memory 19 ms after Irileth's copy
         (owned by the other game) used the door 16707 by itself here and was unloaded (`Activation of 16707 by 1A67F,
         another game's actor, not sent`, then `Actor removed, form id: 1A67F`). Not ours by the crash handler (none of
-        our deletions); a copy walking through a load door on its own is the lead. Open.
+        our deletions). The crashing call is the game's find-node-by-name (VR 0x140D8A900) on a freed 3D root, from a
+        game job thread, with a `MovementControllerNPC` and a `MovementMessage` on the stack beside Irileth's copy and
+        an Ash Spawn (FF00108F): an NPC's movement still pointed at the 3D the door had just unloaded. No mod's code on
+        the stack. The trigger is already refused since build 1a569f4 (2026-10-24, `HookActivate`, `DoorCopy:` line):
+        a copy never uses a load door on its own (`live-door-copy-load` red on a547eb5, green on 1a569f4), but v1.9.6
+        does not have it, so it reaches these players only with a release. Their logs show how often it happened:
+        153 copy activations "not sent" in this player's logs (16707 three times), 24 in the other's. The crash itself is not reproduced in
+        the rig. What stays: the owner's own use of a load door is still replayed on the copy, which then unloads
+        here the same way; nothing links that path to a crash yet.
       - `SkyrimVR.exe+0x117B10` (SE 11308), Whiterun, the other player: a garbage pointer (0x3F8CCCCD00000001) under
-        Skjor's sword, under a second after Skjor loaded. Open; needs that player's
+        Skjor's sword, 5 s after this game spawned Skjor (`Spawn Actor: 1A691` at 18:46:45). Before that, Skjor was
+        removed here twice (18:40:03, 18:41:22) and in the other game within 2 s each time; the two games had Skjor
+        under two server ids (20004D there, 20010A here); his copy activated something on its own 12 times in the
+        other game (which were load doors the log does not say); and here his AI asked to unequip 150 times a second
+        for three minutes, all refused by the game (`ActionFlood`, not sent). The door churn is what build 1a569f4
+        stops; the rest is not linked to the crash. Not proven; needs that player's
         `crash_UTC_2026-10-29_01-46-45.small.dmp`.
       - `skyrimvrtools.dll+0x71B5`: the known load during our death sequence.
 - [ ] **Play session 2026-10-28 18:01 (player 1 on 43e6a70, player 2 on 10b98ee5; about 30 min, a fight with archers)**
@@ -1126,8 +1139,8 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
         - Rig, `live-door-copy-load` (new): the game makes the bot's NPC copy use Mistwatch's load door. Red on
           a547eb5 (the copy went through and unloaded, then was removed and spawned again), green on 1a569f4, 10
           checks (the same copy stays loaded where it was, spawned once). Regressions `live-door-echo` 6/6,
-          `live-copy-removed` 4/4. Not seen in play yet: the receiving game needs this client. Not covered: what the
-          refused copy's AI does at the door (it may stand there until its owner's position moves it).
+          `live-copy-removed` 4/4. Seen in play: 16 refusals in player 1's log on 2026-10-24 and 10-25. Not covered: what the refused copy's AI does at the door (it tries again while its package
+          lasts, so it may stand there until its owner's position moves it).
       - Ours, a door activation dropped: 938F3 opened in player 1's game by a Stormcloak soldier player 1 owned
         (FF001B35, server id 100086). Player 2's game had no copy of that soldier: `OnActivateNotify: could not find
         actor server id 100086`. The door stayed shut there.
