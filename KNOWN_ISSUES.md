@@ -238,22 +238,32 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   it. Since 1a569f4 `HookActivate` refuses a copy's own load door use (`DoorCopy:` line, `live-door-copy-load`). The
   crash itself is not reproduced. The owner's own door use is still replayed on its copy, which unloads it the same way.
 
-- **Freeze after closing the unpaused map: the game draws the VR pointer forever -- open, guarded.** Player 1 twice
-  on 2026-10-28 (19:47, 19:57), player 2 once (19:59), each within a second of closing the map, which runs unpaused
-  online (Gameplay:bUnpausedMenus). The main thread ran at 100% CPU in one frame's draw loop (VR 0x141349500, inside
-  `+0x130BB6F`): it draws a pass and follows its next link (+0x30). Player 2's full dump: the pass of "UI Pointer
-  Geometry" (the VR laser, PlayerCharacter+0x440) linked to itself. A pass links to itself when it is put on its list
-  twice (BSBatchRenderer's register functions, vtable 0x141906E88 slots 1 and 2: the head insert, and the sorted insert,
-  which stops on it). What puts the pointer on twice is not known yet.
-  - Ruled out as the direct cause: our map laser call (0x1406B8980) only moves the pointer and updates its bounds; it
-    does not put it on a list. Seen with the map unpaused: its show and close are handled on a worker thread, the
-    main thread drawing meanwhile (paused, the game handles both on the main thread). Holding the close for the main
-    thread (a065abe1) rested on the close freeing the map's 3D, which the dump does not show, so it was taken out again.
-  - Guard and diagnosis: `RenderPassWatch` checks every insert; a pass that ends up linked to itself gets its link put
-    back (the list stays whole, the frame ends) and is logged with both inserts' callers, threads and frame and
-    whether the map is shown (`RenderPassWatch: pass ... put on renderer ...'s list a second time`). No cost seen in
-    the rig's frame times. The rig does not reproduce it: `live-map-pointer` (the map with a message box and the
-    pointer over it, closed ten times) passes with and without the watch.
+- **Freeze after closing the unpaused map -- cause found, fixed in build b20765d, seen fixed by player 1.** Player 1 twice
+  on 2026-10-28, player 2 several times since, each within a second of closing the map, which runs unpaused online
+  (Gameplay:bUnpausedMenus). The main thread followed one draw list forever (the draw at VR 0x141349270, its loop at
+  0x141349500): the list looped back on itself, the VR laser ("UI Pointer Geometry") on itself, or the two controller
+  models on each other. A pass has one link (+0x30), so a pass put on a list twice closes a loop.
+  - Cause (player 2's full dump of 2026-10-29 18:38, then player 1's trace of 2026-10-30 07:28): the player's world node
+    (player+0x3F0: the controllers, the laser, the map's beacons) is culled twice in one job, onto one culler's visible
+    list. The cull job (VR 0x141322390) culls the world's roots (0x141315B40, returning to +0x1322468) when the world is
+    drawn, then the extra roots (returning to +0x13224A0), the list at 0x143485AD8. That list is built at the frame's
+    start (VR 0x1405BFC90) and holds the world node while `UI::IsMenuOpen("MapMenu")` (the call at 0x1405C0590), as the
+    world is left out then. Whether the world is drawn is read in the job. Paused, nothing changes between the two.
+    Unpaused, the hide runs on a UI worker and gives the world back in between, and that job reaches the node through
+    ObjectLODRoot and again as an extra root. 53 such frames in 472 closes on 2026-10-29, 15 in 61 on 2026-10-30.
+  - First fix (e111fd7, the builder's check also needing the map not closing) did not hold: 15 doubles in 61 closes,
+    as most come from a list built just before the hide began.
+  - Fix (b20765d): in the job, when the world's cull reaches the node (one of its roots above it, nothing hidden on the
+    way, checked before and after that cull), the extra roots are culled from a private copy without it
+    (`Map menu: the player's world node left out of the extra cull roots ...`). The shared list is left alone. Rig:
+    `live-map-pointer` ok, the laser still drawn once a frame with the map open, the copy never used there (the rig
+    never doubled, so no red run).
+    In play (player 1, 2026-10-30 07:51): 30 closes online, the node left out 9 times (each 1 to 2 ms after a hide
+    began, in its frame), no pass put on a list twice, no loop cut, no self-link, against 15 doubles in 61 closes
+    on e111fd7 the same morning.
+  - Guards kept: the list draw cuts any loop before following it, and the insert check puts back a pass linked to
+    itself (`RenderPassWatch:` lines). The watch also traces the laser from the cull to the list right after each
+    close and prints every step if it is ever put on a list twice again.
 - **Crash within a second of travelling away from copies this client made -- open.** `SkyrimVR.exe+0x3AC1A8`
   (`FOCollisionListener`, a virtual call on freed memory), `+0x2EEF6A` (`HasKeyword` on a freed object) or
   `VCRUNTIME140.dll+0x504F` (a cast on the value 1), 0.5 to 0.9 s after arriving through a loading screen. In each the

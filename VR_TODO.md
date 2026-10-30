@@ -688,6 +688,34 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
           otherwise); `Map menu: hide done on thread X, frame N` marks each close. Rig, `live-map-pointer` 4 runs:
           every hook in place, no jank, the normal paths logged once; it never double-inserts, so the answer
           needs play. Next session: 30 to 40 map closes online; then read the `put on a list again` blocks.
+        - Cause found by player 2 in the full dump of 18:38 (on 9c536680): culled twice, no list walked twice.
+          The culler's visible list held the world node's whole subtree twice (controllers, laser, the map's
+          beacons): once from the world walk (the node back in the cell), once as an extra cull root. The game's
+          root builder (0x1405BFC90) adds the node as its own root while `UI::IsMenuOpen("MapMenu")` (the call at
+          0x1405C0590, read here too); the hide gives the node back to the world before the map stops counting as
+          open, and on a UI worker a frame is culled in between. 53 such frames in 472 closes on 2026-10-29, all
+          1 to 3 ms after the hide began. Fixed in build e111fd7 (client, FUS folder, on 641de798): that call also
+          needs our hook not to have seen the hide begin (`Map menu: the player's world node is a cull root of its
+          own only while the map is open and not closing`). Rig, `live-map-pointer`: ok, no jank, the laser still
+          drawn once a frame with the map open (1076 frames in 30 s, as before); the rig never doubled, so no red
+          run. To see in play: 30 to 40 map closes online, hands and laser in the map as before, and no
+          `put on a list again`, `led back` or self-link line at all.
+        - 2026-10-30 07:28, player 1 alone on e111fd7, 61 map closes online: no freeze seen, but the guards worked
+          15 times (15 doubles, 15 self-links put back, 4 controller loops cut). The trace: in each, one worker
+          culler's visible list got the laser twice on one thread, from the cull job's two culls (`0x1322468`,
+          the world's roots, through ObjectLODRoot; `0x13224a0`, the extra roots). The extra roots are listed at
+          the frame's start, the world's part is decided in the job, and the hide flips it in between, so the
+          builder check of e111fd7 came too early. Changed in build b20765d (client, FUS folder, on 641de798):
+          the check moved into the job; the extra roots' cull leaves the world node out (a private copy of the
+          list) when that job's world cull reached it. The builder patch is gone. Rig, `live-map-pointer`: ok, no
+          jank, the laser drawn once a frame with the map open as before, and the copy never used there. To see
+          in play: 60 map closes online; `Map menu: the player's world node left out ...` at some closes, and no
+          `put on a list again`, `led back` or self-link line.
+        - 2026-10-30 07:51, player 1 alone on b20765d, 30 map closes online: seen fixed. The node left out 9 times,
+          each 1 to 2 ms after `Map menu: hide handled`, in that frame; no `put on a list again`, `led back`,
+          self-link or `still holds` line; the laser drawn once in all 1192 frames counted. At e111fd7's rate (15
+          in 61) none in 30 would be chance about 2 times in 10,000. Still to see: player 2 on this build, and a
+          session together.
       - Player 1: `ActorValueService::OnHealthChange: failed to find server id` 1948 times, about 10 a second in the
         fight (18:10 to 18:12), against 7 in an older session: a health change (most likely regeneration) of an actor
         with no server id yet. Nothing seen on screen. Now named: `Health change of X ('name', base B) not sent: it has

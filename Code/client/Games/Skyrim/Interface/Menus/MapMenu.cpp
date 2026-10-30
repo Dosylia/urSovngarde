@@ -4,6 +4,9 @@
 #include <Games/Skyrim/Interface/UI.h>
 #include <Games/Memory.h>
 #include <PatchCheck.h>
+#include <PlayerCharacter.h>
+
+#include <intrin.h>
 
 // Online the map is opened from TweenMenu, which UI.cpp's kAllowList unpauses, so the frame after the map opens
 // still runs the game's unpaused updates (offline that frame is already paused). Two things go wrong in it:
@@ -238,6 +241,117 @@ static void HookMapWorldUpdate(float aDelta)
     if (*pParity != parityBefore && *reinterpret_cast<const uint8_t*>(exe + kMainPausedByte) == 0 && IsMapOpenUnpaused())
         *pParity = parityBefore;
 }
+
+// The cull job (VR 0x141322390) culls the world's roots when the world is drawn, then the extra roots, both through 0x141315B40.
+// Both go on one thread into one culler, the roots array at args+0x50.
+// While the map is open the world is left out and the player's world node (player+0x3F0) is one of the extra roots.
+// The extra roots are listed at the frame's start (VR 0x1405BFC90, while UI::IsMenuOpen("MapMenu")), but the world's part is decided in the job.
+// An unpaused hide, on a UI worker, gives the world back in between, and that job culls the node twice: its passes go on one list twice.
+// So when the job's world cull reaches the node, its extra roots are culled from a copy without it.
+constexpr uintptr_t kCullRoots = 0x1315B40;
+constexpr uintptr_t kWorldCullReturn = 0x1322468;
+constexpr uintptr_t kExtraCullReturn = 0x13224A0;
+constexpr uintptr_t kExtraCullRoots = 0x3485AD8;
+constexpr size_t kCullArgsRoots = 0x50;
+constexpr size_t kPlayerWorldNode = 0x3F0;
+constexpr size_t kObjectParent = 0x30;
+
+// A BSTArray of node pointers, as the cull reads it.
+struct NodeArray
+{
+    const uint8_t** pData;
+    uint32_t Capacity;
+    uint32_t Pad;
+    uint32_t Size;
+    uint32_t Pad2;
+};
+
+using TCullRoots = uint64_t(uint8_t*, uint32_t, uint32_t);
+static TCullRoots* RealCullRoots;
+static uintptr_t s_exe = 0;
+
+// The job's world cull, as the extra roots' cull of the same job finds it.
+static thread_local const uint8_t* t_worldCullArgs = nullptr;
+static thread_local const NodeArray* t_worldRoots = nullptr;
+static thread_local bool t_worldReachedNode = false;
+
+static std::atomic<uint32_t> s_nodeLeftOut{0};
+
+static const uint8_t* PlayerWorldNode() noexcept
+{
+    const auto* pPlayer = reinterpret_cast<const uint8_t*>(PlayerCharacter::Get());
+    return pPlayer ? *reinterpret_cast<const uint8_t* const*>(pPlayer + kPlayerWorldNode) : nullptr;
+}
+
+// A cull from these roots reaches the node when one of them is the node or above it, with nothing hidden on the way.
+static bool Reaches(const NodeArray* apRoots, const uint8_t* apNode) noexcept
+{
+    if (!apRoots || !apNode)
+        return false;
+    for (const uint8_t* pNode = apNode; pNode; pNode = *reinterpret_cast<const uint8_t* const*>(pNode + kObjectParent))
+    {
+        if (*reinterpret_cast<const uint32_t*>(pNode + kAvObjectFlags) & kHidden)
+            return false;
+        for (uint32_t i = 0; i < apRoots->Size; ++i)
+            if (apRoots->pData[i] == pNode)
+                return true;
+    }
+    return false;
+}
+
+static uint64_t HookCullRoots(uint8_t* apArgs, uint32_t aMode, uint32_t aFlags)
+{
+    const uintptr_t cReturn = reinterpret_cast<uintptr_t>(_ReturnAddress()) - s_exe;
+    auto** ppRoots = reinterpret_cast<const NodeArray**>(apArgs + kCullArgsRoots);
+
+    if (cReturn == kWorldCullReturn)
+    {
+        // Before and after: the hide may give the node back while the world is culled.
+        const uint8_t* pNode = PlayerWorldNode();
+        bool reached = Reaches(*ppRoots, pNode);
+        const uint64_t cResult = RealCullRoots(apArgs, aMode, aFlags);
+        reached = reached || Reaches(*ppRoots, pNode);
+        t_worldCullArgs = apArgs;
+        t_worldRoots = *ppRoots;
+        t_worldReachedNode = reached;
+        return cResult;
+    }
+
+    if (cReturn != kExtraCullReturn)
+        return RealCullRoots(apArgs, aMode, aFlags);
+
+    // Only after the world's cull of this same job.
+    const bool cAfterWorldCull = std::exchange(t_worldCullArgs, nullptr) == apArgs;
+    const uint8_t* pNode = PlayerWorldNode();
+    const NodeArray* pExtraRoots = *ppRoots;
+    if (!cAfterWorldCull || !pNode || reinterpret_cast<uintptr_t>(pExtraRoots) != s_exe + kExtraCullRoots ||
+        !(t_worldReachedNode || Reaches(t_worldRoots, pNode)))
+        return RealCullRoots(apArgs, aMode, aFlags);
+
+    static thread_local const uint8_t* t_rootsCopy[64];
+    NodeArray copy{t_rootsCopy, static_cast<uint32_t>(std::size(t_rootsCopy))};
+    bool found = false;
+    for (uint32_t i = 0; i < pExtraRoots->Size && copy.Size < copy.Capacity; ++i)
+    {
+        if (pExtraRoots->pData[i] == pNode)
+            found = true;
+        else
+            t_rootsCopy[copy.Size++] = pExtraRoots->pData[i];
+    }
+    if (!found || pExtraRoots->Size > copy.Capacity)
+        return RealCullRoots(apArgs, aMode, aFlags);
+
+    // Every one counts; the first twenty are told, then one in five hundred.
+    const uint32_t cCount = ++s_nodeLeftOut;
+    if (cCount <= 20 || cCount % 500 == 0)
+        spdlog::info("Map menu: the player's world node left out of the extra cull roots in frame {}: the world's cull of that job reached it (number {}, the map {})",
+                     MainLoopFrame(), cCount, s_mapOpen ? "shown" : "not shown");
+
+    *ppRoots = &copy;
+    const uint64_t cResult = RealCullRoots(apArgs, aMode, aFlags);
+    *ppRoots = pExtraRoots;
+    return cResult;
+}
 #endif
 
 static TiltedPhoques::Initializer s_init(
@@ -287,5 +401,23 @@ static TiltedPhoques::Initializer s_init(
 
         s_hooksReady = true;
         spdlog::info("Map menu: code found; it pauses as in the game until a server unpauses it");
+
+        // Its two calls in the cull job are checked too, since the hook tells them apart by where they return.
+        s_exe = exe;
+        const auto* pCullRoots = reinterpret_cast<const uint8_t*>(exe + kCullRoots);
+        const auto cCallsCullRoots = [&](const uintptr_t aReturn)
+        {
+            const auto* pCall = reinterpret_cast<const uint8_t*>(exe + aReturn - 5);
+            return *pCall == 0xE8 && reinterpret_cast<uintptr_t>(pCall + 5 + *reinterpret_cast<const int32_t*>(pCall + 1)) == exe + kCullRoots;
+        };
+        if (PatchCheck::Is(pCullRoots, {0x4C, 0x8B, 0xDC, 0x53, 0x55, 0x56, 0x57, 0x41, 0x55}) && cCallsCullRoots(kWorldCullReturn) && cCallsCullRoots(kExtraCullReturn))
+        {
+            RealCullRoots = reinterpret_cast<TCullRoots*>(exe + kCullRoots);
+            TP_HOOK(&RealCullRoots, HookCullRoots);
+            spdlog::info("Map menu: the player's world node is culled once a job, from the world or as an extra root");
+        }
+        else
+            spdlog::error("Map menu: the cull of roots at {} or its calls in the cull job are not the expected code ({}); left as they are", fmt::ptr(pCullRoots),
+                          PatchCheck::Bytes(pCullRoots, 9));
 #endif
     });
