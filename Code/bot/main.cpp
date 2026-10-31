@@ -7,6 +7,9 @@
 //   wait <seconds>
 //   walk <x> <y> [speed]            to a world position (units/s, default 150)
 //   walk rel <dx> <dy> [speed]      relative to where the bot stands
+//   moveto <x> <y> <z> [speed]      to a world position, its height too
+//   reportevery <seconds>           a report that often, whatever the script is doing
+//   listen <file>                   runs the commands written to that file as they come, until the line "end"
 //   follow <distance> <seconds>     stay that far from the host
 //   equip <hex form id> [left|both] [spell]
 //   unequip <hex form id> [left|both]

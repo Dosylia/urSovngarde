@@ -1,5 +1,6 @@
 
 #include <strsafe.h>
+#include <string>
 
 #include <MinHook.h>
 #include <winternl.h>
@@ -291,6 +292,55 @@ NTSTATUS WINAPI TP_LdrLoadDll(const wchar_t* apPath, uint32_t* apFlags, UNICODE_
 }
 } // namespace
 
+#ifdef SKYRIMVR
+// The two-game test (Tools/VR/two-games.py) runs a second game on one PC.
+// CommonLib plugins keep the address library in a named shared block, and a second game rewriting it made the first game's plugins fail and quit it.
+// While that test's marker file exists, each game gets a block of its own.
+static bool IsTwoGameTest() noexcept
+{
+    static const bool s_on = []()
+    {
+        wchar_t path[MAX_PATH]{};
+        const DWORD cLength = GetEnvironmentVariableW(L"LOCALAPPDATA", path, MAX_PATH);
+        if (!cLength || cLength >= MAX_PATH)
+            return false;
+        std::wstring marker(path);
+        marker += L"\\SkyrimTogetherVR\\two-games.on";
+        return GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES;
+    }();
+    return s_on;
+}
+
+static std::wstring OwnBlockName(LPCWSTR acpName)
+{
+    return std::wstring(acpName) + L"-" + std::to_wstring(GetCurrentProcessId());
+}
+
+static bool IsAddressLibraryBlock(LPCWSTR acpName) noexcept
+{
+    return acpName && wcsstr(acpName, L"CommonLib");
+}
+
+using TCreateFileMappingW = HANDLE(WINAPI*)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCWSTR);
+using TOpenFileMappingW = HANDLE(WINAPI*)(DWORD, BOOL, LPCWSTR);
+static TCreateFileMappingW RealCreateFileMappingW = nullptr;
+static TOpenFileMappingW RealOpenFileMappingW = nullptr;
+
+static HANDLE WINAPI TP_CreateFileMappingW(HANDLE aFile, LPSECURITY_ATTRIBUTES aAttributes, DWORD aProtect, DWORD aHigh, DWORD aLow, LPCWSTR acpName)
+{
+    if (IsAddressLibraryBlock(acpName))
+        return RealCreateFileMappingW(aFile, aAttributes, aProtect, aHigh, aLow, OwnBlockName(acpName).c_str());
+    return RealCreateFileMappingW(aFile, aAttributes, aProtect, aHigh, aLow, acpName);
+}
+
+static HANDLE WINAPI TP_OpenFileMappingW(DWORD aAccess, BOOL aInherit, LPCWSTR acpName)
+{
+    if (IsAddressLibraryBlock(acpName))
+        return RealOpenFileMappingW(aAccess, aInherit, OwnBlockName(acpName).c_str());
+    return RealOpenFileMappingW(aAccess, aInherit, acpName);
+}
+#endif
+
 #define VALIDATE(x) \
     if (x != MH_OK) \
         Die(L"CoreStubsInit(): Fatal Minhook error.", true);
@@ -303,6 +353,14 @@ void CoreStubsInit()
     std::replace(s_OverridePath.begin(), s_OverridePath.end(), L'/', L'\\');
 
     VALIDATE(MH_Initialize());
+
+#ifdef SKYRIMVR
+    if (IsTwoGameTest())
+    {
+        VALIDATE(MH_CreateHookApi(L"KernelBase.dll", "CreateFileMappingW", &TP_CreateFileMappingW, (void**)&RealCreateFileMappingW));
+        VALIDATE(MH_CreateHookApi(L"KernelBase.dll", "OpenFileMappingW", &TP_OpenFileMappingW, (void**)&RealOpenFileMappingW));
+    }
+#endif
 
     if (!IsUsingMO2())
     {

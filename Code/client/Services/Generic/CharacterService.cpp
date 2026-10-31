@@ -1383,6 +1383,8 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         m_world.remove<EarlyAnimationBufferComponent>(cEntity);
 
         auto& localComponent = m_world.emplace_or_replace<LocalComponent>(cEntity, acMessage.ServerId, acMessage.OwnershipEpoch);
+        if (const auto* pFormId = m_world.try_get<FormIdComponent>(cEntity))
+            spdlog::info("Entity: local actor {:X} has server id {:X}", pFormId->Id, acMessage.ServerId);
         localComponent.IsDead = acMessage.IsDead;
         localComponent.IsWeaponDrawn = acMessage.IsWeaponDrawn;
         pActor->GetExtension()->SetRemote(false);

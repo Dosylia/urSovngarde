@@ -1591,6 +1591,13 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
 
 bool Bot::RunScript() noexcept
 {
+    // "reportevery <seconds>": a report whatever the script is doing, for a play session that compares it with the game.
+    if (m_reportEvery > 0.f && Clock::now() >= m_nextReport)
+    {
+        m_nextReport = Clock::now() + std::chrono::milliseconds(static_cast<int>(m_reportEvery * 1000.f));
+        StepCommand(Command{"report", {}, 0}, false);
+    }
+
     if (m_pc >= m_script.size())
     {
         if (m_phase != Phase::Stopped)
@@ -1601,6 +1608,11 @@ bool Bot::RunScript() noexcept
         }
         return false;
     }
+
+    if (m_script[m_pc].Name == "listen" && !ReadListenFile())
+        return false;
+    if (m_pc >= m_script.size())
+        return false;
 
     const Command& command = m_script[m_pc];
 
@@ -1627,6 +1639,54 @@ bool Bot::RunScript() noexcept
         m_commandFresh = true;
     }
     return done;
+}
+
+// "listen <file>": runs the commands written to that file as they come, so a play session can steer this player.
+// The line "end" stops listening, and the script goes on after the listen line.
+// True when there is a command to run now.
+bool Bot::ReadListenFile() noexcept
+{
+    const auto cNow = Clock::now();
+    if (cNow < m_listenNext)
+        return false;
+    m_listenNext = cNow + std::chrono::milliseconds(100);
+
+    std::ifstream file(m_script[m_pc].Args.empty() ? std::string() : m_script[m_pc].Args[0], std::ios::binary);
+    if (!file)
+        return false;
+    file.seekg(static_cast<std::streamoff>(m_listenOffset));
+
+    std::vector<Command> commands;
+    bool ended = false;
+    std::string line;
+    while (std::getline(file, line))
+    {
+        // A line still being written waits for the next look.
+        if (file.eof())
+            break;
+        m_listenOffset += line.size() + 1;
+        std::istringstream stream(line);
+        Command command;
+        if (!(stream >> command.Name))
+            continue;
+        if (command.Name == "end")
+        {
+            ended = true;
+            break;
+        }
+        std::string token;
+        while (stream >> token)
+            command.Args.push_back(token);
+        commands.push_back(std::move(command));
+    }
+
+    if (ended)
+        m_script.erase(m_script.begin() + static_cast<std::ptrdiff_t>(m_pc));
+    if (!commands.empty())
+        m_script.insert(m_script.begin() + static_cast<std::ptrdiff_t>(m_pc), commands.begin(), commands.end());
+    if (ended || !commands.empty())
+        m_commandFresh = true;
+    return ended || !commands.empty();
 }
 
 bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
@@ -1690,6 +1750,21 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // "infront <distance>": straight to <distance> units in front of the host (its heading), at the host's height. The
     // bot never changes height otherwise (MoveTowards keeps z), so its copy can stand inside a hillside the host
     // walked up (live-blade, 2026-10-10: 156 units under the player, out of reach of a scripted swing).
+    // "moveto <x> <y> <z> [speed]": walks there, its height too, so that it stays on the ground it walks over.
+    if (name == "moveto")
+    {
+        if (aFirstTick)
+        {
+            m_walkTarget = glm::vec3(arg(0, m_position.x), arg(1, m_position.y), arg(2, m_position.z));
+            m_walkSpeed = arg(3, 220.f);
+        }
+        return MoveTowards(m_walkTarget, m_walkSpeed, dt);
+    }
+    if (name == "reportevery")
+    {
+        m_reportEvery = arg(0, 1.f);
+        return true;
+    }
     if (name == "infront")
     {
         if (const KnownPlayer* pHost = Host())
@@ -2681,13 +2756,19 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (actor.IsPlayer)
                 continue;
             const std::string cRef = actor.Ref.ModId == m_skyrimModId && actor.Ref.BaseId ? fmt::format("{:X}", actor.Ref.BaseId) : std::string("none");
-            const std::string cAt = actor.PositionKnown ? fmt::format("{:.0f} {:.0f} {:.0f}", actor.Position.x, actor.Position.y, actor.Position.z) : std::string("unknown");
-            spdlog::info("[report] actor {:X} ref {} {} {} at {}", actor.ServerId, cRef, actor.Dead ? "dead" : "alive", actor.OwnedByUs ? "ours" : "theirs", cAt);
+            const glm::vec3 cPlace = actor.OwnedByUs ? m_npcPosition : actor.Position;
+            const std::string cAt = actor.PositionKnown || actor.OwnedByUs ? fmt::format("{:.0f} {:.0f} {:.0f}", cPlace.x, cPlace.y, cPlace.z) : std::string("unknown");
+            const std::string cHealth = actor.HealthKnown ? fmt::format("{:.0f}", actor.Health) : std::string("unknown");
+            spdlog::info("[report] actor {:X} ref {} {} {} at {} health {}", actor.ServerId, cRef, actor.Dead ? "dead" : "alive", actor.OwnedByUs ? "ours" : "theirs", cAt, cHealth);
         }
         for (const auto& [refId, state] : m_doorStates)
             spdlog::info("[report] door {:X} {}", refId, state == DoorState::kOpen || state == DoorState::kOpening ? "open" : "closed");
         for (const auto& [refId, locked] : m_locks)
             spdlog::info("[report] lock {:X} {}", refId, locked ? "locked" : "unlocked");
+        for (const auto& player : m_players)
+            if (player.ServerId != m_serverId)
+                spdlog::info("[report] player {:.0f} {:.0f} {:.0f}", player.Position.x, player.Position.y, player.Position.z);
+        spdlog::info("[report] me {:.0f} {:.0f} {:.0f}", m_position.x, m_position.y, m_position.z);
         spdlog::info("[report] end");
         return true;
     }

@@ -76,6 +76,13 @@ Choice AskToTryAgain(vr::EVRInitError aError) noexcept
 
 uint32_t __cdecl HookVR_InitInternal2(vr::EVRInitError* apError, vr::EVRApplicationType aType, const char* apStartupInfo)
 {
+    // SteamVR runs one scene application and kills the one before it, so the second game of the two-game test (Tools/VR/two-games.py) starts as an overlay.
+    if (std::getenv("TWO_GAMES_SECOND"))
+    {
+        aType = vr::VRApplication_Overlay;
+        spdlog::info("Two games: this game joins SteamVR as an overlay");
+    }
+
     const auto cFirstAttempt = std::chrono::steady_clock::now();
     for (uint32_t attempt = 1;; ++attempt)
     {

@@ -85,6 +85,28 @@ void Hook_StopTimer(int type)
     StopTimer(type);
 }
 
+#ifdef SKYRIMVR
+// The game quits at start when FindWindowA finds a window of its own class, and brings that window to the front.
+// The two-game test (Tools/VR/two-games.py) runs a second game on one PC, so that call finds none while its marker file exists.
+static TiltedPhoques::Initializer s_secondGameInTest(
+    []()
+    {
+        const char* cLocalAppData = std::getenv("LOCALAPPDATA");
+        if (!cLocalAppData || !std::filesystem::exists(std::filesystem::path(cLocalAppData) / "SkyrimTogetherVR" / "two-games.on"))
+            return;
+
+        auto* pCall = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + 0x5B5969;
+        if (!PatchCheck::Is(pCall, {0xFF, 0x15, 0x21, 0x9E, 0xFC, 0x00, 0x48, 0x85, 0xC0}))
+        {
+            spdlog::error("Two games: the game's check for a running game is not the expected code ({}); a second game cannot start", PatchCheck::Bytes(pCall, 9));
+            return;
+        }
+        TiltedPhoques::Put<uint16_t>(pCall, 0xC031);
+        TiltedPhoques::Put<uint32_t>(pCall + 2, 0x90909090);
+        spdlog::info("Two games: a second game may start on this PC");
+    });
+#endif
+
 static TiltedPhoques::Initializer s_viewportHooks(
     []()
     {

@@ -198,6 +198,7 @@ private:
     //! Shared by waitfor and expect. Returns nothing when the condition cannot be parsed.
     std::optional<bool> Evaluate(const std::vector<std::string>& acArgs, std::string& aOutWhy) const noexcept;
     void WriteReport(const std::string& acPath) const noexcept;
+    bool ReadListenFile() noexcept;
     bool StepCommand(const Command& acCommand, bool aFirstTick) noexcept;
     bool MoveTowards(const glm::vec3& acTarget, float aSpeed, float aDt) noexcept;
 
@@ -219,6 +220,10 @@ private:
 
     BotOptions m_options;
     std::vector<Command> m_script;
+    float m_reportEvery{};
+    std::chrono::steady_clock::time_point m_nextReport{};
+    size_t m_listenOffset{};
+    std::chrono::steady_clock::time_point m_listenNext{};
 
     Phase m_phase = Phase::Idle;
     Clock::time_point m_phaseStart{};

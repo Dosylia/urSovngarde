@@ -22,6 +22,9 @@ param(
     [Parameter(Position = 0)][ValidateSet('up', 'down', 'status')][string]$Action = 'status',
     [string]$Save = '',                 # a save name; empty loads the fixed rig save below, or the most recent one if it is gone
     [switch]$NoConnect,                 # no server and no waiting for a connection: the game alone, mod loaded
+    [string]$ServerAddress = '',        # address:port of a test server elsewhere: this one is joined and no local server starts
+    [string]$ServerPassword = '',       # that server's password; it goes only into the connect file, which "down" puts back
+    [switch]$Twin,                      # the game starts through two-games-anchor.py, which can start a second one (two-games.py)
     [switch]$AutoConnect,               # the launcher's "connect automatically" setting on: the game connects by itself, F6 is not pressed
     [switch]$ListServer,                # the player has no connect file: the test server is in a mod's, and the script connects
     [int]$LoadTimeout = 180,
@@ -335,7 +338,8 @@ function Set-RigConnect {
         if ($line) { $port = [int]$line.Matches[0].Groups[1].Value }
     }
     New-Item -ItemType Directory -Force -Path (Split-Path $connectFile) | Out-Null
-    $text = "127.0.0.1:$port"
+    $text = if ($ServerAddress) { $ServerAddress } else { "127.0.0.1:$port" }
+    if ($ServerAddress -and $ServerPassword) { $text += "`r`n$ServerPassword" }
     if ($AutoConnect) { $text += "`r`nautoconnect=on" }
     if ($ListServer) {
         if (Test-Path -LiteralPath $listConnectFile) { throw "A connect file is already in Overwrite, and the rig does not replace it: $listConnectFile" }
@@ -347,7 +351,7 @@ function Set-RigConnect {
         return
     }
     Set-Content -LiteralPath $connectFile -Value $text -Encoding ascii
-    Write-Host "Connect file set to the local test server (127.0.0.1:$port) for this run."
+    Write-Host "Connect file set to the test server ($($text.Split("`r")[0])) for this run."
 }
 
 function Restore-Connect {
@@ -472,14 +476,19 @@ try {
     $loaded = Select-String -Path $vrLog -Pattern "Driver 'null' finished adding tracked device with serial number 'CTRL2Serial'" -Quiet
     if (-not $loaded) { throw "SteamVR is up, but the null driver did not add its controllers (see $vrLog). Is the built driver_null.dll still in place?" }
 
-    if (-not $NoConnect -and -not (Test-Running '^(urSovngardeServer|SkyrimTogetherServer)$')) {
+    if (-not $NoConnect -and -not $ServerAddress -and -not (Test-Running '^(urSovngardeServer|SkyrimTogetherServer)$')) {
         Start-Process -FilePath (Join-Path $release 'urSovngardeServer.exe') -WorkingDirectory $release -WindowStyle Hidden
         $startedServer = $true
         @{ startedServer = $true; save = $Save; profileDir = $profileDir } | ConvertTo-Json | Set-Content $stateFile
         Start-Sleep -Seconds 4
     }
 
-    Start-Process -FilePath $mo2 -ArgumentList "`"moshortcut://:$mo2Shortcut`""
+    if ($Twin) {
+        $python = (Get-Command python).Source
+        $anchor = Join-Path $PSScriptRoot 'two-games-anchor.py'
+        Start-Process -FilePath $mo2 -ArgumentList "run `"$python`" -a `"$anchor`""
+    }
+    else { Start-Process -FilePath $mo2 -ArgumentList "`"moshortcut://:$mo2Shortcut`"" }
     Wait-Until { Get-Health } 180 'DevBench to answer (the game to start)'
     Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } $MenuTimeout 'the main menu' -NeedsGame
 
