@@ -1,0 +1,80 @@
+# What a game does with an NPC it takes over while that NPC walks.
+#
+#   python Tools\VR\live-check.py live-takeover-walk
+#   python Tools\VR\live-check.py --expect-fail live-takeover-walk     on a build without the fix: must be RED
+#
+# In play (2026-10-31) NPCs looked wrong on the game that had just gained them.
+# Here an NPC gained mid-walk stopped dead and held a stride, its feet rocking 5-28 units from the pelvis, until something moved it.
+# The bot's Ralof (2BF9E, a reference of Skyrim.esm) walks towards the player as this game's copy, from a real player's recording.
+# Mid-walk the game claims him, through the path of its own follower: setting the teammate flag is what makes it ask.
+# That is a party leader claim on the server and the same gained path in the client, except that a follower keeps its gear here.
+# `replay` holds the bot's script until it ends, so what happens during the walk is queued for the driver first.
+# It is judged on his legs, read from the game: they stand once he stands, and move with him when his AI walks him.
+# The takeover and his AI are the real game's, but the copy's source is a bot and its pose a player's, so this proves nothing alone.
+# Run Tools\VR\takeover-probe.py beside it for his position, legs and state over time.
+party lead
+log live takeover walk
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+stay
+log DO god on
+
+log -- the real player walks, and the bot records it to replay as its NPC
+log DO mark walked player
+log DO key w 10000
+capture other 12
+wait 2
+log REQUIRE moved walked atleast 100
+log REQUIRE bot logged Captured action names of \w+: \S
+
+log -- the bot's Ralof where the walk began: this game's own Ralof is the copy
+npc 2BF9E
+waitfor owned == 1 20
+wait 6
+log REQUIRE ref 2BF9E near player 3600
+
+log -- he walks towards the player, with the headset on him
+log DO look at npc 500 hold 60000
+wait 2
+log REQUIRE view npc
+log DO sleep 4
+log SHOT walking of npc
+log DO sleep 1
+log -- the game asks for him mid-walk
+log DO papyrus Actor SetPlayerTeammate npc b:true b:true
+log DO sleep 3
+log SHOT gained-3s of npc
+log DO sleep 4
+log SHOT gained-8s of npc
+replay npc 1
+log REQUIRE logged Gained ownership of actor \w+ \(form 2BF9E\)
+
+log -- he was gained mid-walk and stands: his legs must stand too, not hold the stride
+log DO mark stood npc
+log CHECK npc feet still 5 15
+log CHECK logged Takeover: NPC 2BF9E .* stopped \('moveStop' taken\)
+log CHECK moved stood atmost 30
+log SHOT gained-20s of npc
+
+log -- his AI walks him: legs and body go together, so he does not slide
+log DO papyrus Actor KeepOffsetFromActor npc 14 f:0 f:0 f:0 f:0 f:0 f:0 f:150 f:75
+log CHECK npc feet moving 3
+log CHECK moved stood atleast 300
+log DO papyrus Actor ClearKeepOffsetFromActor npc
+wait 20
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

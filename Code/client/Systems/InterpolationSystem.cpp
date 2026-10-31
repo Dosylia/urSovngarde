@@ -148,6 +148,30 @@ void WatchQuietCopy(Actor* apActor) noexcept
 }
 } // namespace
 
+bool InterpolationSystem::OnFoot(const Actor* apActor) noexcept
+{
+    return IsOnFoot(apActor);
+}
+
+float InterpolationSystem::FootSpeed(Actor* apActor) noexcept
+{
+    return IsOnFoot(apActor) ? LegSpeed(apActor) : 0.f;
+}
+
+float InterpolationSystem::ReportedSpeed(const uint32_t aFormId, const InterpolationComponent& acInterpolationComponent) noexcept
+{
+    const auto& points = acInterpolationComponent.TimePoints;
+    if (points.size() < 2 || s_quietStopped.find(aFormId) != s_quietStopped.end())
+        return 0.f;
+
+    const auto& last = points.back();
+    const auto& before = *std::prev(points.end(), 2);
+    if (last.Tick <= before.Tick)
+        return 0.f;
+
+    return glm::distance(last.Position, before.Position) * 1000.f / static_cast<float>(last.Tick - before.Tick);
+}
+
 uint64_t InterpolationSystem::GetPlaybackTick(const InterpolationComponent& acInterpolationComponent) noexcept
 {
     const double cTick = acInterpolationComponent.Clock.GetRenderTick();

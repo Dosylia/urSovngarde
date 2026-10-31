@@ -1,13 +1,12 @@
-# Another player's projectile spell on this player: the replayed projectile decides whether it hit, the caster's report how much.
+# Another player's spell on this player: what counts is what the caster's game saw, as for a sword.
 #
 #   python Tools\VR\live-check.py live-pvp-projectile
-#   python Tools\VR\live-check.py --expect-fail live-pvp-projectile     on a build without the fix: must be RED
 #
-# The bot's "launch" sends a Fireball (spell 1C789, 40 fire damage, projectile 10FBED) as a caster's game does, so the game replays it from the bot's copy.
-# Its "effect" is the caster's report of the same spell: the spell, its magnitude, and how strong the caster's perks and difficulty made it.
-# On an NPC that Fireball does 40 times the game's multiplier for hits by the player, plus a burn; a player takes the same, not the far higher multiplier for hits on the player.
-# With the rig's difficulty (0.6 by the player, 3 on the player) that is 24 and a burn of about 6.
-# A run counts only when (REQUIRE): each launch was replayed here, so the game had a projectile to decide with.
+# The bot's "launch" sends a Fireball (spell 1C789, projectile 10FBED) as a caster's game does, so the game replays it from the bot's copy.
+# That replay is only seen: its damage does not count here.
+# The bot's "hit ... spell" is the caster's game sending the hit, with no tick, so no weapon can block it.
+# This checks the defender's half only. The bot does not aim, cast or carry a pose, so it says nothing of what a real second game does.
+# A run counts only when (REQUIRE): the launch was replayed here.
 log live pvp projectile
 waitfor connected 45
 expect known me
@@ -17,49 +16,22 @@ infront 300
 wait 3
 wait 2
 
-log -- the replayed projectile hits, and no report comes: the caster's game saw it miss
+log -- the replayed projectile hits, and the caster's game sends nothing: it saw it miss
 log CHECK player mark
 wait 1
 launch 10FBED 1C789
 wait 7
 log REQUIRE logged Remote projectile launched: shooter \w+, base 10FBED, weapon 0, ammo 0, spell 1C789, handle true
-log CHECK player dropped 30
+log CHECK player dropped 0
 log CHECK bot absent Effect 1CEA1 of spell 1C789 applied to \w+ by
 
-log -- the replayed projectile hits, and the caster's report says their perks made it half as strong again: 0.9 with the difficulty
-log CHECK player mark
-wait 1
-launch 10FBED 1C789
-effect other 1C789 1CEA1 40 0.9
-wait 8
-log CHECK player dropped 42
-
-log -- the projectile flies past the player, and the caster's game reports a hit: the player's game decides
+log -- the projectile flies past the player, and the caster's game saw a hit: it counts
 log CHECK player mark
 wait 1
 launch 10FBED 1C789 miss
-effect other 1C789 1CEA1 40 0.9
-wait 8
-log CHECK player dropped 0
-log CHECK logged PvP: 1 hit\(s\) another player's game reported not taken
-
-log -- this game is paused: no projectile can be made here, so the caster's report is the hit
-log CHECK player mark
-wait 1
-log DO menu 5 Journal Menu
-wait 2
-launch 10FBED 1C789
-effect other 1C789 1CEA1 40 0.9
-wait 6
-log CHECK logged Remote projectile from \w+ not launched: this game is paused
+hit other -36 spell
+wait 4
 log CHECK player dropped 36
-
-log -- a frost spell, a dual value modifier: its damage counts as a single one's does
-log CHECK player mark
-wait 1
-launch 2F774 2B96C
-wait 7
-log CHECK player dropped 12
 
 log -- a launch whose forms this game cannot name is not made
 launch 10FBED 1C789 empty

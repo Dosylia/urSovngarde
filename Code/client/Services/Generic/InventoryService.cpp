@@ -387,6 +387,9 @@ void InventoryService::RunWeaponStateUpdates() noexcept
     {
         const auto& formIdComponent = view.get<FormIdComponent>(entity);
         Actor* const pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
+        // Gone from the game, for instance in a load, before discovery has noticed.
+        if (!pActor)
+            continue;
         auto& localComponent = view.get<LocalComponent>(entity);
 
         bool isWeaponDrawn = pActor->actorState.IsWeaponDrawn();

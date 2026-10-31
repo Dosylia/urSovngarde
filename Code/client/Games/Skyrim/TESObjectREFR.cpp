@@ -1185,6 +1185,7 @@ TP_MAKE_THISCALL(HookRemoveInventoryItem, TESObjectREFR, BSPointerHandle<TESObje
     // The player dropping an item from the inventory comes here, as RemoveItem with the "dropping" reason.
     // It does not pass through Actor::DropObject, the only other place drops are announced to the other players.
     const bool cOwnDrop = aReason == ITEM_REMOVE_REASON::kDropping && !ScopedInventoryOverride::IsOverriden() && apThis == PlayerCharacter::Get();
+    bool takenOffBody = false;
     Inventory::Entry dropped{};
 
     if (!ScopedInventoryOverride::IsOverriden())
@@ -1213,6 +1214,10 @@ TP_MAKE_THISCALL(HookRemoveInventoryItem, TESObjectREFR, BSPointerHandle<TESObje
             event.ServerId = cTaken->ServerId;
             event.OwnershipEpoch = cTaken->OwnershipEpoch;
             World::Get().GetRunner().Trigger(std::move(event));
+            takenOffBody = true;
+            // What lies in the world is worn by nobody.
+            dropped.ExtraWorn = false;
+            dropped.ExtraWornLeft = false;
         }
         else
             QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apMoveToRef);
@@ -1222,7 +1227,7 @@ TP_MAKE_THISCALL(HookRemoveInventoryItem, TESObjectREFR, BSPointerHandle<TESObje
 
     ScopedEquipOverride _;
 
-    if (!cOwnDrop)
+    if (!cOwnDrop && !takenOffBody)
         return TiltedPhoques::ThisCall(RealRemoveInventoryItem, apThis, apResult, apItem, aCount, aReason, apExtraList, apMoveToRef, apDropLoc, apRotate);
 
     // Held while the game drops it, so a DropObject hook on the way neither re-announces the drop nor queues the change twice.

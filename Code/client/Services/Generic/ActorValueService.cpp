@@ -71,6 +71,25 @@ static void SayNpcCopyKeptUp(Actor* apActor, float aHealth) noexcept
         spdlog::info("Death sync: NPC copy {:X} kept at {:.0f} health instead of {:.0f}; its owner's game decides whether it dies", apActor->formID, kNpcCopyHealthFloor, aHealth);
 }
 
+// Another player's spell on this player, summed per second: a beam's hits are small, and come four times a second.
+static void SaySpellHits(const uint32_t aPlayerId, const float aDamage, const float aHealth) noexcept
+{
+    static float s_damage = 0.f;
+    static uint32_t s_hits = 0;
+    static std::chrono::steady_clock::time_point s_since = std::chrono::steady_clock::now();
+
+    s_damage += aDamage;
+    ++s_hits;
+    if (const auto cNow = std::chrono::steady_clock::now(); cNow - s_since >= 1s)
+    {
+        spdlog::info("PvP: spell hits from player {}: {} hit(s), {:.0f} damage in {} ms; health now {:.0f}", aPlayerId, s_hits, s_damage,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(cNow - s_since).count(), aHealth);
+        s_damage = 0.f;
+        s_hits = 0;
+        s_since = cNow;
+    }
+}
+
 // The form id of player aPlayerId's copy in this game, or 0 when it has none.
 static uint32_t PlayerCopyFormId(uint32_t aPlayerId) noexcept
 {
@@ -274,17 +293,18 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
 
     if (acEvent.DeltaHealth > -1.0f && acEvent.DeltaHealth < 1.0f)
     {
-        if (m_smallHealthChanges.find(serverId) == m_smallHealthChanges.end())
-            m_smallHealthChanges[serverId] = acEvent.DeltaHealth;
+        auto& smallChanges = acEvent.FromSpell ? m_smallSpellChanges : m_smallHealthChanges;
+        if (smallChanges.find(serverId) == smallChanges.end())
+            smallChanges[serverId] = acEvent.DeltaHealth;
         else
-            m_smallHealthChanges[serverId] += acEvent.DeltaHealth;
+            smallChanges[serverId] += acEvent.DeltaHealth;
         return;
     }
 
     RequestHealthChangeBroadcast requestHealthChange;
     requestHealthChange.Id = serverId;
     requestHealthChange.DeltaHealth = acEvent.DeltaHealth;
-    requestHealthChange.Tick = m_transport.GetClock().GetCurrentTick();
+    requestHealthChange.Tick = acEvent.FromSpell ? 0 : m_transport.GetClock().GetCurrentTick();
 
     m_transport.Send(requestHealthChange);
 
@@ -318,6 +338,17 @@ void ActorValueService::RunSmallHealthUpdates() noexcept
 
         m_smallHealthChanges.clear();
     }
+
+    for (auto& value : m_smallSpellChanges)
+    {
+        RequestHealthChangeBroadcast requestHealthChange;
+        requestHealthChange.Id = value.first;
+        requestHealthChange.DeltaHealth = value.second;
+
+        m_transport.Send(requestHealthChange);
+    }
+
+    m_smallSpellChanges.clear();
 }
 
 void ActorValueService::RunDeathStateUpdates() noexcept
@@ -447,7 +478,8 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
 {
 #ifdef SKYRIMVR
     // Another player's hit on this player waits for the defender's rule (RunHeldHits).
-    if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId)
+    // A spell's hit has no tick and goes straight on: no weapon can block it, and it is not an arrow's.
+    if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId && acMessage.Tick)
     {
         Actor* pActor = Utils::GetByServerId<Actor>(acMessage.Id);
         if (pActor && pActor == PlayerCharacter::Get())
@@ -461,10 +493,7 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
                              acMessage.AttackerPlayerId);
                 return;
             }
-            NotifyHealthChangeBroadcast held = acMessage;
-            if (!held.Tick)
-                held.Tick = m_transport.GetClock().GetCurrentTick();
-            m_heldHits.push_back(held);
+            m_heldHits.push_back(acMessage);
             return;
         }
     }
@@ -506,6 +535,9 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
         DeathCause::RecordPlayerHit(acMessage.AttackerPlayerId);
 
     const float health = pActor->GetActorValue(ActorValueInfo::kHealth);
+
+    if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId && !acMessage.Tick && pActor == PlayerCharacter::Get())
+        SaySpellHits(acMessage.AttackerPlayerId, -acMessage.DeltaHealth, health);
 
     // Another player's blow on an actor other than this player: what it did here, so that one that never kills can be told apart.
     if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId && pActor != PlayerCharacter::Get())

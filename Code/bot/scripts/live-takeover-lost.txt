@@ -1,0 +1,60 @@
+# What a game does with an NPC it loses while that NPC walks: does its copy hold a stride?
+#
+#   python Tools\VR\live-check.py live-takeover-lost
+#
+# On c382599 it did not: she stood, her feet moving 9 units in 5 s, where an NPC gained mid-walk moved its by 46.
+# The game's own Lydia (A2C94, a reference of Skyrim.esm) follows the walking player by her AI, and the bot claims her mid-walk.
+# Her teammate flag goes just before the claim, so she goes as a plain NPC and is not asked back.
+# The bot then has her stand, sending back what the game itself reported while she stood: real variables, at the real pace, and no VR pose.
+# A replay starts from the bot's own place, so the bot waits on the road where she will be at the claim: a real new owner has her where she is.
+# `replay` holds the bot's script until it ends, so what happens during it is queued for the driver first.
+# It is judged on her legs, read from the game. Run Tools\VR\takeover-probe.py beside it for her speed and position over time.
+log live takeover lost
+waitfor connected 45
+expect known me
+waitfor known other 40
+ownership accept
+stay
+wait 5
+log DO god on
+
+log -- the game's Lydia, beside the player
+log DO papyrus ObjectReference MoveTo A2C94 14 f:120 f:0 f:-10 b:false
+waitfor known ref:A2C94 40
+wait 6
+log REQUIRE ref A2C94 near player 400
+
+log -- the bot waits ahead on the road; naming her there only sets where a replay starts, and she stays the game's
+teleport 140070 -32550
+wait 1
+npc A2C94
+wait 2
+log REQUIRE bot logged NPC registered as actor \w+ \(owner no\)
+
+log -- the bot records her standing, as the game reports it
+capture ref:A2C94 6
+wait 1
+log REQUIRE bot logged Captured \d+ updates of
+
+log -- the player walks up the road, and her AI follows
+log DO mark went ref A2C94
+log DO key w 10000
+wait 3.5
+log REQUIRE moved went atleast 300
+log REQUIRE ref A2C94 feet moving 1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+wait 1.5
+
+log -- the bot takes her mid-walk, and has her stand
+claim ref:A2C94 follower
+wait 1
+log DO sleep 4
+log CHECK ref A2C94 feet still 5 15
+replay npc 4 noactions
+log REQUIRE bot logged Actor \w+ is now player \d+'s at epoch \d+ -- that is us
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

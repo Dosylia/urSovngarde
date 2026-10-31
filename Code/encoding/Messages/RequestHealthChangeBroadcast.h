@@ -21,6 +21,6 @@ struct RequestHealthChangeBroadcast final : ClientMessage
 
     uint32_t Id;
     float DeltaHealth;
-    //! When it happened in the sender's game, on the server's clock (TransportService::GetClock); 0 when not known.
+    //! When it happened in the sender's game, on the server's clock (TransportService::GetClock); 0 for a spell's hit or tick, which no weapon can block.
     uint64_t Tick{};
 };

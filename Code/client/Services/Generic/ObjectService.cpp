@@ -533,6 +533,8 @@ void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept
     }
 
     const auto* const pObject = Cast<TESObjectREFR>(TESForm::GetById(acEvent.FormId));
+    if (!pObject)
+        return;
 
     TESObjectCELL* pCell = pObject->GetParentCellEx();
     if (!pCell)

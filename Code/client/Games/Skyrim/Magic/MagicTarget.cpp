@@ -21,7 +21,6 @@
 #include <Forms/SpellItem.h>
 #include <Forms/EnchantmentItem.h>
 #include <Forms/ActorValueInfo.h>
-#include <Games/References.h>
 
 TP_THIS_FUNCTION(TAddTarget, bool, MagicTarget, MagicTarget::AddTargetData& arData);
 TP_THIS_FUNCTION(TCheckAddEffectTargetData, bool, MagicTarget::AddTargetData, void* arArgs, float afResistance);
@@ -65,78 +64,13 @@ static bool DamagesHealth(EffectItem* apEffect) noexcept
     return cModifiesValue && pSetting->primaryActorValue == ActorValueInfo::kHealth && (pSetting->flags & cDetrimental) != 0;
 }
 
-// The effect takes health from its target, whether it gives it to its caster or not.
-static bool LowersHealth(EffectItem* apEffect) noexcept
-{
-    constexpr uint32_t cDetrimental = 0x4;
-
-    if (DamagesHealth(apEffect))
-        return true;
-
-    if (!apEffect || !apEffect->pEffectSetting)
-        return false;
-
-    const EffectSetting* pSetting = apEffect->pEffectSetting;
-    return pSetting->eArchetype == EffectArchetypes::ArchetypeID::kAbsorb && pSetting->primaryActorValue == ActorValueInfo::kHealth && (pSetting->flags & cDetrimental) != 0;
-}
-
-bool MagicTarget::IsSaneCasterFactor(const float aFactor) noexcept
-{
-    constexpr float cMostPerkFactor = 10.f;
-    return std::isfinite(aFactor) && aFactor >= 0.f && aFactor <= cMostPerkFactor;
-}
-
-// A concentration spell or staff is decided and done by the beam replayed in the other game, so its caster has nothing to report.
-static bool IsConcentration(MagicItem* apSpell) noexcept
-{
-    if (const SpellItem* pSpell = Cast<SpellItem>(apSpell))
-        return pSpell->eCastingType == MagicSystem::CastingType::CONCENTRATION;
-
-    const EnchantmentItem* pEnchantment = Cast<EnchantmentItem>(apSpell);
-    return pEnchantment && pEnchantment->eCastingType == MagicSystem::CastingType::CONCENTRATION;
-}
-
-// How a spell or an enchantment reaches its target.
-static MagicSystem::Delivery DeliveryOf(MagicItem* apSpell) noexcept
-{
-    if (const SpellItem* pSpell = Cast<SpellItem>(apSpell))
-        return pSpell->eDelivery;
-
-    const EnchantmentItem* pEnchantment = Cast<EnchantmentItem>(apSpell);
-    return pEnchantment ? pEnchantment->eDelivery : MagicSystem::DELIVERY_COUNT;
-}
-
-// A power is cast by the copy in the other game too, so unless it is aimed it lands there by itself, and its caster has nothing to report.
-// An aimed power goes across by its projectile, as any aimed spell does.
-static bool LandsByItsCast(MagicItem* apSpell) noexcept
-{
-    using ST = MagicSystem::SpellType;
-
-    if (IsConcentration(apSpell))
-        return true;
-
-    const SpellItem* pSpell = Cast<SpellItem>(apSpell);
-    const bool cPower = pSpell && (pSpell->eSpellType == ST::POWER || pSpell->eSpellType == ST::LESSER_POWER || pSpell->eSpellType == ST::VOICE_POWER);
-    return cPower && pSpell->eDelivery != MagicSystem::AIMED && pSpell->eDelivery != MagicSystem::TARGET_LOCATION;
-}
-
 bool MagicTarget::IsCast(MagicItem* apSpell) noexcept
 {
-    const MagicSystem::Delivery cDelivery = DeliveryOf(apSpell);
-    return Cast<SpellItem>(apSpell) || cDelivery == MagicSystem::AIMED || cDelivery == MagicSystem::TARGET_LOCATION;
-}
+    if (const SpellItem* pSpell = Cast<SpellItem>(apSpell))
+        return pSpell->eDelivery != MagicSystem::TOUCH;
 
-bool MagicTarget::IsReplayedHit(EffectItem* apEffect, MagicItem* apSpell) noexcept
-{
-    if (!DamagesHealth(apEffect) || apEffect->data.iDuration != 0 || IsConcentration(apSpell))
-        return false;
-
-    // A form made at run time means nothing in another game, so no projectile of it is replayed there.
-    if (apSpell->IsTemporary() || apEffect->pEffectSetting->IsTemporary())
-        return false;
-
-    const MagicSystem::Delivery cDelivery = DeliveryOf(apSpell);
-    return cDelivery == MagicSystem::AIMED || cDelivery == MagicSystem::TARGET_LOCATION;
+    const EnchantmentItem* pEnchantment = Cast<EnchantmentItem>(apSpell);
+    return pEnchantment && (pEnchantment->eDelivery == MagicSystem::AIMED || pEnchantment->eDelivery == MagicSystem::TARGET_LOCATION);
 }
 
 void MagicTarget::DispelAllSpells(bool aNow) noexcept
@@ -149,7 +83,8 @@ void MagicTarget::DispelAllSpells(bool aNow) noexcept
 bool MagicTarget::AddTarget(AddTargetData& arData, float aCasterPerkFactor, bool aApplyStaminaPerkBonus) noexcept
 {
     // The factor comes from another game: one that no perk could give (not a number, below 0, over 10 times) is not applied.
-    const bool cSane = IsSaneCasterFactor(aCasterPerkFactor);
+    constexpr float cMostPerkFactor = 10.f;
+    const bool cSane = std::isfinite(aCasterPerkFactor) && aCasterPerkFactor >= 0.f && aCasterPerkFactor <= cMostPerkFactor;
     if (!cSane)
     {
         static bool s_said = false;
@@ -239,11 +174,15 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
 
         if (!arData.pSpell->IsHealingSpell() && !arData.pSpell->IsBuffSpell())
         {
-            // A damaging spell on the other player is reported to that player's game, like a sword hit (Actor::HookDamageActor).
-            // It is not applied locally: the other side owns that body.
-            // Only an instant effect that damages health, not the spell's other effects: damage-over-time and concentration effects tick on the other side.
-            if (World::Get().GetServerSettings().PvpEnabled && DamagesHealth(arData.pEffectItem) && arData.pEffectItem->data.iDuration == 0 && !LandsByItsCast(arData.pSpell) &&
-                arData.fMagnitude > 0.f)
+            // A spell's damage runs on the copy as it does on an NPC, with the caster's perks and its burn.
+            // Each of its hits goes to the other game as a health change (Actor::HookDamageActor), and the copy's health stays as it is.
+            if (World::Get().GetServerSettings().PvpEnabled && MagicTarget::IsCast(arData.pSpell) && DamagesHealth(arData.pEffectItem))
+                return TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
+
+            // A damaging spell on the other player is sent as a health change, like a sword hit (Actor::HookDamageActor).
+            // Only the caster's game reliably knows it landed. It is not applied locally: the other side owns that body.
+            // Only an instant effect that damages health, not the spell's other effects: damage-over-time and concentration effects tick on their own.
+            if (World::Get().GetServerSettings().PvpEnabled && DamagesHealth(arData.pEffectItem) && arData.pEffectItem->data.iDuration == 0 && arData.fMagnitude > 0.f)
             {
                 // The caster's perks (Augmented Flames and the like) adjust an effect only as it is made (AdjustForPerks), as on an NPC.
                 // So the effect is made on the copy to take their factor, and left with no magnitude there (live-pvp-spell-perks).
@@ -262,20 +201,10 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
                     return false;
                 }
 
-                // As on an NPC, the caster's difficulty counts too.
-                const float cFactor = GameplayFormulas::CalculateRealDamage(pTargetActor, s_perkFactor, false);
-                spdlog::info("PvP: spell {:X} hit remote player {:X} for {:.0f} (base {:.0f}, the caster's perks {:.2f})", arData.pSpell->formID, pTargetActor->formID, cBase * cFactor,
+                const float cDamage = cBase * s_perkFactor;
+                spdlog::info("PvP: spell {:X} hit remote player {:X} for {:.0f} (base {:.0f}, the caster's perks {:.2f})", arData.pSpell->formID, pTargetActor->formID, cDamage,
                              cBase, s_perkFactor);
-
-                // An aimed spell is reported as itself: the other game's replayed projectile decides whether it hit, and this says how strong it was.
-                // Anything else, a touch or a weapon's strike, is a plain health change, weighed by the defender's rule.
-                if (MagicTarget::IsReplayedHit(arData.pEffectItem, arData.pSpell))
-                {
-                    addTargetEvent.CasterPerkFactor = cFactor;
-                    World::Get().GetRunner().Trigger(addTargetEvent);
-                }
-                else
-                    World::Get().GetRunner().Trigger(HealthChangeEvent(pTargetActor->formID, -cBase * cFactor));
+                World::Get().GetRunner().Trigger(HealthChangeEvent(pTargetActor->formID, -cDamage));
             }
 
             return false;
@@ -313,21 +242,10 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
                 if (arData.pSpell->IsHealingSpell() || arData.pSpell->IsBuffSpell())
                     return false;
 
-                // The projectile or beam replayed here reached this player, so the spell landed.
-                // Its damage counts here (HookDamageActor), so its caster's game is not told of it, or it would report the hit again.
-                // Their report adds their perks to an aimed spell (MagicService).
-                if (MagicTarget::IsCast(arData.pSpell) && LowersHealth(arData.pEffectItem))
-                {
-                    const float cMagnitude = arData.fMagnitude;
-                    const bool cLanded = TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
-
-                    if (cLanded && cMagnitude > 0.f && MagicTarget::IsReplayedHit(arData.pEffectItem, arData.pSpell))
-                        World::Get().GetRunner().Queue(
-                            [cCopy = arData.pCaster->formID, cSpell = arData.pSpell->formID, cEffect = arData.pEffectItem->pEffectSetting->formID,
-                             cAmount = GameplayFormulas::CalculateRealDamage(arData.pCaster, cMagnitude, false)]()
-                            { World::Get().GetMagicService().OnPvpSpellLanded(cCopy, cSpell, cEffect, cAmount); });
-                    return cLanded;
-                }
+                // A spell's damage comes from its caster's game, so this effect is only seen here (HookDamageActor).
+                // That game is not told of it, or it would report the hit again.
+                if (MagicTarget::IsCast(arData.pSpell) && DamagesHealth(arData.pEffectItem))
+                    return TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
             }
         }
 

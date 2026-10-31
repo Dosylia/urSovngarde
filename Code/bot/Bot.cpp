@@ -2156,6 +2156,16 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             const int64_t cOffset = args.size() > 3 ? std::strtoll(args[3].c_str(), nullptr, 10) : 0;
             tick = static_cast<uint64_t>(std::max<int64_t>(1, static_cast<int64_t>(m_firstClashTick) + cOffset));
         }
+        // "spell": a spell's hit, as a caster's game sends it: with no tick, since no weapon can block it.
+        if (args.size() > 2 && args[2] == "spell")
+        {
+            RequestHealthChangeBroadcast request{};
+            request.Id = target;
+            request.DeltaHealth = arg(1, -30.f);
+            SendMsg(request);
+            spdlog::info("Spell hit on {:X} for {:.1f}", target, request.DeltaHealth);
+            return true;
+        }
         SendHit(target, arg(1, -30.f), tick);
         return true;
     }

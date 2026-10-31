@@ -1,4 +1,5 @@
 #include <Games/References.h>
+#include <atomic>
 #include <Games/Skyrim/EquipManager.h>
 #include <AI/AIProcess.h>
 #include <Misc/MiddleProcess.h>
@@ -36,6 +37,7 @@
 #include <Forms/TESRace.h>
 
 #include <Effects/ValueModifierEffect.h>
+#include <Forms/MagicItem.h>
 
 #include <Games/Skyrim/Misc/InventoryEntry.h>
 #include <Games/Skyrim/ExtraData/ExtraCount.h>
@@ -1221,8 +1223,9 @@ bool TP_MAKE_THISCALL(HookSpawnActorInWorld, Actor)
 TP_THIS_FUNCTION(TDamageActor, bool, Actor, float aDamage, Actor* apHitter, bool aKillMove);
 static TDamageActor* RealDamageActor = nullptr;
 
-// While a spell's effect does its damage: it got onto its target through HookAddTarget, so its damage counts.
-static thread_local bool s_spellDamage = false;
+// The spell whose effect is doing its damage right now, or 0.
+// On another player's copy that is the hit sent to their game; on this player, from their copy, it is only seen.
+static thread_local uint32_t s_damagingSpell = 0;
 
 #ifdef SKYRIMVR
 TP_THIS_FUNCTION(THitTarget, void, Actor, Actor* apTarget, void* apProjectile, bool aIsOffhand);
@@ -1266,15 +1269,6 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
 
     const auto* pExHittee = apThis->GetExtension();
 
-    // Another player's spell does to this player what it does to an NPC: the game's multiplier for hits by a player, not the far higher one for hits on the player.
-    if (s_spellDamage && apHitter && pExHittee && pExHittee->IsLocalPlayer())
-    {
-        const auto* pExSpellHitter = apHitter->GetExtension();
-        const float cOnPlayer = GameplayFormulas::CalculateRealDamage(apThis, 1.f, false);
-        if (pExSpellHitter && pExSpellHitter->IsRemotePlayer() && cOnPlayer > 0.f)
-            aDamage *= GameplayFormulas::CalculateRealDamage(apHitter, 1.f, false) / cOnPlayer;
-    }
-
     // Against a party, enemies last longer and hit harder, by how many of its players are near this one.
     // The longer life is dealt as less damage from this player, so no actor value changes and none of it reaches a save.
     // Each game scales only its own player's hits on NPCs and NPCs' hits on its own player; hits between players, and between NPCs, followers included, stay as they are.
@@ -1302,12 +1296,12 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
         }
 
         // Another player's copy hitting this player here.
-        // Their arrows and spells are replayed here, and the replayed projectile's hit decides (the defender's own copy).
-        // Their melee is their game's report, weighed by the defender's rule; their weapon body touching this player here is not a hit.
+        // Their arrows are replayed here, and the replayed arrow's hit decides (the defender's own copy).
+        // Their melee and spells are their game's report; their weapon body touching this player here is not a hit, and their spell's effect here is only seen.
         // Summed per second, because a concentration spell hits each frame and a resting blade touches each second.
         if (const ActorExtension* pHitterExtension = apHitter ? apHitter->GetExtension() : nullptr; pHitterExtension && pHitterExtension->IsRemotePlayer())
         {
-            const bool cRanged = s_spellDamage || PvpProjectiles::Recent(apHitter->formID, glm::distance(glm::vec3(apHitter->position), glm::vec3(apThis->position)));
+            const bool cRanged = !s_damagingSpell && PvpProjectiles::Recent(apHitter->formID, glm::distance(glm::vec3(apHitter->position), glm::vec3(apThis->position)));
             static float s_damage[2]{};
             static uint32_t s_hits[2]{};
             static std::chrono::steady_clock::time_point s_since[2]{std::chrono::steady_clock::now(), std::chrono::steady_clock::now()};
@@ -1318,7 +1312,7 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
             {
                 spdlog::info("PvP: player copy {:X} hit this player here: {} hit(s), {:.0f} damage since the last such line {} ms ago; {}", apHitter->formID, s_hits[cKind],
                              s_damage[cKind], std::chrono::duration_cast<std::chrono::milliseconds>(cNow - s_since[cKind]).count(),
-                             cRanged ? "taken, its projectile decides here" : "not taken, melee is its own game's report");
+                             cRanged ? "taken, its projectile decides here" : "not taken, melee and spells are its own game's report");
                 s_damage[cKind] = 0.f;
                 s_hits[cKind] = 0;
                 s_since[cKind] = cNow;
@@ -1342,14 +1336,15 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
             // The other player's sword is a body in this world (VRBodySync), and PLANCK counts a swing into any such body as a hit.
             // PLANCK stores where the hit landed in the player (+0x6BC, its VR offset) right before this runs.
             // A hit where his weapon body was just touched landed on the weapon, so it is not sent.
+            // A spell's hit is no swing: that point is then an older swing's.
             const auto* pLastHit = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(apHitter) + 0x6BC);
-            if (VRBodySync::IsWeaponTouchAt(glm::vec3{pLastHit[0], pLastHit[1], pLastHit[2]}))
+            if (!s_damagingSpell && VRBodySync::IsWeaponTouchAt(glm::vec3{pLastHit[0], pLastHit[1], pLastHit[2]}))
             {
                 spdlog::info("PvP: a hit of {:.0f} on remote player {:X}'s weapon, not on {:X}; not sent", realDamage, apThis->formID, apThis->formID);
                 return false;
             }
             // The blade stop: the blade that landed it is drawn resting on his, so on neither screen does it reach him.
-            if (VRBodySync::IsBladeStoppedAt(apThis->formID, glm::vec3{pLastHit[0], pLastHit[1], pLastHit[2]}))
+            if (!s_damagingSpell && VRBodySync::IsBladeStoppedAt(apThis->formID, glm::vec3{pLastHit[0], pLastHit[1], pLastHit[2]}))
             {
                 spdlog::info("PvP: a hit of {:.0f} on remote player {:X} by a blade resting on his; not sent", realDamage, apThis->formID);
                 return false;
@@ -1357,7 +1352,26 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
 #endif
             if (realDamage >= 1.f)
                 spdlog::info("PvP: hit remote player {:X} for {:.0f}", apThis->formID, realDamage);
-            World::Get().GetRunner().Trigger(HealthChangeEvent(apThis->formID, -realDamage));
+
+            // Summed per second, because a beam hits each frame.
+            if (s_damagingSpell)
+            {
+                static float s_damage = 0.f;
+                static uint32_t s_hits = 0;
+                static std::chrono::steady_clock::time_point s_since = std::chrono::steady_clock::now();
+                s_damage += realDamage;
+                ++s_hits;
+                if (const auto cNow = std::chrono::steady_clock::now(); cNow - s_since >= std::chrono::seconds(1))
+                {
+                    spdlog::info("PvP: spell {:X} hits on remote player {:X}: {} hit(s), {:.0f} damage in {} ms", s_damagingSpell, apThis->formID, s_hits, s_damage,
+                                 std::chrono::duration_cast<std::chrono::milliseconds>(cNow - s_since).count());
+                    s_damage = 0.f;
+                    s_hits = 0;
+                    s_since = cNow;
+                }
+            }
+
+            World::Get().GetRunner().Trigger(HealthChangeEvent(apThis->formID, -realDamage, s_damagingSpell != 0));
         }
 
         // Never "killed", or the game would put the copy down here on its stale health while the real player is fine.
@@ -1429,9 +1443,9 @@ void TP_MAKE_THISCALL(HookApplyActorEffect, ActiveEffect, Actor* apTarget, float
         }
     }
 
-    s_spellDamage = MagicTarget::IsCast(apThis->pSpell);
+    s_damagingSpell = MagicTarget::IsCast(apThis->pSpell) ? apThis->pSpell->formID : 0;
     TiltedPhoques::ThisCall(RealApplyActorEffect, apThis, apTarget, aEffectValue, unk1);
-    s_spellDamage = false;
+    s_damagingSpell = 0;
 }
 
 TP_THIS_FUNCTION(TRegenAttributes, void*, Actor, int aId, float regenValue);
@@ -1683,6 +1697,19 @@ char TP_MAKE_THISCALL(HookActorProcess, Actor, float aDeltaTime)
     // So is an NPC copy knocked to the floor: its get-up runs here, once its ragdoll has come to rest.
     const ActorExtension* pExtension = apThis->GetExtension();
     const bool cKnockedNpc = pExtension && !pExtension->IsRemotePlayer() && apThis->actorState.IsKnockedDown();
+
+    // TEMPORARY: whether this hook ever sees an actor, or only the address of a local smart pointer, and whether it ever skips.
+    static std::atomic<uint32_t> s_calls{0};
+    static std::atomic<uint32_t> s_onStack{0};
+    static std::atomic<uint32_t> s_actors{0};
+    static std::atomic<uint32_t> s_skips{0};
+    const auto cFromHere = reinterpret_cast<intptr_t>(apThis) - reinterpret_cast<intptr_t>(&pExtension);
+    s_onStack += cFromHere > -0x10000 && cFromHere < 0x10000 ? 1 : 0;
+    s_actors += pExtension ? 1 : 0;
+    s_skips += pExtension && pExtension->IsRemote() && !apThis->actorState.IsDeadOrDying() && !apThis->actorState.IsBleedingOut() && !cKnockedNpc ? 1 : 0;
+    if (const uint32_t cCalls = ++s_calls; cCalls <= 5 || cCalls % 1000 == 0)
+        spdlog::info("ActorProcessDiag: of {} calls, {} had their argument on the stack, {} saw an actor, {} skipped it", cCalls, s_onStack.load(), s_actors.load(), s_skips.load());
+
     if (pExtension && pExtension->IsRemote() && !apThis->actorState.IsDeadOrDying() && !apThis->actorState.IsBleedingOut() && !cKnockedNpc)
     {
         if (apThis->currentProcess)

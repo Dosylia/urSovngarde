@@ -125,6 +125,108 @@ struct FollowerPasses
 TiltedPhoques::Map<uint32_t, FollowerPasses> s_followerPasses;
 std::unordered_set<uint32_t> s_sharedFollowers;
 
+// NPCs gained while their owner's reports had them moving.
+// This game's AI shows what it wants a moment later: a speed if it walks them on, none if it has them standing.
+// Standing, it never had them moving, so it never stops the legs, and they would hold a stride until its next move.
+struct GainedMoving
+{
+    uint32_t FormId{};
+    float CopySpeed{};
+    std::chrono::steady_clock::time_point At{};
+};
+TiltedPhoques::Vector<GainedMoving> s_gainedMoving;
+
+void RunGainedMoving() noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = s_gainedMoving.begin(); it != s_gainedMoving.end();)
+    {
+        if (cNow < it->At)
+        {
+            ++it;
+            continue;
+        }
+
+        Actor* pActor = Cast<Actor>(TESForm::GetById(it->FormId));
+        // Given away again by now, or killed, thrown or mounted: its legs are not this stop's to touch.
+        const bool cStillOurs = pActor && pActor->GetNiNode() && !pActor->GetExtension()->IsRemote();
+        if (cStillOurs && !pActor->IsMount() && InterpolationSystem::OnFoot(pActor) && !pActor->actorState.IsDeadOrDying() && !pActor->actorState.IsBleedingOut() &&
+            !pActor->actorState.IsKnockedDown())
+        {
+            const float cSpeed = InterpolationSystem::FootSpeed(pActor);
+            if (cSpeed > 1.f)
+                spdlog::info("Takeover: NPC {:X} was moving as a copy here (speed {:.0f}), and this game's AI walks it on (speed {:.0f})", pActor->formID, it->CopySpeed, cSpeed);
+            else
+            {
+                static BSFixedString s_moveStop("moveStop");
+                const bool cTaken = pActor->SendAnimationEvent(&s_moveStop);
+                spdlog::info("Takeover: NPC {:X} was moving as a copy here (speed {:.0f}), and this game's AI has it standing; stopped ('moveStop' {})", pActor->formID,
+                             it->CopySpeed, cTaken ? "taken" : "not taken");
+            }
+        }
+        it = s_gainedMoving.erase(it);
+    }
+}
+
+// TEMPORARY: what a living NPC carries over from being a copy, read as it is gained and 3 s later.
+// In flags1, bits 0-3 are its moving directions and bits 6-8 walking, running and sprinting.
+// In flags2, bits 5-7 are its weapon: 0 sheathed, 3 drawn, 4 wanting to sheathe, 5 sheathing.
+struct TakeoverWatch
+{
+    uint32_t FormId{};
+    std::chrono::steady_clock::time_point At{};
+};
+TiltedPhoques::Vector<TakeoverWatch> s_takeoverWatches;
+
+void LogTakeoverState(Actor* apActor, const char* acpWhen) noexcept
+{
+    static BSFixedString s_speed("Speed");
+    static BSFixedString s_state("iState");
+    float graphSpeed = 0.f;
+    uint32_t graphState = 0;
+    apActor->animationGraphHolder.GetVariableFloat(&s_speed, &graphSpeed);
+    apActor->animationGraphHolder.GetVariableInt(&s_state, &graphState);
+    const uint32_t cFlags2 = apActor->actorState.flags2;
+    spdlog::info("TakeoverDiag: NPC {:X} {}: flags1 {:#x}, flags2 {:#x}, weapon {}, speed {:.0f}, graph speed {:.0f}, graph state {}", apActor->formID, acpWhen,
+                 apActor->actorState.flags1, cFlags2, (cFlags2 >> 5) & 7, apActor->GetSpeed(), graphSpeed, graphState);
+}
+
+// TEMPORARY: the second reading of each gained NPC, and a line each time an NPC this game runs starts or stops swimming.
+void RunTakeoverDiag(World& aWorld) noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = s_takeoverWatches.begin(); it != s_takeoverWatches.end();)
+    {
+        if (cNow < it->At)
+        {
+            ++it;
+            continue;
+        }
+        if (Actor* pActor = Cast<Actor>(TESForm::GetById(it->FormId)))
+            LogTakeoverState(pActor, "3 s after the gain");
+        it = s_takeoverWatches.erase(it);
+    }
+
+    static std::chrono::steady_clock::time_point s_nextSwimCheck;
+    if (cNow < s_nextSwimCheck)
+        return;
+    s_nextSwimCheck = cNow + std::chrono::seconds(1);
+
+    static TiltedPhoques::Map<uint32_t, bool> s_swimming;
+    auto view = aWorld.view<FormIdComponent, LocalComponent>();
+    for (const auto cEntity : view)
+    {
+        const Actor* pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id));
+        if (!pActor || pActor == PlayerCharacter::Get())
+            continue;
+        const bool cSwimming = pActor->actorState.IsSwimming();
+        const auto it = s_swimming.find(pActor->formID);
+        if (cSwimming != (it != s_swimming.end() && it->second))
+            spdlog::info("SwimDiag: own NPC {:X} {} swimming here at height {:.0f}", pActor->formID, cSwimming ? "starts" : "stops", pActor->position.z);
+        s_swimming[pActor->formID] = cSwimming;
+    }
+}
+
 // References standing here whose teleport was refused, and when.
 // The server sends that teleport right before it takes a character through a door and out of this player's view.
 TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_teleportsRefused;
@@ -930,8 +1032,8 @@ void CharacterService::OnActorAdded(const ActorAddedEvent& acEvent) noexcept
 
     if (it != std::end(view))
     {
-        Actor* pActor = Cast<Actor>(TESForm::GetById(acEvent.FormId));
-        pActor->GetExtension()->SetRemote(true);
+        if (Actor* pActor = Cast<Actor>(TESForm::GetById(acEvent.FormId)))
+            pActor->GetExtension()->SetRemote(true);
 
         entity = *it;
     }
@@ -1018,6 +1120,8 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     RunGhostChecks();
     SpawnReveal::Tick();
     RunFollowerReclaims();
+    RunGainedMoving();
+    RunTakeoverDiag(m_world);
 
     {
         PerfScope perfScope("CharacterService::RunFactionsUpdates");
@@ -1368,15 +1472,10 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         else if (!IsPlaceLoadedHere(m_world, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position) && (!IsActorLoadedHere(pActor) || acMessage.WorldSpaceId))
         {
             // A reference its owner took out of this interior goes with it, or it would stay here frozen.
-            // So does one its owner just took through a gate, whose teleport was refused here.
             // The world space's persistent cell takes it with no cell read.
             auto* pWorldSpace = Cast<TESWorldSpace>(TESForm::GetById(m_world.GetModSystem().GetGameId(acMessage.WorldSpaceId)));
-            const auto cRefused = s_teleportsRefused.find(pActor->formID);
-            const bool cThroughGate = cRefused != s_teleportsRefused.end() && std::chrono::steady_clock::now() - cRefused->second < std::chrono::seconds(10) &&
-                                      pActor->GetWorldSpace() != pWorldSpace;
-            if (cRefused != s_teleportsRefused.end())
-                s_teleportsRefused.erase(cRefused);
-            TESObjectCELL* pOutdoors = pWorldSpace && IsActorLoadedHere(pActor) && !pActor->IsTemporary() && (!pActor->GetWorldSpace() || cThroughGate) ? pWorldSpace->GetPersistentCell() : nullptr;
+            s_teleportsRefused.erase(pActor->formID);
+            TESObjectCELL* pOutdoors = pWorldSpace && IsActorLoadedHere(pActor) && !pActor->IsTemporary() && !pActor->GetWorldSpace() ? pWorldSpace->GetPersistentCell() : nullptr;
             if (pOutdoors && pOutdoors->worldspace == pWorldSpace)
             {
                 DiscoveryService::NoteMovedHere(pActor->formID);
@@ -1944,6 +2043,21 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
             spdlog::warn("Declined ownership of actor {:X} at epoch {} because the actor is not ready", acMessage.ServerId, acMessage.OwnershipEpoch);
             DeclineOwnership(acMessage.ServerId, acMessage.OwnershipEpoch);
             return;
+        }
+
+        // By its owner's reports, not its graph: this game's AI writes its own speed there, even on a copy.
+        // A slow walker reports about 60 units a second, and a standing body none.
+        constexpr float cMovingSpeed = 20.f;
+        const auto* pCopyInterpolation = m_world.try_get<InterpolationComponent>(cEntity);
+        const bool cOwnGraphCopy = pActor->GetExtension()->IsRemote() && pCopyInterpolation && !pCopyInterpolation->ForeignGraph;
+        if (const float cCopySpeed = cOwnGraphCopy ? InterpolationSystem::ReportedSpeed(pActor->formID, *pCopyInterpolation) : 0.f; cCopySpeed > cMovingSpeed)
+            s_gainedMoving.push_back({pActor->formID, cCopySpeed, std::chrono::steady_clock::now() + std::chrono::milliseconds(500)});
+
+        // TEMPORARY: see LogTakeoverState.
+        if (!pActor->IsDead())
+        {
+            LogTakeoverState(pActor, "as it is gained");
+            s_takeoverWatches.push_back({pActor->formID, std::chrono::steady_clock::now() + std::chrono::seconds(3)});
         }
 
         // Reconcile while hooks still treat the actor as remote/non-authoritative.
@@ -2571,9 +2685,9 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
         spdlog::info("Teleport of actor {:X} not made: {} (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))", pActor->formID,
                      cActorLoaded ? "it goes out beyond the loaded area here" : "it is not loaded here, nor is the place it goes to", acMessage.WorldSpaceId.BaseId,
                      acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
-        // Only out of this interior or world space, to one this game has: the assignment moves nothing else, and a copy left here unmoved would stand frozen.
+        // Only from an interior, to a world this game has: the assignment moves nothing else, and a copy left here unmoved would stand frozen.
         const auto* pTargetWorld = Cast<TESWorldSpace>(TESForm::GetById(modSystem.GetGameId(acMessage.WorldSpaceId)));
-        if (cActorLoaded && pTargetWorld && pTargetWorld->GetPersistentCell() && pActor->GetWorldSpace() != pTargetWorld)
+        if (cActorLoaded && !pActor->GetWorldSpace() && pTargetWorld && pTargetWorld->GetPersistentCell())
         {
             if (s_teleportsRefused.size() > 256)
                 s_teleportsRefused.clear();
@@ -3223,6 +3337,10 @@ void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickI
         m_ownerLeveledPicks.clear();
     m_ownerLeveledPicks[apActor->formID] = cPickId;
 
+    // A body keeps the look it has: changing its pick disables and rebuilds it, so it would vanish from under a hand that takes it.
+    if (apActor->IsDead() && apActor->GetNiNode() && m_pendingLeveledConforms.find(apActor->formID) == m_pendingLeveledConforms.end())
+        return;
+
     // Even a pick matching the current base must supersede pending work.
     if (pBase->IsTemporary() && localPickId == cPickId && m_pendingLeveledConforms.find(apActor->formID) == m_pendingLeveledConforms.end())
     {
@@ -3299,7 +3417,8 @@ void CharacterService::ProcessLeveledConforms() noexcept
                 continue;
             }
             const TESNPC* pLocalPick = pActor->GetLeveledPick();
-            if (pLocalPick && pLocalPick->formID != it->second && m_pendingLeveledConforms.find(it->first) == m_pendingLeveledConforms.end())
+            // A body keeps the look it has (ApplyLeveledNpcPick).
+            if (pLocalPick && pLocalPick->formID != it->second && !pActor->IsDead() && m_pendingLeveledConforms.find(it->first) == m_pendingLeveledConforms.end())
             {
                 // Twice at most per actor, or a reconciliation that never matches would rebuild the creature every second.
                 static std::unordered_map<uint32_t, int> s_rerolls;

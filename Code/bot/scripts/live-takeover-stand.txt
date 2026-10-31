@@ -1,0 +1,64 @@
+# The control for live-takeover-walk: the same recording and the same claim, but the copy has stopped first.
+# It must pass with and without the stop at the gain: an NPC that stood gets nothing.
+#
+#   python Tools\VR\live-check.py live-takeover-stand
+#
+# Run Tools\VR\takeover-probe.py beside it.
+party lead
+log live takeover stand
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+stay
+log DO god on
+
+log -- the real player walks, and the bot records it to replay as its NPC
+log DO mark walked player
+log DO key w 6000
+capture other 8
+wait 2
+log REQUIRE moved walked atleast 100
+log REQUIRE bot logged Captured action names of \w+: \S
+
+log -- the bot's Ralof where the walk began: this game's own Ralof is the copy
+npc 2BF9E
+waitfor owned == 1 20
+wait 6
+log REQUIRE ref 2BF9E near player 2500
+
+log -- he walks towards the player and stops, with the headset on him
+log DO look at npc 500 hold 60000
+wait 2
+log REQUIRE view npc
+replay npc 1
+wait 4
+log SHOT copy-stopped of npc
+
+log -- the game asks for him, standing
+log DO papyrus Actor SetPlayerTeammate npc b:true b:true
+wait 3
+log SHOT gained-3s of npc
+wait 5
+log REQUIRE logged Gained ownership of actor \w+ \(form 2BF9E\)
+log SHOT gained-8s of npc
+log -- he stood as a copy, so nothing changes: no stop, and his legs stand
+log CHECK npc feet still 5 15
+log CHECK absent Takeover: NPC \w+ was moving
+wait 12
+log SHOT gained-20s of npc
+wait 2
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

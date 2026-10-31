@@ -19,15 +19,15 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ### Next play session
 
-All of this needs build c382599 or later, on both players and the server (a protocol change: an older client cannot join). Do what you can, in any order. Each line says what
+All of this needs build 4716f50 or later, on both players and the server (a protocol change: an older client cannot join). Do what you can, in any order. Each line says what
 to do, what you should see, and what to read in the log if you don't. "It looked fine" is a result too: say so.
 
 Before you start: don't play the vanilla Helgen intro together. Player 2 stays tied, because Ralof is a copy in that game and
 his scene never finishes. Use an alternate start, or connect after the intro.
 
-- **PvP on, spells and arrows.** Hit each other with fire, frost and shock spells and with arrows, and dodge some. A spell takes
-  about what it takes from an NPC, once. An arrow takes one hit's health, not two. A dodged one takes nothing.
-  If not: `PvP: spell X of player N: their report says A, the hit here did B`, `Remote projectile from X not launched`.
+- **PvP on, spells and arrows.** Hit each other with fire, frost and shock spells, aimed ones and beams, and with arrows. A spell that
+  hits on the caster's screen takes about what it takes from an NPC, once, even if it looked like a miss on yours. An arrow takes one
+  hit's health, not two, and a dodged arrow takes nothing. If not: `PvP: spell X hits on remote player` in the caster's log, `PvP: spell hits from player` in the other's.
 - **A fight with NPCs, then look at the bodies.** Bodies stay put while you look at them; one in the wrong place moves when you
   look away. No NPC lies dead on one screen while it fights on the other, and a dead one never stays on its feet. A named townsperson the other
   player kills dies in both games, and any bounty is theirs.
@@ -47,9 +47,22 @@ his scene never finishes. Use an alternate start, or connect after the intro.
 - **An Ice Wraith.** Both PCs need its behaviour folder, `SkyrimTogetherRebornBehaviors/IceWraith`. Fight one with both players
   near. Its copy moves as it does in its owner's game and does not slide.
   If not: `SlideDiag`, `Ghost: reference X was enabled again`.
-- **A follower through a city gate.** One player takes a follower through a gate while the other stays outside. She is gone for the
-  player left outside. The same for a follower taken out of an inn.
+- **A follower out of an inn.** One player takes a follower out of an inn while the other stays inside. She is gone for the
+  player left inside. (Through a city gate she stays behind for the other player, as on v1.9.7.)
   If not: `Assignment: X left this place with its owner`.
+- **An NPC handed over mid-walk (needs the next build).** Stay in a town with people walking about, and let one of you go through a
+  door and come back: that hands NPCs over. No NPC stands with one leg forward, rocking, on either screen, and none walks on the spot
+  or slides. Say which screen if one does. If not: `Takeover: NPC X was moving as a copy here`, `TakeoverDiag:`, `SwimDiag: own NPC`.
+- **A weapon taken by hand off a body the other game runs (needs the next build).** Do it with the other player watching, holding the same
+  kind of weapon if you can. They see the item once, in your hand, and it goes when you stow it or lies where you let it fall. It
+  is gone from the body, and their own weapon stays in their hand.
+  If not: `BodyTake: X xN taken off Y`, then `DroppedItem: dropped X`.
+
+- **Walk up to NPCs in a town, moving in and out through a door or gate.** An NPC that changes hands mid-walk does not freeze in a stride. Note
+  the time of any NPC sliding, crouching or swimming: those did not reproduce and are still unexplained.
+  If not: `Takeover: NPC X was moving as a copy here`, `TakeoverDiag: NPC X as it is gained`.
+- **Pull an item off a body the other player's game runs,** then drop something from your inventory. Both show for the other player.
+  If not: `BodyTake: X xN taken off Y`, `Dropped item`.
 
 If there is time:
 
@@ -69,6 +82,65 @@ If there is time:
 After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:`, `Connection:`, `VRBodySync: actor X body --`, and
 `logs/process-end.log` if a game vanishes.
 
+- [!] **An NPC taken over while it walks** (play session 2026-10-31 07:55 on c382599)
+      Players saw NPCs frozen, sliding, and swimming on snow. All three reports were on player 1, just after that game gained the NPC:
+      claims at 08:08:28 and 08:08:53, a leader assignment at 08:11:38. That session had 117 gains in 22 min, against 43 in 25 on
+      10-30. Nothing in c382599 was found that causes it: `VR_HISTORY.md` has the same symptom around 10-04. Nothing resets a graph
+      or `actorState` at a gain (`SetRemote(false)` only clears a bit).
+      - Rig, deployed c382599, read from the game's own actor. The bot's Ralof walks as the game's copy, from a player's recording,
+        and the game claims him, through the follower path because `replay` holds the bot's script:
+        - gained mid-walk, 2 runs of 2: he stops dead within 0.6 s and holds a stride, feet rocking 5-28 units from the pelvis about
+          every 6 s, with `Speed` 0. No slide. It lasted 3.5 min, until an AI order moved him;
+        - gained after he stopped: nothing, feet 11-15;
+        - gained mid-walk with an AI order already given: his AI walks him on, `Speed` 315 to 328, and stops him cleanly;
+        - gained standing with an AI order already given: `Speed` 363 at once, 344 units in about 1.2 s, then he stood with `Speed`
+          361 and relaxed legs for the 27 s watched. Not explained, and the change below does not touch it;
+        - `moveStop` sent to a held stride cleared it on the next sample, and an AI order right after walked him 735 units with his
+          legs moving.
+      - In the tree, not built (client only, no protocol change): an NPC its owner's last two reports had moving when it was gained is
+        looked at again 500 ms later. If this game's AI has it at no speed, it gets the graph's `moveStop`. If the AI walks it on, it is
+        left alone. Dead, dying, downed or knocked bodies, mounts and anything not on its feet are left out. One line each time:
+        `Takeover: NPC X was moving as a copy here (speed N), and this game's AI has it standing|walks it on`.
+      - Build 1299bb5 read the graph's speed at the gain, and the stop never fired: `live-takeover-walk` read 0 with every report
+        saying 315, and `live-takeover-aiwalk` read 305. So this game's AI writes the graph's speed on a copy, and reports load over it
+        later in the tick. Reports are the only reading no local write reaches, and every kind of actor has them. `iState` is
+        no test: it is a posture (`iState_NPCBowDrawn`, `iState_NPCBlocking`, `iState_NPC1HM`), 21 of the 32 graphs do not sync it, and on
+        the rig it stayed 6 after a `moveStop` and after his AI had walked him and stopped him.
+      - Rig test `live-takeover-walk`, judged on his legs read from the game: RED on c382599 on `npc feet still` (a foot moved 46
+        units). Its controls, which must pass with and without the stop: `live-takeover-stand`, an NPC that stood (4 units), and
+        `live-takeover-aiwalk`, an NPC his AI walks on (legs moving, 856 units in 3 s, no stop), both ok on c382599. All three to
+        run on the next build, where the walk also has to log the stop. Not seen in play.
+      - The game that loses the NPC: `live-takeover-lost`, 2 runs of 2 on c382599, shows no held stride, so nothing is changed there.
+        The game's own Lydia follows the player by her AI, the bot claims her mid-walk and sends back what the game reported while she
+        stood, about 8 reports a second. She settles, a foot moving 9 units in 5 s, once with a jump of 1355 units at the claim
+        and once with 43. Not known why she settles and a gained NPC does not: one NPC, a bot as the new owner.
+      - TEMPORARY, in the tree: `TakeoverDiag: NPC X as it is gained|3 s after the gain` (flags1, flags2, weapon state, speed, graph
+        speed, `iState`) and `SwimDiag: own NPC X starts|stops swimming`.
+      - `ActionFlood: ... 46BAF (Unequip)` starts 1.0 s after the gain for 21 of the 23 gained actors that flooded on player 1, and it
+        proves nothing yet. It is in the logs since 10-26, actors never gained flood too (15 of 34 on player 2), only 23 of 54 gains
+        on player 1 and 9 of 63 on player 2 show it, and on the rig it came only with the teammate flag. The weapon state in
+        `TakeoverDiag` should say more.
+      - Rig limits: the copy's source is a bot replaying a player's run, with that player's VR pose on the NPC. That is why
+        `live-takeover-walk-walking.png` shows him prone: no `SwimDiag`, `IsSwimming` False. The claim goes through the follower path, where
+        a follower keeps its gear.
+      - Limits of the stop:
+        - 500 ms is wall-clock: a gain inside a pausing menu reads the report's speed, logs "walks it on" and is not looked at again;
+        - an AI starting to walk in the very tick of the look can lose that start;
+        - a body walking on the spot against a wall has legs moving and reports no speed, so it is not looked at;
+        - the stop is a graph event, so it is not relayed: the other games get only the reports;
+        - a copy frozen on its way here is not queued, as it reads no speed.
+      - QuietStop reads the speed the same way: see "QuietStop misses a walking NPC copy whose own AI stands", in open work.
+      - Not known: whether the held stride is what players saw; how often a gain finds a moving copy (the `Takeover:` lines will
+        count it); what the sliding and the swimming were; how long a normal NPC's own AI takes to move it (Ralof's package is a
+        sandbox in Riverwood, and it never moved him). A Ralof that was never a copy did not take `KeepOffsetFromActor` at all, near
+        the player or with the teammate flag and `EvaluatePackage`, and one gained did: not explained.
+      - Copies running the game's AI all along: the 305 and the 0 above say something local writes a copy's graph each frame, and
+        `HookActorProcess` skipped nothing in the rig on 1299bb5, one run: `ActorProcessDiag: of 2 calls, 2 had their argument on the
+        stack, 0 saw an actor, 0 skipped it`. Two calls in a whole game also say that hook barely runs. Not seen in play.
+        If that hook is ever made to skip, a walking AI starts cold at the gain and this has to be tested again.
+      - Only two real games can show: a walking patrol NPC or a follower gained on the next build, legs against travel in the first 5 s;
+        the previous owner's and a third player's screens after a real leader claim; that NPC asked back; a player coming into
+        range after such a takeover, as the server replays `moveStart`; `Takeover:` lines from combat, swimming and idles, taken or not taken.
 - [!] **The published Linux server archive crashes when a client joins, on the newer systems it can run on** (fixed on
       b06cceb8 + the local `gamenetworkingsockets` recipe in `xmake-repo`; Linux server only, no client or protocol
       change; not released yet). One player's Linux host hit it. v1.9.6 and v1.9.7 amd64 were run; v1.9.2 to v1.9.5 and
@@ -378,8 +450,25 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       - Not seen in play. To see: one player takes a weapon off a body with their hand, and the other player no
         longer finds it on that body.
       - Not tested: that the game's own death drop happens while the body is dying (it is left out on that
-        assumption, as the Cydaphex port does). Not covered: the item taken exists only in this player's world. If
-        they let it fall instead of keeping it, the other player never sees it lying there.
+        assumption, as the Cydaphex port does).
+      - The item taken existed only in the taker's world (play session 2026-10-31 08:04:55 and 08:05:05, a body player 2's game ran).
+        In the tree, not built (client only): such a take also fires `ItemDroppedEvent`, with its worn flags cleared, so the
+        other game places it where it lies. `Actor::DropObject` stays as it is: it sends `Drop`, so that game drops the item
+        itself, and an announcement would make two. `live-body-take` now also checks that the other game is told: RED on c382599
+        (the bot was told nothing), green to run on the next build. Not seen in play.
+      - Limits of that change:
+        - a take off a body the taker's own game runs is still not shown to the other player. That is the next step, held until
+          this case has been seen working in a session;
+        - the take's -1 can be refused (stale epoch, out of range) while the item is still announced, so it is on the body and on the floor;
+        - a same-base item within 200 units on the other game is adopted instead of a new one placed;
+        - stowed before the server answers, one round trip, the server's item stays, as for a player's own drop;
+        - two players taking at the same moment both keep one, as for any drop;
+        - two takes of the same base inside a round trip can swap ids, as pending items match by base;
+        - a dead follower's body in her player's game may keep the item, if she still counts as a teammate;
+        - a script dropping something off a dead copy within 400 units is announced too: with three or more players extra items can appear.
+      - Only two real games can show: the other player sees it once, at the hand, following it, and it goes on stow; a worn weapon
+        taken while the other player holds the same kind stays in their hand; a take with the same item lying near; a take
+        that shoves the body, with a claim in flight; a fast stow on a real ping.
 - [!] **Papyrus natives never called while missing** (a public player on v1.9.4, 2026-10-18 16:40-17:13 their time,
       on the Synergy VR ENB list: four crashes out of four, each 12 ms after a save finished loading). The first door
       an NPC used after the load crashed the game: `HookActivate` asked `ObjectReference.GetOpenState` for the door's
@@ -574,17 +663,13 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
         carriage's links and reads its anti-tip action (`bhkTiltPreventAction`) as one. Not our code; don't grab it.
         Unproven without our mod.
       - A copy the server removes in a cell the receiving game can't reach left the loaded real reference
-        unannounced (Ingrid on player 2's side). An interior was fixed earlier; a walled city's world space since build
-        4df623a: a reference whose teleport through a gate was just refused goes to that world's persistent cell with no
-        cell read (`Assignment: X left this place with its owner`). One in a world this game lacks stays as it was: a live,
-        unsynced NPC, and so does this player's own follower, whom an assignment would not move (build 474ec2b). That
-        follower case has no rig test: in a party her own game asks for her back within a second, so the other player never
-        holds her at the gate. It rests on the code path.
-        `live-follower-gate` (new) red on e20c11e (Lydia stays in the player's cell), green on 474ec2b 5/5: she goes to cell
-        3B821, and a save made then, loaded after she was moved back beside the player, puts her in Whiterun's world again
-        (`GetParentCell` is None there, as her cell is not loaded, so that check reads her world space).
-        Regressions on 4df623a: `live-follower-left` 3/3, `live-teleport-far-loaded` 5/5. Not seen in play: a follower taken
-        through a city gate is gone for the player left outside.
+        unannounced (Ingrid on player 2's side). An interior was fixed earlier. Taking the same move to a walled city's world
+        space (build 4df623a) was a mistake and is taken out again. In the play test of 2026-10-31 08:10 it moved Lydia into
+        Windhelm's persistent cell in the game of the player left outside, her 3D was rebuilt there, and she stood stuck in
+        the gate with nothing moving her. `live-follower-gate` passed it 5 of 5 against a bot, and proved nothing about a second
+        real game; the script is deleted. A gate is back to v1.9.7: her teleport is refused and she stays a live, unsynced
+        NPC where she stands, which is the open problem this tried to solve. `Assignment: X left this place` now only follows
+        an interior.
       - An ice wolf (33482) bounced owners and its body jumped about 8000 units into Helgen at 21:08; the cause is
         unknown. Only player 1's log is left, from before `CorpseDiag`. On 2026-10-30 no actor changed hands more than twice in
         either game. If it comes back, `Gained ownership`, `CorpseDiag` and `JumpDiag` name it.
@@ -596,6 +681,17 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Open work
 
+- [ ] **QuietStop misses a walking NPC copy whose own AI stands** (next item, left out of the takeover build on purpose)
+      `InterpolationSystem::Update` reads `LegSpeed` before that tick's variables load, so it reads what this game's AI wrote on the
+      copy, not the owner's report (see "An NPC taken over while it walks"). A walking NPC copy whose AI stands reads 0. It is not stopped
+      when its owner goes quiet, the `had no report ... but was not stopped` line needs a speed too, and the load goes on feeding the
+      last report. It would walk on the spot, silently, until handed off or removed: what QuietStop exists to prevent.
+      - Seen: nothing directly, as such a copy logs nothing. From the code. 7 of the 9 retained NPC stops were `not taken`, at speeds
+        like 4 and 7, or 35-82 in corpse runs, which look like local values and not walking legs.
+      - First: an NPC version of `live-copy-quiet`, which uses a player's copy only. It has to be RED on what the player sees: the copy's
+        feet still swinging after its owner goes quiet.
+      - Then: read `LegSpeed` after the load, as `WatchQuietCopy` does. The stop will then fire for more copies than today.
+      - Old code, older than v1.9.7, so not a regression. Not built, not tested.
 - [!] **A protected NPC's copy that its owner says died, and the hand-over after it** (fixed by 10b98ee5, see the
       protected-NPC item: a copy of a protected or essential NPC now dies on its owner's word). On 206a1d36 the rig's
       `live-death-protected` (Lydia) failed 2 of 2: the copy stayed alive (`now dead: false`), and once this game took
@@ -1408,36 +1504,31 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
         `+0x714EB2`, our temporary actor disabled after its disposal (fixed since). Both games crashing at once
         points at one synced event, a temporary actor removed while still referenced, rather than at Engine Fixes'
         cache alone.
-- [!] **PvP spells: how much they hurt, and who decides** (decided 2026-10-24: as on NPCs; 2026-10-31: the defender's replayed
-      projectile decides whether it hit, the caster's game how much). Red on e20c11e, at the rig's difficulty (0.6 for hits by the
-      player, 3 for hits on the player):
-      - A replayed Fireball took 137 health in the first second, where an NPC takes 24 and a burn of about 6.
-      - Its burn stopped counting when the flight window ended (`...; not taken, melee is its own game's report`).
-      - A Flames beam that reached the player did nothing (`60 hit(s), 24 damage ...; not taken`), and its caster reports
-        nothing, because its effect has a duration. So concentration spells have done no PvP damage since 92ff338d.
-      - The player's game sent each replayed hit back to the caster's game, which applies it to its copy and can report it again.
-      - A projectile spell lost the caster's perks: their report was dropped.
-      Build 474ec2b (FUS; earlier builds of the day have an unreviewed version, not to go further): the caster's game reports an
-      aimed spell as the spell, with its perks and difficulty, and the player's game never applies a report by itself. Its replayed projectile decides; the effect's damage counts for its
-      whole length, at the multiplier for hits by a player; nothing goes back to the caster; and when a hit and its report are both in,
-      what the perks add is added. A report whose projectile missed here is dropped; with no projectile made here (a paused game, or
-      no such form) the report is the hit. A staff goes as a spell. A touch spell and a weapon's strike stay health changes, weighed by
-      the defender's rule. A beam counts here as it lands. A sword blow after a spell is no longer taken for it.
-      Left out: a beam has no caster's perks; the perks do not raise a burn, and what they add is not reduced by resistances; a touch
-      spell has no burn; a fire-and-forget absorb no longer heals its caster; a spell just after that player's arrow loses what its
-      report adds, or the whole hit if no projectile was made, because the top-up passes the arrow's window. No test for a staff, a
-      power or a plugin only the caster has. A PROTOCOL CHANGE (the meaning of a report, not its shape): both players and the server
-      update together.
-      Rig: `live-pvp-projectile` (new; the bot now launches) red on e20c11e, ok 17/17 on bd2adc0: Fireball 30 (24 and its burn), with a
-      report 42, dodged 0, paused 36, Ice Spike 12, no `No projectile found`. `live-pvp-concentration` (new; the bot casts) red, 0
-      lost; ok, 19 lost in 4 s. `live-pvp-spell-perks` and `live-pvp-spell-elements`, changed to the new report, ok; on
-      e20c11e the perks one passes its old check and has no report. Regressions `live-heal-perks` 9/9, `live-defender` 24/24. These
-      check the rig player's health and what reached the bot; a real second game has not hit this build. Not seen in play.
-      `live-pvp-projectile` ok 17/17 again on 474ec2b, which has the third review's fixes: an unmade launch answers one report of that
-      spell, a hit already landed goes first, a launch the game refused counts as unmade. The other scripts ran on bd2adc0 only.
-      In the tree after 474ec2b, not built yet, from a fourth review: a spell of a plugin only the caster has is hit by its report, a
-      power the copy casts is not reported as well, and a launch made here clears an older unmade one. All PvP scripts run again on the final build.
-      To see in play: a spell from another player takes about what it takes from an NPC, once, and a dodged one takes none.
+- [!] **PvP spells: the caster's game decides, as for a sword** (play session 2026-10-31 07:55 on c382599: "the spells used to work but
+      do not work anymore now. They do no damage"). The rule of that build, that the defender's replayed projectile decides, failed in play:
+      - Flames and Sparks: the caster's game reported nothing, and the copy's beam touched the other player about a third of the time,
+        so 15 damage in 8 s and 29 in 12 s, with player 2 back at 250 after each. The copy's aim is not the caster's.
+      - Chain Lightning: the caster's game saw a hit for 30, the replay here missed, and the hit was dropped. Why it missed is not known.
+      - `Flames 19`, `Fireball 30` and `live-pvp-projectile 17/17` came from a bot aiming a copy at a still player, and proved nothing about a real
+        game. Nothing was measured against one. Those rig numbers do not describe the code as it is now.
+      - v1.9.7 did no better: a beam's ticks were `not taken` and nothing reported them (code; rig on e20c11e), and Chain Lightning's report
+        was dropped (2026-10-30 18:23:41). Beams last counted before b7e842c2 (2026-10-26).
+      What worked is the path now used. An effect on a copy in the caster's game sent its hit and its burn on 2026-10-30 18:23:41 (`blow of 50`, then `blow of 0`, on an
+      NPC that was a copy there), and a beam's small hits arrive every 250 ms (2026-10-31 08:01:35, though on the caster's own NPC). Melee on players: 18 of 18 hits of 21
+      landed. Arrow replays landed on 2026-10-30, so arrows keep their rule. Whether a beam registers on a player's copy in the caster's game no log shows: the first
+      session on this build answers it (`PvP: spell X hits on remote player`).
+      In the tree, not built, not run: a spell's or staff's damage runs on the copy in the caster's game as on an NPC, with the caster's perks, its burn and
+      the multiplier for hits by a player (0.6 at the rig's difficulty, as swords; decided 2026-10-31). Each hit goes as a health change with
+      no tick, so the defender's rule does not weigh it: a blade cannot block a spell. The defender's replayed effect is only seen, its damage not
+      taken, and it is not sent back. What a hand or a weapon delivers (a weapon's strike enchantment, a touch spell, a combat-hit spell) stays as on v1.9.7, weighed by the
+      defender's rule, with no burn. A sword blow after a spell is no longer taken for the spell.
+      Limits: a dodge on the defender's screen does not help, as with a sword. To look at in play: a ward in the defender's game does not stop a spell; only the copy's ward in
+      the caster's game can, and whether it holds is not known. Absorb spells do nothing to a player, as on v1.9.7. A third player does not see the burn on the defender. A
+      non-hostile damaging effect sends nothing. A burn on the defender from a replay that landed does its last ticks at the game's own multiplier if its caster's copy goes,
+      and as well as the report if the copy is rebuilt mid-burn. A PROTOCOL CHANGE (a spell's hit has no tick): both players and the server update together.
+      Scripts changed to this: `live-pvp-projectile`, `live-pvp-concentration`, `live-pvp-spell-perks`, `live-pvp-spell-elements`; not run on it, and they check one
+      side only. The real result waits for two real games: each player casts Flames, Sparks and Chain Lightning on the other, and holds a ward against one, then read
+      `PvP: spell X hits on remote player` on the caster (it names the spell), `PvP: spell hits from player` and its health on the other.
 
 - [!] **A public group of four on a 1400-mod list** (logs of two of them, 2026-10-17, both on v1.9.3; the same group
       sent the Ralof and start-up crash reports). Fps fine (median 80-87); private memory 10 to 28 GB over 2h15.
@@ -1620,6 +1711,40 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Parked and later
 
+- [ ] **A mod list's server: a connect file inside a mod** (planned 2026-10-31, nothing written; starts once the current tree is committed).
+      FUS's makers run public test servers and want the mod in their Wabbajack list with their server already set. `connect.txt` lives in
+      `%LOCALAPPDATA%`, which neither a FOMOD nor Wabbajack can write to, and a list's players never see a FOMOD. So the game also reads a file
+      from inside a mod: a list ships it as a small mod, and anyone else drags a zip into MO2. Client only, no protocol change, and our own
+      release ships no such file, so a list's mod never has to beat ours.
+      The file: `Data\SKSE\Plugins\urSovngarde\connect.txt`, in the format of `connect.txt`. `SKSE` because MO2 warns about a zip with no top
+      folder it knows, and `urSovngarde` is not one.
+      The rules:
+      - The player's own `connect.txt` wins whenever its first line names a server. The launcher writes it for every join, a friend's code as a
+        local tunnel address, so a mod's file winning would send that join to the wrong server. The cost: after any join or `setup-connect.bat`,
+        a list's server is ignored until that file is deleted. The guides say so.
+      - Address, password and `autoconnect` all come from the one file that gave the address. The two are never mixed.
+      - No port means 10578. Today it means 25681, TiltedConnect's own default (`Client.cpp:120`): the launcher and `setup-connect.bat` both add
+        the port, a hand-made file would not, and the game would retry a dead port for good.
+      - Ticking another server mod takes a game restart, as MO2 builds its virtual folder at the start.
+      The work, in this order:
+      1. Unit tests, `Code/tests/connect_file.cpp`: a byte order mark, a setting on line 2, a password then a setting, no port, a port kept, an
+         empty first line as no server, and which file wins. Reading a file moves to a small header with no game in it, like `PvpProjectiles.h`.
+      2. `VRConnectService::LoadConfig` reads the player's file, then the mod's, by a relative path, as `LogEngineFixes7` reads through MO2 today.
+         `Config` says which one, and the `connecting to` and `waiting for F6` log lines name it: that is the first question in any report.
+      3. Rig, red on the current build first: `live-connect-default`. A `headless.ps1` switch sets the player's file aside and puts one naming the
+         test server in MO2's Overwrite, so the mod list is not touched, and `down` removes it. Red: `no server in`. Green: `connecting to`, the
+         source named, and the bot sees the player.
+      4. Guides: a section on a list's server in `README-mod-manager.md` (the path, the format, the zip, that anyone can read a password in it,
+         that the player's file wins); a line in `README-vortex.md`, `README-manual.md` and `VR_MULTIPLAYER_GUIDE.md`. The last line of
+         `setup-connect.ps1` and the comment in `VRConnectService.h` still say the game connects on its own, which now takes `autoconnect=on`.
+      5. The launcher needs nothing for this to work: it never writes a file with no server (`set_auto_connect`). For its own TODO when this
+         ships: a way back to the list's server after a join, and showing that server.
+      Only real games can show: MO2 taking the zip with no warning and the game connecting from it; a friend's code through the launcher, with
+      a server mod ticked, reaching the friend.
+      For FUS when it ships: a list pins one build and the server refuses another protocol, so list and servers update together; the source is a
+      GitHub release (`directURL`), which must then never be replaced.
+      Left out on purpose: a FOMOD (it would only help the Nexus copy), an MCM menu, per-player feature switches (the server-wide ones are in
+      `STServer.ini`), several servers in one file, a tool that writes the zip.
 - [ ] **Mounts** (parked 2026-10-12). The rider's `MountRequest` crosses and the other game gives the rider's copy the
       mount package, which it accepts, but the copy never gets on: copies run no AI of their own. Tried in the rig and
       reverted: `Actor::PutActorOnMountQuick` (vtable 0xAE on VR) returns false; letting the copy's AI run with its

@@ -23,6 +23,6 @@ struct NotifyHealthChangeBroadcast final : ServerMessage
     float DeltaHealth;
     //! The attacking player, filled in by the server; the actor's owner adds them to its combat.
     uint32_t AttackerPlayerId{};
-    //! When it happened in the attacker's game, on the server's clock; 0 when not known (RequestHealthChangeBroadcast).
+    //! When it happened in the attacker's game, on the server's clock; 0 for a spell's hit or tick (RequestHealthChangeBroadcast).
     uint64_t Tick{};
 };

@@ -3,8 +3,8 @@
 #   python Tools\VR\live-check.py live-pvp-spell-elements
 #   python Tools\VR\live-check.py --expect-fail live-pvp-spell-elements     on a build without the fix: must be RED
 #
-# The caster's game sends a touch spell on the other player as a health change (PvP on, as on the rig's server), and an aimed one as the spell.
-# It sends an effect that lowers health; frost and shock lower it as dual value modifiers (with stamina or magicka).
+# A damage spell goes as a health change (PvP on, as on the rig's server): a touch spell once, an aimed one for each of its hits.
+# Frost and shock lower health as dual value modifiers (with stamina or magicka).
 # Here the player casts a frost touch (3384A AAAFrostTouch, 10), a shock touch (50CFA, a storm atronach's, 20) and Fireball (1C789, 40)
 # at this bot's character.
 # The rig's idle controllers aim a cast loosely: Ice Spike, Ice Storm and Chain Lightning miss the copy in some runs.
@@ -34,14 +34,14 @@ log -- a shock touch
 log DO papyrus Spell Cast 50CFA 14 copy
 wait 6
 log CHECK logged PvP: spell 50CFA hit remote player
-log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -12\.0
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -20\.0
 wait 2
 
 log -- Fireball
 log DO papyrus Spell Cast 1C789 14 copy
 wait 6
-log REQUIRE logged PvP: spell 1C789 hit remote player
-log CHECK bot logged Effect 1CEA1 of spell 1C789 applied to \w+ by
+log REQUIRE logged PvP: hit remote player \w+ for 24
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -24\.0
 wait 3
 log CHECK game alive
 log done

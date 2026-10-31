@@ -6,7 +6,6 @@
 #include <Messages/AddTargetRequest.h>
 #include <Messages/NotifyAddTarget.h>
 #include <Messages/NotifyRemoveSpell.h>
-#include <Services/PvpProjectiles.h>
 #include <spdlog/spdlog.h>
 #include <chrono>
 
@@ -44,9 +43,6 @@ struct MagicService
      * @see UpdateRevealOtherPlayersEffect
      */
     void StartRevealingOtherPlayers() noexcept;
-
-    //! Another player's replayed spell landed on this player here, for that amount of damage before their perks.
-    void OnPvpSpellLanded(uint32_t aCopyFormId, uint32_t aSpellId, uint32_t aEffectId, float aAmount) noexcept;
 
   protected:
     /**
@@ -99,8 +95,6 @@ struct MagicService
      * Apply the "reveal players" effect on remote players.
      */
     void UpdateRevealOtherPlayersEffect(bool aForceTrigger = false) noexcept;
-    //! Hands a matched spell's top-up to the health changes, as another player's blow on this player.
-    void ApplyPvpSpellTopUp(uint32_t aCopyFormId, uint32_t aSpellId, float aReported, float aLanded) noexcept;
 
     World& m_world;
     entt::dispatcher& m_dispatcher;
@@ -172,8 +166,6 @@ struct MagicService
   private:
     std::queue<MagicAddTargetEventQueue> m_queuedEffects;
     std::queue<MagicNotifyAddTargetQueue> m_queuedRemoteEffects;
-    //! Replayed spell hits on this player, and their casters' reports, each waiting for the other.
-    std::vector<PvpProjectiles::SpellSide> m_spellSides;
 };
 
 // Exposed so we can increase log level of just this tricky code, in debugger or a build.

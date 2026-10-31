@@ -10,12 +10,15 @@ struct TESObjectREFR;
  */
 struct HealthChangeEvent
 {
-    HealthChangeEvent(uint32_t aHitteeId, float aDeltaHealth)
+    HealthChangeEvent(uint32_t aHitteeId, float aDeltaHealth, bool aFromSpell = false)
         : HitteeId(aHitteeId)
         , DeltaHealth(aDeltaHealth)
+        , FromSpell(aFromSpell)
     {
     }
 
     uint32_t HitteeId;
     float DeltaHealth;
+    //! A spell's hit: no weapon can block it.
+    bool FromSpell;
 };

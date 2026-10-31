@@ -7,6 +7,7 @@
 # owner's body kept the item, and its owner could still take it there: one item became two.
 # This bot owns a dead NPC carrying an iron dagger, and the game drops the dagger off its copy next to the player, the
 # way a hand takes it. The bot stands for the owner's game: the server has to pass the change on to it.
+# The item now lying in the world has to reach that game too, or it exists in the taker's game alone.
 log live body take
 waitfor connected 45
 collect spawn health death ownership
@@ -34,6 +35,7 @@ wait 4
 # Still the owner, so the body the change reached was one another game runs.
 expect owned == 1
 expect invchanges 1397E == 1
+log CHECK bot logged Dropped item \d+ is 0:1397E x1
 log CHECK game alive
 wait 3
 log done

@@ -21,4 +21,10 @@ struct InterpolationSystem
     // The copy on this form id is gone, or this game runs the actor now: a quiet stop kept for it no longer applies.
     // Left behind, it would start or stop the next copy given that id.
     static void Forget(uint32_t aFormId) noexcept;
+    // Not sitting, riding, sleeping or flying.
+    static bool OnFoot(const Actor* apActor) noexcept;
+    // How fast an actor's legs go while it is on its feet, 0 when it is not.
+    static float FootSpeed(Actor* apActor) noexcept;
+    // How fast its owner's last two reports have a copy going, in units a second, 0 for one stopped here for going quiet.
+    static float ReportedSpeed(uint32_t aFormId, const InterpolationComponent& acInterpolationComponent) noexcept;
 };

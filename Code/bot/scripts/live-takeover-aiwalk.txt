@@ -1,0 +1,56 @@
+# The control for live-takeover-walk: an NPC this game's AI is already walking must not be stopped at the gain.
+# It must pass with and without the stop at the gain: this game's AI walks him on, legs and body together.
+#
+#   python Tools\VR\live-check.py live-takeover-aiwalk
+#
+# The same recording and claim, but his AI has an order from before the claim, so it wants him moving as he is gained.
+party lead
+log live takeover aiwalk
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+stay
+log DO god on
+
+log -- the real player walks, and the bot records it to replay as its NPC
+log DO mark walked player
+log DO key w 10000
+capture other 12
+wait 2
+log REQUIRE moved walked atleast 100
+log REQUIRE bot logged Captured action names of \w+: \S
+
+log -- the bot's Ralof where the walk began: this game's own Ralof is the copy
+npc 2BF9E
+waitfor owned == 1 20
+wait 6
+log REQUIRE ref 2BF9E near player 3600
+
+log -- he walks towards the player; his AI gets an order, and the game asks for him mid-walk
+log DO sleep 5
+log DO papyrus Actor KeepOffsetFromActor npc 14 f:0 f:0 f:0 f:0 f:0 f:0 f:150 f:75
+log DO papyrus Actor SetPlayerTeammate npc b:true b:true
+log DO sleep 1
+log DO mark ran npc
+log CHECK npc feet moving 3
+log CHECK moved ran atleast 300
+replay npc 1
+log REQUIRE logged Gained ownership of actor \w+ \(form 2BF9E\)
+log CHECK absent Takeover: NPC \w+ .* stopped
+log DO papyrus Actor ClearKeepOffsetFromActor npc
+wait 5
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop
