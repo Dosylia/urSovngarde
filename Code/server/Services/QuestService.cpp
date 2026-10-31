@@ -6,6 +6,8 @@
 
 #include <Messages/RequestQuestUpdate.h>
 #include <Messages/NotifyQuestUpdate.h>
+#include <Messages/RequestWarState.h>
+#include <Messages/NotifyWarState.h>
 
 #include <Setting.h>
 namespace
@@ -18,6 +20,19 @@ QuestService::QuestService(World& aWorld, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
 {
     m_questUpdateConnection = aDispatcher.sink<PacketEvent<RequestQuestUpdate>>().connect<&QuestService::OnQuestChanges>(this);
+    m_warStateConnection = aDispatcher.sink<PacketEvent<RequestWarState>>().connect<&QuestService::OnWarState>(this);
+}
+
+void QuestService::OnWarState(const PacketEvent<RequestWarState>& acMessage) noexcept
+{
+    // Only the leader's war is followed: a member's stays its own.
+    auto& partyService = m_world.GetPartyService();
+    if (!partyService.GetPlayerParty(acMessage.pPlayer) || !partyService.IsPlayerLeader(acMessage.pPlayer))
+        return;
+
+    NotifyWarState notify{};
+    notify.State = acMessage.Packet.State;
+    GameServer::Get()->SendToParty(notify, acMessage.pPlayer->GetParty(), acMessage.GetSender());
 }
 
 void QuestService::OnQuestChanges(const PacketEvent<RequestQuestUpdate>& acMessage) noexcept

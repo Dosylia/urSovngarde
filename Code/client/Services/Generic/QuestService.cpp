@@ -18,6 +18,12 @@
 
 #include <Messages/RequestQuestUpdate.h>
 #include <Messages/NotifyQuestUpdate.h>
+#include <Messages/RequestWarState.h>
+#include <Messages/NotifyWarState.h>
+
+#include <Forms/BGSKeyword.h>
+#include <Interface/UI.h>
+#include <Services/PapyrusService.h>
 
 static TESQuest* FindQuestByNameId(const String& name)
 {
@@ -41,6 +47,7 @@ QuestService::QuestService(World& aWorld, entt::dispatcher& aDispatcher)
     m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&QuestService::OnDisconnected>(this);
     m_leftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&QuestService::OnPartyLeft>(this);
     m_questUpdateConnection = aDispatcher.sink<NotifyQuestUpdate>().connect<&QuestService::OnQuestUpdate>(this);
+    m_warStateConnection = aDispatcher.sink<NotifyWarState>().connect<&QuestService::OnWarState>(this);
 
     // Game events:
     // Starts, stops and stages are sent from TESQuestStartStopEvent and TESQuestStageEvent, which fire while the quest
@@ -59,6 +66,8 @@ QuestService::QuestService(World& aWorld, entt::dispatcher& aDispatcher)
     pEventList->scenePhaseEvent.RegisterSink(this);
     pEventList->topicInfoEvent.RegisterSink(this);
     pEventList->loadGameEvent.RegisterSink(this);
+
+    ForgetAppliedWarState();
 }
 
 void QuestService::OnConnected(const ConnectedEvent&) noexcept
@@ -75,8 +84,154 @@ void QuestService::OnConnected(const ConnectedEvent&) noexcept
     */
 }
 
+// A load replaces the quests and the holds' data, so neither is read or written until it is over.
+static bool IsWarReadable() noexcept
+{
+    static const BSFixedString s_loadingMenu("Loading Menu");
+    static const BSFixedString s_mainMenu("Main Menu");
+    const UI* pUI = UI::Get();
+    return pUI && !pUI->GetMenuOpen(s_loadingMenu) && !pUI->GetMenuOpen(s_mainMenu);
+}
+
+static float GetHoldOwner(const TESForm* apHold, BGSKeyword* apOwnerKeyword) noexcept
+{
+    using Location = TESForm;
+    PAPYRUS_FUNCTION(float, Location, GetKeywordData, BGSKeyword*);
+    return s_pGetKeywordData(apHold, apOwnerKeyword);
+}
+
+static uint8_t GetObjectiveFlags(const TESQuest* apQuest, int aObjective) noexcept
+{
+    using Quest = TESQuest;
+    PAPYRUS_FUNCTION(bool, Quest, IsObjectiveDisplayed, int);
+    PAPYRUS_FUNCTION(bool, Quest, IsObjectiveCompleted, int);
+    PAPYRUS_FUNCTION(bool, Quest, IsObjectiveFailed, int);
+    return static_cast<uint8_t>((s_pIsObjectiveDisplayed(apQuest, aObjective) ? WarState::kDisplayed : 0) | (s_pIsObjectiveCompleted(apQuest, aObjective) ? WarState::kCompleted : 0) |
+                                (s_pIsObjectiveFailed(apQuest, aObjective) ? WarState::kFailed : 0));
+}
+
+// False while a form is missing, which only a game without Skyrim.esm's war would have.
+static bool ReadWarState(const TESQuest* apQuest, WarState& aState) noexcept
+{
+    auto* pKeyword = Cast<BGSKeyword>(TESForm::GetById(WarState::kOwnerKeyword));
+    if (!pKeyword)
+        return false;
+
+    for (size_t i = 0; i < WarState::kHolds.size(); ++i)
+    {
+        const TESForm* pHold = TESForm::GetById(WarState::kHolds[i]);
+        if (!pHold)
+            return false;
+        aState.Owners[i] = static_cast<uint8_t>(GetHoldOwner(pHold, pKeyword));
+    }
+
+    for (size_t i = 0; i < WarState::kObjectives.size(); ++i)
+        aState.Objectives[i] = GetObjectiveFlags(apQuest, WarState::kObjectives[i]);
+
+    return true;
+}
+
+void QuestService::SendWarState() noexcept
+{
+    constexpr auto cCheckEvery = 2s;
+    constexpr auto cSendEvery = 30s;
+
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < m_nextWarCheck)
+        return;
+    m_nextWarCheck = cNow + cCheckEvery;
+
+    auto& partyService = m_world.GetPartyService();
+    if (!partyService.IsInParty() || !partyService.IsLeader() || !m_world.GetTransport().IsConnected() || !IsWarReadable())
+        return;
+
+    // A leader not in the war yet leaves its members' war alone.
+    const TESQuest* pQuest = Cast<TESQuest>(TESForm::GetById(WarState::kObjectiveQuest));
+    WarState state{};
+    if (!pQuest || pQuest->IsStopped() || !ReadWarState(pQuest, state))
+        return;
+
+    const bool cChanged = !(state == m_sentWarState);
+    if (!cChanged && cNow < m_nextWarSend)
+        return;
+    m_nextWarSend = cNow + cSendEvery;
+
+    if (cChanged)
+        spdlog::info("WarState: the war changed here; sent to the party");
+    m_sentWarState = state;
+
+    RequestWarState request{};
+    request.State = state;
+    m_world.GetTransport().Send(request);
+}
+
+void QuestService::OnWarState(const NotifyWarState& acMessage) noexcept
+{
+    if (m_world.GetPartyService().IsLeader() || !IsWarReadable())
+        return;
+
+    auto* pQuest = Cast<TESQuest>(TESForm::GetById(WarState::kObjectiveQuest));
+    auto* pKeyword = Cast<BGSKeyword>(TESForm::GetById(WarState::kOwnerKeyword));
+    if (!pQuest || !pKeyword)
+        return;
+
+    using Location = TESForm;
+    using Quest = TESQuest;
+    PAPYRUS_FUNCTION(void, Location, SetKeywordData, BGSKeyword*, float);
+    PAPYRUS_FUNCTION(void, Quest, SetObjectiveDisplayed, int, bool, bool);
+    PAPYRUS_FUNCTION(void, Quest, SetObjectiveCompleted, int, bool);
+    PAPYRUS_FUNCTION(void, Quest, SetObjectiveFailed, int, bool);
+
+    const WarState& cState = acMessage.State;
+    String changes;
+
+    for (size_t i = 0; i < WarState::kHolds.size(); ++i)
+    {
+        const TESForm* pHold = TESForm::GetById(WarState::kHolds[i]);
+        if (!pHold)
+            continue;
+
+        const uint8_t cHere = static_cast<uint8_t>(GetHoldOwner(pHold, pKeyword));
+        if (cHere == cState.Owners[i] || m_appliedWarState.Owners[i] == cState.Owners[i])
+            continue;
+
+        s_pSetKeywordData(pHold, pKeyword, static_cast<float>(cState.Owners[i]));
+        m_appliedWarState.Owners[i] = cState.Owners[i];
+        changes += spdlog::fmt_lib::format(" hold {:X} owner {} to {};", WarState::kHolds[i], cHere, cState.Owners[i]);
+    }
+
+    // Objectives of a war quest that does not run here cannot be shown, and are set once it does.
+    if (!pQuest->IsStopped())
+    {
+        for (size_t i = 0; i < WarState::kObjectives.size(); ++i)
+        {
+            const int cObjective = WarState::kObjectives[i];
+            const uint8_t cWanted = cState.Objectives[i];
+            const uint8_t cHere = GetObjectiveFlags(pQuest, cObjective);
+            if (cHere == cWanted || m_appliedWarState.Objectives[i] == cWanted)
+                continue;
+
+            // Shown last: the journal then announces the objective in its final state.
+            if ((cHere ^ cWanted) & WarState::kCompleted)
+                s_pSetObjectiveCompleted(pQuest, cObjective, (cWanted & WarState::kCompleted) != 0);
+            if ((cHere ^ cWanted) & WarState::kFailed)
+                s_pSetObjectiveFailed(pQuest, cObjective, (cWanted & WarState::kFailed) != 0);
+            if ((cHere ^ cWanted) & WarState::kDisplayed)
+                s_pSetObjectiveDisplayed(pQuest, cObjective, (cWanted & WarState::kDisplayed) != 0, true);
+
+            m_appliedWarState.Objectives[i] = cWanted;
+            changes += spdlog::fmt_lib::format(" objective {} flags {} to {};", cObjective, cHere, cWanted);
+        }
+    }
+
+    if (!changes.empty())
+        spdlog::info("WarState: following the leader's war here:{}{}", changes, pQuest->IsStopped() ? " the war quest does not run here, so its objectives wait" : "");
+}
+
 void QuestService::OnUpdate(const UpdateEvent&) noexcept
 {
+    SendWarState();
+
     if (m_heldStages.empty())
         return;
 
@@ -119,6 +274,16 @@ void QuestService::OnUpdate(const UpdateEvent&) noexcept
 void QuestService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     FlushHeldStages("disconnected");
+
+    // Sent and applied afresh on the next connection, to a party that may have moved on.
+    m_sentWarState = {};
+    ForgetAppliedWarState();
+}
+
+void QuestService::ForgetAppliedWarState() noexcept
+{
+    m_appliedWarState.Owners.fill(WarState::kNothingApplied);
+    m_appliedWarState.Objectives.fill(WarState::kNothingApplied);
 }
 
 void QuestService::OnPartyLeft(const PartyLeftEvent&) noexcept
@@ -601,7 +766,11 @@ void QuestService::OnQuestUpdate(const NotifyQuestUpdate& aUpdate) noexcept
         return;
     }
 
-    if (aUpdate.Status == NotifyQuestUpdate::StageUpdate && pQuest->IsStageReached(aUpdate.Stage))
+    // A quest may run a stage more than once, as the war's CW does stage 4 for each hold, and a member follows its leader through them.
+    // The leader keeps its own world, so it takes a member's stage only the first time.
+    const bool cRepeat = !m_world.GetPartyService().IsLeader() && pQuest->AllowsRepeatedStages();
+    const bool cAlreadyReached = pQuest->IsStageReached(aUpdate.Stage);
+    if (aUpdate.Status == NotifyQuestUpdate::StageUpdate && cAlreadyReached && !cRepeat)
     {
         spdlog::info("Remote quest {:X} already reached stage {}, current stage: {}", formId, aUpdate.Stage, pQuest->currentStage);
         return;
@@ -641,17 +810,17 @@ void QuestService::OnQuestUpdate(const NotifyQuestUpdate& aUpdate) noexcept
     {
     case NotifyQuestUpdate::Started:
     {
-        pQuest->ScriptSetStage(aUpdate.Stage);
+        pQuest->ScriptSetStage(aUpdate.Stage, cRepeat);
         pQuest->SetActive(true);
         bResult = true;
         spdlog::info("Remote quest started: {:X}, stage: {}", formId, aUpdate.Stage);
         break;
     }
     case NotifyQuestUpdate::StageUpdate:
-        pQuest->ScriptSetStage(aUpdate.Stage);
+        pQuest->ScriptSetStage(aUpdate.Stage, cRepeat);
         bResult = true;
         // Whether the quest runs here: a stage set on a quest that cannot start here leaves its scripts unrun.
-        spdlog::info("Remote quest updated: {:X}, stage: {}; running here {}", formId, aUpdate.Stage, pQuest->IsEnabled() ? "yes" : "no");
+        spdlog::info("Remote quest updated: {:X}, stage: {}; running here {}{}", formId, aUpdate.Stage, pQuest->IsEnabled() ? "yes" : "no", cAlreadyReached ? "; run again" : "");
         break;
     case NotifyQuestUpdate::Stopped:
         bResult = StopQuest(formId);

@@ -592,6 +592,44 @@ TEST_CASE("Packets", "[encoding.packets]")
             REQUIRE(pRecv->Changes[1].Enabled);
         }
     }
+
+    SECTION("RequestWarState and NotifyWarState")
+    {
+        WarState state{};
+        state.Owners[4] = 2;
+        state.Objectives[11] = WarState::kDisplayed | WarState::kCompleted;
+        state.Objectives.back() = WarState::kFailed;
+
+        {
+            Buffer buff(1000);
+            RequestWarState sendMessage;
+            sendMessage.State = state;
+
+            Buffer::Writer writer(&buff);
+            sendMessage.Serialize(writer);
+            Buffer::Reader reader(&buff);
+            auto pMessage = ClientMessageFactory{}.Extract(reader);
+            REQUIRE(pMessage);
+            REQUIRE(pMessage->GetOpcode() == sendMessage.GetOpcode());
+            REQUIRE(*CastUnique<RequestWarState>(std::move(pMessage)) == sendMessage);
+        }
+
+        {
+            Buffer buff(1000);
+            NotifyWarState sendMessage;
+            sendMessage.State = state;
+
+            Buffer::Writer writer(&buff);
+            sendMessage.Serialize(writer);
+            Buffer::Reader reader(&buff);
+            auto pMessage = ServerMessageFactory{}.Extract(reader);
+            REQUIRE(pMessage);
+            const auto pRecv = CastUnique<NotifyWarState>(std::move(pMessage));
+            REQUIRE(*pRecv == sendMessage);
+            REQUIRE(pRecv->State.Owners[4] == 2);
+            REQUIRE(pRecv->State.Objectives.back() == WarState::kFailed);
+        }
+    }
 }
 
 TEST_CASE("Damaged messages are dropped", "[encoding.damaged]")

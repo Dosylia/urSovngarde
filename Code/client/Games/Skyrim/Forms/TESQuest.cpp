@@ -95,9 +95,9 @@ bool TESQuest::SetStage(uint16_t newStage)
     return SetStage(this, newStage);
 }
 
-bool TESQuest::ScriptSetStage(uint16_t stageIndex)
+bool TESQuest::ScriptSetStage(uint16_t stageIndex, bool aRepeat)
 {
-    if (IsStageReached(stageIndex))
+    if (IsStageReached(stageIndex) && !aRepeat)
         return false;
 
     using Quest = TESQuest;

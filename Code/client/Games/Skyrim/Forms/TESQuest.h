@@ -202,6 +202,7 @@ struct TESQuest : BGSStoryManagerTreeForm
 
     inline bool IsEnabled() const { return flags & Flags::Enabled; }
     inline bool IsActive() const { return flags & Flags::Active; }
+    inline bool AllowsRepeatedStages() const { return flags & Flags::AllowRepeatStages; }
     inline bool IsStopped() const { return (flags & (Flags::Enabled | Flags::StageWait)) == 0; } // & 0x81
 
     bool Kill();
@@ -211,7 +212,8 @@ struct TESQuest : BGSStoryManagerTreeForm
 
     bool SetStage(uint16_t stage);
     // Through Papyrus, so the stage's fragments run; false when the stage was already reached or did not take.
-    bool ScriptSetStage(uint16_t stage);
+    // aRepeat also sets a stage already reached, on a quest that allows it.
+    bool ScriptSetStage(uint16_t aStage, bool aRepeat = false);
     void SetStopped();
     bool IsStageReached(uint16_t aStage) noexcept;
 };

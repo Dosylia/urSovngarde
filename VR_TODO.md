@@ -68,6 +68,8 @@ his scene never finishes. Use an alternate start, or connect after the intro.
   is gone from the body, and their own weapon stays in their hand.
   If not: `BodyTake: X xN taken off Y`, then `DroppedItem: dropped X`.
 
+- **Win a hold with both players in the war.** The member's journal completes that hold and shows the next one, without any console command. Read
+  `WarState: the war changed here` on the leader and `WarState: following the leader's war here` on the member. A player who rejoins catches up within 30 s.
 - **Loot several bodies in a row while the other player watches from in front.** The looter's copy stands still in each menu, in the pose
   it had, with no snapping of arms or body at each opening and closing. If not: `VRBodySync: actor X hands --`, and whether `owner` and `copy` differ
   while `Menu queued: ContainerMenu` is open on the looter.
@@ -93,6 +95,19 @@ If there is time:
 After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:`, `Connection:`, `VRBodySync: actor X body --`, and
 `logs/process-end.log` if a game vanishes.
 
+- [!] **The Civil War journal and holds stopped following the leader** (session 2026-10-31 14:26 and 20:34: player 2's quest did not move on to Liberate Hjaalmarch, and it had
+      "never really synced since Liberate Falkreath"). Fix in the tree on 7eedbbe1, a protocol change: `RequestWarState` and `NotifyWarState`, so every player and the server need the new build. Not seen in play.
+      The battle quests run on the leader only, so in a member's game `Remote quest updated: CWFortSiegeCapital, stage: 9000; running here no`: the scripts that give a hold to the winner and move the journal on never run there.
+      Player 2's save read on the rig: `CW` active and on the right side (`WarIsActive` 1, `playerAllegiance` 2), `Liberate Falkreath` shown and not completed, Falkreath still owned by the other side.
+      `Remote quest 19E53 already reached stage 4, current stage: 255` was a real part of it. `CW` allows repeated stages and reaches stage 4 once per hold, when the player reports in (player 1 at 14:25:52 and 20:34:20): it completes the report objectives, shows the camps and the next hold. A member refused every one after its first. A member now runs them again on a quest with that flag; a leader still takes a member's stage only once. `GetCurrentStageID` is a high mark: it stayed 255 after stage 4 ran.
+      Player 2's saves, read on the rig: `CW` had stage 0 alone on 10-11; 0 and 255, war stopped, `MQ302` at 320 with stage 40 done on 10-16. That player did not play `MQ302` and used console commands in those weeks, and a member also applies every stage it is sent; the logs of those days are gone, so which of the two set it is unknown. Stage 4 came by 10-25 and set the war active again.
+      Stage 255 cannot be taken back; no gameplay check of it found beyond one package on `GetStage >= 100`. `MQ302` at 320 and `MQ305` at 12 still run in that save, which is no fault in itself: `MQ302` also ran on at 320 in the 10-18 07:09 save, with the main quest finished and `CW` at 256. That later saves have lower stages (10-18 19:31: `MQ305` at 12, no `CW` 256) means an older save was loaded or a quest reset. Nothing to fix.
+      The leader now sends who owns each hold (`CWOwner` on the hold's location) and each `CWObj` objective's state, within 2 s of a change and every 30 s for whoever fell behind. A member sets the same through the natives the war script uses. A member's own war is not sent, and a leader not in the war yet sends nothing.
+      - Rig, two real games on a copy of player 2's save, local server: a hold won reached the member in under 2 s, with `Completed: Liberate Falkreath Hold` in its journal; an objective the leader does not have went at the next send; a member's change did not reach the leader; a member away while a hold fell caught up 27 s after coming back; one log line per change and no repeats.
+      - Same rig, stages: the member's war stopped with stage 255 (`WarIsActive` -1), and the leader's stage 4 set it active again in 0.5 s (`Remote quest updated: 19E53, stage: 4; running here yes; run again`). A member's stage 4 was still refused on the leader. Play on d40cc8b and e6c7900c is the unfixed side: both refused it. 14 of 14 checks; bot pairs 14 of 14 on this protocol, before the repeated stages, which are client only.
+      - Not carried: the rest of what winning a hold does in the member's world (the jarl, garrisons) unless a relayed `ReferenceEnable` does it, a `CW` script's own variables and globals (an objective's percentage text), and the leader's mission quests, which still run on the leader only. A member whose `CWObj` does not run gets the holds, and the objectives wait.
+      - `Gameplay:bEnableMiscQuestSync` still decides whether `CW`, a quest of type None, syncs its stages at all. This new message does not depend on it.
+      - To see: "Win a hold with both players in the war".
 - [!] **A player's copy snapped between two poses at each menu** (session 2026-10-31 14:52, player 2 watching player 1 loot; fix in the tree on
       82bc61ca, client only, no protocol change; each player needs it for the others to see them right; not seen in play).
       In a full menu the game shows a second body. `CaptureLocalPose` read its bones and sent them, so each opening and closing snapped the copy,
@@ -379,13 +394,6 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Fix: `GetPolarAngle` answers 0 for an infinite vector, and the planner treats an infinite target or position as no target, the game's own answer for one it cannot use. Each logs `NonFinite:` once a second.
       Rig: no red run. An infinite offset through `KeepOffsetFromActor` did not hang e6c7900c, twice, so the guard has never fired. `live-walk` 8 ok, both hooks installed, a real Elder Dragon beside the player ran at 100 fps. TPTests 111 ok.
 
-- [ ] **The Civil War questline stops syncing after the first hold** (session 2026-10-31 on d40cc8b, 14:26: player 2's quest did not move on to Liberate Hjaalmarch, and it has
-      "never really synced since Liberate Falkreath"). Not fixed, not tested.
-      Log: player 1's game reached stage 4 of `CW` (0x19E53, the main Civil War quest) at 14:25:52, and player 2's refused it in the same second: `Remote quest 19E53 already reached stage 4,
-      current stage: 255`. Those are the only lines about that quest in either log. The refusal is ours: `QuestService::OnQuestUpdate` drops a stage this game has already reached.
-      Inferred, not read yet: the quest runs again for each hold, so a stage that is new in the game that restarted it is an old one in the other, still at 255 from the last hold. That fits "since Falkreath".
-      Not checked: that `CW` really restarts, and what player 2's game did at the end of Falkreath.
-      Next: read how `CW` restarts, then carry that restart to the other game, so the stage is new there too. Simply letting lower stages through would replay finished quests.
 - [ ] **Ulfric's lines not heard by the other player** (14:25: "both players hearing the dialogues" is not done). Not fixed.
       Log: all 8 of his lines from 14:24:55 to 14:25:55 went out, and player 2's game logged `played here` for each, the last five at 126 to 140 units. `game's answer` was 0.00 for all 8.
       That answer settles nothing yet: it is 0.00 for 1114 of the 1277 lines in that log, at every distance. So `played here` only says the call ran, not that a sound played.

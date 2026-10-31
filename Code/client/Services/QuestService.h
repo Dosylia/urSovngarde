@@ -3,8 +3,10 @@
 #include <World.h>
 #include <Events/EventDispatcher.h>
 #include <Games/Events.h>
+#include <Structs/WarState.h>
 
 struct NotifyQuestUpdate;
+struct NotifyWarState;
 struct DisconnectedEvent;
 struct PartyLeftEvent;
 struct UpdateEvent;
@@ -25,11 +27,16 @@ struct TESQuest;
  * same stage on their own, so it relays each once, from whoever reaches it first, until the quest next starts or stops.
  *
  * Applying: stages go through ScriptSetStage so their fragments run (and a stopped quest restarts), skipping those
- * already reached. Stops skip scripts. ScopedQuestOverride keeps the events this fires from being sent back.
+ * already reached, except that a member runs them again on a quest that allows repeated stages. Stops skip scripts.
+ * ScopedQuestOverride keeps the events this fires from being sent back.
  *
  * Scenes: setting a stage a playing scene waits on can end its phase early, skipping its lines and scripts and leaving
  * the quest stuck. So the leader, whose world the party follows, holds member stages that the running or next phase checks and
  * queues later ones behind them. Members apply every stage right away.
+ *
+ * The civil war: its battle quests run on the leader only, so a member's game never runs the scripts that give a hold to
+ * the winner and move the journal on. The leader sends who owns each hold and the state of each objective, and a member
+ * sets the same on its own quest and holds.
  */
 class QuestService final : public BSTEventSink<TESQuestStartStopEvent>,
                            BSTEventSink<TESQuestStageEvent>,
@@ -81,6 +88,10 @@ private:
     BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
     void OnQuestUpdate(const NotifyQuestUpdate&) noexcept;
+    void OnWarState(const NotifyWarState&) noexcept;
+    // On the leader, in a party: sends the war when it changes, and every so often for whoever fell behind.
+    void SendWarState() noexcept;
+    void ForgetAppliedWarState() noexcept;
     // aSceneId and aPhase: the playing scene and phase that check the stage, 0 when it waits behind stages held before it.
     void HoldStage(TESQuest* apQuest, uint16_t aStage, uint32_t aSceneId, uint32_t aPhase) noexcept;
     // Applies every quest's held stages in order, without waiting for scenes: the server relays a stage only once, so dropping them would lose them.
@@ -93,9 +104,16 @@ private:
     // Keyed by quest form ID
     Map<uint32_t, HeldStages> m_heldStages{};
 
+    WarState m_sentWarState{};
+    // What this member last set, so that something the game will not take is not tried, and announced in the journal, again and again.
+    WarState m_appliedWarState{};
+    std::chrono::steady_clock::time_point m_nextWarCheck{};
+    std::chrono::steady_clock::time_point m_nextWarSend{};
+
     entt::scoped_connection m_joinedConnection;
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_leftConnection;
     entt::scoped_connection m_questUpdateConnection;
+    entt::scoped_connection m_warStateConnection;
 };
