@@ -559,6 +559,7 @@ void RunGhostChecks() noexcept
 }
 //! The values a copy that is to be dead starts with: a little health, so that it lives until it is killed with its 3D.
 //! With none it dies as they are set, with nothing played, and the kill finds it dead and leaves it on its feet.
+//! Never for a body already dead here: no kill would come to take that health, and it gets back up.
 ActorValues ValuesUntilKilled(const ActorValues& acValues) noexcept
 {
     ActorValues values = acValues;
@@ -1416,7 +1417,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
                 const entt::entity copyEntity = m_world.create();
                 m_world.emplace<RemoteComponent>(copyEntity, acMessage.ServerId, pCopy->formID, acMessage.OwnershipEpoch).DeadAtOwner = acMessage.IsDead;
                 pCopy->MoveTo(PlayerCharacter::Get()->parentCell, acMessage.Position);
-                pCopy->SetActorValues(acMessage.IsDead ? ValuesUntilKilled(acMessage.AllActorValues) : acMessage.AllActorValues);
+                pCopy->SetActorValues(acMessage.IsDead && !pCopy->IsDead() ? ValuesUntilKilled(acMessage.AllActorValues) : acMessage.AllActorValues);
                 auto& copyInterpolation = InterpolationSystem::Setup(m_world, copyEntity);
                 copyInterpolation.Position = acMessage.Position;
                 AnimationSystem::Setup(m_world, copyEntity);
@@ -1578,7 +1579,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                         // Actor values and weapon state are also sent in range only, so they are stale too.
                         // Under this staleness gate nothing fresher arrives to conflict with the spawn's values.
                         pActor->SetActorValues(acMessage.IsPlayer ? StandingValues(acMessage.InitialActorValues, pActor->formID)
-                                                                   : acMessage.IsDead ? ValuesUntilKilled(acMessage.InitialActorValues)
+                                                                   : acMessage.IsDead && !pActor->IsDead() ? ValuesUntilKilled(acMessage.InitialActorValues)
                                                                                       : acMessage.InitialActorValues);
                         if (pActor->actorState.IsWeaponDrawn() != acMessage.IsWeaponDrawn)
                             pActor->SetWeaponDrawnEx(acMessage.IsWeaponDrawn);
@@ -1797,7 +1798,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
     pActor->rotation.z = acMessage.Rotation.y;
     pActor->MoveTo(PlayerCharacter::Get()->parentCell, acMessage.Position);
     pActor->SetActorValues(acMessage.IsPlayer ? StandingValues(acMessage.InitialActorValues, pActor->formID)
-                           : acMessage.IsDead ? ValuesUntilKilled(acMessage.InitialActorValues)
+                           : acMessage.IsDead && !pActor->IsDead() ? ValuesUntilKilled(acMessage.InitialActorValues)
                                               : acMessage.InitialActorValues);
 
     pActor->GetExtension()->SetPlayer(acMessage.IsPlayer);
@@ -3266,7 +3267,7 @@ Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const no
     pActor->rotation.z = acMessage.Rotation.y;
     pActor->MoveTo(PlayerCharacter::Get()->parentCell, pInterpolationComponent->Position);
     pActor->SetActorValues(acMessage.IsPlayer ? StandingValues(acMessage.InitialActorValues, pActor->formID)
-                           : acMessage.IsDead ? ValuesUntilKilled(acMessage.InitialActorValues)
+                           : acMessage.IsDead && !pActor->IsDead() ? ValuesUntilKilled(acMessage.InitialActorValues)
                                               : acMessage.InitialActorValues);
 
     pActor->GetExtension()->SetPlayer(acMessage.IsPlayer);
@@ -3339,8 +3340,9 @@ void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickI
         m_ownerLeveledPicks.clear();
     m_ownerLeveledPicks[apActor->formID] = cPickId;
 
-    // A body keeps the look it has: changing its pick disables and rebuilds it, so it would vanish from under a hand that takes it.
-    if (apActor->IsDead() && apActor->GetNiNode() && m_pendingLeveledConforms.find(apActor->formID) == m_pendingLeveledConforms.end())
+    // A body keeps the look it has: changing its pick disables and rebuilds it, so it would vanish from under a hand that takes it, and can come back standing.
+    // Only a body with no pick yet has no look to keep.
+    if (apActor->IsDead() && (apActor->GetNiNode() || !LeveledNpcSystem::IsLeveledNpcBase(pBase)) && m_pendingLeveledConforms.find(apActor->formID) == m_pendingLeveledConforms.end())
         return;
 
     // Even a pick matching the current base must supersede pending work.
@@ -3950,6 +3952,93 @@ void CharacterService::RunRemotePlayerDiag() noexcept
 void CharacterService::RunRemotePlayerDiag() noexcept {}
 void CharacterService::RunOrphanedRemoteDiag() noexcept {}
 void CharacterService::RunWeaponTouch() noexcept {}
+#endif
+
+#ifdef SKYRIMVR
+// A dead body with health gets back up, and stands with no ragdoll while the game still lets a player search it.
+// A save keeps it so, so this takes the health off any body near, and lays down one that has stood still over two looks.
+// From the start of a frame on the main thread: no job is rebuilding a body then.
+void CharacterService::LayDownStandingBodies() noexcept
+{
+    constexpr float cStandingHeight = 50.f; // a pelvis over the feet: about 60 standing, up to 43 lying on a slope
+    constexpr float cStillDistance = 3.f;
+    constexpr float cNearPlayer = 4096.f;
+    constexpr uint32_t cBodiesAtATime = 24;
+    constexpr uint32_t cTries = 3;
+
+    static std::chrono::steady_clock::time_point s_nextLook{};
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < s_nextLook)
+        return;
+    s_nextLook = cNow + std::chrono::seconds(2);
+
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return;
+
+    struct Standing
+    {
+        glm::vec3 Pelvis{};
+        uint32_t Tries = 0;
+    };
+    static TiltedPhoques::Map<uint32_t, Standing> s_standing;
+    if (s_standing.size() > 256)
+        s_standing.clear();
+
+    // Bodies past the limit are looked at on the next round.
+    static uint32_t s_skip = 0;
+    uint32_t seen = 0;
+    uint32_t looked = 0;
+    for (const auto cEntity : m_world.view<FormIdComponent>())
+    {
+        Actor* pActor = Cast<Actor>(TESForm::GetById(m_world.get<FormIdComponent>(cEntity).Id));
+        if (!pActor || pActor == pPlayer || !pActor->GetNiNode())
+            continue;
+        if (glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) > cNearPlayer || !pActor->IsDead())
+            continue;
+        if (seen++ < s_skip)
+            continue;
+        if (++looked > cBodiesAtATime)
+            break;
+
+        if (const float cHealth = pActor->GetActorValue(ActorValueInfo::kHealth); cHealth > 0.f)
+        {
+            spdlog::info("BodyStand: dead {:X} had {:.0f} health; taken", pActor->formID, cHealth);
+            pActor->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, 0.f);
+        }
+
+        float height = 0.f;
+        glm::vec3 pelvis{};
+        if (!VRBodySync::BodyPelvisHeight(pActor, height, pelvis))
+            continue;
+
+        auto found = s_standing.find(pActor->formID);
+        if (height < cStandingHeight)
+        {
+            if (found != s_standing.end())
+                s_standing.erase(found);
+            continue;
+        }
+        if (found == s_standing.end())
+        {
+            s_standing[pActor->formID].Pelvis = pelvis;
+            continue;
+        }
+        Standing& standing = s_standing[pActor->formID];
+        const bool cStill = glm::distance(pelvis, standing.Pelvis) < cStillDistance;
+        standing.Pelvis = pelvis;
+        if (!cStill || standing.Tries >= cTries)
+            continue;
+
+        ++standing.Tries;
+        BSFixedString ragdoll("RagdollInstant");
+        const auto* pNpc = Cast<TESNPC>(pActor->baseForm);
+        pActor->SendAnimationEvent(&ragdoll);
+        spdlog::info("BodyStand: dead {:X} ({}) stands, its pelvis {:.0f} over its feet, with no ragdoll; laid down (try {})", pActor->formID,
+                     pNpc ? pNpc->fullName.value.AsAscii() : "?", height, standing.Tries);
+    }
+    s_skip = looked > cBodiesAtATime ? seen - 1 : 0;
+}
 #endif
 
 void CharacterService::RunRemoteUpdates() noexcept

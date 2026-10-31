@@ -1,3 +1,6 @@
+#include <Games/Skyrim/VRBodySync.h>
+#include <Services/CharacterService.h>
+#include <World.h>
 #include <TiltedOnlinePCH.h>
 #include "TiltedOnlineApp.h"
 #include <Misc/GameVM.h>
@@ -36,6 +39,9 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
     RunDeferredSkillsTreeUpdate();
     ReleaseClosedSkillsTrees();
     RunHeldMapHide();
+    VRBodySync::AddPendingWeaponBodies();
+    if (entt::locator<World>::has_value())
+        World::Get().GetCharacterService().LayDownStandingBodies();
 #endif
 
     return TiltedPhoques::ThisCall(MainLoop, apThis);

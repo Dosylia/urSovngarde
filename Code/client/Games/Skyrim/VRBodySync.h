@@ -15,6 +15,10 @@ namespace VRBodySync
 {
 //! Renderer frame end (BSGraphics StopTimer). One thread, once per frame.
 void OnFrameEnd() noexcept;
+//! The start of a frame, on the main thread: weapon bodies found at the last frame end go in the world here.
+void AddPendingWeaponBodies() noexcept;
+//! How far a body's pelvis stands over its lower foot, and where the pelvis is. False for a body with no such bones.
+bool BodyPelvisHeight(Actor* apActor, float& aHeight, glm::vec3& aPelvis) noexcept;
 
 //! The other player's weapon (on their copy FormId, Side 0 left / 1 right) met one of this player's HIGGS bodies.
 struct Clash

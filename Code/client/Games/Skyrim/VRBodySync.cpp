@@ -1687,8 +1687,22 @@ struct WeaponBody
     bool Listening = false;    // our contact listener is on it
     uint8_t GameMaxAngularVelocity = 0; // the game's limit, put back when the body is let go
 };
-// Per copy and side (left, right). Touched only from the renderer's frame end.
+// Per copy and side (left, right). Touched only from the renderer's frame end and the start of a frame, both on the main thread.
 std::unordered_map<uint64_t, WeaponBody> s_weaponBodies;
+std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> s_weaponBodyRetryAt;
+
+// A weapon body found at the frame end, waiting for the start of the next frame.
+struct PendingWeaponBody
+{
+    uint64_t Key = 0;
+    uint32_t FormId = 0;
+    uint32_t Side = 0;
+    WeaponBody Body{};
+    void* pWorld = nullptr;
+    alignas(16) float Position[4]{};
+    alignas(16) float Rotation[4]{};
+};
+TiltedPhoques::Vector<PendingWeaponBody> s_pendingWeaponBodies;
 
 // What the weapon bodies touch, from Havok's own contact callbacks on each of them.
 // Havok raises them during its step, possibly on worker threads, so they only record what touched what.
@@ -2133,11 +2147,10 @@ void UpdateWeaponBodies(const uint32_t aFormId, Actor* apActor, const Rig& acRig
                 continue;
             }
             // A failed add is tried again after five seconds, not every frame: the checks below are slow ones.
-            static std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> s_retryAt;
             const auto cNowAdd = std::chrono::steady_clock::now();
-            if (const auto retry = s_retryAt.find(key); retry != s_retryAt.end() && cNowAdd < retry->second)
+            if (const auto retry = s_weaponBodyRetryAt.find(key); retry != s_weaponBodyRetryAt.end() && cNowAdd < retry->second)
                 continue;
-            s_retryAt[key] = cNowAdd + std::chrono::seconds(5);
+            s_weaponBodyRetryAt[key] = cNowAdd + std::chrono::seconds(5);
             void* pBhkWorld = BhkWorldOf(pCopyWorld);
             if (!pBhkWorld)
             {
@@ -2160,42 +2173,17 @@ void UpdateWeaponBodies(const uint32_t aFormId, Actor* apActor, const Rig& acRig
                 continue;
             }
             WeaponBodyTarget(body, havokScale, position, rotation);
-            {
-                WorldWriteLock lock(pBhkWorld);
-                if (!lock.Held() || At<void*>(pHavok, kHkWorldOffset) != nullptr)
-                    continue;
-                static_cast<NiRefObject*>(body.pNode)->IncRef();
-                static_cast<NiRefObject*>(body.pWrapper)->IncRef();
-                s_setPositionAndRotation.Get()(pHavok, position, rotation);
-                // The game caps its weapon body at 31.6 rad/s, slower than a swung sword, so the keyframe never catches up.
-                // HIGGS gives its own weapon bodies 500 rad/s; so does this while the body is ours.
-                body.GameMaxAngularVelocity = pHavok[kMaxAngularVelocityOffset];
-                POINTER_SKYRIMSE(THkRealToUFloat8, s_toUFloat8, 9000010, 9000010);
-                if (s_toUFloat8.Get())
-                {
-                    constexpr float cMaxAngularVelocity = 500.f;
-                    s_toUFloat8.Get()(pHavok[kMaxAngularVelocityOffset], cMaxAngularVelocity);
-                }
-                s_addEntity.Get()(pCopyWorld, pHavok, 1); // HK_ENTITY_ACTIVATION_DO_ACTIVATE
-                if (s_addContactListener.Get())
-                {
-                    s_addContactListener.Get()(pHavok, &s_contactListener);
-                    body.Listening = true;
-                }
-            }
-            body.Seen = true;
-            s_weaponBodies[key] = body;
-            s_retryAt.erase(key);
-            const uint32_t filter = At<uint32_t>(pHavok, kFilterInfoOffset);
-            const char* pName = GetName(pNode);
-            const char* pClass = RttiNameOf(body.pWrapper);
-            // Read back from where Havok keeps it: 0 here says the transform is read at the right offset.
-            const float placedOff = glm::length(BodyPosition(pHavok, havokScale) - glm::vec3{position[0], position[1], position[2]} / havokScale);
-            if (ShouldLogWeaponBody(key, true))
-                spdlog::info("VRWeaponBody: actor {:X} {} weapon '{}' ({}) is a body in the world now: layer {}, group {}, motion type {}; placed, it reads {:.1f} units from where it was put; "
-                             "hkpRigidBody at {}",
-                             aFormId, side ? "right" : "left", pName && IsReadable(pName, 1) ? pName : "?", pClass ? pClass : "?", filter & 0x7F, filter >> 16,
-                             At<uint8_t>(pHavok, kMotionTypeOffset), placedOff, fmt::ptr(pHavok));
+            PendingWeaponBody pending{};
+            pending.Key = key;
+            pending.FormId = aFormId;
+            pending.Side = side;
+            pending.Body = body;
+            pending.pWorld = pCopyWorld;
+            std::copy_n(position, 4, pending.Position);
+            std::copy_n(rotation, 4, pending.Rotation);
+            static_cast<NiRefObject*>(body.pNode)->IncRef();
+            static_cast<NiRefObject*>(body.pWrapper)->IncRef();
+            s_pendingWeaponBodies.push_back(pending);
             continue;
         }
 
@@ -2222,6 +2210,77 @@ void UpdateWeaponBodies(const uint32_t aFormId, Actor* apActor, const Rig& acRig
                          side ? "right" : "left", glm::length(BodyPosition(body.pHavok, havokScale) - wanted), centre.x, centre.y, centre.z);
         }
     }
+}
+
+// Puts the weapon bodies of the last frame in the world, at the start of a frame, when no job is running.
+// PLANCK answers an add with an SKSE task, and adding at the frame end could not get its lock: a running task that reads the world waits for this thread's world lock.
+// A job can change the weapon after the frame end, so each is looked at again here, and the references taken then are the ones the body keeps.
+void AddPendingBodies() noexcept
+{
+    if (s_pendingWeaponBodies.empty())
+        return;
+
+    POINTER_SKYRIMSE(float, s_havokScale, 231896, 231896);
+    POINTER_SKYRIMSE(THkpWorldAddEntity, s_addEntity, 9000001, 9000001);
+    POINTER_SKYRIMSE(THkpEntitySetPositionAndRotation, s_setPositionAndRotation, 9000002, 9000002);
+    POINTER_SKYRIMSE(THkpEntityContactListener, s_addContactListener, 60094, 60094);
+    POINTER_SKYRIMSE(THkRealToUFloat8, s_toUFloat8, 9000010, 9000010);
+    const float havokScale = *s_havokScale.Get();
+
+    for (PendingWeaponBody& pending : s_pendingWeaponBodies)
+    {
+        WeaponBody& body = pending.Body;
+        uint8_t* pHavok = body.pHavok;
+        void* pCollision = At<void*>(body.pNode, kCollisionObjectOffset);
+        const bool cSameBody = pCollision && At<void*>(pCollision, kCollisionBodyOffset) == body.pWrapper;
+        bool added = false;
+        if (cSameBody && BhkWorldOf(pending.pWorld) == body.pBhkWorld)
+        {
+            WorldWriteLock lock(body.pBhkWorld);
+            if (!lock.Held() || At<void*>(pHavok, kHkWorldOffset) != nullptr)
+            {
+                static_cast<NiRefObject*>(body.pWrapper)->DecRef();
+                static_cast<NiRefObject*>(body.pNode)->DecRef();
+                continue;
+            }
+            s_setPositionAndRotation.Get()(pHavok, pending.Position, pending.Rotation);
+            // The game caps its weapon body at 31.6 rad/s, slower than a swung sword, so the keyframe never catches up.
+            // HIGGS gives its own weapon bodies 500 rad/s; so does this while the body is ours.
+            body.GameMaxAngularVelocity = pHavok[kMaxAngularVelocityOffset];
+            if (s_toUFloat8.Get())
+            {
+                constexpr float cMaxAngularVelocity = 500.f;
+                s_toUFloat8.Get()(pHavok[kMaxAngularVelocityOffset], cMaxAngularVelocity);
+            }
+            s_addEntity.Get()(pending.pWorld, pHavok, 1); // HK_ENTITY_ACTIVATION_DO_ACTIVATE
+            if (s_addContactListener.Get())
+            {
+                s_addContactListener.Get()(pHavok, &s_contactListener);
+                body.Listening = true;
+            }
+            added = true;
+        }
+        if (!added)
+        {
+            static_cast<NiRefObject*>(body.pWrapper)->DecRef();
+            static_cast<NiRefObject*>(body.pNode)->DecRef();
+            continue;
+        }
+        body.Seen = true;
+        s_weaponBodies[pending.Key] = body;
+        s_weaponBodyRetryAt.erase(pending.Key);
+        const uint32_t filter = At<uint32_t>(pHavok, kFilterInfoOffset);
+        const char* pName = GetName(body.pNode);
+        const char* pClass = RttiNameOf(body.pWrapper);
+        // Read back from where Havok keeps it: 0 here says the transform is read at the right offset.
+        const float placedOff = glm::length(BodyPosition(pHavok, havokScale) - glm::vec3{pending.Position[0], pending.Position[1], pending.Position[2]} / havokScale);
+        if (ShouldLogWeaponBody(pending.Key, true))
+            spdlog::info("VRWeaponBody: actor {:X} {} weapon '{}' ({}) is a body in the world now: layer {}, group {}, motion type {}; placed, it reads {:.1f} units from where it was put; "
+                         "hkpRigidBody at {}",
+                         pending.FormId, pending.Side ? "right" : "left", pName && IsReadable(pName, 1) ? pName : "?", pClass ? pClass : "?", filter & 0x7F, filter >> 16,
+                         At<uint8_t>(pHavok, kMotionTypeOffset), placedOff, fmt::ptr(pHavok));
+    }
+    s_pendingWeaponBodies.clear();
 }
 
 // Right before Havok steps a world, wakes every weapon body in it and keyframes it to where its weapon was last drawn.
@@ -2967,6 +3026,36 @@ std::vector<CopyBlade> s_copyBlades;
 
 namespace VRBodySync
 {
+void AddPendingWeaponBodies() noexcept
+{
+    AddPendingBodies();
+}
+
+bool BodyPelvisHeight(Actor* apActor, float& aHeight, glm::vec3& aPelvis) noexcept
+{
+    // A body a hand is on, in this game or its owner's, is held up, not standing.
+    constexpr auto cPosedLately = std::chrono::seconds(5);
+    constexpr float cHandReach = 150.f;
+    if (const auto cPosedAt = BodyPosedAt(apActor->formID); cPosedAt && std::chrono::steady_clock::now() - *cPosedAt < cPosedLately)
+        return false;
+
+    void* pRoot = apActor->GetNiNode();
+    void* pPelvis = pRoot ? FindShallowest(pRoot, "NPC Pelvis [Pelv]") : nullptr;
+    void* pLeft = pPelvis ? FindShallowest(pRoot, "NPC L Foot [Lft ]") : nullptr;
+    void* pRight = pPelvis ? FindShallowest(pRoot, "NPC R Foot [Rft ]") : nullptr;
+    if (!pLeft || !pRight)
+        return false;
+
+    const NiPoint3& pelvis = At<NiTransform>(pPelvis, kWorldOffset).translate;
+    aPelvis = glm::vec3{pelvis.x, pelvis.y, pelvis.z};
+    for (uint8_t side = 0; side < 2; ++side)
+        if (glm::vec3 hand{}; LocalHandPosition(side, hand) && glm::distance(hand, aPelvis) < cHandReach)
+            return false;
+
+    aHeight = pelvis.z - std::min(At<NiTransform>(pLeft, kWorldOffset).translate.z, At<NiTransform>(pRight, kWorldOffset).translate.z);
+    return true;
+}
+
 // The blade stop, after HandParries below; OnFrameEnd calls these.
 std::array<BladeExtent, 2> MeasureCopyBlades(const Rig& acRig) noexcept;
 void RecordCopyBlades(uint32_t aFormId, Actor* apActor, const std::array<BladeExtent, 2>& acExtents) noexcept;

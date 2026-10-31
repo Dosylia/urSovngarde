@@ -98,6 +98,10 @@ struct CharacterService
 
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
 
+#ifdef SKYRIMVR
+    void LayDownStandingBodies() noexcept;
+#endif
+
 private:
     //! False when the cell to move to could not be found.
     bool MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept;
