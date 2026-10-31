@@ -30,6 +30,7 @@ static TMapProcessMessage* RealMapProcessMessage;
 static TMainUpdateSky* RealMainUpdateSky;
 // Written by the thread that processes UI messages, read from the client's update on the VM worker pool.
 static std::atomic<bool> s_mapOpen{false};
+static std::atomic<bool> s_mapUnpaused{false};
 static std::atomic<bool> s_closeRequested{false};
 // The map's model this code hid at an unpaused close; only that model is shown again.
 static std::atomic<uint8_t*> s_modelHiddenOnClose{nullptr};
@@ -89,9 +90,9 @@ static void RunDeferredMapClose() noexcept
     // Built on first use: the game's string table does not exist at static init.
     static const BSFixedString s_mapName("MapMenu");
 
-    // The cancel the player sends, not a bare hide: a bare kHide frees the map's 3D on a UI worker while the main
-    // thread draws it. BSUIMessageData read off the call site at 0x1405D0BF5: 0x28 bytes, vtable at the RVA below,
-    // the user event string at +0x18, rest zero. Game heap, since the game frees it.
+    // The cancel the player sends, so the map closes the way the player closes it.
+    // BSUIMessageData read off the call site at 0x1405D0BF5: 0x28 bytes, vtable at the RVA below, the user event string at +0x18, rest zero.
+    // Game heap, since the game frees it.
     constexpr uintptr_t kMessageDataVtable = 0x16C8B38;
     constexpr size_t kMessageDataSize = 0x28;
     constexpr size_t kUserEventOffset = 0x18;
@@ -109,6 +110,47 @@ static void RunDeferredMapClose() noexcept
     s_addMessage.Get()(pQueue, &s_mapName, UIMessage::kUserEvent, pData);
 }
 
+// The hide takes down terrain blocks and their water shapes, which the render's cull holds by raw pointer in its visible list.
+// A paused map hides on the main thread, between frames. Unpaused, the queue gives the hide to the game's UI job, which runs beside the cull.
+// So the message waits outside the queue for the start of the next frame, on the main thread.
+// Main::Update waits for its jobs after each render, so no job, cull or draw runs there.
+static std::mutex s_heldHideLock;
+static void* s_pHeldHideQueue = nullptr;
+static void* s_pHeldHideData = nullptr;
+
+bool HoldMapHide(void* apQueue, void* apData) noexcept
+{
+    if (!s_mapOpen || !s_mapUnpaused)
+        return false;
+
+    // A second hide before the first ran asks for the same close.
+    std::scoped_lock lock(s_heldHideLock);
+    if (!s_pHeldHideQueue)
+    {
+        s_pHeldHideQueue = apQueue;
+        s_pHeldHideData = apData;
+    }
+    return true;
+}
+
+void RunHeldMapHide() noexcept
+{
+    void* pQueue = nullptr;
+    void* pData = nullptr;
+    {
+        std::scoped_lock lock(s_heldHideLock);
+        pQueue = std::exchange(s_pHeldHideQueue, nullptr);
+        pData = std::exchange(s_pHeldHideData, nullptr);
+    }
+    if (!pQueue)
+        return;
+
+    // Built on first use: the game's string table does not exist at static init.
+    static const BSFixedString s_mapName("MapMenu");
+    if (UI* pUI = UI::Get())
+        pUI->RunMessageNow(pQueue, s_mapName, UIMessage::kHide, pData);
+}
+
 static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
 {
     const bool cHiding = aMessage.eType == UIMessage::kHide || aMessage.eType == UIMessage::kForceHide;
@@ -124,10 +166,14 @@ static uint32_t HookMapProcessMessage(IMenu* apThis, UIMessage& aMessage)
     }
 
     if (aMessage.eType == UIMessage::kShow)
+    {
+        s_mapUnpaused = !apThis->PausesGame();
         s_mapOpen = true;
+    }
     else if (cHiding)
     {
         s_mapOpen = false;
+        s_mapUnpaused = false;
         s_lastHideFrame.store(MainLoopFrame(), std::memory_order_relaxed);
     }
 
@@ -246,7 +292,8 @@ static void HookMapWorldUpdate(float aDelta)
 // Both go on one thread into one culler, the roots array at args+0x50.
 // While the map is open the world is left out and the player's world node (player+0x3F0) is one of the extra roots.
 // The extra roots are listed at the frame's start (VR 0x1405BFC90, while UI::IsMenuOpen("MapMenu")), but the world's part is decided in the job.
-// An unpaused hide, on a UI worker, gives the world back in between, and that job culls the node twice: its passes go on one list twice.
+// A hide in the UI job, as the game's close of all its menus still is, gives the world back in between.
+// That job then culls the node twice, and its passes go on one list twice.
 // So when the job's world cull reaches the node, its extra roots are culled from a copy without it.
 constexpr uintptr_t kCullRoots = 0x1315B40;
 constexpr uintptr_t kWorldCullReturn = 0x1322468;

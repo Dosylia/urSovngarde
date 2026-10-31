@@ -287,6 +287,29 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   - Guards kept: the list draw cuts any loop before following it, and the insert check puts back a pass linked to
     itself (`RenderPassWatch:` lines). The watch also traces the laser from the cull to the list right after each
     close and prints every step if it is ever put on a list twice again.
+- **Crash after closing the unpaused map -- cause found, changed in build a114d97, not seen in play yet.** Player 1, 2026-10-31
+  15:05 on d40cc8b, the third fast travel of the session: `SkyrimVR.exe+0x13085EE`, a call through a null vtable on a job thread,
+  2 ms after the hide began and 2 ms before it ended, with the main thread waiting in the render for that job. Once in hundreds of closes.
+  - What the dump shows: the job walks a culler's visible list (0x140D9A190, the list at culler+0x128, entry 669) and hands each geometry
+    to the accumulator's append (0x141308570). The list holds raw pointers. Entry 669 was a `BSTriShape` with a `BSWaterShaderProperty`:
+    4 vertices, z -14000, a LOD water quad, no parent. Shape and property were freed: first 8 bytes zero, the renderer data gone.
+    Two quads next to it in memory were alive. None of our deleted copies was in a register.
+  - Cause: a pausing map hides on the main thread (`Map menu: hide handled ... (the main thread), the map pausing`), as `Main::Update` handles the
+    UI queue itself just before `Main::Render`. Unpaused, the game's job list does it: the job named "UI" (0x140648FC0) runs beside the
+    render's cull, and `Main::Render` only waits for it after the cull. The hide reaches the terrain's LOD blocks
+    (0x14091BA80, 0x14091C540, 0x1404C5830, 0x1404BDBC0) and removes their water objects (0x1404D8820, 0x1404D7730, which destroys the
+    `TESWaterObject` at TESWaterSystem+0x20). Read from the code, and the times fit; that this very quad went that way is not proven,
+    as the worker had left that code when the dump was written.
+  - Fix (a114d97): a plain `kHide` for a map open unpaused stays out of the queue (`UIMessageQueue__AddMessage`, `HoldMapHide`). At the start of
+    the next `Main::Update` the main thread queues it and calls `UI::ProcessMessages` (`RunHeldMapHide`). `Main::Update` waits for its
+    job thread after each render (0x14057CBA0) and the render waits for the UI job (0x1405B8D47), so nothing runs there: the state
+    the paused path has. The message's data, which carries a fast travel, goes with it. It also ends the race behind the freeze above,
+    as the hide no longer falls between a job's two culls; those guards stay.
+  - Not held: a hide while the game closes all its menus (UI+0x1C9, set by 0x140F1BF10), so those run as they always did. A load
+    (0x140168160) handles the queue right after and needs the hide in it. The other callers do not, among them the player's death
+    (`KillImpl`, 0x14060D3B2), so a player killed with the map open still gets the hide in the UI job, the old race. The mod already closes
+    the map at the first hit, so that takes a kill in the frames before that close, on top of the race itself.
+  - Rig: `live-map-close` red on d40cc8b, green on a114d97, closing by Cancel, under a message box, by a hit and by a load. `live-map-pointer` ok.
 - **Crash within a second of travelling away from copies this client made -- open.** `SkyrimVR.exe+0x3AC1A8`
   (`FOCollisionListener`, a virtual call on freed memory), `+0x2EEF6A` (`HasKeyword` on a freed object) or
   `VCRUNTIME140.dll+0x504F` (a cast on the value 1), 0.5 to 0.9 s after arriving through a loading screen. In each the

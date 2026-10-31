@@ -52,6 +52,11 @@ public:
     bool GetMenuOpen(const BSFixedString& acName) const;
     void CloseAllMenus();
     void DebugLogAllMenus();
+#ifdef SKYRIMVR
+    //! Queues a message and handles the queue at once, as the main thread does in a paused frame.
+    //! Only on the main thread at the start of a frame, while none of the frame's jobs run.
+    void RunMessageNow(void* apQueue, const BSFixedString& acMenu, UIMessage::UI_MESSAGE_TYPE aType, void* apData);
+#endif
 
     IMenu* FindMenuByName(const BSFixedString& acName);
     BSFixedString* LookupMenuNameByInstance(IMenu* apMenu);

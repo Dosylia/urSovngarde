@@ -27,6 +27,9 @@ to do, what you should see, and what to read in the log if you don't. "It looked
 Before you start: don't play the vanilla Helgen intro together. Player 2 stays tied, because Ralof is a copy in that game and
 his scene never finishes. Use an alternate start, or connect after the intro.
 
+- **Fast travel from the map, a few times, and some plain closes (needs a114d97, player 1 is enough).** The rig cannot pick a marker, so this is the
+  one way to see it. The map goes, the fast travel starts, the game does not crash. Plain closes bring the world back at once.
+  If not: every close should read `Map menu: hide handled on thread N (the main thread), the map unpaused`. Say the time of anything odd.
 - **PvP on, spells and arrows.** Hit each other with fire, frost and shock spells, aimed ones and beams, and with arrows. A spell that
   hits on the caster's screen takes about what it takes from an NPC, once, even if it looked like a miss on yours. An arrow takes one
   hit's health, not two, and a dodged arrow takes nothing. If not: `PvP: spell X hits on remote player` in the caster's log, `PvP: spell hits from player` in the other's.
@@ -72,8 +75,8 @@ If there is time:
   copy X here: ... head H ...` (H about 105 standing, under 30 lying).
 - **A heal:** Healing Hands or Heal Other on the other player heals what it would on an NPC. Read `the caster's perks make it N times as strong`.
 - **Map icons:** open the map, zoom in close and back out, and look for the other player's icon.
-- **The map, player 2 and together:** 60 closes online, no freeze. Read `Map menu: the player's world node left out` at some closes,
-  and no `put on a list again` or `led back`.
+- **The map, player 2 and together:** 60 closes online, no freeze. Read `Map menu: hide handled on thread N (the main thread), the map unpaused`
+  at each close, and no `put on a list again` or `led back`.
 - **One follower in both saves:** she settles with one game. Read `she is that player's follower too, so she stays there`, once,
   and no more `asked for back`.
 - **Look at the other player:** stand in front of them while they hold their hands out, palms up, then have them run past you with
@@ -218,10 +221,25 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       - Only two real games can show: the other player sees it once, at the hand, following it, and it goes on stow; a worn weapon
         taken while the other player holds the same kind stays in their hand; a take with the same item lying near; a take
         that shoves the body, with a claim in flight; a fast stow on a real ping.
-- [!] **The published Linux server archive crashes when a client joins, on the newer systems it can run on** (fixed on b06cceb8 + the
-      local `gamenetworkingsockets` recipe in `xmake-repo`; Linux server only, not released yet). To see: the next push rebuilds every
-      Linux package and CI passes on amd64 and on arm64, then a game client joins the next release's archive on a Linux host. The public
-      server is not affected; which build it runs is still not written down.
+- [!] **The published Linux server archive crashes when a client joins, on the newer systems it can run on** (fixed by the
+      local `gamenetworkingsockets` recipe in `xmake-repo`, 34fe6f91; Linux server only, not released yet). CI on f0eeccfc: a client joins the
+      staged server on amd64 and on arm64. To see: a game client joins the next release's archive on a Linux host. The public server is not
+      affected; which build it runs is still not written down.
+      FUS's fork fixed the same cause the other way (18126f99, 75ad014e): Linux moves to OpenSSL 3.5.7, where ours keeps 1.1.1w, which is end of
+      life. Their CI checks for undefined OpenSSL symbols, and has no client joining. A merge must take the root `xmake.lua` and both recipe
+      files from one side: a mix links two OpenSSLs into one server. Moving Linux to OpenSSL 3 is worth doing on its own, after the hotfix.
+- [!] **A server that comes with a mod** (611853fb, no protocol change, not in a release; rig only). `Data\SKSE\Plugins\urSovngarde\connect.txt`, in the
+      format of `connect.txt`, gives a player with no server of their own a list's server. A list ships it as a small mod, and anyone else drags a
+      zip into MO2. The player's file wins whenever it names a server: the launcher writes it for every join, a friend's code as a local tunnel.
+      No port means 10578. README-mod-manager has the steps.
+      Rig: `live-connect-default` red on 4716f50 (`no server in`), 5 of 5 on d40cc8b. With a dead address in the mod's file, the game joined the
+      server in the player's own (one run, 3ca977d). Unit tests: `Code/tests/connect_file.cpp`. The rig's file sits in MO2's Overwrite, so this
+      shows the read through MO2, not a real mod.
+      To see, with no `connect.txt` of your own: drag a zip into MO2, no warning, tick it, start the game. `VRConnectService: the server comes from
+      a mod's connect file`, then connected. Then, with that mod ticked, a friend's code through the launcher reaches the friend.
+      Known gap: the launcher reads only the player's file, so it shows no server here, and after a join the way back is deleting that file.
+      Left out on purpose: a FOMOD (it would only help the Nexus copy), an MCM menu, per-player feature switches (the server-wide ones are in
+      `STServer.ini`), several servers in one file, a tool that writes the zip.
 - [!] **Quest scenes together** (the quest port, build 3d08be4, and the narrower hold, 626a969). A stage goes once per party, a member's stage
       is held only while it changes a check of a playing scene's running phase or the next one, and lines carry the sender's scene phase.
       Not confirmed in play. To see: a quest scene with both players near, nobody's scene stuck, no stage played twice, few holds, each
@@ -271,6 +289,11 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       height crosses 10000 upward, so opening it alone never gathers. To see: "Map icons". If zooming shows the icon, make the client force
       the regather. Not yet checked: the icon type VR's map shows for type 11, whether the list goes into saves, fast travel between
       worldspaces. A marker for a far player loads that exterior cell from disk; left as it is.
+- [!] **Crash at a fast travel from the map** (`SkyrimVR.exe+0x13085EE`, player 1 on d40cc8b, 2026-10-31 15:05; cause and fix in KNOWN_ISSUES,
+      "Crash after closing the unpaused map"). Build a114d97 runs the unpaused map's close on the main thread at the start of a frame.
+      Rig: `live-map-close` red on d40cc8b (the hide on a worker), green on a114d97 (Cancel, message box, a hit, a load), and `live-map-pointer` ok on b493cbb.
+      That shows where the hide runs. It does not show the crash gone: it came once in hundreds of closes, never in the rig. Not seen in play.
+      A real fast travel from the map cannot run in the rig. To see: "Fast travel from the map".
 - [!] **The map freeze, player 2 and together** (cause and fix in KNOWN_ISSUES, "Freeze after closing the unpaused map"). Seen fixed by player 1,
       30 closes online on 2026-10-30. To see: "The map, player 2 and together".
 - [!] **Fingers not synced on MGO's skeleton** (since build f997b6a the check takes up to three hops). 536 flattened bones, and `no usable flattened
@@ -279,6 +302,8 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 - [!] **Our browser helper outlived a crashed game and froze Mod Organizer** (2026-10-20; each helper now ends with the game, build 1a569f4).
       `helper-exit-check -StuckMain` red, then ok; rig only, and not confirmed in play. To see: after a crash, no `TPProcess.exe` left in Task
       Manager and Mod Organizer starts.
+      One did outlive its game on 2026-10-31: a `TPProcess.exe --type=gpu-process` started at 10:36 by the 43-second rig session on 8ad48b5 was still alive at 16:20, its
+      parent gone, 2 MB. The crash at 15:05 that day left none. How that one survived is not known, so a GPU helper may not be covered by the fix.
 - [!] **Freeze 2026-10-25 14:51: the autosave entering the Palace of the Kings never finished** (fixed on a98ad845 + the ExtraDataList lock change).
       A race microseconds wide, so no rig test makes it fail. To see: no freeze after a load with the other player's marker near. Not seen
       again in the 349 loading screens of 10-25 to 10-31, which is no proof.
@@ -471,6 +496,8 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 - [ ] **`live-defender` can time its hits off a stray clash** (rig only; 2026-10-31, failed on 3 of 6 runs across c382599, 1299bb5 and 4716f50 with nothing else changed). The bot takes
       `atclash` from the first clash of the run. One before the script's own clash leaves its hits about 40 s old, past the 30 s the game keeps a clash, so they land
       where the script expects a block (`a hit of 30 ... lands, 43468 ms after it happened`). Clean runs read `64 ms before`. What touches the blade first is not known.
+- [ ] **`live-map-pointer`'s second half closes nothing** (found 2026-10-31). Its last five rounds press Escape while the box is up, the box takes it, and the map stays open to
+      the end of the script, so `the map closed while the box is still up` has never been tested. The first five rounds are real closes. `live-map-close` covers those paths.
 - [ ] **Trustworthy rig tests** (asked 2026-10-17: fixes that pass in the rig keep failing in play). The rules: red before the fix, REQUIRE the preconditions,
       checks on what the player sees, report rig results as rig results, and after each play session "rig said / play said".
       Next: the scripts that leave the copy behind the headset (`live-revive-copy`, `live-creatures` and more), not judged one by one yet; the new
@@ -510,40 +537,6 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Parked and later
 
-- [ ] **A mod list's server: a connect file inside a mod** (planned 2026-10-31, nothing written; starts once the current tree is committed).
-      FUS's makers run public test servers and want the mod in their Wabbajack list with their server already set. `connect.txt` lives in
-      `%LOCALAPPDATA%`, which neither a FOMOD nor Wabbajack can write to, and a list's players never see a FOMOD. So the game also reads a file
-      from inside a mod: a list ships it as a small mod, and anyone else drags a zip into MO2. Client only, no protocol change, and our own
-      release ships no such file, so a list's mod never has to beat ours.
-      The file: `Data\SKSE\Plugins\urSovngarde\connect.txt`, in the format of `connect.txt`. `SKSE` because MO2 warns about a zip with no top
-      folder it knows, and `urSovngarde` is not one.
-      The rules:
-      - The player's own `connect.txt` wins whenever its first line names a server. The launcher writes it for every join, a friend's code as a
-        local tunnel address, so a mod's file winning would send that join to the wrong server. The cost: after any join or `setup-connect.bat`,
-        a list's server is ignored until that file is deleted. The guides say so.
-      - Address, password and `autoconnect` all come from the one file that gave the address. The two are never mixed.
-      - No port means 10578. Today it means 25681, TiltedConnect's own default (`Client.cpp:120`): the launcher and `setup-connect.bat` both add
-        the port, a hand-made file would not, and the game would retry a dead port for good.
-      - Ticking another server mod takes a game restart, as MO2 builds its virtual folder at the start.
-      The work, in this order:
-      1. Unit tests, `Code/tests/connect_file.cpp`: a byte order mark, a setting on line 2, a password then a setting, no port, a port kept, an
-         empty first line as no server, and which file wins. Reading a file moves to a small header with no game in it, like `PvpProjectiles.h`.
-      2. `VRConnectService::LoadConfig` reads the player's file, then the mod's, by a relative path, as `LogEngineFixes7` reads through MO2 today.
-         `Config` says which one, and the `connecting to` and `waiting for F6` log lines name it: that is the first question in any report.
-      3. Rig, red on the current build first: `live-connect-default`. A `headless.ps1` switch sets the player's file aside and puts one naming the
-         test server in MO2's Overwrite, so the mod list is not touched, and `down` removes it. Red: `no server in`. Green: `connecting to`, the
-         source named, and the bot sees the player.
-      4. Guides: a section on a list's server in `README-mod-manager.md` (the path, the format, the zip, that anyone can read a password in it,
-         that the player's file wins); a line in `README-vortex.md`, `README-manual.md` and `VR_MULTIPLAYER_GUIDE.md`. The last line of
-         `setup-connect.ps1` and the comment in `VRConnectService.h` still say the game connects on its own, which now takes `autoconnect=on`.
-      5. The launcher needs nothing for this to work: it never writes a file with no server (`set_auto_connect`). For its own TODO when this
-         ships: a way back to the list's server after a join, and showing that server.
-      Only real games can show: MO2 taking the zip with no warning and the game connecting from it; a friend's code through the launcher, with
-      a server mod ticked, reaching the friend.
-      For FUS when it ships: a list pins one build and the server refuses another protocol, so list and servers update together; the source is a
-      GitHub release (`directURL`), which must then never be replaced.
-      Left out on purpose: a FOMOD (it would only help the Nexus copy), an MCM menu, per-player feature switches (the server-wide ones are in
-      `STServer.ini`), several servers in one file, a tool that writes the zip.
 - [ ] **Mounts** (parked 2026-10-12). The rider's `MountRequest` crosses and the other game gives the rider's copy the
       mount package, which it accepts, but the copy never gets on: copies run no AI of their own. Tried in the rig and
       reverted: `Actor::PutActorOnMountQuick` (vtable 0xAE on VR) returns false; letting the copy's AI run with its

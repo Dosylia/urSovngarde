@@ -1,0 +1,70 @@
+# The unpaused map closes on the main thread, as a paused map does, and the world comes back.
+#
+#   python Tools\VR\live-check.py live-map-close        (the rig's server with Gameplay:bUnpausedMenus=true)
+#   python Tools\VR\live-check.py --expect-fail live-map-close     on a build without the fix: must be RED
+#
+# The hide takes terrain blocks and their water shapes down, and the render's cull holds those by raw pointer.
+# A paused map hides on the main thread, between frames. Unpaused, the game's UI job took it, beside the cull.
+# That race crashed a player 2 ms after a hide began, in the walk of the visible list (SkyrimVR.exe+0x13085EE).
+# It came once in hundreds of closes, so a clean run proves nothing about the crash: this checks where the hide runs.
+# Here the map is closed four ways: with the game's Cancel, with a message box over it, by a hit, and by a load.
+# A fast travel from the map is not here: nothing in the rig can pick a marker, so play has to show it.
+log live map close
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- closed with the game's Cancel
+log DO logmark
+log DO menu open MapMenu
+log DO sleep 2
+log SHOT map-open
+log DO key escape 200
+log DO sleep 3
+log REQUIRE logged Menu opened while connected: MapMenu \(runs unpaused\)
+log REQUIRE logged Menu closing: MapMenu
+log CHECK logged Map menu: hide handled on thread \d+ \(the main thread\), the map unpaused
+log CHECK logged Map menu: hide done
+log SHOT world-back
+
+log -- a message box over it, accepted, then closed
+log DO menu open MapMenu
+log DO sleep 2
+log DO papyrus Debug MessageBox global s:MapTest
+log DO sleep 2
+log DO key e 200
+log DO sleep 1
+log DO key escape 200
+log DO sleep 3
+log REQUIRE logged Menu queued: MessageBoxMenu
+log SHOT world-back-box
+log CHECK absent Map menu: hide handled on thread \d+ \(not the main thread
+log CHECK absent RenderPassWatch: pass
+log CHECK absent FreezeWatchdog: no frame of ours
+
+log -- a hit takes the map away, by the Cancel the mod posts
+log DO menu open MapMenu
+log DO sleep 2
+log DO logmark
+log DO console player.damageav health 20
+log DO sleep 3
+log REQUIRE logged Menu closing: MapMenu
+log CHECK logged Map menu: hide handled on thread \d+ \(the main thread\), the map unpaused
+log CHECK absent Map menu: hide handled on thread \d+ \(not the main thread
+log CHECK absent RenderPassWatch: pass
+log CHECK absent FreezeWatchdog: no frame of ours
+
+log -- a load with the map open: the game closes all its menus and handles the queue itself, so the hide is not held
+log DO menu open MapMenu
+log DO sleep 2
+log DO logmark
+log DO load last
+log DO sleep 25
+log CHECK logged Map menu: hide done
+log CHECK game inworld
+log SHOT world-back-load
+wait 3
+log done
+stop

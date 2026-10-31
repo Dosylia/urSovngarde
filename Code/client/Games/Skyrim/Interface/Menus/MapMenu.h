@@ -37,4 +37,10 @@ bool MapMenuShown() noexcept;
 
 // The main loop frame the map's last hide began in, 0 before any.
 uint64_t MapMenuLastHideFrame() noexcept;
+
+// Keeps an unpaused map's hide out of the message queue, from any thread; true when it took the message.
+bool HoldMapHide(void* apQueue, void* apData) noexcept;
+
+// Called from the start of Main::Update: runs a held hide on the main thread.
+void RunHeldMapHide() noexcept;
 #endif

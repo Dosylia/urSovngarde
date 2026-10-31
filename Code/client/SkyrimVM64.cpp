@@ -3,6 +3,7 @@
 #include <Misc/GameVM.h>
 #include <Interface/Menus/SleepWaitMenu.h>
 #include <Interface/Menus/SkillsMenu.h>
+#include <Interface/Menus/MapMenu.h>
 #include <Interface/UI.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
@@ -34,6 +35,7 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
     UpdateSkillsMenuChecks();
     RunDeferredSkillsTreeUpdate();
     ReleaseClosedSkillsTrees();
+    RunHeldMapHide();
 #endif
 
     return TiltedPhoques::ThisCall(MainLoop, apThis);

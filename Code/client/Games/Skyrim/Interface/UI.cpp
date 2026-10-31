@@ -370,6 +370,17 @@ void UnpausedMenusOnMainLoop() noexcept
 static bool s_sendingEnemyMeter = false;
 static std::chrono::steady_clock::time_point s_lastGameEnemyMeterTargetAt{};
 
+#ifdef SKYRIMVR
+// Set while the game closes all its menus, and cleared when the queue has been handled.
+// A load does this and handles the queue right after, so its hide has to be in the queue.
+static bool IsClosingAllMenus() noexcept
+{
+    constexpr size_t cClosingAllMenus = 0x1C9;
+    const auto* pUI = reinterpret_cast<const uint8_t*>(UI::Get());
+    return pUI && pUI[cClosingAllMenus];
+}
+#endif
+
 void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI_MESSAGE_TYPE a3, void* a4)
 {
     // The other half of "Menu queued": a menu asked to close, so a report shows which menu was left open.
@@ -377,6 +388,10 @@ void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI
     if ((a3 == UIMessage::kHide || a3 == UIMessage::kForceHide) && a2 && a2->AsAscii() && strncmp(a2->AsAscii(), "WS", 2) != 0)
         spdlog::info("Menu closing: {}{}", a2->AsAscii(), a3 == UIMessage::kForceHide ? " (forced)" : "");
 
+#ifdef SKYRIMVR
+    if (a3 == UIMessage::kHide && a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "MapMenu") == 0 && !IsClosingAllMenus() && HoldMapHide(a1, a4))
+        return;
+#endif
 
     // An empty message box opens at the main menu and after every save load, pausing the world; that show is dropped.
     if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "MessageBoxMenu") == 0)
@@ -411,6 +426,19 @@ void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI
 
     UIMessageQueue__AddMessage_Real(a1, a2, a3, a4);
 }
+
+#ifdef SKYRIMVR
+void UI::RunMessageNow(void* apQueue, const BSFixedString& acMenu, UIMessage::UI_MESSAGE_TYPE aType, void* apData)
+{
+    TP_THIS_FUNCTION(TProcessMessages, void, UI);
+    POINTER_SKYRIMSE(TProcessMessages, s_processMessages, 79945, 82082);
+
+    UIMessageQueue__AddMessage_Real(apQueue, &acMenu, aType, apData);
+    // Without it the message stays queued, and the UI job takes it.
+    if (s_processMessages.Get())
+        TiltedPhoques::ThisCall(s_processMessages.Get(), this);
+}
+#endif
 
 void UI::SetEnemyMeterTarget(uint32_t aHandle, uint16_t aLevel)
 {
