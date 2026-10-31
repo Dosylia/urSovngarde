@@ -93,4 +93,10 @@ struct VRPose
     std::array<bool, 2> WeaponHeld{};
     std::array<Quaternion_NetQuantize, 2> WeaponRotation{};
     float WeaponOffset[2][3]{};
+
+    //! Where the sender's held spell goes, as the game's angles: Z, then X (HasSpellAim).
+    //! The game aims a copy's flame or beam by its body each frame, so the copy's takes these instead.
+    //! Sent only while a hand casts.
+    bool HasSpellAim{false};
+    float SpellAim[2]{};
 };

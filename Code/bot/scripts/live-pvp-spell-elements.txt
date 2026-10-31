@@ -34,14 +34,14 @@ log -- a shock touch
 log DO papyrus Spell Cast 50CFA 14 copy
 wait 6
 log CHECK logged PvP: spell 50CFA hit remote player
-log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -20\.0
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -60\.0
 wait 2
 
 log -- Fireball
 log DO papyrus Spell Cast 1C789 14 copy
 wait 6
-log REQUIRE logged PvP: hit remote player \w+ for 24
-log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -24\.0
+log REQUIRE logged PvP: hit remote player \w+ for 120
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -120\.0
 wait 3
 log CHECK game alive
 log done

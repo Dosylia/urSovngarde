@@ -82,6 +82,11 @@ VRPose MakeFullPose()
     pose.WeaponOffset[1][1] = -3.5f;
     pose.WeaponOffset[1][2] = 7.75f;
 
+    // A held spell.
+    pose.HasSpellAim = true;
+    pose.SpellAim[0] = 1.5f;
+    pose.SpellAim[1] = -0.25f;
+
     return pose;
 }
 } // namespace
@@ -110,6 +115,9 @@ TEST_CASE("a full pose survives the wire", "[vrpose]")
     REQUIRE(back.HasWeapons);
     REQUIRE_FALSE(back.WeaponHeld[0]);
     REQUIRE(back.WeaponHeld[1]);
+    REQUIRE(back.HasSpellAim);
+    REQUIRE(back.SpellAim[0] == Approx(1.5f).epsilon(0.0));
+    REQUIRE(back.SpellAim[1] == Approx(-0.25f).epsilon(0.0));
 }
 
 TEST_CASE("the positional fields are exact, not quantised", "[vrpose]")
@@ -236,4 +244,6 @@ TEST_CASE("two poses that differ in one field are not equal", "[vrpose]")
     REQUIRE(differsBy([](VRPose& p) { p.WeaponHeld[1] = false; }));
     REQUIRE(differsBy([](VRPose& p) { p.WeaponRotation[1] = MakeQuat(5.f); }));
     REQUIRE(differsBy([](VRPose& p) { p.WeaponOffset[1][2] += 1.f; }));
+    REQUIRE(differsBy([](VRPose& p) { p.HasSpellAim = false; }));
+    REQUIRE(differsBy([](VRPose& p) { p.SpellAim[0] += 1.f; }));
 }

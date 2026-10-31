@@ -396,6 +396,9 @@ private:
     //! replay ends, so the copy stays posed (a stream without a pose hands the copy back to its animation).
     bool m_holdPose{false};
     VRPose m_lastReplayedPose{};
+    // A held spell whose aim goes out with each movement, as a VR player's does; heading, then pitch.
+    bool m_castAiming{false};
+    float m_castAim[2]{};
     //! Where the NPC this bot registered stands, which is where a replay for it starts from.
     glm::vec3 m_npcPosition{};
     //! The base form of the last character captured, as the server names it: what "npc captured" registers a

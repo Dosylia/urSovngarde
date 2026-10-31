@@ -15,6 +15,7 @@
 
 #include <Games/ActorExtension.h>
 #include <Games/Overrides.h>
+#include <Games/References.h>
 #include <PlayerCharacter.h>
 
 #include <Effects/ActiveEffect.h>
@@ -201,7 +202,7 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
                     return false;
                 }
 
-                const float cDamage = cBase * s_perkFactor;
+                const float cDamage = GameplayFormulas::CalculateRealDamage(pTargetActor, cBase * s_perkFactor, false, true);
                 spdlog::info("PvP: spell {:X} hit remote player {:X} for {:.0f} (base {:.0f}, the caster's perks {:.2f})", arData.pSpell->formID, pTargetActor->formID, cDamage,
                              cBase, s_perkFactor);
                 World::Get().GetRunner().Trigger(HealthChangeEvent(pTargetActor->formID, -cDamage));

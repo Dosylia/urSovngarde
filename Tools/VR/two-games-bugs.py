@@ -26,7 +26,7 @@ import play  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
 OUT = os.path.join(ROOT, 'build', 'desync', 'two-games-bugs')
-LOGS = r'C:\Fus\tools\urSovngarde\logs'
+LOGS = next((p for p in (r'C:\Fus\tools\urSovngarde\logs', r'E:\FUS\tools\Skyrim Together VR\logs') if os.path.isdir(p)), None)
 ASK_FILE = os.path.join(tempfile.gettempdir(), 'two-games-second')
 OLD_ORC, BANDIT_MELEE, BANDIT_TANK, MAGE = '62128', 'F62D7', 'F62D9', '753CB'
 ITEM = '12EB7'

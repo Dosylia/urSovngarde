@@ -50,12 +50,12 @@ float* GetGreetDistance() noexcept
 namespace GameplayFormulas
 {
 
-float CalculateRealDamage(Actor* apHittee, float aDamage, bool aKillMove) noexcept
+float CalculateRealDamage(Actor* apHittee, float aDamage, bool aKillMove, bool aOnOtherPlayer) noexcept
 {
     using TGetDifficultyMultiplier = float(int32_t, int32_t, bool);
     POINTER_SKYRIMSE(TGetDifficultyMultiplier, s_getDifficultyMultiplier, 26503, 25920);
 
-    bool isPlayer = apHittee == PlayerCharacter::Get();
+    bool isPlayer = aOnOtherPlayer || apHittee == PlayerCharacter::Get();
 
     float multiplier = s_getDifficultyMultiplier(PlayerCharacter::Get()->difficulty, ActorValueInfo::kHealth, isPlayer);
 

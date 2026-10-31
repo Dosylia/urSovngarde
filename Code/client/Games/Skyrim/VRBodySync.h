@@ -114,6 +114,12 @@ void EndWeaponTouch() noexcept;
 void SetRemotePose(Actor* apActor, const VRPose& acPose) noexcept;
 void ClearRemotePose(uint32_t aFormId) noexcept;
 
+//! Where this player's held spell goes now, in the game's angles.
+//! From any thread, each frame; it goes out with the pose while it keeps coming.
+void NoteSpellAim(float aZAngle, float aXAngle) noexcept;
+//! Where the held spell of another player's copy goes, if its owner sends that. From any thread.
+bool CopySpellAim(uint32_t aFormId, float& aZAngle, float& aXAngle) noexcept;
+
 //! A cheap fingerprint of the local transforms of the first nodes below an actor's 3D root; 0 when the actor has no 3D.
 //! Equal fingerprints across frames on a moving body mean its animation graph is not advancing.
 uint64_t SkeletonMotionFingerprint(Actor* apActor) noexcept;

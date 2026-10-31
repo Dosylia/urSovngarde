@@ -44,6 +44,10 @@ bool VRPose::operator==(const VRPose& acRhs) const noexcept
                 return false;
         }
     }
+    if (HasSpellAim != acRhs.HasSpellAim)
+        return false;
+    if (HasSpellAim && !std::equal(std::begin(SpellAim), std::end(SpellAim), std::begin(acRhs.SpellAim)))
+        return false;
     if (NoBones)
         return true;
 
@@ -136,6 +140,16 @@ void VRPose::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
                 std::memcpy(&bits, &value, sizeof(bits));
                 aWriter.WriteBits(bits, 32);
             }
+        }
+    }
+    aWriter.WriteBits(HasSpellAim ? 1 : 0, 1);
+    if (HasSpellAim)
+    {
+        for (const float value : SpellAim)
+        {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            aWriter.WriteBits(bits, 32);
         }
     }
 }
@@ -244,6 +258,19 @@ void VRPose::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
                 const uint32_t raw = static_cast<uint32_t>(bits);
                 std::memcpy(&value, &raw, sizeof(value));
             }
+        }
+    }
+    uint64_t hasSpellAim = 0;
+    aReader.ReadBits(hasSpellAim, 1);
+    HasSpellAim = hasSpellAim != 0;
+    if (HasSpellAim)
+    {
+        for (float& value : SpellAim)
+        {
+            uint64_t bits = 0;
+            aReader.ReadBits(bits, 32);
+            const uint32_t raw = static_cast<uint32_t>(bits);
+            std::memcpy(&value, &raw, sizeof(value));
         }
     }
 }

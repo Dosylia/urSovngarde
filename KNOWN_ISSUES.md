@@ -182,6 +182,10 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
 
 ## 6. Open bugs
 
+- **PvP limits of the one damage rule** (`PvpProjectiles.h`, `HookDamageActor`, `OnHealthChangeBroadcast`). An arrow takes its shooter's number, so a raised shield in the target's game no
+  longer lowers it: the copy in the shooter's game does not block, and the hook does not see the block. Three rarer cases cost at most one arrow's number: a second arrow's report within
+  500 ms of the first arrow's hit counts as more of the first; a replayed hit higher than the report stays higher; a report after the flight window (a hitch over 300 ms) is held as a plain hit, on top of the replay's.
+- **PvP limits of a held spell's aim** (`VRPose::SpellAim`): one aim per player, so two hands aimed apart share it, and a thin beam can be drawn beside a body at the right angle, from the copy's hand. Damage depends on neither.
 - **Frees are skipped while the game exits** (`Memory.cpp`): mimalloc was handed a pointer into a plugin's image (po3's ENB
   light plugin) during exit, and every quit wrote a ~100 MB dump. The hub has no mimalloc crash in 80 reports (2026-10-31).
 - **Remote player's bare face out of the helmet, and the body flickering**, seen only in one interior

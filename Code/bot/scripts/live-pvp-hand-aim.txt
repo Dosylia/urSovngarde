@@ -1,0 +1,26 @@
+# A held spell from the player's real hand sends where it goes, and takes the one damage rule.
+#
+#   python Tools\VR\live-pvp-hand.py
+#
+# That driver starts this script, and holds the trigger with a held spell (Flames unless told otherwise) in the hands aimed at the bot, through the virtual controllers.
+# So the spell is the game's own, from the hand, turned by the spell mods as in play.
+# The bot reads the aim that arrives with the pose, and says how far it is from the way to the bot.
+# This checks the sending half only: the bot has no second game to show the spell in.
+# A run counts only when (REQUIRE): the spell hit the bot's copy in this game.
+log live pvp hand aim
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+infront 200
+wait 3
+stay
+
+log -- hand cast now
+wait 30
+log REQUIRE logged PvP: spell \w+ hits on remote player
+log CHECK bot logged Spell aim of the player at
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -
+log CHECK game alive
+log done
+stop

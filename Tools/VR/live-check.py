@@ -1629,6 +1629,8 @@ class Run:
         threading.Thread(target=read_bot, daemon=True).start()
         for line in iter(output.get, None):
             log.write(line)
+            # As it comes, so a driver beside the script can read it (live-pvp-hand.py).
+            log.flush()
             self.bot_lines.append(line)
             m = re.search(r'ok: known me \(([0-9A-Fa-f]+) is known\)', line) or re.search(r'Character assigned.*?([0-9A-Fa-f]+)', line)
             if m and not self.bot_id:

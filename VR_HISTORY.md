@@ -1325,7 +1325,7 @@ entry there. The first line is from the next-session list.
       that object outlives `Delete()`. Not seen in the rig's runs, which all read 2 or 3.
 - [ ] **Console travel can crash the rig's game** (2026-10-30, 4 in about 9): `coc` or `cow` through DevBench queues the load on a
       worker thread, and the main thread then draws with the world torn down: `+0x1349238` (renderer+8 null), `+0x134c61a` (+0x180 null),
-      `d3d11.dll+0x1808d1`, a bad jump under `CommunityShaders.dll+0x38b794`, 1 to 100 ms after `Menu queued: Loading Menu`. Seen on 10-26 and
+      `d3d11.dll+0x1808d1`, a bad jump under `CommunityShaders.dll+0x38b794`, 0 to 101 ms after `Menu queued: Loading Menu`; on the three d3d11 crashes the crashing thread wrote that line itself. Seen on 10-26 and
       10-28 too, before the map work; none of our frames on the stack. In play every load is queued on one thread, and the hub has none of
       these addresses. Scripts that need to go indoors use Papyrus `MoveTo` (`live-follower-left`). `live-copies-left-3` and `live-spawn-burst`
       now travel that way too, to markers in Tamriel, as the freed body's crash is a contact in the same physics world.

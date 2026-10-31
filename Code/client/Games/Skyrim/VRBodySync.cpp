@@ -510,6 +510,10 @@ struct RemotePose
     std::array<bool, 2> WeaponHeld{};
     std::array<glm::quat, 2> WeaponRotation{};
     std::array<glm::vec3, 2> WeaponOffset{};
+    // Where the owner's held spells go (see VRPose::HasSpellAim).
+    // Not kept, so a copy's spell goes back to following its body when the owner stops sending.
+    bool HasSpellAim = false;
+    float SpellAim[2]{};
 };
 
 std::shared_mutex s_posesLock;
@@ -4799,6 +4803,44 @@ ArrowHold LocalArrowHold() noexcept
     return s_arrowHold;
 }
 
+// Where this player's held spell went last.
+// A held spell turns to its hand each frame, so one that has not for this long has ended.
+constexpr auto kSpellAimLasts = std::chrono::milliseconds(400);
+
+std::mutex s_spellAimLock;
+float s_spellAim[2]{};
+std::chrono::steady_clock::time_point s_spellAimAt{};
+
+void NoteSpellAim(const float aZAngle, const float aXAngle) noexcept
+{
+    if (!std::isfinite(aZAngle) || !std::isfinite(aXAngle))
+        return;
+    std::scoped_lock lock(s_spellAimLock);
+    s_spellAim[0] = aZAngle;
+    s_spellAim[1] = aXAngle;
+    s_spellAimAt = std::chrono::steady_clock::now();
+}
+
+// The pose's spell aim, from the last moments.
+void FillSpellAim(VRPose& aOutPose, const std::chrono::steady_clock::time_point aNow) noexcept
+{
+    std::scoped_lock lock(s_spellAimLock);
+    aOutPose.HasSpellAim = s_spellAimAt != std::chrono::steady_clock::time_point{} && aNow - s_spellAimAt <= kSpellAimLasts;
+    aOutPose.SpellAim[0] = s_spellAim[0];
+    aOutPose.SpellAim[1] = s_spellAim[1];
+}
+
+bool CopySpellAim(const uint32_t aFormId, float& aZAngle, float& aXAngle) noexcept
+{
+    std::shared_lock lock(s_posesLock);
+    const auto it = s_poses.find(aFormId);
+    if (it == s_poses.end() || !it->second.HasSpellAim)
+        return false;
+    aZAngle = it->second.SpellAim[0];
+    aXAngle = it->second.SpellAim[1];
+    return true;
+}
+
 bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHeading) noexcept
 {
     aOutPose.HasData = false;
@@ -4980,6 +5022,8 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
             aOutPose.RightHandOffset[2] = right.z;
         }
     }
+
+    FillSpellAim(aOutPose, now);
 
     // Hips: where the pelvis sits relative to the 3D root, in root space.
     // Crouching, leaning and hip sway move it without changing any rotation.
@@ -5409,6 +5453,13 @@ void SetRemotePose(Actor* apActor, const VRPose& acPose) noexcept
             pose.WeaponRotation[side] = acPose.WeaponRotation[side];
             pose.WeaponOffset[side] = glm::vec3{acPose.WeaponOffset[side][0], acPose.WeaponOffset[side][1], acPose.WeaponOffset[side][2]};
         }
+    }
+
+    pose.HasSpellAim = acPose.HasSpellAim;
+    if (acPose.HasSpellAim)
+    {
+        pose.SpellAim[0] = acPose.SpellAim[0];
+        pose.SpellAim[1] = acPose.SpellAim[1];
     }
 }
 

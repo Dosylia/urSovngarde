@@ -1281,7 +1281,10 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
             aDamage *= GameplayFormulas::PartyEnemyDamage(cPlayersNearby);
     }
 
-    float realDamage = GameplayFormulas::CalculateRealDamage(apThis, aDamage, aKillMove);
+    // Every hit of this player on another player, by weapon or by spell, is as strong as an NPC's hit on a player.
+    const ActorExtension* pExPlayerHitter = apHitter ? apHitter->GetExtension() : nullptr;
+    const bool cOnOtherPlayer = pExHittee->IsRemotePlayer() && pExPlayerHitter && pExPlayerHitter->IsLocalPlayer();
+    float realDamage = GameplayFormulas::CalculateRealDamage(apThis, aDamage, aKillMove, cOnOtherPlayer);
 
     float currentHealth = apThis->GetActorValue(ActorValueInfo::kHealth);
     bool wouldKill = (currentHealth - realDamage) <= 0.f;
@@ -1319,6 +1322,14 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
             }
             if (!cRanged)
                 return false;
+
+            // This game decides that the arrow hit, and its shooter's game says how hard: the copy has none of its owner's skill or perks.
+            if (const float cReported = realDamage > 0.f ? PvpProjectiles::ArrowHitHere(apHitter->formID, realDamage) : 0.f; cReported > 0.f)
+            {
+                spdlog::info("PvP: an arrow from copy {:X} takes {:.0f}, its shooter's number; {:.0f} here", apHitter->formID, cReported, realDamage);
+                aDamage *= cReported / realDamage;
+                realDamage = cReported;
+            }
         }
 
         World::Get().GetRunner().Trigger(HealthChangeEvent(apThis->formID, -realDamage));

@@ -1,0 +1,48 @@
+# Another player's arrow: this game decides whether it hit, and its shooter's game says how hard.
+#
+#   python Tools\VR\live-check.py live-pvp-arrow-number
+#
+# The arrow is replayed here from the shooter's copy, which has none of its owner's skill or perks, so what it makes of the arrow is far too low.
+# So a hit here takes the number the shooter's game sent, whichever of the two arrives first.
+# The bot's "launch ... arrow" is the replay, and its "hit other -N" is the shooter's number.
+# This checks the defender's half only. The bot does not aim, so it says nothing of what a real second game does.
+log live pvp arrow number
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+infront 300
+wait 3
+
+log -- an arrow that hits here takes the shooter's number
+log CHECK player mark
+wait 1
+launch 3BE12 0 arrow
+hit other -150
+wait 5
+log REQUIRE logged Remote projectile launched: shooter \w+, base 3BE12, weapon 13841, ammo 1397F, spell 0, handle true
+log CHECK player dropped 150
+
+log -- an arrow that flies past here takes nothing, whatever the shooter's game saw
+log DO logmark
+log CHECK player mark
+wait 1
+launch 3BE12 0 arrowmiss
+hit other -150
+wait 5
+log CHECK player dropped 0
+log CHECK logged PvP: a hit of 150 from player \d+ not taken
+
+log -- an enchanted arrow reports twice, here both after the hit, and the highest number counts
+log CHECK player mark
+wait 1
+launch 3BE12 0 arrow
+wait 0.25
+hit other -10
+hit other -100
+wait 5
+log CHECK player dropped 100
+log CHECK logged PvP: an arrow of player \d+ took \d+ here and its shooter's number is 100
+log CHECK game alive
+log done
+stop

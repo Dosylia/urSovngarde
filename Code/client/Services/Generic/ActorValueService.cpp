@@ -489,8 +489,23 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
             const Actor* pCopy = Cast<Actor>(TESForm::GetById(cCopy));
             if (pCopy && PvpProjectiles::Recent(cCopy, glm::distance(glm::vec3(pCopy->position), glm::vec3(pActor->position))))
             {
-                spdlog::info("PvP: a hit of {:.0f} from player {} not taken: its projectile is replayed here, and that copy's hit decides", -acMessage.DeltaHealth,
-                             acMessage.AttackerPlayerId);
+                const float cTaken = PvpProjectiles::ArrowReported(cCopy, -acMessage.DeltaHealth);
+                if (cTaken <= 0.f)
+                {
+                    spdlog::info("PvP: a hit of {:.0f} from player {} not taken: its projectile is replayed here, and that copy's hit decides", -acMessage.DeltaHealth,
+                                 acMessage.AttackerPlayerId);
+                    return;
+                }
+
+                // The replayed arrow got here first and took what this game makes of it, so only the rest of its shooter's number is left.
+                spdlog::info("PvP: an arrow of player {} took {:.0f} here and its shooter's number is {:.0f}; the rest is taken", acMessage.AttackerPlayerId, cTaken,
+                             -acMessage.DeltaHealth);
+                if (-acMessage.DeltaHealth > cTaken)
+                {
+                    NotifyHealthChangeBroadcast rest = acMessage;
+                    rest.DeltaHealth = acMessage.DeltaHealth + cTaken;
+                    ApplyHealthChange(rest);
+                }
                 return;
             }
             m_heldHits.push_back(acMessage);

@@ -352,6 +352,7 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     vrPose.HasScale = false;
     vrPose.HasRootPosition = false;
     vrPose.HasWeapons = false;
+    vrPose.HasSpellAim = false;
     {
         const InterpolationComponent::TimePoint* pBefore = nullptr;
         const InterpolationComponent::TimePoint* pAfter = nullptr;
@@ -471,6 +472,24 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
                 vrPose.WeaponHeld = weaponSource.WeaponHeld;
                 vrPose.WeaponRotation = weaponSource.WeaponRotation;
                 std::copy(&weaponSource.WeaponOffset[0][0], &weaponSource.WeaponOffset[0][0] + 6, &vrPose.WeaponOffset[0][0]);
+            }
+
+            // Where a held spell goes. Blended when both ends have it, as a flame sweeps with the hand; a turn across the wrap of the angle is taken the short way.
+            if (pBefore->VRPoseData.HasSpellAim && pAfter->VRPoseData.HasSpellAim)
+            {
+                vrPose.HasSpellAim = true;
+                const float cTurn = std::remainder(pAfter->VRPoseData.SpellAim[0] - pBefore->VRPoseData.SpellAim[0], glm::two_pi<float>());
+                vrPose.SpellAim[0] = pBefore->VRPoseData.SpellAim[0] + cTurn * poseDelta;
+                vrPose.SpellAim[1] = TiltedPhoques::Lerp(pBefore->VRPoseData.SpellAim[1], pAfter->VRPoseData.SpellAim[1], poseDelta);
+            }
+            else
+            {
+                const VRPose& spellSource = pAfter->VRPoseData.HasSpellAim ? pAfter->VRPoseData : pBefore->VRPoseData;
+                if (spellSource.HasSpellAim)
+                {
+                    vrPose.HasSpellAim = true;
+                    std::copy(std::begin(spellSource.SpellAim), std::end(spellSource.SpellAim), std::begin(vrPose.SpellAim));
+                }
             }
         }
     }

@@ -748,6 +748,15 @@ void Bot::SendMovement() noexcept
     movement.Direction = 0.f;
     if (m_holdPose && m_lastReplayedPose.HasData)
         update.UpdatedVRPose = m_lastReplayedPose;
+    if (m_castAiming)
+    {
+        VRPose& pose = update.UpdatedVRPose;
+        pose.HasData = true;
+        pose.NoBones = pose.NoBones || !m_holdPose;
+        pose.HasSpellAim = true;
+        pose.SpellAim[0] = m_castAim[0];
+        pose.SpellAim[1] = m_castAim[1];
+    }
 
     // Unreliable, as the game's client sends movement: the next one, 50 ms later, makes good a lost one.
     SendMsg(message, MovementFlags());
@@ -1140,6 +1149,18 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             {
                 pPlayer->Position = FromNet(entry.second.UpdatedMovement.Position);
                 pPlayer->Rotation = glm::vec2(entry.second.UpdatedMovement.Rotation.x, entry.second.UpdatedMovement.Rotation.y);
+                // What a real client sends while it holds a spell, at most once a second.
+                if (const VRPose& pose = entry.second.UpdatedVRPose; pose.HasSpellAim)
+                {
+                    static Clock::time_point s_nextSaid{};
+                    if (const auto cNow = Clock::now(); cNow >= s_nextSaid)
+                    {
+                        s_nextSaid = cNow + std::chrono::seconds(1);
+                        const glm::vec3 cWay = m_position - pPlayer->Position;
+                        spdlog::info("Spell aim of the player at {:X}: heading {:.1f} degrees, pitch {:.1f}; this bot is at heading {:.1f}", entry.first,
+                                     glm::degrees(pose.SpellAim[0]), glm::degrees(pose.SpellAim[1]), glm::degrees(std::atan2(cWay.x, cWay.y)));
+                    }
+                }
                 pPlayer->MovedInCell = entry.second.UpdatedMovement.CellId;
                 pPlayer->MovedInWorldSpace = entry.second.UpdatedMovement.WorldSpaceId;
             }
@@ -2326,7 +2347,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "launch <projectile hex> <spell hex> [miss|empty]": a projectile of a Skyrim.esm spell leaves this bot's character for the host, as a caster's game sends it.
+    // "launch <projectile hex> <spell hex> [miss|empty|arrow|arrowmiss]": a projectile of a Skyrim.esm spell leaves this bot's character for the host, as a caster's game sends it.
     // The host's game replays it from the bot's copy, so its own hit or miss can be tested.
     // With "miss" it flies past the host.
     // With "empty" its ids stay empty, as a form made at run time reaches another game.
@@ -2335,6 +2356,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         uint32_t projectile = 0;
         uint32_t spell = 0;
         const std::string cHow = args.size() > 2 ? args[2] : "";
+        const bool cMiss = cHow == "miss" || cHow == "arrowmiss";
+        const bool cArrow = cHow == "arrow" || cHow == "arrowmiss";
         const KnownPlayer* pHost = Host();
         if (args.size() < 2 || !ParseHex(args[0], projectile) || !ParseHex(args[1], spell) || !pHost)
         {
@@ -2353,13 +2376,20 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.OriginZ = cFrom.z;
         // The game's angles: heading clockwise from north, and pitch with down positive.
         constexpr float cMissBy = 0.6f;
-        request.ZAngle = std::atan2(cWay.x, cWay.y) + (cHow == "miss" ? cMissBy : 0.f);
+        request.ZAngle = std::atan2(cWay.x, cWay.y) + (cMiss ? cMissBy : 0.f);
         request.XAngle = -std::atan2(cWay.z, glm::length(glm::vec2(cWay.x, cWay.y)));
         request.ParentCellID = pHost->CellId;
         if (cHow != "empty")
         {
             request.ProjectileBaseID = Skyrim(projectile);
             request.SpellID = Skyrim(spell);
+        }
+        // "arrow": no spell, and the bow and arrow a client's launch of it names (an Imperial Bow and a Steel Arrow).
+        if (cArrow)
+        {
+            request.SpellID = GameId{};
+            request.WeaponID = Skyrim(0x13841);
+            request.AmmoID = Skyrim(0x1397F);
         }
         // A spell from the right hand, as the client's own launch event says.
         request.CastingSource = 1;
@@ -2372,7 +2402,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "cast <spell hex> [stop]": this bot's character casts that Skyrim.esm spell from its right hand at the host, or stops, as a client sends a concentration spell.
+    // "cast <spell hex> [stop|away [noaim]]": this bot's character casts that Skyrim.esm spell from its right hand at the host, or stops, as a client sends a concentration spell.
     if (name == "cast")
     {
         uint32_t spell = 0;
@@ -2388,12 +2418,20 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             stop.CasterId = m_serverId;
             stop.CastingSource = 1;
             SendMsg(stop);
+            m_castAiming = false;
             spdlog::info("[script] cast of {:X} stopped", spell);
             return true;
         }
-        // A beam goes where the caster looks.
+        // A copy's spell goes where its body faces, or at a target if it has one.
+        // "away" turns the body from the host with no target, as a VR player's hand points where its body does not.
+        // Its aim then goes with the pose, unless "noaim".
+        const bool cAway = args.size() > 1 && args[1] == "away";
         const glm::vec3 cWay = pHost->Position - m_position;
-        m_yaw = std::atan2(cWay.x, cWay.y);
+        const float cHeading = std::atan2(cWay.x, cWay.y);
+        m_yaw = cAway ? cHeading + glm::pi<float>() : cHeading;
+        m_castAiming = cAway && !(args.size() > 2 && args[2] == "noaim");
+        m_castAim[0] = cHeading;
+        m_castAim[1] = 0.f;
         SendMovement();
 
         SpellCastRequest request{};
@@ -2401,9 +2439,9 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.SpellFormId = Skyrim(spell);
         request.CastingSource = 1;
         request.IsDualCasting = false;
-        request.DesiredTarget = pHost->ServerId;
+        request.DesiredTarget = cAway ? 0 : pHost->ServerId;
         SendMsg(request);
-        spdlog::info("[script] spell {:X} cast at the host", spell);
+        spdlog::info("[script] spell {:X} cast at the host{}", spell, cAway ? (m_castAiming ? ", the body turned away and the aim sent" : ", the body turned away and no aim sent") : "");
         return true;
     }
 

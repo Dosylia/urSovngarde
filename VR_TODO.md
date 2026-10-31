@@ -21,7 +21,7 @@ repos' `TODO.md`: `C:\dev\urSovngarde-launcher` and `C:\dev\urSovngarde-hub`.
 
 ### Next play session
 
-All of this needs build 4716f50 or later, on both players and the server (a protocol change: an older client cannot join). Do what you can, in any order. Each line says what
+All of this needs build dd9f756 or later, on both players and the server (a protocol change: an older client cannot join). Do what you can, in any order. Each line says what
 to do, what you should see, and what to read in the log if you don't. "It looked fine" is a result too: say so.
 
 Before you start: don't play the vanilla Helgen intro together. Player 2 stays tied, because Ralof is a copy in that game and
@@ -30,9 +30,12 @@ his scene never finishes. Use an alternate start, or connect after the intro.
 - **Fast travel from the map, a few times, and some plain closes (needs a114d97, player 1 is enough).** The rig cannot pick a marker, so this is the
   one way to see it. The map goes, the fast travel starts, the game does not crash. Plain closes bring the world back at once.
   If not: every close should read `Map menu: hide handled on thread N (the main thread), the map unpaused`. Say the time of anything odd.
-- **PvP on, spells and arrows.** Hit each other with fire, frost and shock spells, aimed ones and beams, and with arrows. A spell that
-  hits on the caster's screen takes about what it takes from an NPC, once, even if it looked like a miss on yours. An arrow takes one
-  hit's health, not two, and a dodged arrow takes nothing. If not: `PvP: spell X hits on remote player` in the caster's log, `PvP: spell hits from player` in the other's.
+- **PvP on: held spells go where they are aimed.** Hold Flames, then Sparks, on each other, and turn your hand away with your body still facing them. On the other screen the spell
+  follows your hand, not your chest. A wide flame reaches them when it hits; a thin beam can pass a little to the side, as the copy's hand is not exactly yours.
+  Say how far off it looked, and when. If not: both logs have `SpellAimDiag:` once a second, the caster's the real angle, the other's the same angle and how far that player is from it.
+- **PvP on: one damage rule.** A hit by sword, arrow or spell on the other player now takes what an NPC's hit takes. So a sword hit of about 21 is about 105 at our difficulty, and a power
+  attack can kill at once. Say whether that feels right or too hard: it is one number to soften. An arrow takes one hit's health, not two, and a dodged arrow takes nothing.
+  If not: `PvP: hit remote player X for N` and `PvP: spell X hits on remote player` in the attacker's log, `PvP: spell hits from player` and `PvP: an arrow from copy X takes N` in the other's.
 - **A fight with NPCs, then look at the bodies.** Bodies stay put while you look at them; one in the wrong place moves when you
   look away. No NPC lies dead on one screen while it fights on the other, and a dead one never stays on its feet. A named townsperson the other
   player kills dies in both games, and any bounty is theirs.
@@ -374,8 +377,8 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       NPC that was a copy there), and a beam's small hits arrive every 250 ms (2026-10-31 08:01:35, though on the caster's own NPC). Melee on players: 18 of 18 hits of 21
       landed. Arrow replays landed on 2026-10-30, so arrows keep their rule. Whether a beam registers on a player's copy in the caster's game no log shows: the first
       session on this build answers it (`PvP: spell X hits on remote player`).
-      In the tree, not built, not run: a spell's or staff's damage runs on the copy in the caster's game as on an NPC, with the caster's perks, its burn and
-      the multiplier for hits by a player (0.6 at the rig's difficulty, as swords; decided 2026-10-31). Each hit goes as a health change with
+      Committed in f0eeccfc: a spell's or staff's damage runs on the copy in the caster's game as on an NPC, with the caster's perks, its burn and
+      the multiplier for a hit on a player (see the entry below). Each hit goes as a health change with
       no tick, so the defender's rule does not weigh it: a blade cannot block a spell. The defender's replayed effect is only seen, its damage not
       taken, and it is not sent back. What a hand or a weapon delivers (a weapon's strike enchantment, a touch spell, a combat-hit spell) stays as on v1.9.7, weighed by the
       defender's rule, with no burn. A sword blow after a spell is no longer taken for the spell.
@@ -383,9 +386,25 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       the caster's game can, and whether it holds is not known. Absorb spells do nothing to a player, as on v1.9.7. A third player does not see the burn on the defender. A
       non-hostile damaging effect sends nothing. A burn on the defender from a replay that landed does its last ticks at the game's own multiplier if its caster's copy goes,
       and as well as the report if the copy is rebuilt mid-burn. A PROTOCOL CHANGE (a spell's hit has no tick): both players and the server update together.
-      Scripts changed to this: `live-pvp-projectile`, `live-pvp-concentration`, `live-pvp-spell-perks`, `live-pvp-spell-elements`; not run on it, and they check one
-      side only. The real result waits for two real games: each player casts Flames, Sparks and Chain Lightning on the other, and holds a ward against one, then read
-      `PvP: spell X hits on remote player` on the caster (it names the spell), `PvP: spell hits from player` and its health on the other.
+      Scripts changed to this: `live-pvp-projectile`, `live-pvp-concentration`, `live-pvp-spell-perks`, `live-pvp-spell-elements`; they check one side only.
+      Still open for play: a ward held against a spell, and Chain Lightning.
+- [!] **PvP: where a held spell is drawn, and one damage rule** (session 2026-10-31 14:10 to 15:05: "a giant offset", "sometimes 20cm off, other time like whole meters"). Build dd9f756,
+      uncommitted on 87e6a1fc. Rig and two real games on one PC, not seen in play. A PROTOCOL CHANGE (`VRPose`): both players and the server update together.
+      Why it was off: a held spell only sends "cast", and the other game casts it again on the copy. There the game aims a copy's flame or beam by its body, each frame. The caster's real
+      one follows the hand, turned by the spell mods. In that session the caster's game landed 18 of 21 and 8 of 12 presses, and the replay touched the target on 6 and 2.
+      The defender's rule was not the cause: spells have not gone through it since f0eeccfc.
+      The fix: each frame the caster's game reads the angles the game has just given its spell from the hand (0x14076875B, 0x14075E987) and sends them with the pose (`VRPose::SpellAim`). The copy's
+      flame and beam take them in the same two updates (four call swaps). Launch angles do not do: with a target near they gave its heading, 0.0 off, while the real beam was 112 degrees away.
+      Damage: every hit of a player on a player, by sword, arrow or spell, uses the multiplier for a hit on a player, as an NPC's does (3 at our difficulty instead of 0.6, so 5 times what it was).
+      An arrow: this game still decides that it hit, and its shooter's game now says how hard, as the copy has none of its owner's skill or perks. The highest report of one arrow counts, as an enchanted one reports twice.
+      Two real games (helpers of `two-games-bugs.py`, the hand steered by `SpellAimDiag`): Flames on the target, sent 90, drawn 90, 7 of 7 seconds in both games, 24 a second off the target's real health.
+      Hand turned away, body still facing: drawn with the hand, no touch, where a body-aimed copy would touch. Sparks in both hands: sent and drawn 89.8 and 13.4, real hits of 60 a second.
+      On 3a8e1a1, with launch angles, the one flame that hit touched nothing in the other game in 6 s.
+      Rig: `live-pvp-beam-aim` (a control without the aim, then Flames reaching the player and Sparks taking the angle; the bot's aim is level, so its Sparks passes over), `live-pvp-hand-aim` (Flames from the real hand, one step to 0.0 off, then real hits),
+      `live-pvp-arrow-number` (150, 0 and 100 exactly), `live-pvp-spell-elements`, `live-pvp-spell-perks` (180 sent). TPTests 111 ok. A sword's own number was not swung in the rig: it is the same line as a spell's.
+      Limits: one aim per player, so two hands aimed apart share it (6 of 85 casts in that session had two hands going). A thin beam is drawn from the copy's hand, 10 to 30 units from the real one, so it
+      can pass beside a body at the right angle: Sparks touched nothing there, at 0.5 degrees off, while the real one hit. The first moment of a cast goes by the body, before the aim arrives; that effect is not taken.
+      The second game of the two-game rig does not steer, so a real hit ran one way only; the other way, sent and drawn matched. An arrow's number has no shield in it (KNOWN_ISSUES, with three rarer arrow cases).
 - [ ] **A revived player's copy still lying down, and below the floor while down** (session 2026-10-30, once). Player 2's copy sat below the floor
       while down (18:26:44, 10 s, its hands at foot level). At 18:26:54 `bleedOutStop` was refused and the fix fired (`not taken; IdleForceDefaultState
       taken`), yet 5 s later it still lay: `Revive: player 2 ... 5 s after the revive`, copy head 27.5 (about 105 standing, under 30 lying).

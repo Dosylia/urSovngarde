@@ -1,0 +1,64 @@
+# Another player's held spell goes where its owner aims it, not where the copy's body faces.
+#
+#   python Tools\VR\live-check.py live-pvp-beam-aim
+#
+# A held spell is cast again on its caster's copy, and the game aims a copy's spell by its body.
+# The real one follows the hand, turned by the caster's spell mods, so it travelled a different way on each screen.
+# Its angles now come with the VR pose (VRPose::HasSpellAim).
+# Here the bot stands with its back to the player, with no target, as a VR player's hand points where its body does not.
+# Without the aim the flame goes away from the player: that half is the control, and is what a build without this does.
+# This checks the receiving half only. The bot's aim is computed, so it says nothing of what a real hand sends.
+# The bot's aim is level, which a wide flame survives. A thin beam then passes over the player, so Sparks is checked by the angle it takes, and the pictures show it turn.
+log live pvp beam aim
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+infront 150
+wait 3
+
+log -- the control: back to the player, no aim sent, so the flame goes the other way
+log DO logmark
+cast 12FCD away noaim
+wait 4
+log SHOT no-aim
+cast 12FCD stop
+wait 2
+log REQUIRE logged Remote spell cast: caster \w+, spell 12FCD
+log CHECK absent PvP: player copy \w+ hit this player here
+
+log -- the same with the aim sent: the flame reaches the player
+log DO logmark
+cast 12FCD away
+wait 4
+log SHOT aim
+cast 12FCD stop
+wait 2
+log REQUIRE logged Remote spell cast: caster \w+, spell 12FCD
+log CHECK logged PvP: player copy \w+ hit this player here
+
+log -- Sparks is a beam, not a flame, and the game aims a beam in its own update: the control
+# The flame's burn ticks on for a few seconds, and each tick reads as a touch.
+wait 6
+log DO logmark
+cast 2DD2A away noaim
+wait 4
+log SHOT sparks-no-aim
+cast 2DD2A stop
+wait 2
+log REQUIRE logged Remote spell cast: caster \w+, spell 2DD2A
+log CHECK absent SpellAimDiag: copy \w+
+log CHECK absent PvP: player copy \w+ hit this player here
+
+log -- the same with the aim sent: the beam takes it, heading to the player
+log DO logmark
+cast 2DD2A away
+wait 4
+log SHOT sparks-aim
+cast 2DD2A stop
+wait 2
+log REQUIRE logged Remote spell cast: caster \w+, spell 2DD2A
+log CHECK logged SpellAimDiag: copy \w+'s held spell goes heading -?[\d.]+, pitch 0\.0; this player is -?[01]\.\d degrees off it
+log CHECK game alive
+log done
+stop
