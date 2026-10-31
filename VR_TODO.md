@@ -27,6 +27,8 @@ to do, what you should see, and what to read in the log if you don't. "It looked
 Before you start: don't play the vanilla Helgen intro together. Player 2 stays tied, because Ralof is a copy in that game and
 his scene never finishes. Use an alternate start, or connect after the intro.
 
+- **A dragon fight with both players near (needs 8f303ba on both games).** The game must not stop. A `NonFinite:` line in either log is the guard catching what froze the game on 10-31, and it names
+  the actor's place: say the time. If the game does stop: `FreezeWatchdog:` in the log and `logs\freeze.small.dmp`.
 - **Fast travel from the map, a few times, and some plain closes (needs a114d97, player 1 is enough).** The rig cannot pick a marker, so this is the
   one way to see it. The map goes, the fast travel starts, the game does not crash. Plain closes bring the world back at once.
   If not: every close should read `Map menu: hide handled on thread N (the main thread), the map unpaused`. Say the time of anything odd.
@@ -367,6 +369,15 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       up, it was this.
 
 ## Open work
+
+- [!] **A full freeze when a dragon fight started** (session 2026-10-31 20:36 on e6c7900c, player 1's game). Fixed in build 8f303ba, not seen in play, not reproduced on the rig.
+      Cause: the game's `NiPoint3::GetPolarAngle` (0x140C97030) wraps its angle in a loop a NaN never leaves (0x140C97095). The stall watcher caught one thread at that address at 20:36:45, and the freeze dump
+      26 s later has it there, with the vector (-inf, +inf, +inf) on its stack. It comes from the movement planner (0x141189710): an infinite movement target minus a finite position.
+      The actor stood at (135230, 9722, -11906), pitched 33 degrees up, so a flyer. The Elder Dragon's copy was made here at 20:36:22 and roared at 20:36:44.7, and the game stopped within a second.
+      The dragon was player 2's, and that game went on. That the actor was the copy is inferred: no log gives the copy's place. Where the infinite target came from is not known. Our code only reads whether an actor flies.
+      It fits copies running the game's movement step (`HookActorProcess`, in "Findings from reading the game's code").
+      Fix: `GetPolarAngle` answers 0 for an infinite vector, and the planner treats an infinite target or position as no target, the game's own answer for one it cannot use. Each logs `NonFinite:` once a second.
+      Rig: no red run. An infinite offset through `KeepOffsetFromActor` did not hang e6c7900c, twice, so the guard has never fired. `live-walk` 8 ok, both hooks installed, a real Elder Dragon beside the player ran at 100 fps. TPTests 111 ok.
 
 - [ ] **The Civil War questline stops syncing after the first hold** (session 2026-10-31 on d40cc8b, 14:26: player 2's quest did not move on to Liberate Hjaalmarch, and it has
       "never really synced since Liberate Falkreath"). Not fixed, not tested.

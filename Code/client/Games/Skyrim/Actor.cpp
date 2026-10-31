@@ -1,5 +1,6 @@
 #include <Games/References.h>
 #include <atomic>
+#include <intrin.h>
 #include <Games/Skyrim/EquipManager.h>
 #include <AI/AIProcess.h>
 #include <Misc/MiddleProcess.h>
@@ -1795,6 +1796,87 @@ void TP_MAKE_THISCALL(HookStealAlarm, Actor, TESObjectREFR* apRef, TESForm* apOb
                      apThis ? apThis->formID : 0, apRef ? apRef->formID : 0, apObject ? apObject->formID : 0, aNum, aTotal);
 }
 
+#ifdef SKYRIMVR
+// Whether a second has passed since this said true last. The game's movement jobs run on several threads.
+static bool SecondPassed(std::atomic<uint64_t>& aNext) noexcept
+{
+    const uint64_t cNow = GetTickCount64();
+    uint64_t next = aNext.load(std::memory_order_relaxed);
+    return cNow >= next && aNext.compare_exchange_strong(next, cNow + 1000);
+}
+
+// NiPoint3::GetPolarAngle (VR 0x140C97030) wraps its angle into range in a loop that a NaN never leaves, so an infinite vector would hang the game for good.
+constexpr uintptr_t kGetPolarAngle = 0xC97030;
+using TGetPolarAngle = float(const NiPoint3*);
+static TGetPolarAngle* RealGetPolarAngle = nullptr;
+
+static float HookGetPolarAngle(const NiPoint3* apThis)
+{
+    if (std::isfinite(apThis->x) && std::isfinite(apThis->y))
+        return RealGetPolarAngle(apThis);
+
+    static std::atomic<uint64_t> s_next{0};
+    if (SecondPassed(s_next))
+        spdlog::warn("NonFinite: the angle of ({}, {}) asked for at {:X}; 0 given, as the game would never answer", apThis->x, apThis->y,
+                     reinterpret_cast<uintptr_t>(_ReturnAddress()));
+    return 0.f;
+}
+
+// A movement planner's target. Kinds 2 and 3 are a place in the world.
+struct MovementTarget
+{
+    int32_t Kind;
+    NiPoint3 Position;
+};
+
+// The direction from an actor to its movement target (VR 0x141189710).
+constexpr uintptr_t kMovementDirection = 0x1189710;
+using TMovementDirection = void(const MovementTarget*, const NiPoint3*, const NiPoint3*, float, NiPoint3*);
+static TMovementDirection* RealMovementDirection = nullptr;
+
+static void HookMovementDirection(const MovementTarget* apTarget, const NiPoint3* apPosition, const NiPoint3* apAngles, float aHeight, NiPoint3* apDirection)
+{
+    const auto cFinite = [](const NiPoint3& acPoint) { return std::isfinite(acPoint.x) && std::isfinite(acPoint.y) && std::isfinite(acPoint.z); };
+    const bool cPlace = apTarget->Kind == 2 || apTarget->Kind == 3;
+    if (!cPlace || (cFinite(apTarget->Position) && cFinite(*apPosition)))
+    {
+        RealMovementDirection(apTarget, apPosition, apAngles, aHeight, apDirection);
+        return;
+    }
+
+    // What the game answers for a target it cannot use: no turn.
+    apDirection->x = 0.f;
+    apDirection->y = 0.f;
+    apDirection->z = apAngles->z;
+
+    static std::atomic<uint64_t> s_next{0};
+    if (SecondPassed(s_next))
+        spdlog::warn("NonFinite: a movement target at ({}, {}, {}) for the actor at ({}, {}, {}), facing ({:.2f}, {:.2f}), not followed", apTarget->Position.x,
+                     apTarget->Position.y, apTarget->Position.z, apPosition->x, apPosition->y, apPosition->z, apAngles->x, apAngles->z);
+}
+
+static void HookNonFiniteGuards() noexcept
+{
+    const auto cExe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+    if (const auto cPolarAngle = cExe + kGetPolarAngle; *reinterpret_cast<const uint32_t*>(cPolarAngle) == 0x58EC8348)
+    {
+        RealGetPolarAngle = reinterpret_cast<TGetPolarAngle*>(cPolarAngle);
+        TP_HOOK(&RealGetPolarAngle, HookGetPolarAngle);
+    }
+    else
+        spdlog::error("Actor: GetPolarAngle is not the expected code; an infinite vector can hang the game there");
+
+    if (const auto cDirection = cExe + kMovementDirection; *reinterpret_cast<const uint32_t*>(cDirection) == 0x245C8948)
+    {
+        RealMovementDirection = reinterpret_cast<TMovementDirection*>(cDirection);
+        TP_HOOK(&RealMovementDirection, HookMovementDirection);
+    }
+    else
+        spdlog::error("Actor: the movement direction function is not the expected code; an infinite target is not caught there");
+}
+#endif
+
 static TiltedPhoques::Initializer s_actorHooks(
     []()
     {
@@ -1870,6 +1952,7 @@ static TiltedPhoques::Initializer s_actorHooks(
 #ifdef SKYRIMVR
         TP_HOOK(&RealHitTarget, HookHitTarget);
         TP_HOOK(&RealCanBeKilledBy, HookCanBeKilledBy);
+        HookNonFiniteGuards();
 #endif
         TP_HOOK(&RealApplyActorEffect, HookApplyActorEffect);
         TP_HOOK(&RealRegenAttributes, HookRegenAttributes);
