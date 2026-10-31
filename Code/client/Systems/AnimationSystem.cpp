@@ -374,6 +374,13 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
             if (s_hasHeldHeading)
                 movement.Rotation.y = s_heldHeading;
         }
+        // In any other full menu the game shows a second body, in another pose, so the copy would snap at each opening and closing.
+        // The others see this player as they were when it opened, and the heading is held with it.
+        else if (IsPausingMenuOpen() && VRBodySync::LastLocalPose(pPlayer, pose))
+        {
+            if (s_hasHeldHeading)
+                movement.Rotation.y = s_heldHeading;
+        }
         else if (!VRBodySync::CaptureLocalPose(pPlayer, pose, heading))
         {
             // The other player then sees this body in the plain animation pose.

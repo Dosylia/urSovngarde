@@ -181,6 +181,38 @@ bool IsOptionalMenuOpenUnpaused() noexcept
     return false;
 }
 
+// The menus seen with the game's pause flag when queued, before it is cleared for play online.
+// Only ever added to, and the count is published after the name, so the pose send reads them with no lock.
+// A lock there could meet the UI's own: the game takes that one in GetMenuOpen, and may hold it when it queues a menu.
+static std::mutex s_pausingMenusLock;
+static std::array<const BSFixedString*, 32> s_pausingMenus{};
+static std::atomic<size_t> s_pausingMenuCount{0};
+
+static void RecordPausingMenu(const char* acpName) noexcept
+{
+    std::scoped_lock lock(s_pausingMenusLock);
+    const size_t cCount = s_pausingMenuCount.load();
+    for (size_t i = 0; i < cCount; ++i)
+        if (std::strcmp(s_pausingMenus[i]->AsAscii(), acpName) == 0)
+            return;
+    if (cCount == s_pausingMenus.size())
+        return;
+    s_pausingMenus[cCount] = new BSFixedString(acpName);
+    s_pausingMenuCount.store(cCount + 1);
+}
+
+bool IsPausingMenuOpen() noexcept
+{
+    const UI* pUI = UI::Get();
+    if (!pUI)
+        return false;
+    const size_t cCount = s_pausingMenuCount.load();
+    for (size_t i = 0; i < cCount; ++i)
+        if (pUI->GetMenuOpen(*s_pausingMenus[i]))
+            return true;
+    return false;
+}
+
 // Built on first use: the game's string table does not exist yet when static initializers run.
 static bool IsAllowListMenuOpenUnpaused()
 {
@@ -262,6 +294,10 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
             return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
         const BSFixedString* pName = apSelf->LookupMenuNameByInstance(apMenu);
         spdlog::info("Menu queued: {}{} (connected {})", pName ? pName->AsAscii() : "?", apMenu->PausesGame() ? " [pauses]" : "", World::Get().GetTransport().IsConnected() ? "yes" : "no");
+#ifdef SKYRIMVR
+        if (pName && pName->AsAscii() && apMenu->PausesGame())
+            RecordPausingMenu(pName->AsAscii());
+#endif
         if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Loading Menu") == 0)
         {
             ++s_loadingScreensQueued;

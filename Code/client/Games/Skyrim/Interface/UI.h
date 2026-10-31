@@ -115,6 +115,9 @@ bool IsMenuOpenUnpaused(const BSFixedString& acName) noexcept;
 // Whether one of those menus is currently open without pausing, whatever the current server setting.
 bool IsOptionalMenuOpenUnpaused() noexcept;
 
+// Whether a menu that pauses by its own flag is open, whether or not it was unpaused for play online.
+bool IsPausingMenuOpen() noexcept;
+
 // Called by the main loop on the main thread at the start of each frame: records that thread and counts the frame.
 void UnpausedMenusOnMainLoop() noexcept;
 

@@ -4746,6 +4746,18 @@ void CaptureWeapons(PlayerCharacter* apPlayer, void* apRoot, const BoneNodes& ac
             aOutPose.WeaponOffset[side][axis] = offset[side][axis];
 }
 
+// What LastLocalPose sends again, without the fields sent only when they change, which the receiver keeps, or only while a spell is held.
+static VRPose s_lastLocalPose{};
+static void* s_lastLocalRoot = nullptr;
+
+bool LastLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose) noexcept
+{
+    if (!s_lastLocalPose.HasData || apPlayer->GetNiNode() == s_lastLocalRoot)
+        return false;
+    aOutPose = s_lastLocalPose;
+    return true;
+}
+
 // The arrow the local player holds in a hand, as CaptureArrowHold last found it.
 std::mutex s_arrowHoldLock;
 ArrowHold s_arrowHold;
@@ -5092,6 +5104,12 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
     }
 
     aOutPose.HasData = true;
+    s_lastLocalRoot = pRoot;
+    s_lastLocalPose = aOutPose;
+    s_lastLocalPose.HasWeapons = false;
+    s_lastLocalPose.HasFingers = false;
+    s_lastLocalPose.HasScale = false;
+    s_lastLocalPose.HasSpellAim = false;
     return true;
 }
 

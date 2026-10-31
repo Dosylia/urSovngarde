@@ -66,6 +66,9 @@ his scene never finishes. Use an alternate start, or connect after the intro.
   is gone from the body, and their own weapon stays in their hand.
   If not: `BodyTake: X xN taken off Y`, then `DroppedItem: dropped X`.
 
+- **Loot several bodies in a row while the other player watches from in front.** The looter's copy stands still in each menu, in the pose
+  it had, with no snapping of arms or body at each opening and closing. If not: `VRBodySync: actor X hands --`, and whether `owner` and `copy` differ
+  while `Menu queued: ContainerMenu` is open on the looter.
 - **Walk up to NPCs in a town, moving in and out through a door or gate.** An NPC that changes hands mid-walk does not freeze in a stride. Note
   the time of any NPC sliding, crouching or swimming: those did not reproduce and are still unexplained.
   If not: `Takeover: NPC X was moving as a copy here`, `TakeoverDiag: NPC X as it is gained`.
@@ -88,6 +91,18 @@ If there is time:
 After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:`, `Connection:`, `VRBodySync: actor X body --`, and
 `logs/process-end.log` if a game vanishes.
 
+- [!] **A player's copy snapped between two poses at each menu** (session 2026-10-31 14:52, player 2 watching player 1 loot; fix in the tree on
+      82bc61ca, client only, no protocol change; each player needs it for the others to see them right; not seen in play).
+      In a full menu the game shows a second body. `CaptureLocalPose` read its bones and sent them, so each opening and closing snapped the copy,
+      and looting 25 bodies in 3 minutes looked like the copy fighting an animation. In that session, with a loot menu open on the owner the copy's
+      hands matched in 5% of samples (median gap 27.6 units) and with no menu near in 62% (median 0.1).
+      While a menu that pauses by its own flag is open and the game shows another body than the last one read, the last pose is sent again, heading held.
+      - Rig, two real games, local server, one corpse, the menu 21 s open and 21 s shut: unfixed 0 of 17 samples with the hands on target with a loot menu open, 0 of 5 in the
+        journal, gap 28.5. Fixed: median gap 0.0 in both, and 8 of 8 in the looting rhythm. The read body changed `0x18c5cd380` to `0x18c54a000` at each opening and back at each closing.
+        Hands were within 0.4 units of the held pose in the first half second after closing, so nothing waits for the body to settle. The rig has no real VR arms.
+      - Left alone: the skills and map menus still send no pose, so the copy plays its animation there.
+      - Open, cause unknown, not a menu: the copy's hand can jump 12 to 18 units at any time on the rig, menu shut or held (2 and 5 of about 22 samples shut on two runs of the fixed build, 1 of 22 unfixed).
+        `ReachHands` corrects at most 15 units, so a body that sways across that limit may flip between corrected and not. Not seen in play as such.
 - [!] **An NPC taken over while it walks** (play session 2026-10-31 07:55 on c382599)
       Players saw NPCs frozen, sliding, and swimming on snow. All three reports were on player 1, just after that game gained the NPC:
       claims at 08:08:28 and 08:08:53, a leader assignment at 08:11:38. That session had 117 gains in 22 min, against 43 in 25 on

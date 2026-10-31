@@ -90,6 +90,9 @@ bool PlayClashSound(const glm::vec3& acPoint) noexcept;
 //! Reads the player's VR pose in the body's frame; aOutHeading is the heading to send with it, the body's facing when known.
 bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHeading) noexcept;
 
+//! The last pose CaptureLocalPose read, to send again while the game shows another body; false when it shows the same one.
+bool LastLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose) noexcept;
+
 
 
 //! The pose of a dead NPC this machine owns, so the other players see it slump and get dragged as it does here.
