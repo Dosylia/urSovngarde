@@ -28,4 +28,4 @@ $lines = if ($password) { "$address`r`n$password`r`n" } else { "$address`r`n" }
 
 Write-Host ""
 Write-Host "Saved $file"
-Write-Host "The game connects on its own a few seconds after a save is loaded."
+Write-Host "Load a save in the game, then press F6 to connect."

@@ -29,6 +29,9 @@ tested on.
 
 `uGridsToLoad` must be 5 in `SkyrimPrefs.ini`, which is the default. The server refuses other values.
 
+A server can also come as a small mod: install its zip like any other mod and deploy. See "Shipping a server with a
+mod" in `README-mod-manager.md`.
+
 Two Vortex things to know:
 
 - Purge in Vortex removes every deployed mod from `Data`, the co-op mod included. Deploy again before playing.

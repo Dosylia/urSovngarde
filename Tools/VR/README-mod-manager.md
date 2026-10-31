@@ -19,3 +19,23 @@ closing MO2. (By hand: replace `urSovngarde.exe` and `urSovngarde.pdb` there.)
 Coming from a build before the rename (the program was `SkyrimTogetherVR.exe`, the folder `Skyrim Together VR`):
 point your MO2 executable at `urSovngarde.exe`. The launcher does that for you; `update.bat` keeps the old name
 working with the new build in the meantime.
+
+## Shipping a server with a mod
+
+A server can come as a small mod, so a list can ship its own and anyone can hand theirs out as a zip.
+
+1. Make a text file called `connect.txt`, with the server's address on the first line:
+
+       play.example.org:10578
+       autoconnect=on
+
+   Leave out the port and the game uses 10578. With `autoconnect=on` the game connects by itself a few seconds
+   after a load; without it, players press F6. A password goes on the line after the address, and anyone who has
+   the mod can read it.
+2. Put the file in `SKSE\Plugins\urSovngarde\` and zip the `SKSE` folder.
+3. Drag the zip onto MO2's mod list and tick it. In a Wabbajack list it is one of your own mods (No Match Include).
+
+Several server mods? The lowest one ticked in the mod list wins. Changing that takes a game restart.
+
+A server you set yourself always wins: `setup-connect.bat` and joining a server both write
+`%LOCALAPPDATA%\SkyrimTogetherVR\connect.txt`. Delete that file to use the mod's server.

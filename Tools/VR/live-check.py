@@ -1607,6 +1607,11 @@ class Run:
                 cmd += ['--x', '%.0f' % where[0], '--y', '%.0f' % where[1]]
         except Exception:
             pass
+        if self.script in OFFLINE_START:
+            cmd += ['--standalone', '--host-timeout', '2', '--x', '0', '--y', '0']
+            # The player's file would win, and the run would say nothing about a mod's.
+            if os.path.exists(os.path.join(os.environ['LOCALAPPDATA'], 'SkyrimTogetherVR', 'connect.txt')):
+                self.invalid.append('the player has a connect file: this script needs headless.ps1 up -ListServer')
         print('== %s' % self.script, flush=True)
         self.log_start = len(session_lines())
         self.log_from = self.log_start
@@ -2327,6 +2332,8 @@ ACTION_ROWS = ('DO ', 'screenshot ', 'console ', 'server restart', 'load last', 
 
 # Scripts whose red run is the bot behaving as before the fix, with the variable that makes it so.
 RED_ENV = {'live-loss-playback': 'STBOT_RELIABLE_MOVEMENT'}
+# Scripts that start with the game offline: the bot has no player to clone, so it stands far off with an empty body, which the game never has to draw.
+OFFLINE_START = {'live-connect-default'}
 
 
 def verdict(run, results, expect_fail):

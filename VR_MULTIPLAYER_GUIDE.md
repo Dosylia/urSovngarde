@@ -92,6 +92,9 @@ By hand: create the folder `%LOCALAPPDATA%\SkyrimTogetherVR\` if it doesn't exis
 
 Just the address, nothing else: no `http://` and no quotes.
 
+A server can also come as a small mod: the same file at `SKSE\Plugins\urSovngarde\connect.txt` inside it
+(`README-mod-manager.md`). Your own `connect.txt` wins whenever it names a server.
+
 ---
 
 ## 5. Friend: install the client (one-time)

@@ -3,6 +3,7 @@
 #ifdef SKYRIMVR
 
 #include <Services/VRConnectService.h>
+#include <Services/ConnectFile.h>
 #include <Services/TransportService.h>
 
 #include <Events/UpdateEvent.h>
@@ -18,29 +19,11 @@
 #include <Utils.h>
 #include <World.h>
 
-#include <fstream>
-
 namespace
 {
 constexpr auto kAutoConnectDelay = 5s;    // after a save is loaded, so the cell has settled, before the install checks and the connection or the F6 hint
 constexpr auto kAttemptTimeout = 30s;     // an attempt that never reports back is abandoned
 constexpr std::array<std::chrono::seconds, 5> kRetryDelays{5s, 10s, 20s, 30s, 60s};
-
-// Spaces and Notepad's UTF-8 byte order mark make the address unresolvable.
-void Trim(std::string& aText)
-{
-    if (aText.rfind("\xEF\xBB\xBF", 0) == 0)
-        aText.erase(0, 3);
-
-    const auto first = aText.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos)
-    {
-        aText.clear();
-        return;
-    }
-    aText.erase(aText.find_last_not_of(" \t\r\n") + 1);
-    aText.erase(0, first);
-}
 
 // The name the server knows this player by: TransportService sends it when connecting.
 TiltedPhoques::String PlayerName() noexcept
@@ -53,39 +36,19 @@ TiltedPhoques::String PlayerName() noexcept
 
 bool VRConnectService::LoadConfig(Config& aConfig) noexcept
 {
-    char localAppData[MAX_PATH];
-    if (!GetEnvironmentVariableA("LOCALAPPDATA", localAppData, sizeof(localAppData)))
+    char localAppData[MAX_PATH] = "";
+    GetEnvironmentVariableA("LOCALAPPDATA", localAppData, sizeof(localAppData));
+
+    // The working directory is the game's, so under Mod Organizer this path shows the mods.
+    ConnectFile::Contents contents;
+    if (!ConnectFile::Load(std::string(localAppData) + "\\SkyrimTogetherVR\\connect.txt", "Data\\SKSE\\Plugins\\urSovngarde\\connect.txt", contents))
         return false;
 
-    std::ifstream file(std::string(localAppData) + "\\SkyrimTogetherVR\\connect.txt");
-    std::string address;
-    if (!file || !std::getline(file, address))
-        return false;
-
-    Trim(address);
-    if (address.empty())
-        return false;
-
-    // After the address: the password, then settings as "name=value" lines.
-    // A file without a password may have the setting on the second line, so a setting is never taken for a password.
-    std::string password;
-    bool autoConnect = false;
-    bool passwordRead = false;
-    for (std::string line; std::getline(file, line);)
-    {
-        Trim(line);
-        if (line.rfind("autoconnect=", 0) == 0)
-            autoConnect = line == "autoconnect=on";
-        else if (!passwordRead)
-        {
-            password = line;
-            passwordRead = true;
-        }
-    }
-
-    aConfig.Address = address.c_str();
-    aConfig.Password = password.c_str();
-    aConfig.AutoConnect = autoConnect;
+    aConfig.Address = contents.Address.c_str();
+    aConfig.Password = contents.Password.c_str();
+    aConfig.AutoConnect = contents.AutoConnect;
+    if (contents.FromMod)
+        spdlog::info("VRConnectService: the server comes from a mod's connect file");
     return true;
 }
 
@@ -155,7 +118,7 @@ void VRConnectService::StartAttempt() noexcept
     Config config;
     if (!LoadConfig(config))
     {
-        spdlog::warn("VRConnectService: no server in %LOCALAPPDATA%\\SkyrimTogetherVR\\connect.txt");
+        spdlog::warn("VRConnectService: no server in %LOCALAPPDATA%\\SkyrimTogetherVR\\connect.txt or Data\\SKSE\\Plugins\\urSovngarde\\connect.txt");
         Utils::ShowHudMessage("urSovngarde: no server set, join from the urSovngarde launcher");
         m_state = State::kIdle;
         return;

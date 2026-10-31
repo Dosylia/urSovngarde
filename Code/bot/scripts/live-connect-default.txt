@@ -1,0 +1,27 @@
+# A server that comes with a mod: a player with no connect file of their own connects to the one in a mod.
+#
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\headless.ps1 up -ListServer
+#   python Tools\VR\live-check.py live-connect-default
+#   python Tools\VR\live-check.py --expect-fail live-connect-default     on a build without the fix: must be RED
+#
+# -ListServer sets the player's connect.txt aside and writes the test server to SKSE\Plugins\urSovngarde\connect.txt in MO2's Overwrite.
+# The game sees that file in Data through MO2, as it would see a list's mod, so the mod list is not touched.
+# It leaves the game offline, and the F6 here is what connects it, so the attempt falls inside this script's log.
+# This bot is only the driver: it stands far off, as there is no player to clone (OFFLINE_START in live-check.py).
+# A run counts only when (REQUIRE): the game was offline, so that F6 connected rather than disconnected.
+# Whether the player's own file wins is in Code/tests/connect_file.cpp.
+log live connect default
+waitfor connected 45
+expect known me
+wait 3
+
+log -- F6, with no connect file of the player's
+log DO f6
+wait 8
+log REQUIRE absent VRConnectService: disconnecting
+log CHECK logged VRConnectService: the server comes from a mod's connect file
+log CHECK logged VRConnectService: connecting to 127\.0\.0\.1:\d+ \(attempt 1\)
+log CHECK logged Connected: the server accepted this player
+log CHECK game alive
+log done
+stop

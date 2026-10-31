@@ -14,6 +14,9 @@ Vortex users: see `README-vortex.md` instead. The urSovngarde launcher does all 
 You still need SKSE VR and the VR Address Library for SKSEVR installed in `Data`, like any SKSE mod.
 `uGridsToLoad` must be 5 in `SkyrimPrefs.ini`, which is the default.
 
+A server can also come as a small mod: copy its `SKSE` folder into `Data`. See "Shipping a server with a mod" in
+`README-mod-manager.md`.
+
 Updating: close the game and drag the update zip onto `update.bat` in the mod's folder.
 (By hand: replace `urSovngarde.exe` and `urSovngarde.pdb` there.)
 

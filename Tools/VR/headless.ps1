@@ -2,6 +2,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\headless.ps1 up        # SteamVR (null headset), server, game, last save, connected
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\headless.ps1 up -NoConnect   # the same without a server: the game alone
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\headless.ps1 up -ListServer  # the server in a mod's connect file, not connected yet: live-connect-default
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\headless.ps1 status
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\headless.ps1 down      # quit the game, stop what 'up' started, headset setting off
 #
@@ -22,6 +23,7 @@ param(
     [string]$Save = '',                 # a save name; empty loads the fixed rig save below, or the most recent one if it is gone
     [switch]$NoConnect,                 # no server and no waiting for a connection: the game alone, mod loaded
     [switch]$AutoConnect,               # the launcher's "connect automatically" setting on: the game connects by itself, F6 is not pressed
+    [switch]$ListServer,                # the player has no connect file: the test server is in a mod's, and the script connects
     [int]$LoadTimeout = 180,
     # Seconds the game has to reach the main menu: MGO takes about five and a half minutes, FUS under three.
     [int]$MenuTimeout = 600,
@@ -319,6 +321,8 @@ function Restore-Saves {
 # The player's file is put back by "down".
 $connectFile = Join-Path $env:LOCALAPPDATA 'SkyrimTogetherVR\connect.txt'
 $connectBackup = "$connectFile.before-rig"
+# A mod's connect file: what MO2's Overwrite holds, the game sees in Data, so the mod list is not touched.
+$listConnectFile = Join-Path $fusRoot 'overwrite\SKSE\Plugins\urSovngarde\connect.txt'
 
 function Set-RigConnect {
     if (Test-Path -LiteralPath $connectBackup) { Restore-Connect }
@@ -333,11 +337,23 @@ function Set-RigConnect {
     New-Item -ItemType Directory -Force -Path (Split-Path $connectFile) | Out-Null
     $text = "127.0.0.1:$port"
     if ($AutoConnect) { $text += "`r`nautoconnect=on" }
+    if ($ListServer) {
+        if (Test-Path -LiteralPath $listConnectFile) { throw "A connect file is already in Overwrite, and the rig does not replace it: $listConnectFile" }
+        # By force: a read-only file left here would send the test game to the player's real server.
+        if (Test-Path -LiteralPath $connectFile) { Remove-Item -LiteralPath $connectFile -Force }
+        New-Item -ItemType Directory -Force -Path (Split-Path $listConnectFile) | Out-Null
+        Set-Content -LiteralPath $listConnectFile -Value $text -Encoding ascii
+        Write-Host "The player's connect file is aside, and the local test server (127.0.0.1:$port) is in a mod's for this run."
+        return
+    }
     Set-Content -LiteralPath $connectFile -Value $text -Encoding ascii
     Write-Host "Connect file set to the local test server (127.0.0.1:$port) for this run."
 }
 
 function Restore-Connect {
+    # Only a file naming this PC is the rig's. Nothing here may stop the player's own file coming back.
+    $listServer = Get-Content -LiteralPath $listConnectFile -TotalCount 1 -ErrorAction SilentlyContinue
+    if ($listServer -match '^127\.0\.0\.1:\d+$') { Remove-Item -LiteralPath (Split-Path $listConnectFile) -Recurse -Force -ErrorAction SilentlyContinue }
     if (-not (Test-Path -LiteralPath $connectBackup)) { return }
     if ((Get-Item -LiteralPath $connectBackup).Length -eq 0) { Remove-Item -LiteralPath $connectFile -ErrorAction SilentlyContinue }
     else { Copy-Item -LiteralPath $connectBackup -Destination $connectFile -Force }
@@ -494,6 +510,12 @@ try {
 
     if ($NoConnect) {
         Write-Host 'Up, not connected (no server was started).' -ForegroundColor Green
+        Show-Status
+        return
+    }
+
+    if ($ListServer) {
+        Write-Host 'Up, not connected: the script presses F6.' -ForegroundColor Green
         Show-Status
         return
     }

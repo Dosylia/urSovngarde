@@ -13,8 +13,10 @@ struct ConnectionErrorEvent;
  * @brief Connects VR players without a keyboard or a menu.
  *
  * The server comes from %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt: "address:port", then an optional password line.
- * A few seconds after a save is loaded the client connects on its own, and a dropped connection is retried with a growing delay.
- * F6 still toggles the connection by hand, and disconnecting with it stops the retries.
+ * When that file names no server, it comes from the same file in a mod: Data\SKSE\Plugins\urSovngarde\connect.txt.
+ * A few seconds after a save is loaded the client connects on its own if the file says "autoconnect=on", and otherwise waits for F6.
+ * A dropped connection is retried with a growing delay.
+ * F6 toggles the connection by hand, and disconnecting with it stops the retries.
  * A refused connection (wrong version, wrong password, ...) stops them too, because trying again would give the same answer.
  */
 struct VRConnectService
@@ -27,7 +29,7 @@ struct VRConnectService
         bool AutoConnect = false;
     };
 
-    // False when connect.txt is missing or its first line is empty.
+    // False when neither the player's file nor a mod's names a server.
     static bool LoadConfig(Config& aConfig) noexcept;
 
     VRConnectService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept;
