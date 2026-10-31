@@ -31,6 +31,7 @@ wait 3
 
 log -- the player leaves for Riverwood's inn; the bot, still in the keep, is given her
 # Indoors to indoors: console travel out to Tamriel has hit Community Shaders' crash at a load (+0x1208c8) in the rig.
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console coc RiverwoodSleepingGiantInn
 waitfor ownedby ref:A2C94 me 40
 expect ownedby ref:A2C94 me

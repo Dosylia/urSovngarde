@@ -1,0 +1,37 @@
+# A dead body stays with its owner when another game only meets it; a hand on it is what moves it.
+#
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair bodyassign
+#
+# A game that joins registers every actor it has, bodies too.
+# The server handed it such a body as if a hand had grabbed it, and that game's corpse became the truth for everyone.
+# This side owns a body. The other side registers the same reference, and later claims it, which is what a grab sends.
+
+log bodyassign actor
+waitfor connected 45
+collect ownership
+record bodyassign actor
+
+waitfor players >= 1 30
+expect known me
+
+log settling where the other bot can see me
+wait 8
+waitfor known other 40
+expect known other
+
+log a body of mine
+npc A2C94
+waitfor owned == 1 20
+wait 2
+npclife dead 0
+
+# The other side registers it soon after this and claims it 16 s later: the server's 10 s hold has passed here, with no claim yet.
+wait 24
+expect owned == 1
+
+# The other side has claimed it by now, as a hand does.
+wait 12
+expect owned == 0
+wait 2
+log done
+stop

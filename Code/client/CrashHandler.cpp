@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <exception>
+#include <map>
 #include <unordered_map>
 #include <vector>
 #include <filesystem>
@@ -777,7 +778,9 @@ namespace FreezeWatchdog
 namespace
 {
 std::atomic<int64_t> s_lastBeatMs{0};
+std::atomic<uint64_t> s_frames{0};
 std::atomic<DWORD> s_updateThreadId{0};
+std::atomic<int64_t> s_loadingScreenAtMs{0};
 
 int64_t NowMs() noexcept
 {
@@ -835,14 +838,14 @@ uint32_t CountThreads() noexcept
 // Logs where a thread is, suspending it only while its registers and stack top are copied into an existing buffer.
 // Nothing is allocated or logged while it is suspended: it may hold the heap lock or the logger's.
 // ReadProcessMemory fails instead of faulting on a missing page.
-void LogThread(const char* apWhat, const DWORD aThreadId) noexcept
+void LogThread(const char* apWhat, const DWORD aThreadId, const char* apLabel = "FreezeWatchdog", const spdlog::level::level_enum aLevel = spdlog::level::err) noexcept
 {
     if (!aThreadId || aThreadId == GetCurrentThreadId())
         return;
     HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, aThreadId);
     if (!hThread)
     {
-        spdlog::error("FreezeWatchdog: could not open the {} (thread {})", apWhat, aThreadId);
+        spdlog::log(aLevel, "{}: could not open the {} (thread {})", apLabel, apWhat, aThreadId);
         return;
     }
 
@@ -856,10 +859,9 @@ void LogThread(const char* apWhat, const DWORD aThreadId) noexcept
         haveContext = GetThreadContext(hThread, &context) != FALSE;
         if (haveContext)
         {
-            // Shrink the window until it reads: the stack ends somewhere above rsp.
+            // Shrink the window until it reads: the stack ends somewhere above rsp, and a partial read counts.
             for (SIZE_T size = sizeof(s_stack); size >= 4096 && copied == 0; size /= 2)
-                if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(context.Rsp & ~static_cast<DWORD64>(7)), s_stack, size, &copied))
-                    copied = 0;
+                ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(context.Rsp & ~static_cast<DWORD64>(7)), s_stack, size, &copied);
         }
         ResumeThread(hThread);
     }
@@ -867,15 +869,15 @@ void LogThread(const char* apWhat, const DWORD aThreadId) noexcept
 
     if (!haveContext)
     {
-        spdlog::error("FreezeWatchdog: could not read where the {} is (thread {})", apWhat, aThreadId);
+        spdlog::log(aLevel, "{}: could not read where the {} is (thread {})", apLabel, apWhat, aThreadId);
         return;
     }
 
     char desc[MAX_PATH + 64];
     DescribeCodeAddress(reinterpret_cast<void*>(context.Rip), desc, sizeof(desc));
-    spdlog::error("FreezeWatchdog: the {} (thread {}) is at rip 0x{:x} ({})", apWhat, aThreadId, static_cast<uint64_t>(context.Rip), desc);
-    spdlog::error("  rax 0x{:016x}  rcx 0x{:016x}  rdx 0x{:016x}  rbx 0x{:016x}  rsp 0x{:016x}", static_cast<uint64_t>(context.Rax),
-                  static_cast<uint64_t>(context.Rcx), static_cast<uint64_t>(context.Rdx), static_cast<uint64_t>(context.Rbx), static_cast<uint64_t>(context.Rsp));
+    spdlog::log(aLevel, "{}: the {} (thread {}) is at rip 0x{:x} ({})", apLabel, apWhat, aThreadId, static_cast<uint64_t>(context.Rip), desc);
+    spdlog::log(aLevel, "  rax 0x{:016x}  rcx 0x{:016x}  rdx 0x{:016x}  rbx 0x{:016x}  rsp 0x{:016x}", static_cast<uint64_t>(context.Rax),
+                static_cast<uint64_t>(context.Rcx), static_cast<uint64_t>(context.Rdx), static_cast<uint64_t>(context.Rbx), static_cast<uint64_t>(context.Rsp));
     size_t hits = 0;
     for (size_t slot = 0; slot < copied / sizeof(uintptr_t) && hits < 40; ++slot)
     {
@@ -883,9 +885,50 @@ void LogThread(const char* apWhat, const DWORD aThreadId) noexcept
         if (!IsExecutableAddress(pCandidate))
             continue;
         DescribeCodeAddress(pCandidate, desc, sizeof(desc));
-        spdlog::error("    [rsp+0x{:04x}] 0x{:012x}  {}", slot * sizeof(uintptr_t), reinterpret_cast<uint64_t>(pCandidate), desc);
+        spdlog::log(aLevel, "    [rsp+0x{:04x}] 0x{:012x}  {}", slot * sizeof(uintptr_t), reinterpret_cast<uint64_t>(pCandidate), desc);
         ++hits;
     }
+}
+
+// The module a thread's own code runs in: the entry nearest the thread's start that is not the C runtime or the system.
+// Read off its stack, as LogThread does, so a thread started through ucrtbase still names its owner.
+std::string ThreadOwner(const DWORD aThreadId) noexcept
+{
+    HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, aThreadId);
+    if (!hThread)
+        return "unreadable";
+
+    static uintptr_t s_stack[4096];
+    CONTEXT context{};
+    context.ContextFlags = CONTEXT_CONTROL;
+    SIZE_T copied = 0;
+    if (SuspendThread(hThread) != static_cast<DWORD>(-1))
+    {
+        if (GetThreadContext(hThread, &context))
+            for (SIZE_T size = sizeof(s_stack); size >= 4096 && copied == 0; size /= 2)
+                ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(context.Rsp & ~static_cast<DWORD64>(7)), s_stack, size, &copied);
+        ResumeThread(hThread);
+    }
+    CloseHandle(hThread);
+    if (copied == 0)
+        return "unreadable";
+
+    std::string owner = "system";
+    char desc[MAX_PATH + 64];
+    for (size_t slot = 0; slot < copied / sizeof(uintptr_t); ++slot)
+    {
+        auto* pCandidate = reinterpret_cast<void*>(s_stack[slot]);
+        if (!IsExecutableAddress(pCandidate))
+            continue;
+        DescribeCodeAddress(pCandidate, desc, sizeof(desc));
+        std::string module(desc);
+        module = module.substr(0, module.find('+'));
+        std::string lower(module);
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.rfind("ntdll", 0) != 0 && lower.rfind("kernel", 0) != 0 && lower.rfind("ucrtbase", 0) != 0 && lower.rfind("msvcp", 0) != 0 && lower.rfind("vcruntime", 0) != 0)
+            owner = module;
+    }
+    return owner;
 }
 
 // Logs where this process's threads started, most common first: a start address names the module that owns a thread.
@@ -900,7 +943,7 @@ void LogThreadStarts(const uint32_t aCount) noexcept
     if (hSnapshot == INVALID_HANDLE_VALUE)
         return;
     std::unordered_map<uintptr_t, uint32_t> starts;
-    std::unordered_map<uintptr_t, std::vector<DWORD>> samples; // a few thread ids per start address
+    std::unordered_map<uintptr_t, std::vector<DWORD>> samples; // the thread ids of each start address
     uint32_t unopened = 0;
     LONG lastStatus = 0;
     THREADENTRY32 entry{};
@@ -921,11 +964,7 @@ void LogThreadStarts(const uint32_t aCount) noexcept
         if (const LONG cStatus = s_query(hThread, cThreadQuerySetWin32StartAddress, &start, sizeof(start), nullptr); cStatus == 0)
         {
             ++starts[start];
-            auto& ids = samples[start];
-            if (ids.size() < 3)
-                ids.push_back(entry.th32ThreadID);
-            else
-                ids[2] = entry.th32ThreadID; // the last one listed, likely among the newest
+            samples[start].push_back(entry.th32ThreadID);
         }
         else
         {
@@ -949,13 +988,122 @@ void LogThreadStarts(const uint32_t aCount) noexcept
                  static_cast<uint32_t>(lastStatus), line);
 
     // The biggest group may start in ucrtbase's thread starter, which names no owner.
-    // A sample thread's stack then shows the module that started it.
+    // Threads spread over the whole group then show which module runs them.
     if (!sorted.empty() && sorted[0].second >= 100)
     {
         const auto& ids = samples[sorted[0].first];
-        for (size_t i = ids.size() > 2 ? ids.size() - 2 : 0; i < ids.size(); ++i)
-            LogThread("sample thread of the biggest group", ids[i]);
+        constexpr size_t cSpread = 24;
+        const size_t cStep = std::max<size_t>(ids.size() / cSpread, 1);
+        std::map<std::string, uint32_t> owners;
+        size_t read = 0;
+        for (size_t i = 0; i < ids.size() && read < cSpread; i += cStep, ++read)
+            ++owners[ThreadOwner(ids[i])];
+        std::string list;
+        for (const auto& [cModule, cCount] : owners)
+            list += fmt::format("{}{} x{}", list.empty() ? "" : ", ", cModule, cCount);
+        spdlog::warn("ThreadOwners: {} of the biggest group's {} threads read: {}", read, ids.size(), list);
     }
+}
+
+// Every thread of this process and the CPU time it has used so far, in 100 ns units.
+std::vector<std::pair<DWORD, uint64_t>> ThreadCpuTimes() noexcept
+{
+    std::vector<std::pair<DWORD, uint64_t>> times;
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE)
+        return times;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    for (BOOL ok = Thread32First(hSnapshot, &entry); ok; ok = Thread32Next(hSnapshot, &entry))
+    {
+        if (entry.th32OwnerProcessID != GetCurrentProcessId())
+            continue;
+        HANDLE hThread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+        if (!hThread)
+            continue;
+        FILETIME created, ended, kernel, user;
+        if (GetThreadTimes(hThread, &created, &ended, &kernel, &user))
+            times.emplace_back(entry.th32ThreadID, (static_cast<uint64_t>(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
+                                                       (static_cast<uint64_t>(user.dwHighDateTime) << 32 | user.dwLowDateTime));
+        CloseHandle(hThread);
+    }
+    CloseHandle(hSnapshot);
+    return times;
+}
+
+// The process ending itself, which no handler sees: one line straight to disk, with who called.
+// A normal quit shows here too, through Engine Fixes' fast exit; the game's own exit removes this hook first and has its `Exit:` line.
+// A game that vanishes with no line of either kind was killed from outside, failed fast, or overflowed its stack.
+wchar_t s_processEndPath[MAX_PATH + 32]{};
+using TNtTerminateProcess = LONG(NTAPI)(HANDLE, LONG);
+TNtTerminateProcess* s_realTerminateProcess = nullptr;
+
+LONG NTAPI HookNtTerminateProcess(HANDLE ahProcess, LONG aStatus)
+{
+    static std::atomic<bool> s_said{false};
+    if ((!ahProcess || ahProcess == GetCurrentProcess()) && !s_said.exchange(true))
+    {
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        char line[1024];
+        int length = _snprintf_s(line, _TRUNCATE, "%04d-%02d-%02d %02d:%02d:%02d.%03d status 0x%lX, thread %lu, through the game's exit %d:", now.wYear, now.wMonth, now.wDay, now.wHour,
+                                 now.wMinute, now.wSecond, now.wMilliseconds, static_cast<unsigned long>(aStatus), GetCurrentThreadId(), IsProcessExiting() ? 1 : 0);
+        void* frames[12]{};
+        const USHORT cFrames = CaptureFramesGuarded(frames, 12);
+        for (USHORT i = 0; i < cFrames && length > 0 && length < static_cast<int>(sizeof(line)) - 2; ++i)
+        {
+            char desc[128];
+            DescribeCodeAddress(frames[i], desc, sizeof(desc));
+            const int cAdded = _snprintf_s(line + length, sizeof(line) - length, _TRUNCATE, " %s", desc);
+            if (cAdded < 0)
+                break;
+            length += cAdded;
+        }
+        if (length > 0)
+            length += _snprintf_s(line + length, sizeof(line) - length, _TRUNCATE, "\r\n");
+        HANDLE hFile = CreateFileW(s_processEndPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE)
+        {
+            DWORD written = 0;
+            WriteFile(hFile, line, static_cast<DWORD>(strlen(line)), &written, nullptr);
+            CloseHandle(hFile);
+        }
+    }
+    return s_realTerminateProcess(ahProcess, aStatus);
+}
+
+// Where the game is while it runs slowly, read at that moment.
+// The main thread may only be waiting, so the thread that works the most in the next 100 ms is read too.
+void LogSlowFrame(const char* apLabel) noexcept
+{
+    static const DWORD s_mainThreadId = FindMainThreadId();
+    const DWORD cUpdate = s_updateThreadId.load(std::memory_order_relaxed);
+    LogThread("game's main thread", s_mainThreadId, apLabel, spdlog::level::info);
+    if (cUpdate != s_mainThreadId)
+        LogThread("thread that last ran our update", cUpdate, apLabel, spdlog::level::info);
+
+    const auto cBefore = ThreadCpuTimes();
+    Sleep(100);
+    if (IsProcessExiting() || !s_loggerAlive.load(std::memory_order_acquire))
+        return;
+    const auto cAfter = ThreadCpuTimes();
+    DWORD busiest = 0;
+    uint64_t most = 0;
+    for (const auto& [cId, cTime] : cAfter)
+    {
+        const auto cThen = std::find_if(cBefore.begin(), cBefore.end(), [cId](const auto& acEntry) { return acEntry.first == cId; });
+        // An id can be reused between the two looks: a new thread has used less than the old one had.
+        if (cThen == cBefore.end() || cId == GetCurrentThreadId() || cTime < cThen->second)
+            continue;
+        if (const uint64_t cUsed = cTime - cThen->second; cUsed > most)
+        {
+            most = cUsed;
+            busiest = cId;
+        }
+    }
+    spdlog::info("{}: the busiest thread used {} ms of the last 100", apLabel, most / 10000);
+    if (busiest && busiest != s_mainThreadId && busiest != cUpdate)
+        LogThread("busiest thread", busiest, apLabel, spdlog::level::info);
 }
 
 void LogHealth(const int64_t aSinceBeatMs) noexcept
@@ -972,19 +1120,58 @@ DWORD WINAPI WatchdogMain(LPVOID) noexcept
     int64_t nextHealthMs = NowMs() + 30000;
     int64_t reportedForBeat = -1;
     int reportsForBeat = 0;
+    int64_t nextSecondMs = 0;
     for (;;)
     {
-        if (WaitForSingleObject(s_watchdogWake.load(), 1000) == WAIT_FAILED)
-            Sleep(1000);
+        if (WaitForSingleObject(s_watchdogWake.load(), 50) == WAIT_FAILED)
+            Sleep(50);
         LogPendingSevereExceptions();
         // While the game exits only the lines above are written.
-        if (IsProcessExiting())
+        if (IsProcessExiting() || !s_loggerAlive.load(std::memory_order_acquire))
             continue;
         const int64_t cBeat = s_lastBeatMs.load(std::memory_order_relaxed);
         if (!cBeat)
             continue; // the game has not run a frame of ours yet
         const int64_t cNow = NowMs();
         const int64_t cSince = cNow - cBeat;
+
+        // A frame that does not end is read while it lasts: a stall in a fight is over long before a look once a second comes round.
+        // One read a stall of 200 ms or more, one every 10 s at most: eight to start with and one more every 30 s.
+        // So a long ride, with a hitch at every grid line, leaves some for the fight after it.
+        // A loading screen stops frames on purpose, so nothing is read for a minute after one is queued.
+        static const int64_t s_stallsFromMs = cNow;
+        static int64_t s_stallReadForBeat = 0;
+        static int64_t s_nextStallMs = 0;
+        static int64_t s_stallReads = 0;
+        if (cSince >= 200 && cBeat != s_stallReadForBeat && cNow >= s_nextStallMs && s_stallReads < 8 + (cNow - s_stallsFromMs) / 30000 &&
+            cNow - s_loadingScreenAtMs.load(std::memory_order_relaxed) >= 60000)
+        {
+            s_stallReadForBeat = cBeat;
+            s_nextStallMs = cNow + 10000;
+            spdlog::warn("Stall: no frame for {} ms; where the game is (read {}):", cSince, ++s_stallReads);
+            LogSlowFrame("Stall");
+        }
+
+        if (cNow < nextSecondMs)
+            continue;
+        nextSecondMs = cNow + 1000;
+
+        // A stutter that lasts: frames this second under 15, while frames still come.
+        // The main thread is read then, at most 12 times a session and once every 20 s, to name what it is doing.
+        static uint64_t s_lastFrames = 0;
+        static int64_t s_nextStutterMs = 0;
+        static int s_stutterReads = 0;
+        const uint64_t cFrames = s_frames.load(std::memory_order_relaxed);
+        // The first look has no second before it to compare with.
+        const uint64_t cFramesThisSecond = s_lastFrames ? cFrames - s_lastFrames : 0;
+        s_lastFrames = cFrames;
+        if (cFramesThisSecond > 0 && cFramesThisSecond < 15 && cSince < 1000 && cNow >= s_nextStutterMs && s_stutterReads < 12)
+        {
+            ++s_stutterReads;
+            s_nextStutterMs = cNow + 20000;
+            spdlog::warn("Stutter: {} frames in the last second; where the game is ({} of 12):", cFramesThisSecond, s_stutterReads);
+            LogSlowFrame("Stutter");
+        }
 
         if (cNow >= nextHealthMs)
         {
@@ -1038,14 +1225,25 @@ DWORD WINAPI WatchdogMain(LPVOID) noexcept
 }
 } // namespace
 
+void NoteLoadingScreen() noexcept
+{
+    s_loadingScreenAtMs.store(NowMs(), std::memory_order_relaxed);
+}
+
 void Beat() noexcept
 {
     s_lastBeatMs.store(NowMs(), std::memory_order_relaxed);
+    s_frames.fetch_add(1, std::memory_order_relaxed);
     s_updateThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
 }
 
 void Start() noexcept
 {
+    const auto cProcessEndPath = TiltedPhoques::GetPath() / "logs" / "process-end.log";
+    wcsncpy_s(s_processEndPath, cProcessEndPath.c_str(), _TRUNCATE);
+    s_realTerminateProcess = reinterpret_cast<TNtTerminateProcess*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtTerminateProcess"));
+    TP_HOOK_IMMEDIATE(&s_realTerminateProcess, HookNtTerminateProcess);
+
     s_watchdogWake.store(CreateEventW(nullptr, FALSE, FALSE, nullptr));
     DWORD threadId = 0;
     if (HANDLE hWatchdog = CreateThread(nullptr, 0, &WatchdogMain, nullptr, 0, &threadId))

@@ -1,38 +1,55 @@
-# A door a script opens in this game opens for the other player too.
+# A door the party leader's scripts move moves for the other player too.
 #
 #   python Tools\VR\live-check.py live-door-script
 #   python Tools\VR\live-check.py --expect-fail live-door-script     on a build that sends only a door's use: must be RED
 #
-# Only an actor's use of a door is sent; a script's SetOpen is not (sync audit, 2026-10-26).
-# In the civil war, quest scripts open and close most doors, so the other player keeps them as they were.
-# Here Helgen keep's door 9B0A5 (not a load door): closed by the other player first, then opened by a script in this game,
-# with the bot in the same cell. It leaves the player in Helgen's keep, like live-door-state: run it last.
+# Only an actor's use of a door was sent, and a script's SetOpen is no use, so the other player kept the door as it was.
+# In the civil war, quest scripts open and close most doors, and only the leader's game runs those quests.
+# Here this game leads and the bot is a member, in the same cell.
+# Helgen keep's jail door F8239 (not a load door, and drawn, unlike its twin 9B0A5) is shut by the other player first.
+# A script here then opens and closes it: the bot must be told both.
+# It leaves the player in Helgen's keep: run it by name after a fresh `headless.ps1 up`.
 log live door script
 waitfor connected 45
 expect known me
 waitfor known other 40
 wait 5
+log REQUIRE bot logged info\] In the party of player
 
 log DO god on
 log -- the player into Helgen's keep, next to the door; the bot into its cell
-log DO console player.moveto 9B0A5
+log DO papyrus ObjectReference MoveTo 14 9B0A5 f:60 f:0 f:0 b:false
 wait 12
 cell 5DE24
 wait 4
 
 log -- the other player shuts the door, so both games start from the same state
-activate 9B0A5 by nobody 1
+activate F8239 by nobody 1
 wait 5
-log REQUIRE ref 9B0A5 closed
+log REQUIRE ref F8239 closed
 wait 2
 
 log -- a script in this game opens it
-log DO papyrus ObjectReference SetOpen 9B0A5 b:true
+log DO papyrus ObjectReference SetOpen F8239 b:true
 wait 6
-log REQUIRE ref 9B0A5 open
+log REQUIRE ref F8239 open
 report
 wait 2
-log CHECK told door 9B0A5 open
+log CHECK told door F8239 open
+
+log -- a script closes it again
+log DO papyrus ObjectReference SetOpen F8239 b:false
+wait 6
+log REQUIRE ref F8239 closed
+report
+wait 2
+log CHECK told door F8239 closed
+
+log -- a script asks for what the door already is: nothing moved, so nothing more goes out
+expect activations == 2
+log DO papyrus ObjectReference SetOpen F8239 b:false
+wait 5
+expect activations == 2
 log CHECK desync all
 wait 3
 log CHECK game alive

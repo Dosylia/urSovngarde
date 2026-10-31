@@ -9,7 +9,7 @@
 # are bent to put the hands where the owner's are, by at most 15 units (VRBodySync::ReachHands).
 #
 # The bot records the game player's own stream (movement and VR pose) and plays it back as its own character, with
-# the hands put at the waist (the rig's headset has no controllers, so the recording has them on the floor, beyond
+# the hands put within reach (the rig's headset has no controllers, so the recording has them on the floor, beyond
 # any arm's reach); the game poses the bot's copy and logs, every 5 s, where the hands should be against where they are.
 log live hands
 waitfor connected 45
@@ -25,15 +25,14 @@ wait 3
 log -- recording the player's stream for 12 s
 capture other 12
 wait 1
-log -- this bot plays it back as its own character, hands at the waist the way real logs have them
-handtargets -15 15 70 15 20 80
+log -- this bot plays it back as its own character, hands within reach of where the pose rests them
+handtargets -2 -18 38 8 -16 40
 replay me 3
 wait 3
-# The rig's owner stands 50 units behind its root (its VRIK body, no real controllers), so the copy's whole body is
-# moved back 50 units. That offset used to be applied once per level of the bone chain and put the hands 269 units
-# away (2026-10-04); now they must stay within arm's reach of the targets. Whether they meet in play only a real
-# session shows. (65 units on 2026-10-04: the test targets are at the waist, the rig pose has the arms down.)
-log CHECK hands within 80
+# ReachHands skips an arm more than 15 units from its target, so the targets are 10 units above where this pose rests its
+# hands: L(-2, -19, 28), R(8, -16, 30) on bd2adc0. A median of 0.0 there; a target 17 above gave 17.1, the arm left alone,
+# and the old waist targets 61, which judged nothing. Whether hands meet in play only a real session shows.
+log CHECK hands within 5
 log SHOT hands of copy
 wait 4
 log CHECK game alive

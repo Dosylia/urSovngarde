@@ -433,15 +433,6 @@ void TESObjectREFR::SetMotionType(const int32_t aMotionType) const noexcept
     s_pSetMotionType(this, aMotionType, true);
 }
 
-void TESObjectREFR::Enable() const noexcept
-{
-    using ObjectReference = TESObjectREFR;
-
-    PAPYRUS_FUNCTION(void, ObjectReference, Enable, bool);
-
-    s_pEnable(this, true);
-}
-
 // Skyrim: MoveTo() can fail, causing the object to be deleted
 void TESObjectREFR::MoveTo(TESObjectCELL* apCell, const NiPoint3& acPosition) const noexcept
 {
@@ -998,11 +989,14 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
         spdlog::debug("Adding item {:X}, count {}", pObject->formID, arEntry.Count);
         AddObjectToContainer(pObject, pExtraDataList, arEntry.Count, nullptr);
 
-        // TODO: check Actor cast first?
-        if (isWorn)
-            EquipManager::Get()->Equip(Cast<Actor>(this), pObject, nullptr, arEntry.Count, DefaultObjectManager::Get().rightEquipSlot, false, true, false, false);
-        else if (isWornLeft)
-            EquipManager::Get()->Equip(Cast<Actor>(this), pObject, nullptr, arEntry.Count, DefaultObjectManager::Get().leftEquipSlot, false, true, false, false);
+        // The game's equip code reads the actor's AI process, and an actor not loaded here has none.
+        if (Actor* pWearer = Cast<Actor>(this); pWearer && pWearer->HasLoadedProcess())
+        {
+            if (isWorn)
+                EquipManager::Get()->Equip(pWearer, pObject, nullptr, arEntry.Count, DefaultObjectManager::Get().rightEquipSlot, false, true, false, false);
+            else if (isWornLeft)
+                EquipManager::Get()->Equip(pWearer, pObject, nullptr, arEntry.Count, DefaultObjectManager::Get().leftEquipSlot, false, true, false, false);
+        }
     }
     else if (arEntry.Count < 0)
     {
@@ -1129,7 +1123,7 @@ bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, u
 
     // A copy of another game's actor never goes through a load door on its own here: its owner's game reports where it went.
     // Otherwise this game's AI takes the copy to a cell its owner never entered, where it is removed and spawned again.
-    // The owner's own use of the door is replayed with TESObjectREFR::Activate, which calls the game's function directly (live-door-copy-load).
+    // The owner's own use of the door is replayed with TESObjectREFR::Activate, and stops here too when the game carries it out (live-door-copy-replay).
     const ActorExtension* pActivatorExtension = pActivator ? pActivator->GetExtension() : nullptr;
     if (pActivatorExtension && pActivatorExtension->IsRemote() && apThis->baseForm && apThis->baseForm->formType == FormType::Door &&
         apThis->extraData.Contains(ExtraDataType::Teleport))

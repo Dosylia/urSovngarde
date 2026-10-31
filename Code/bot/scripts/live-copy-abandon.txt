@@ -38,14 +38,14 @@ wait 10
 log DO god on
 wait 3
 log -- 1. the player leaves; this bot stays and is given the creatures
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 waitfor owned >= 1 60
 wait 25
 log CHECK game alive
 wait 3
 
 log -- 2. the player comes back and is sent the creatures, which are this bot's now
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 45
 log CHECK game alive
 log CHECK logged HandedAway: server character \w+ is this game's own actor
@@ -59,13 +59,13 @@ log CHECK logged Gained ownership of actor
 wait 3
 
 log -- 4. the player leaves again
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 wait 40
 log CHECK game alive
 wait 3
 
 log -- and comes back
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 45
 log CHECK game alive
 log CHECK game inworld

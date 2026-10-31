@@ -1,0 +1,30 @@
+# Another player's concentration spell on this player: the beam replayed here decides, and it hurts as on an NPC.
+#
+#   python Tools\VR\live-check.py live-pvp-concentration
+#   python Tools\VR\live-check.py --expect-fail live-pvp-concentration     on a build without the fix: must be RED
+#
+# The bot's "cast" sends Flames (spell 12FCD, 8 fire damage a second) as a caster's game does, and its copy casts it here at the player.
+# The caster's game reports nothing for it, since its effect has a duration.
+# With the rig's difficulty (0.6 for hits by a player) four seconds of it are 19.
+# A run counts only when (REQUIRE): the copy cast it and the beam reached the player.
+log live pvp concentration
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+infront 150
+wait 3
+wait 2
+log CHECK player mark
+wait 1
+cast 12FCD
+wait 4
+cast 12FCD stop
+wait 2
+log REQUIRE logged Remote spell cast: caster \w+, spell 12FCD
+log REQUIRE logged PvP: player copy \w+ hit this player here
+# Flames does 5 a second, so a beam of about 4 s takes 15 to 30 by how its ticks fall. It took 0 before the fix.
+log CHECK player dropped 15..30
+log CHECK game alive
+log done
+stop

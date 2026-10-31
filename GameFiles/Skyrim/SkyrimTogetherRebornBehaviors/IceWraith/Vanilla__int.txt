@@ -1,0 +1,5 @@
+iSyncIdleLocomotion
+iSyncTurnState
+iSyncDefaultState
+iState
+iGetUpType

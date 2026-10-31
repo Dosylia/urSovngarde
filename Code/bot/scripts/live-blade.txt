@@ -42,7 +42,7 @@ log DO console player.additem 12EB7 1
 wait 1
 log DO console player.equipitem 12EB7
 wait 2
-log DO face copy
+log REQUIRE view copy
 wait 2
 log DO papyrus Actor DrawWeapon 14
 wait 4

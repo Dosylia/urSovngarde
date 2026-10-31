@@ -1,0 +1,32 @@
+# An Ice Wraith's movement reaches the other player.
+#
+#   python Tools\VR\live-check.py live-creature-icewraith
+#
+# Its graph has no descriptor and no Speed variable, so without a replacer folder its owner sends no animation variables and its copy slides.
+# Red: the folder IceWraith taken out of SkyrimTogetherRebornBehaviors (0 updates with variables).
+# The game spawns one and lets it attack the player, and this bot records the stream the server relays for it.
+log live creature icewraith
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 6
+log DO god on
+wait 2
+log DO combat on
+wait 2
+
+log DO console player.placeatme 00023AB3 1
+wait 6
+capture base 23AB3 12
+wait 2
+log CHECK logged found match, behavior hash \w+ .* has original behavior IceWraith
+log CHECK bot logged Captured \d+ updates of \w+: [1-9]\d* with animation variables
+
+log DO combat off
+wait 2
+log DO god off
+wait 2
+log CHECK game alive
+log done
+stop

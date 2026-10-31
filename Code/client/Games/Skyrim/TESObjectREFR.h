@@ -195,7 +195,6 @@ struct TESObjectREFR : TESForm
     static constexpr int32_t kMotionDynamic = 1;
     static constexpr int32_t kMotionKeyframed = 4;
     void SetMotionType(int32_t aMotionType) const noexcept;
-    void Enable() const noexcept;
     void MoveTo(TESObjectCELL* apCell, const NiPoint3& acPosition) const noexcept;
     //! Moves the reference and its 3D where they are, as the game moves actors every frame.
     //! MoveTo builds the 3D again instead, which shows as the object blinking when done several times a second.

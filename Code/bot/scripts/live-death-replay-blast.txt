@@ -34,6 +34,10 @@ waitfor owned == 1 20
 wait 8
 log REQUIRE npc standing
 wait 4
+# The client poses no body out of view, and the bot's mage stands 200 units east of the player, often behind the headset.
+log DO look at npc 500 hold 22000
+wait 1
+log REQUIRE view npc
 log DO record copy npc 14
 replay npc
 wait 6

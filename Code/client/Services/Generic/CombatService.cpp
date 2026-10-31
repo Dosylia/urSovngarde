@@ -106,11 +106,20 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
     }
 
     FormIdComponent formIdComponent = remoteView.get<FormIdComponent>(*remoteIt);
+    const uint32_t cSpellId = modSystem.GetGameId(acMessage.SpellID);
+
+    // A spell not launched here leaves only its caster's report of the hit; an arrow's hit is its report anyway.
+    const auto cNoteUnmade = [&]()
+    {
+        if (acMessage.SpellID.BaseId != 0)
+            PvpProjectiles::NoteUnmade(formIdComponent.Id, cSpellId);
+    };
 
     // Not while this game is paused (the journal, the console).
     // A projectile launched into a paused world hangs where it was made, and all of them land at once on unpause.
     if (const UI* pUI = UI::Get(); pUI && pUI->numPausesGame > 0)
     {
+        cNoteUnmade();
         static std::chrono::steady_clock::time_point s_nextSaid{};
         if (std::chrono::steady_clock::now() >= s_nextSaid)
         {
@@ -129,6 +138,7 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
 
     if (!launchData.pParentCell)
     {
+        cNoteUnmade();
         spdlog::warn("Cannot launch projectile, invalid parent cell: {:X}", cParentCellId);
         return;
     }
@@ -142,6 +152,21 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
     const uint32_t cProjectileBaseId = modSystem.GetGameId(acMessage.ProjectileBaseID);
     launchData.pProjectileBase = TESForm::GetById(cProjectileBaseId);
 
+    // A form a mod made at run time has an id only its own game knows (mod id FFFFFFFF), and a mod this game lacks resolves to nothing.
+    // The game refuses a launch without a projectile.
+    if (!launchData.pProjectileBase)
+    {
+        cNoteUnmade();
+        static std::chrono::steady_clock::time_point s_nextSaid{};
+        if (std::chrono::steady_clock::now() >= s_nextSaid)
+        {
+            s_nextSaid = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            spdlog::info("Remote projectile from {:X} not launched: its projectile {:X}:{:X} of spell {:X}:{:X} does not exist here", formIdComponent.Id,
+                         acMessage.ProjectileBaseID.ModId, acMessage.ProjectileBaseID.BaseId, acMessage.SpellID.ModId, acMessage.SpellID.BaseId);
+        }
+        return;
+    }
+
     const uint32_t cFromWeaponId = modSystem.GetGameId(acMessage.WeaponID);
     launchData.pFromWeapon = Cast<TESObjectWEAP>(TESForm::GetById(cFromWeaponId));
 
@@ -152,7 +177,6 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
     launchData.fXAngle = acMessage.XAngle;
     launchData.fYAngle = acMessage.YAngle;
 
-    const uint32_t cSpellId = modSystem.GetGameId(acMessage.SpellID);
     launchData.pSpell = Cast<MagicItem>(TESForm::GetById(cSpellId));
 
     launchData.eCastingSource = (MagicSystem::CastingSource)acMessage.CastingSource;
@@ -177,8 +201,15 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
 
     Projectile::Launch(&result, launchData);
 
-    // Another player's projectile: its hit or miss here decides their ranged hit on this player (the defender's own copy).
-    if (m_world.all_of<PlayerComponent>(*remoteIt))
+    // Another player's arrow: its hit or miss here decides the hit their game reports on this player (the defender's own copy).
+    // A spell's hit does not come as such a report (MagicTarget::IsReplayedHit), and a sword blow after it is not the spell.
+    // A projectile of a spell this game does not have lands nothing, so that spell counts as not launched too.
+    // A launch made here owns what its caster reports next, not one that could not be made before it.
+    if (result.handle.iBits == 0 || (acMessage.SpellID.BaseId != 0 && !launchData.pSpell))
+        cNoteUnmade();
+    else if (acMessage.SpellID.BaseId != 0)
+        PvpProjectiles::TakeUnmade(formIdComponent.Id, cSpellId);
+    else if (m_world.all_of<PlayerComponent>(*remoteIt))
         PvpProjectiles::NoteLaunched(formIdComponent.Id);
 
     // Pairs with the sender's "Projectile launch" line: what this side actually launched for a remote shooter.

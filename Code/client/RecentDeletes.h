@@ -16,8 +16,8 @@ struct Entry
 {
     uint64_t Address{};
     uint32_t FormId{};
-    uint32_t Handles{};   // outstanding BSPointerHandles: who else still has a claim on this actor
-    uint32_t RefCount{};  // the whole refCount word, handles are its low 10 bits
+    uint32_t Handles{};   // its strong references, the low 10 bits of RefCount
+    uint32_t RefCount{};  // the whole refCount word
     uint32_t Flags{};     // see Claim below
     uint64_t Stamp{};     // steady_clock ticks
 };

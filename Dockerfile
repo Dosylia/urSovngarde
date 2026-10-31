@@ -25,7 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 WORKDIR /src
 COPY . /src
 
-RUN --mount=type=cache,target=/root/.xmake/packages \
+# Raise the id when a recipe changes how a package is built: its build hash stays, so the old build would come back.
+RUN --mount=type=cache,id=xmake-packages-2,target=/root/.xmake/packages \
     --mount=type=cache,target=/root/.xmake/repositories \
     source ~/.xmake/profile && \
     xmake config -y -m release && \

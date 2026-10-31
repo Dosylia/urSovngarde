@@ -704,6 +704,10 @@ void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationCompone
         const float jump = glm::distance(previous, static_cast<glm::vec3>(acPoint.Position));
         if (jump > cImpossibleStep)
         {
+            // Movement arrives unreliably: a late point from before the jump would send the actor back to where it left.
+            if (acPoint.Tick < aInterpolationComponent.TimePoints.back().Tick)
+                return;
+
             aInterpolationComponent.TimePoints.clear();
             aInterpolationComponent.Position = acPoint.Position;
 

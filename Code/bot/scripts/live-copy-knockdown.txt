@@ -50,6 +50,10 @@ wait 6
 npclife alive 0
 wait 3
 # The copy's pose through the whole replay and a few seconds after it, judged below.
+# The client poses no body out of view, and the bot stands 200 units east of the player, behind the headset on the rig's save.
+log DO look at npc 500 hold 36000
+wait 1
+log REQUIRE view npc
 log DO watch npc 34
 replay npc
 wait 3

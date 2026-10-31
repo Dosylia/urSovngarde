@@ -1,0 +1,34 @@
+# A copy whose health reaches zero before its death arrives falls when the death comes.
+#
+#   python Tools\VR\live-check.py live-copy-health-first
+#   python Tools\VR\live-check.py --expect-fail live-copy-health-first     on a build without the fix: must be RED
+#
+# An owner sends an NPC's health and its death on two timers, so the health can get there first.
+# Set straight to zero, the copy was dead with no death played: its death then found it dead, and it stayed on its feet.
+log live copy health first
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- a human of this bot's, and the player looks at it
+npc temp 753CB
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc alive
+log DO look at npc 500 hold 12000
+wait 2
+
+log -- its owner's health reaches zero, and its death comes two seconds later
+npchealth 0
+wait 2
+npclife dead 0
+wait 5
+log REQUIRE npc dead
+log SHOT after-death
+log CHECK npc lying
+log CHECK game alive
+wait 2
+log done
+stop

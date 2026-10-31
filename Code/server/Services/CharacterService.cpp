@@ -274,6 +274,9 @@ void CharacterService::ProcessPendingLeaderAssignments() const noexcept
         if (!pPlayer || !m_world.valid(cPending.Entity))
             continue;
         // The rules are checked again: another arrival, a hand-over or a departure may have come meanwhile.
+        // What is held back here is never a grab, so an NPC that died in the wait stays with its owner.
+        if (const auto* pCharacter = m_world.try_get<CharacterComponent>(cPending.Entity); pCharacter && pCharacter->IsDead())
+            continue;
         if (CanClaimOwnership(pPlayer, cPending.Entity, cPending.OwnershipEpoch, cPending.Reason))
             TransferOwnership(pPlayer, cPending.Entity, cPending.Reason);
     }
@@ -1123,9 +1126,10 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
 
     // A dead body goes to whoever grabs it, party or not, since only the owner sends its bones.
     // The epoch check above settles two players grabbing at once.
+    // A game that only registers it gets a copy: taking it would make that game's corpse the truth for everyone.
     const bool cDeadBody = characterComponent.IsDead();
     if (cDeadBody)
-        return true;
+        return aReason == OwnershipTransferReason::LeaderAssignment ? reject("a dead body changes hands only when it is grabbed") : true;
 
     auto& partyService = m_world.GetPartyService();
     if (!partyService.IsPlayerInParty(apPlayer) || (!cDeadBody && !aFollower && !partyService.IsPlayerLeader(apPlayer)))

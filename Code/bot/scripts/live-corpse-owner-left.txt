@@ -1,0 +1,45 @@
+# A body whose owner leaves in the middle of moving it is not held in its last pose.
+#
+#   python Tools\VR\live-check.py live-corpse-owner-left
+#   python Tools\VR\live-check.py --expect-fail live-corpse-owner-left     on a build without the fix: must be RED
+#
+# While the owner moves a body its bones are drawn over the copy here.
+# The owner disconnects with the pose still running, and this game takes the body over.
+# Nothing sends bones any more, so the last ones must go, or the body stays frozen in them whatever its ragdoll does.
+log live corpse owner left
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- a human of this bot's, killed
+npc temp 753CB
+waitfor owned == 1 20
+wait 8
+npclife dead 0
+wait 8
+log REQUIRE npc dead
+
+log -- its owner is moving it, then disconnects with the pose still running
+npcmove 0 40 0 posed
+wait 0.2
+npcmove 0 40 0 posed
+wait 0.2
+npcmove 0 40 0 posed
+wait 0.2
+npcmove 0 40 0 posed
+wait 0.2
+npcmove 0 0 0 posed
+wait 0.2
+log CHECK logged VRBodySync: posing body \w+ from its owner's bones
+disconnect
+wait 12
+log REQUIRE logged Gained ownership of actor
+log DO logmark
+wait 7
+log CHECK absent VRBodySync: posing body \w+ from its owner's bones
+log CHECK game alive
+wait 1
+log done
+stop

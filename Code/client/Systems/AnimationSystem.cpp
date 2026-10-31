@@ -147,20 +147,24 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
 
         // TEMPORARY diagnostic for remote NPCs sliding while the game refuses most of their moveStart and turnStop replays.
         // For one refused replay per 10 s, it logs everything the refusal could depend on. Remove once understood.
-        if (!result)
+        // A transition without animation (Type bit 4) played nothing on its owner either, so its refusal says nothing.
+        if (!result && (first.Type & 0x4) == 0)
         {
             static std::chrono::steady_clock::time_point s_nextSample{};
+            static uint32_t s_refused = 0;
+            ++s_refused;
             const auto now = std::chrono::steady_clock::now();
             if (now >= s_nextSample)
             {
                 s_nextSample = now + 10s;
                 const auto* pBase = Cast<TESNPC>(apActor->baseForm);
                 spdlog::info("ReplayDiag: refused '{}' on {:X} ({}): action {:X} resolved {}, idle {:X} resolved {}, type {}, target {:X} resolved {}, graph ready {}, has 3D {}, "
-                             "has process {}, flags1 {:#x}, flags2 {:#x}, dead or dying {}, replay left {}, queued {}",
+                             "has process {}, flags1 {:#x}, flags2 {:#x}, dead or dying {}, replay left {}, queued {}; {} refused since the last line",
                              first.EventName.c_str(), apActor->formID, pBase ? pBase->fullName.value.AsAscii() : "?", actionId, pAction != nullptr, first.IdleId,
                              actionData.idleForm != nullptr, first.Type, targetId, pTarget != nullptr, apActor->animationGraphHolder.IsReady(),
                              apActor->GetNiNode() != nullptr, apActor->currentProcess != nullptr, apActor->actorState.flags1, apActor->actorState.flags2,
-                             apActor->actorState.IsDeadOrDying(), aAnimationComponent.ReplayCount, actions.size());
+                             apActor->actorState.IsDeadOrDying(), aAnimationComponent.ReplayCount, actions.size(), s_refused);
+                s_refused = 0;
             }
         }
 
@@ -284,6 +288,34 @@ static int PlayerDirectionSlot(Actor* apPlayer) noexcept
 }
 #endif
 
+#ifdef SKYRIMVR
+namespace
+{
+// TEMPORARY: a dead body this game owns whose reported position jumps, and what it was read from.
+// The others pull their copy after every report, so a jump here is a jump on their screens.
+void NoteBodyJump(const Actor* apActor, const glm::vec3& acSent, const bool aFromRoot) noexcept
+{
+    static std::unordered_map<uint32_t, glm::vec3> s_lastSent;
+    if (s_lastSent.size() > 512)
+        s_lastSent.clear();
+    const auto [it, cIsNew] = s_lastSent.try_emplace(apActor->formID, acSent);
+    if (cIsNew)
+        return;
+    const float cJump = glm::distance(it->second, acSent);
+    if (cJump > 300.f)
+    {
+        const auto* pPlayer = PlayerCharacter::Get();
+        spdlog::info("CorpseDiag: own body {:X} sent {:.0f} units from its last report, from ({:.0f}, {:.0f}, {:.0f}) to ({:.0f}, {:.0f}, {:.0f}), read from its {}; "
+                     "reference at ({:.0f}, {:.0f}, {:.0f}) in cell {:X}, attached {}, player at ({:.0f}, {:.0f}, {:.0f})",
+                     apActor->formID, cJump, it->second.x, it->second.y, it->second.z, acSent.x, acSent.y, acSent.z, aFromRoot ? "3D root" : "reference", apActor->position.x,
+                     apActor->position.y, apActor->position.z, apActor->parentCell ? apActor->parentCell->formID : 0, apActor->parentCell && apActor->parentCell->IsAttached(),
+                     pPlayer ? pPlayer->position.x : 0.f, pPlayer ? pPlayer->position.y : 0.f, pPlayer ? pPlayer->position.z : 0.f);
+    }
+    it->second = acSent;
+}
+} // namespace
+#endif
+
 void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, ReferenceUpdate& aUpdate) noexcept
 {
     auto& movement = aUpdate.UpdatedMovement;
@@ -299,12 +331,16 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
     // The others put their copy where this says (VRBodySync::PlaceCorpse), so the 3D root's world position is sent instead.
     if (apActor != PlayerCharacter::Get() && apActor->actorState.IsDead())
     {
-        if (const NiNode* pRoot = apActor->GetNiNode())
+        const NiNode* pRoot = apActor->GetNiNode();
+        if (pRoot)
         {
             // NiAVObject::world is at 0x7C, as VRBodySync and DroppedItemService read it.
             const auto& world = *reinterpret_cast<const NiTransform*>(reinterpret_cast<const uint8_t*>(pRoot) + 0x7C);
             movement.Position = glm::vec3(world.translate.x, world.translate.y, world.translate.z);
         }
+#ifdef SKYRIMVR
+        NoteBodyJump(apActor, static_cast<glm::vec3>(movement.Position), pRoot != nullptr);
+#endif
     }
 
     movement.Rotation.x = apActor->rotation.x;

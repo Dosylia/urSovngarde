@@ -16,7 +16,7 @@ waitfor known other 40
 wait 5
 
 log DO god on
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 30
 log DO console player.moveto 92D04
 wait 8

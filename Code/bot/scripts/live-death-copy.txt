@@ -23,6 +23,10 @@ wait 6
 log DO logmark
 
 log -- the owner's NPC dies; the copy is watched while the death arrives
+# The client poses no body out of view, and the bot stands 200 units east of the player, behind the headset on the rig's save.
+log DO look at npc 500 hold 16000
+wait 1
+log REQUIRE view npc
 log DO watch npc 10
 wait 2
 npclife dead 0

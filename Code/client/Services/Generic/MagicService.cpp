@@ -32,6 +32,7 @@
 #include <Games/Overrides.h>
 
 #include <Forms/SpellItem.h>
+#include <Messages/NotifyHealthChangeBroadcast.h>
 #include <Forms/EnchantmentItem.h>
 #include <PlayerCharacter.h>
 
@@ -118,6 +119,10 @@ void MagicService::OnUpdate(const UpdateEvent& acEvent) noexcept
     ApplyQueuedEffects();
 
     UpdateRevealOtherPlayersEffect();
+
+    if (!m_spellSides.empty())
+        if (const size_t cMissed = PvpProjectiles::DropOldSpellSides(m_spellSides, std::chrono::steady_clock::now()))
+            spdlog::info("PvP: {} hit(s) another player's game reported not taken: the replayed projectile missed here", cMissed);
 }
 
 void MagicService::OnSpellCastEvent(const SpellCastEvent& acEvent) const noexcept
@@ -504,6 +509,15 @@ void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
     const uint32_t cSpellId = World::Get().GetModSystem().GetGameId(acMessage.SpellId);
     if (cSpellId == 0)
     {
+        // A spell of a plugin only its caster has: no projectile of it is made here, so its report is all there is of the hit.
+        const Actor* pCopy = acMessage.CasterId ? Utils::GetByServerId<Actor>(acMessage.CasterId) : nullptr;
+        if (pCopy && Utils::GetByServerId<Actor>(acMessage.TargetId) == PlayerCharacter::Get() && World::Get().GetServerSettings().PvpEnabled &&
+            MagicTarget::IsSaneCasterFactor(acMessage.CasterPerkFactor) && PvpProjectiles::TakeUnmade(pCopy->formID, 0))
+        {
+            ApplyPvpSpellTopUp(pCopy->formID, 0, acMessage.Magnitude * acMessage.CasterPerkFactor, 0.f);
+            return;
+        }
+
         spdlog::error("{}: failed to retrieve formID of server spell id, GameId base: {:X}, mod: {:X}, discarding", __FUNCTION__, acMessage.SpellId.BaseId, acMessage.SpellId.ModId);
         return;
     }
@@ -567,12 +581,67 @@ void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
     if (pEffect->IsVampireLordEffect())
         pActor->GetExtension()->GraphDescriptorHash = AnimationGraphDescriptor_VampireLordBehavior::m_key;
 
+    // Another player's game reports its aimed spell hit this player's copy there.
+    // This game's replayed projectile decides whether it hit, and the report only adds what the caster's perks add.
+    if (pActor == PlayerCharacter::Get() && pCaster && pCaster->GetExtension() && pCaster->GetExtension()->IsRemotePlayer() && MagicTarget::IsReplayedHit(pEffect, pSpell))
+    {
+        if (World::Get().GetServerSettings().PvpEnabled && MagicTarget::IsSaneCasterFactor(acMessage.CasterPerkFactor))
+        {
+            const PvpProjectiles::SpellSide cReport{pCaster->formID, cSpellId, cEffectId, true, acMessage.Magnitude * acMessage.CasterPerkFactor, std::chrono::steady_clock::now()};
+            if (const auto cLanded = PvpProjectiles::TakeOtherSide(m_spellSides, cReport))
+                ApplyPvpSpellTopUp(pCaster->formID, cSpellId, cReport.Amount, cLanded->Amount);
+            // With no projectile made here, the report is all there is of the hit.
+            else if (PvpProjectiles::TakeUnmade(pCaster->formID, cSpellId))
+                ApplyPvpSpellTopUp(pCaster->formID, cSpellId, cReport.Amount, 0.f);
+            else
+                m_spellSides.push_back(cReport);
+        }
+        return;
+    }
+
     // This hack is here because slow time seems to be twice as slow when cast by an npc
     if (pEffect->IsSlowEffect())
         pActor = PlayerCharacter::Get();
 
     pActor->magicTarget.AddTarget(data, acMessage.CasterPerkFactor, acMessage.ApplyStaminaPerkBonus);
     spdlog::debug("Applied remote magic effect");
+}
+
+void MagicService::OnPvpSpellLanded(const uint32_t aCopyFormId, const uint32_t aSpellId, const uint32_t aEffectId, const float aAmount) noexcept
+{
+    const PvpProjectiles::SpellSide cLanded{aCopyFormId, aSpellId, aEffectId, false, aAmount, std::chrono::steady_clock::now()};
+    if (const auto cReport = PvpProjectiles::TakeOtherSide(m_spellSides, cLanded))
+        ApplyPvpSpellTopUp(aCopyFormId, aSpellId, cReport->Amount, aAmount);
+    else
+        m_spellSides.push_back(cLanded);
+}
+
+void MagicService::ApplyPvpSpellTopUp(const uint32_t aCopyFormId, const uint32_t aSpellId, const float aReported, const float aLanded) noexcept
+{
+    const float cTopUp = PvpProjectiles::SpellTopUp(aReported, aLanded);
+    if (cTopUp <= 0.f)
+        return;
+
+    auto players = m_world.view<PlayerComponent, FormIdComponent>();
+    uint32_t attacker = 0;
+    for (const auto cEntity : players)
+        if (players.get<FormIdComponent>(cEntity).Id == aCopyFormId)
+            attacker = players.get<PlayerComponent>(cEntity).Id;
+
+    auto locals = m_world.view<LocalComponent, FormIdComponent>();
+    for (const auto cEntity : locals)
+    {
+        if (locals.get<FormIdComponent>(cEntity).Id != PlayerCharacter::Get()->formID)
+            continue;
+
+        spdlog::info("PvP: spell {:X} of player {}: their report says {:.0f}, the hit here did {:.0f}", aSpellId, attacker, aReported, aLanded);
+        NotifyHealthChangeBroadcast change{};
+        change.Id = locals.get<LocalComponent>(cEntity).Id;
+        change.DeltaHealth = -cTopUp;
+        change.AttackerPlayerId = attacker;
+        m_dispatcher.trigger(change);
+        return;
+    }
 }
 
 void MagicService::OnRemoveSpellEvent(const RemoveSpellEvent& acEvent) noexcept

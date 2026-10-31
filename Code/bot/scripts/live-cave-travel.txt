@@ -12,6 +12,7 @@ waitfor known other 40
 wait 5
 
 log -- into Stillborn Cave
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console coc StillbornCave01
 wait 25
 log CHECK game inworld

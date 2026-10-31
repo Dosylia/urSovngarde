@@ -1,0 +1,5 @@
+Direction
+TurnDelta
+TurnDamped
+staggerMagnitude
+staggerDirection

@@ -18,17 +18,18 @@ log DO god on
 log -- the player into Helgen's keep, next to the door, which is closed first
 log DO console player.moveto 9B0A5
 wait 12
-cell 5DE24
-stay
-wait 4
 # DevBench's Papyrus calls take effect a little after they return, so each one is given a few seconds.
+# Before the bot comes in: this game leads, so a script's move is sent, and the bot's count must stay at 0.
 log DO papyrus ObjectReference SetOpen 9B0A5 b:false
 wait 6
 log REQUIRE ref 9B0A5 closed
-wait 3
+cell 5DE24
+stay
+wait 4
 
 log -- the player leaves for Riverwood's inn; the bot stays in the keep
 # Indoors to indoors: console travel out to Tamriel has hit Community Shaders' crash at a load (+0x1208c8) in the rig.
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console coc RiverwoodSleepingGiantInn
 wait 20
 log REQUIRE player cell 133C6

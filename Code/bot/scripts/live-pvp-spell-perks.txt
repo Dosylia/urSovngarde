@@ -3,10 +3,10 @@
 #   python Tools\VR\live-check.py live-pvp-spell-perks
 #   python Tools\VR\live-check.py --expect-fail live-pvp-spell-perks     on a build without the fix: must be RED
 #
-# The caster's game sends a damage spell on the other player as a health change (PvP on, as on the rig's server).
-# It sent the spell's base magnitude: the caster's perks adjust an effect only as the game makes it (AdjustForPerks).
-# Here the player gets Augmented Flames (25 % more fire damage; F392E, its name is printed) and casts Fireball (1C789,
-# 40 fire damage) at this bot's character. The bot must receive more than the base 40.
+# The caster's game reports a damage spell on the other player as the spell (PvP on, as on the rig's server).
+# It carries how strong the caster's game made it: their perks, which adjust an effect only as the game makes it (AdjustForPerks), and the game's multiplier for hits by the player.
+# Here the player gets Augmented Flames (50 % more fire damage in this mod list; F392E, its name is printed) and casts Fireball (1C789,
+# 40 fire damage) at this bot's character. With the rig's difficulty (0.6) the bot must receive a factor of 0.9.
 # A run counts only when (REQUIRE): the game sent the hit at all.
 log live pvp spell perks
 waitfor connected 45
@@ -19,13 +19,15 @@ log DO papyrus Form GetName F392E
 log DO console player.addperk F392E
 wait 2
 
+# The rig's controllers point straight ahead, and a VR player cannot be turned: the bot's character goes there.
+infront 200
+wait 3
+
 log -- Fireball at this bot's character
-log DO face copy
-wait 2
 log DO papyrus Spell Cast 1C789 14 copy
 wait 6
 log REQUIRE logged PvP: spell 1C789 hit remote player
-log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -(4[6-9]|[5-9]\d|\d{3,})\.\d
+log CHECK bot logged Effect 1CEA1 of spell 1C789 applied to \w+ by \w+, magnitude 40\.00, caster's perks 0\.90
 wait 3
 log CHECK game alive
 log done

@@ -64,13 +64,25 @@ TEST_CASE("a player leaving with a hundred and thirty copies held frees none of 
 TEST_CASE("a waiting copy is released once its handles clear", "[copyremoval]")
 {
     REQUIRE(ShouldRelease(0, 10, false));
-    REQUIRE_FALSE(ShouldRelease(2, 10, false));
+    REQUIRE_FALSE(ShouldRelease(kOwnHolds, 10, false));
 }
 
-TEST_CASE("a waiting copy gives up eventually", "[copyremoval]")
+TEST_CASE("a waiting copy ends after the wait", "[copyremoval]")
 {
-    REQUIRE_FALSE(ShouldRelease(2, kMaxWaitMs - 1, false));
-    REQUIRE(ShouldRelease(2, kMaxWaitMs, false));
+    REQUIRE_FALSE(ShouldRelease(kOwnHolds, kMaxWaitMs - 1, false));
+    REQUIRE(ShouldRelease(kOwnHolds, kMaxWaitMs, false));
+    REQUIRE(ShouldRelease(kOwnHolds + 2, kMaxWaitMs, false));
+}
+
+// Every reference in a cell has the game's own two holds, so a live copy never reads zero.
+// A copy at those two is the normal end of the wait, not a copy freed while held.
+TEST_CASE("the game's own two holds are not something still holding the copy", "[copyremoval]")
+{
+    REQUIRE(ReleaseReason(kOwnHolds, kMaxWaitMs, false) == Released::HandlesGone);
+    REQUIRE_FALSE(FreedWhileHeld(ReleaseReason(kOwnHolds, kMaxWaitMs, false)));
+
+    REQUIRE(ReleaseReason(kOwnHolds + 1, kMaxWaitMs, false) == Released::WaitedOut);
+    REQUIRE(FreedWhileHeld(ReleaseReason(kOwnHolds + 1, kMaxWaitMs, false)));
 }
 
 TEST_CASE("the oldest go when the list is over its bound", "[copyremoval]")
@@ -78,24 +90,20 @@ TEST_CASE("the oldest go when the list is over its bound", "[copyremoval]")
     REQUIRE(ShouldRelease(5, 0, true));
 }
 
-// Why a copy was freed, which the log could not previously say.
-//
-// The 2026-09-27 session read as 16 copies the game had "let go of". Every one had been queued exactly 60000 ms
-// earlier and still had 2 handles on it: the give-up path, printed in the words of the success path. These
-// assertions are the check that wording cannot drift back together.
+// Why a copy was freed: two different outcomes must never print the same sentence.
 
 TEST_CASE("freeing a copy says which of the three reasons it was", "[copyremoval]")
 {
     REQUIRE(ReleaseReason(0, 10, false) == Released::HandlesGone);
     REQUIRE(ReleaseReason(2, 10, false) == Released::NotYet);
-    REQUIRE(ReleaseReason(2, kMaxWaitMs, false) == Released::WaitedOut);
+    REQUIRE(ReleaseReason(kOwnHolds + 1, kMaxWaitMs, false) == Released::WaitedOut);
     REQUIRE(ReleaseReason(2, 10, true) == Released::ListFull);
 
     // Zero handles is safe on any grounds, so it outranks both give-up paths: there is nothing left to dangle.
     REQUIRE(ReleaseReason(0, kMaxWaitMs, true) == Released::HandlesGone);
 }
 
-TEST_CASE("only the give-up paths leave something holding a dangling pointer", "[copyremoval]")
+TEST_CASE("only the give-up paths delete a copy something else holds", "[copyremoval]")
 {
     REQUIRE_FALSE(FreedWhileHeld(Released::HandlesGone));
     REQUIRE_FALSE(FreedWhileHeld(Released::NotYet));

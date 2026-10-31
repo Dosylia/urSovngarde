@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Structs/GameId.h>
+#include <Events/EventDispatcher.h>
 #include <Games/Skyrim/DeathSentence.h>
 #include <Games/Skyrim/GameSound.h>
 
@@ -24,7 +25,7 @@ struct NotifyDownedState;
 /**
  * @brief Handles logic related to the local player.
  */
-struct PlayerService
+struct PlayerService final : BSTEventSink<TESLoadGameEvent>
 {
     PlayerService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept;
     ~PlayerService() noexcept = default;
@@ -44,6 +45,7 @@ protected:
     void OnPlayerLevelEvent(const PlayerLevelEvent& acEvent) const noexcept;
     void OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept;
     void OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept;
+    BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
 private:
     //! Where the game would have saved last; the server keeps the last one each player sends (SafePointRequest).
@@ -122,7 +124,8 @@ private:
     // For RunSafePointUpdates: the loading screens counted and the rest menu as last seen, when to record the next safe point, and whether a loading screen showed since going down or starting the respawn.
     uint32_t m_loadingScreens = 0;
     bool m_restMenuOpen = false;
-    bool m_loadingSeen = false;
+    // A save was loaded since the player went down; the game's event comes on another thread than the update.
+    std::atomic<bool> m_saveLoaded{false};
     std::chrono::steady_clock::time_point m_nextMenuCheck{};
     std::chrono::steady_clock::time_point m_safePointAt{};
     // After a revive, bleedout recovery is blocked again once the player has stood up (or the wait gives up).

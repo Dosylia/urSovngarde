@@ -1,0 +1,59 @@
+# A body its owner moved goes where the owner left it once the bones stop, even with the player looking at it.
+#
+#   python Tools\VR\live-check.py live-corpse-dragged
+#   python Tools\VR\live-check.py --expect-fail live-corpse-dragged     on a build without the fix: must be RED
+#
+# A dragged body is only drawn where its owner has it, and its ragdoll here stays behind.
+# When the bones stop it is drawn back where the ragdoll lay, so the corpse move is what puts it right.
+# A body at rest waits until the player looks away (live-corpse-in-view). This one cannot.
+log live corpse dragged
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- a human of this bot's, 300 units off, killed
+npc temp 753CB
+waitfor owned == 1 20
+wait 8
+npcmove 0 300 0
+wait 4
+npcmove 0 0 0
+wait 2
+npclife dead 0
+wait 8
+log REQUIRE npc dead
+log DO look at npc 500 hold 12000
+wait 2
+log REQUIRE view npc
+log DO logmark
+
+log -- its owner drags it 300 units with the player looking at it, then lets go
+npcmove 0 60 0 posed
+wait 0.2
+npcmove 0 60 0 posed
+wait 0.2
+npcmove 0 60 0 posed
+wait 0.2
+npcmove 0 60 0 posed
+wait 0.2
+npcmove 0 60 0 posed
+wait 0.2
+npcmove 0 0 0 posed
+wait 0.2
+npcmove 0 0 0 posed
+wait 0.2
+log -- two steps with no pose: the copy's buffer holds two points, so the second ends the pose
+npcmove 0 0 0
+wait 0.2
+npcmove 0 0 0
+wait 5
+log CHECK logged VRBodySync: body \w+ has no humanoid skeleton; moved its whole tree
+log CHECK logged CorpseDiag: \w+'s ragdoll lay \d+ units from where its owner's corpse is; moved there
+wait 2
+log CHECK logged CorpseDiag: \w+'s ragdoll now lies ([0-9]|[1-5][0-9]) units from where its owner's corpse is
+log CHECK game alive
+wait 2
+log done
+stop

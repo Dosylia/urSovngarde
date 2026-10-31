@@ -28,7 +28,8 @@ struct AddTargetRequest final : ClientMessage
     GameId EffectId{};
     float Magnitude{};
     bool IsDualCasting{};
-    // How much the caster's perks multiplied a heal or buff on another player, in the caster's game.
+    // How much the caster's game multiplied a heal or buff on another player: its perks.
+    // For an aimed spell's hit on another player, its perks and its multiplier for hits by a player.
     float CasterPerkFactor{1.f};
     bool ApplyStaminaPerkBonus{};
 };

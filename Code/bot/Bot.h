@@ -338,6 +338,7 @@ private:
     uint64_t m_lastClashTick{}; //!< when the last of them was seen, on the server's clock
     uint64_t m_firstClashTick{}; //!< and the first
     uint32_t m_objectMoves{}; //!< world-object moves relayed to this bot
+    std::map<uint32_t, uint32_t> m_objectMovesOf; //!< those moves per Skyrim.esm object, for "objectmoves <hex>"
     uint32_t m_activationsBack{}; //!< activations relayed to this bot in its own name: its own, sent back by a game
     uint32_t m_activations{}; //!< every activation relayed to this bot, whoever did it
     //! The latest switch relayed to this bot for each reference the party leader's scripts switched (Skyrim.esm base id), for "refenabled".

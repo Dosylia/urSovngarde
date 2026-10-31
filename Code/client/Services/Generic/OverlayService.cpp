@@ -161,7 +161,7 @@ void OverlayService::CreateVR() noexcept
 
 // CEF keeps its own GPU process.
 // With "in-process-gpu" the GPU thread cannot make a GL context in the game, retries forever and fills the disk with cef_debug.log.
-// The cost is a crash at libcef.dll+7A52582 on quitting, which only happens while the game is already closing.
+// The cost is a rare crash at libcef.dll+7A52582, when CEF cannot start that process.
 void OverlayService::CreateOverlay(OverlayApp::RenderProvider* apProvider) noexcept
 {
     m_pOverlay = new OverlayApp(apProvider, new ::OverlayClient(m_transport, apProvider->Create()));

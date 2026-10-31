@@ -20,6 +20,7 @@
 #include <Messages/RequestReferenceEnable.h>
 #include <Messages/NotifyReferenceEnable.h>
 #include <Events/ReferenceEnableEvent.h>
+#include <Events/ScriptDoorEvent.h>
 #include <Services/PartyService.h>
 #include <Structs/DoorState.h>
 
@@ -31,6 +32,7 @@
 #include <Games/TES.h>
 
 #include <inttypes.h>
+#include <unordered_set>
 
 // The states travel as the game's own numbers.
 static_assert(DoorState::kOpen == TESObjectREFR::kOpen && DoorState::kOpening == TESObjectREFR::kOpening && DoorState::kClosed == TESObjectREFR::kClosed &&
@@ -51,6 +53,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_scriptAnimationNotifyConnection = aDispatcher.sink<NotifyScriptAnimation>().connect<&ObjectService::OnNotifyScriptAnimation>(this);
     m_referenceEnableConnection = aDispatcher.sink<ReferenceEnableEvent>().connect<&ObjectService::OnReferenceEnableEvent>(this);
     m_referenceEnableNotifyConnection = aDispatcher.sink<NotifyReferenceEnable>().connect<&ObjectService::OnNotifyReferenceEnable>(this);
+    m_scriptDoorConnection = aDispatcher.sink<ScriptDoorEvent>().connect<&ObjectService::OnScriptDoorEvent>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
 
     EventDispatcherManager::Get()->activateEvent.RegisterSink(this);
@@ -126,6 +129,7 @@ void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
     // TODO(cosideci): clear object components
     m_enableChanges.clear();
     m_enableWaiting.clear();
+    m_doorsMovedHere.clear();
 }
 
 void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
@@ -238,10 +242,12 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             const Lock* pLock = pObject->GetLock();
             // A door locked here stays shut: opening it would unlock it, as the game's SetOpen does.
             const bool cLockedHere = pLock && pLock->IsLocked();
-            if (cLocal == TESObjectREFR::kNone || cLocal == cShared || cLocal == (cOpen ? TESObjectREFR::kOpening : TESObjectREFR::kClosing) || (cOpen && cLockedHere))
+            const bool cMovedHere = m_doorsMovedHere.contains(pObject->formID);
+            if (cLocal == TESObjectREFR::kNone || cLocal == cShared || cLocal == (cOpen ? TESObjectREFR::kOpening : TESObjectREFR::kClosing) || (cOpen && cLockedHere) || cMovedHere)
             {
                 spdlog::info("Door {:X}: {} in the other games when this game came in; {} here (state {})", pObject->formID, cOpen ? "open" : "closed",
-                             cLocal == TESObjectREFR::kNone ? "no state known" : cOpen && cLockedHere ? "left shut, it is locked" : "already so", static_cast<int>(cLocal));
+                             cLocal == TESObjectREFR::kNone ? "no state known" : cOpen && cLockedHere ? "left shut, it is locked" : cMovedHere ? "left as this game's script left it" : "already so",
+                             static_cast<int>(cLocal));
             }
             else
             {
@@ -292,6 +298,10 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     }
 
     if (!m_transport.IsConnected())
+        return;
+
+    // A temporary reference exists only in this game, and its id means nothing in the others.
+    if (acEvent.pObject->IsTemporary())
         return;
 
     // A locked object opens the lockpicking menu, not itself, so its activation is not sent.
@@ -391,6 +401,9 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
         return;
     }
 
+    // Used in another game since this game's script moved it, so the kept state is the newer one again.
+    m_doorsMovedHere.erase(pObject->formID);
+
     // Only an object in a cell this game has loaded is used here: a script's use of a far or indoor reference must not run its scripts here.
     // A door's state still comes when this game enters its cell, with the cell's objects.
     const TESObjectCELL* pCell = pObject->GetParentCellEx();
@@ -457,6 +470,44 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
     // unsure if these flags are the best, but these are passed with the papyrus Activate fn
     // might be an idea to have the client send the flags through NotifyActivate
     pObject->Activate(pActor, 0, nullptr, 1, 0);
+}
+
+void ObjectService::OnScriptDoorEvent(const ScriptDoorEvent& acEvent) noexcept
+{
+    if (!m_transport.IsConnected())
+        return;
+
+    // Only the leader's game runs the party's quests, so only its scripts' doors are shared.
+    // A member's own scripts stay its own, and a state the server kept from an older use must not undo them.
+    if (!m_world.GetPartyService().IsLeader())
+    {
+        m_doorsMovedHere.insert(acEvent.FormId);
+        return;
+    }
+
+    // A load door is used in the other games, not set, and using it would take the leader's copy through.
+    auto* pDoor = Cast<TESObjectREFR>(TESForm::GetById(acEvent.FormId));
+    if (!pDoor || pDoor->extraData.Contains(ExtraDataType::Teleport))
+        return;
+
+    const TESObjectCELL* pCell = pDoor->GetParentCellEx();
+    auto& modSystem = m_world.GetModSystem();
+    ActivateRequest request;
+    if (!pCell || !modSystem.GetServerModId(pDoor->formID, request.Id) || !modSystem.GetServerModId(pCell->formID, request.CellId))
+        return;
+
+    // Sent as the player's use of the door: the other games set the door from that, and the server keeps its state.
+    const auto view = m_world.view<FormIdComponent, LocalComponent>();
+    const auto cPlayer = std::find_if(std::begin(view), std::end(view), [view](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == 0x14; });
+    if (cPlayer == std::end(view))
+        return;
+
+    request.ActivatorId = view.get<LocalComponent>(*cPlayer).Id;
+    request.PreActivationOpenState = acEvent.Open ? DoorState::kClosed : DoorState::kOpen;
+    m_transport.Send(request);
+
+    spdlog::info("Door {:X} ({:X}:{:X}) {} by a script here; sent to the players in cell {:X}:{:X}", pDoor->formID, request.Id.ModId, request.Id.BaseId,
+                 acEvent.Open ? "opened" : "closed", request.CellId.ModId, request.CellId.BaseId);
 }
 
 void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept
@@ -636,6 +687,11 @@ bool IsSharedSwitchKind(const TESObjectREFR* apRef) noexcept
     }
 }
 
+// How the leader's switches went here since the last line about them.
+size_t s_enableSwitched = 0;
+size_t s_enableAlreadySo = 0;
+size_t s_enableLeftAlone = 0;
+
 // At most one line per kind every 10 s, with how many switches went by since the last one.
 bool LogDue(std::chrono::steady_clock::time_point& aNext) noexcept
 {
@@ -664,9 +720,15 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
         return false;
     // The leader sends only these kinds; another plugin at the same id here is left alone.
     if (!IsSharedSwitchKind(pRef) || pRef->IsDeleted())
+    {
+        ++s_enableLeftAlone;
         return true;
+    }
     if (aEnabled == !pRef->IsDisabled())
+    {
+        ++s_enableAlreadySo;
         return true;
+    }
 
     // A door, container, activator or furniture that comes or goes is one a player can see missing.
     // Markers and statics switch by the hundred and are left out.
@@ -679,6 +741,10 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
         pRef->EnableImpl();
     else
         pRef->Disable();
+    if (aEnabled == !pRef->IsDisabled())
+        ++s_enableSwitched;
+    else
+        spdlog::warn("ReferenceEnable: {:X} (base {:X}) did not take the leader's switch {}", pRef->formID, pRef->baseForm->formID, aEnabled ? "on" : "off");
     return true;
 }
 
@@ -704,10 +770,16 @@ void ObjectService::OnNotifyReferenceEnable(const NotifyReferenceEnable& acMessa
     s_since += acMessage.Changes.size();
     if (LogDue(s_nextLog))
     {
-        spdlog::info("ReferenceEnable: {} reference(s) the leader's scripts switched (first {:X}:{:X} {}), {} applied here now, {} waiting for their cell", s_since,
+        spdlog::info("ReferenceEnable: {} reference(s) the leader's scripts switched (first {:X}:{:X} {}), {} applied here now, {} waiting for their cell; "
+                     "since the last such line {} switched, {} already so, {} left alone",
+                     s_since,
                      acMessage.Changes.empty() ? 0 : acMessage.Changes[0].Id.ModId, acMessage.Changes.empty() ? 0 : acMessage.Changes[0].Id.BaseId,
-                     !acMessage.Changes.empty() && acMessage.Changes[0].Enabled ? "on" : "off", applied, m_enableWaiting.size());
+                     !acMessage.Changes.empty() && acMessage.Changes[0].Enabled ? "on" : "off", applied, m_enableWaiting.size(), s_enableSwitched, s_enableAlreadySo,
+                     s_enableLeftAlone);
         s_since = 0;
+        s_enableSwitched = 0;
+        s_enableAlreadySo = 0;
+        s_enableLeftAlone = 0;
     }
 }
 
@@ -715,13 +787,16 @@ void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
     if (!m_enableChanges.empty())
     {
+        // A script can switch a reference off and on again within a frame, over and over.
+        // Only where it ended goes out, or every other game would redo each switch.
         RequestReferenceEnable request{};
-        for (const auto& [formId, enabled] : m_enableChanges)
+        std::unordered_set<uint32_t> done;
+        for (auto it = m_enableChanges.rbegin(); it != m_enableChanges.rend(); ++it)
         {
             ReferenceEnableState state{};
-            if (m_world.GetModSystem().GetServerModId(formId, state.Id.ModId, state.Id.BaseId))
+            if (done.insert(it->first).second && m_world.GetModSystem().GetServerModId(it->first, state.Id.ModId, state.Id.BaseId))
             {
-                state.Enabled = enabled;
+                state.Enabled = it->second;
                 request.Changes.push_back(state);
             }
         }

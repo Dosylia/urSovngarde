@@ -29,6 +29,8 @@ log -- the leader's script switches the camp marker off, then on
 refenable 8680C off
 wait 4
 log CHECK ref 8680C disabled
+# Checks run while the script goes on: without this wait the next switch can land before the game is asked.
+wait 3
 refenable 8680C on
 wait 4
 log CHECK ref 8680C enabled

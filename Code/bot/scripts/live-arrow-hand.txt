@@ -40,7 +40,7 @@ handtargets -8 45 110 6 8 118
 holdpose on
 replay me 2
 wait 3
-log DO face copy
+log REQUIRE view copy
 wait 3
 
 log -- an arrow in the copy's right hand, its head 67 units from the hand bone

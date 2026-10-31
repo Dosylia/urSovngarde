@@ -24,6 +24,19 @@ static uintptr_t ReadFirstWord(const void* apAddress) noexcept
     }
 }
 
+// Returns this form's id, or 0 if reading it faults.
+static uint32_t ReadFormId(const TESForm* apForm) noexcept
+{
+    __try
+    {
+        return apForm->formID;
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
+    {
+        return 0;
+    }
+}
+
 //! Whether a pointer from a form lookup is still a real game object: readable, with its vtable inside the game image.
 //! Freed memory reused for anything else fails this at once.
 //! The read is guarded instead of checked with VirtualQuery, which costs about 10 ms per call on the game's large heap.
@@ -47,6 +60,29 @@ bool IsLiveGameObject(const TESForm* apForm) noexcept
     return vtable >= s_image.first && vtable < s_image.second;
 }
 
+// Whether what a lookup gave for this id is that form.
+// Memory reused by another game object has a vtable in the game image too, so only its id tells them apart.
+static bool IsFormWithId(const TESForm* apForm, const uint32_t aId) noexcept
+{
+    if (!IsLiveGameObject(apForm))
+        return false;
+
+    CrashGuard::Enter();
+    const uint32_t cId = ReadFormId(apForm);
+    CrashGuard::Leave();
+
+    return cId == aId;
+}
+
+bool IsStaleFormId(const uint32_t aId) noexcept
+{
+    using TGetFormById = TESForm*(uint32_t);
+    POINTER_SKYRIMSE(TGetFormById, getFormById, 14617, 14617);
+
+    const TESForm* pForm = getFormById.Get()(aId);
+    return pForm && !IsFormWithId(pForm, aId);
+}
+
 TESForm* TESForm::GetById(const uint32_t aId)
 {
     using TGetFormById = TESForm*(uint32_t);
@@ -54,8 +90,8 @@ TESForm* TESForm::GetById(const uint32_t aId)
 
     TESForm* pForm = getFormById.Get()(aId);
     // The lookup can hand out a freed form: with Engine Fixes' form cache a temporary form's id stays mapped to memory
-    // used for something else since, and casting that faults. So only a live game object is returned.
-    if (pForm && !IsLiveGameObject(pForm))
+    // used for something else since, and casting that faults. So only the form asked for is returned.
+    if (pForm && !IsFormWithId(pForm, aId))
     {
         static std::atomic<uint32_t> s_freed{0};
         const uint32_t cCount = ++s_freed;

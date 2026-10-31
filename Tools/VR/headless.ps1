@@ -473,11 +473,23 @@ try {
 
     if ($StartCell) {
         Start-Sleep -Seconds 3
-        Invoke-Tool 'console' @{ action = 'exec'; command = "cow $StartCell" } | Out-Null
+        if ($StartCell -eq 'Tamriel 34 -9') {
+            # Console travel can crash the game as it loads (VR_TODO, "Console travel"), and this is the rig's most run trip.
+            # So it goes by Papyrus, to a persistent reference by Mistwatch. The fractions keep the offsets floats in PowerShell's JSON.
+            # A long load holds DevBench's answer: a timeout here is no failure, the position below says whether the trip happened.
+            $move = @{ action = 'call'; script = 'ObjectReference'; function = 'MoveTo'; self = @{ form = '0x14' }; args = @(@{ form = '0x4AFD9' }, -32.5, -911.5, 262.5, $false) }
+            try { Invoke-Tool 'papyrus' $move | Out-Null } catch { Write-Host "MoveTo gave no answer yet: $($_.Exception.Message)" }
+        } else {
+            Invoke-Tool 'console' @{ action = 'exec'; command = "cow $StartCell" } | Out-Null
+        }
         Start-Sleep -Seconds 3
         Wait-Until { -not ((Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Loading Menu') } $LoadTimeout 'the start cell to load' -NeedsGame
         Start-Sleep -Seconds 5
-        Write-Host "Player put at the start: cow $StartCell"
+        if ($StartCell -eq 'Tamriel 34 -9') {
+            $y = (Invoke-Tool 'papyrus' @{ action = 'call'; script = 'ObjectReference'; function = 'GetPositionY'; self = @{ form = '0x14' } }).returned
+            if ([math]::Abs($y + 32896) -gt 600) { throw "The player is not at the start: y $y, wanted about -32896." }
+        }
+        Write-Host "Player put at the start: $StartCell"
     }
 
     if ($NoConnect) {

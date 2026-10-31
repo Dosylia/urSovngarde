@@ -9,6 +9,7 @@
 #include <PlayerCharacter.h>
 #include <BSAnimationGraphManager.h>
 #include <Components/BGSBipedObjectForm.h>
+#include <Forms/TESObjectCELL.h>
 #include <Forms/TESObjectARMO.h>
 #include <NetImmerse/NiNode.h>
 #include <NetImmerse/NiTransform.h>
@@ -18,6 +19,7 @@
 #include <PerfScope.h>
 
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <tlhelp32.h>
 #include <cwctype>
@@ -348,21 +350,38 @@ int16_t ReadEntryIndex(const uint8_t* apEntry, int aField) noexcept
     return *reinterpret_cast<const int16_t*>(apEntry + kBoneEntryIndices + aField * sizeof(int16_t));
 }
 
+// Whether following one index field up from an entry reaches an index within that many hops.
+bool LeadsUpTo(const BoneArrayInfo& acInfo, const uint8_t* apEntry, const int16_t aAncestor, const int aField, const int aHops) noexcept
+{
+    for (int hop = 0; hop < aHops; ++hop)
+    {
+        const int16_t cParent = ReadEntryIndex(apEntry, aField);
+        if (cParent == aAncestor)
+            return true;
+        if (cParent < 0 || static_cast<uint32_t>(cParent) >= acInfo.Count)
+            return false;
+        apEntry = acInfo.pArray + cParent * kBoneEntrySize;
+    }
+    return false;
+}
+
 BoneArrayInfo ResolveBoneArray(void* apRoot, const BoneNodes& acNodes, bool aLog) noexcept
 {
     BoneArrayInfo info;
     info.pArray = GetBoneArray(FindByRtti(apRoot, "BSFlattenedBoneTree"), info.Count);
 
     // The parent index is the one that maps the left forearm to the upper arm and the hand to the forearm.
+    // Some skeletons put twist bones between them, so a longer way up is tried only when no field does it directly.
     const uint8_t* pUpper = FindBoneEntry(info.pArray, info.Count, acNodes[VRPose::kLeftUpperArm]);
     const uint8_t* pFore = FindBoneEntry(info.pArray, info.Count, acNodes[VRPose::kLeftForearm]);
     const uint8_t* pHand = FindBoneEntry(info.pArray, info.Count, acNodes[VRPose::kLeftHand]);
     if (pUpper && pFore && pHand)
     {
         const auto indexOf = [&info](const uint8_t* apEntry) { return static_cast<int16_t>((apEntry - info.pArray) / kBoneEntrySize); };
-        for (int field = 0; field < 4 && info.ParentField < 0; ++field)
-            if (ReadEntryIndex(pFore, field) == indexOf(pUpper) && ReadEntryIndex(pHand, field) == indexOf(pFore))
-                info.ParentField = field;
+        for (int hops = 1; hops <= 3 && info.ParentField < 0; ++hops)
+            for (int field = 0; field < 4 && info.ParentField < 0; ++field)
+                if (LeadsUpTo(info, pFore, indexOf(pUpper), field, hops) && LeadsUpTo(info, pHand, indexOf(pFore), field, hops))
+                    info.ParentField = field;
     }
 
     if (!info.pArray || info.ParentField < 0)
@@ -2789,7 +2808,16 @@ void ReleaseUnseenWeaponBodies() noexcept
 TiltedPhoques::Vector<uint32_t> s_touchCandidates;
 
 // When the owner's bones last moved a dead body here (ApplyRemotePoses). See IsRemoteBodyGrabbedHere.
+// Written at the frame's end and read from the world's update, which can be different threads.
+std::mutex s_bodyPosedLock;
 std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_bodyPosedByOwnerAt;
+
+std::optional<std::chrono::steady_clock::time_point> BodyPosedAt(const uint32_t aFormId) noexcept
+{
+    std::scoped_lock lock(s_bodyPosedLock);
+    const auto cPosed = s_bodyPosedByOwnerAt.find(aFormId);
+    return cPosed != s_bodyPosedByOwnerAt.end() ? std::optional(cPosed->second) : std::nullopt;
+}
 
 // Where PlaceCorpse last put each copy's body, and how its moves went.
 struct PlacedCorpse
@@ -2800,6 +2828,9 @@ struct PlacedCorpse
     glm::vec3 WantedAt{};
     float ApartBeforeMove = -1.f; // how far it lay when last moved for this place; -1: not moved yet
     uint32_t Fruitless = 0;
+    uint32_t Streak = 0; // moves in a row
+    bool SaidInView = false;
+    std::chrono::steady_clock::time_point PosedAt{}; // the end of the owner's last drag this has seen
 };
 std::unordered_map<uint32_t, PlacedCorpse> s_placedCorpses;
 
@@ -3344,7 +3375,10 @@ void OnFrameEnd() noexcept
             if (!pActor->actorState.IsDead())
                 continue;
             isBody = true;
-            s_bodyPosedByOwnerAt[formId] = now;
+            {
+                std::scoped_lock lock(s_bodyPosedLock);
+                s_bodyPosedByOwnerAt[formId] = now;
+            }
 
             // The other half of the sender's line, so one log shows the whole chain.
             static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextSaid;
@@ -3525,6 +3559,10 @@ void OnFrameEnd() noexcept
                 const glm::vec3 rootAt = ToGlm(rootWorld.translate);
                 const glm::vec3 copyLeft = inverseRoot * (ToGlm(rig.Bones[VRPose::kLeftHand].World().translate) - rootAt);
                 const glm::vec3 copyRight = inverseRoot * (ToGlm(rig.Bones[VRPose::kRightHand].World().translate) - rootAt);
+                // How high the body is drawn against where the reference stands: a lying or sinking copy shows here.
+                spdlog::info("VRBodySync: actor {:X} body -- reference z {:.0f}, 3D root z {:.0f}, head {:.0f} above the root, knock state {}", formId, pActor->position.z, rootAt.z,
+                             rig.Bones[VRPose::kHead].pNode || rig.Bones[VRPose::kHead].pEntry ? ToGlm(rig.Bones[VRPose::kHead].World().translate).z - rootAt.z : 0.f,
+                             (pActor->actorState.flags1 >> 25) & 0x7);
                 spdlog::info("VRBodySync: actor {:X} hands -- owner L({:.1f}, {:.1f}, {:.1f}) R({:.1f}, {:.1f}, {:.1f}); copy L({:.1f}, {:.1f}, {:.1f}) R({:.1f}, {:.1f}, {:.1f})", formId,
                              pose.HandOffsets[0].x, pose.HandOffsets[0].y, pose.HandOffsets[0].z, pose.HandOffsets[1].x, pose.HandOffsets[1].y, pose.HandOffsets[1].z, copyLeft.x, copyLeft.y,
                              copyLeft.z, copyRight.x, copyRight.y, copyRight.z);
@@ -4149,6 +4187,7 @@ void PulseClashHaptics(const uint8_t aSide) noexcept
 void ForgetCorpse(const uint32_t aFormId) noexcept
 {
     s_placedCorpses.erase(aFormId);
+    std::scoped_lock lock(s_bodyPosedLock);
     s_bodyPosedByOwnerAt.erase(aFormId);
 }
 
@@ -4163,12 +4202,23 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     const auto cNow = std::chrono::steady_clock::now();
 
     // Not while its owner is moving it: its bones arrive (ApplyRemotePoses) and place it, and moving the ragdoll too would fight them.
-    // Once the bones stop, the ragdoll is put where the owner left the body.
-    if (const auto cPosed = s_bodyPosedByOwnerAt.find(apActor->formID);
-        cPosed != s_bodyPosedByOwnerAt.end() && cNow - cPosed->second < std::chrono::milliseconds(1500))
-        return false;
+    // The ragdoll stays behind meanwhile, so the moment the bones stop it is put where the owner left the body, or it would flash back.
+    const auto cPosedAt = BodyPosedAt(apActor->formID);
+    if (cPosedAt)
+    {
+        std::shared_lock lock(s_posesLock);
+        if (s_poses.find(apActor->formID) != s_poses.end())
+            return false;
+    }
 
     auto& placed = s_placedCorpses[apActor->formID];
+    // A drag that just ended starts over: the moves before it say nothing about this one.
+    if (cPosedAt && *cPosedAt != placed.PosedAt)
+    {
+        placed.PosedAt = *cPosedAt;
+        placed.MovedAt = {};
+        placed.Streak = 0;
+    }
     if (cNow < placed.NextAt)
         return false;
     placed.NextAt = cNow + std::chrono::milliseconds(500);
@@ -4180,9 +4230,6 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     void* pRoot = apActor->GetNiNode();
     if (!(cScale > 0.f) || !pRoot || !s_setPositionAndRotation.Get())
         return false;
-
-    // TEMPORARY: the walk and the move are timed for the "moved there" line, against the 20-47 ms frames seen with it in play.
-    const auto cWalkStart = std::chrono::steady_clock::now();
 
     // The ragdoll's bodies: a live tree, so only null checks, no IsReadable (it costs milliseconds per call here).
     // Only dynamic bodies in a world count; the first found from the root is the ragdoll's root (pelvis or centre of mass).
@@ -4233,7 +4280,25 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
         placed.WantedAt = acWanted;
         placed.ApartBeforeMove = -1.f;
         placed.Fruitless = 0;
+        placed.SaidInView = false;
     }
+    // A player would see the move as a jump, so it waits until they see neither end of it.
+    // Not a body whose owner's bones just stopped: the player sees it where its owner left it, and its ragdoll must be there too.
+    const bool cJustPosed = cPosedAt && cNow - *cPosedAt < std::chrono::seconds(10);
+    if (!cJustPosed && HeadsetTransform() && (IsInView(cRagdollRoot) || IsInView(acWanted)))
+    {
+        if (!placed.SaidInView)
+            spdlog::info("CorpseDiag: {:X}'s ragdoll lies {:.0f} units from where its owner's corpse is, in the player's view; it waits until the player looks away",
+                         apActor->formID, cApart);
+        placed.SaidInView = true;
+        return false;
+    }
+    // Each move is a jump on screen, so a body that keeps moving is not pulled after it twice a second.
+    // Moves in a row wait 1, 2, 4, 8, then 16 s, and 30 s without one start over.
+    if (cNow - placed.MovedAt >= std::chrono::seconds(30))
+        placed.Streak = 0;
+    else if (cNow - placed.MovedAt < std::chrono::seconds(1ll << std::min(placed.Streak - 1, 4u)))
+        return false;
     // A move that did not bring it nearer means the body settles back as far off, and repeating it makes the corpse jump.
     // After two such moves it is left where it lies until the owner's corpse moves.
     if (placed.ApartBeforeMove >= 0.f && cApart >= placed.ApartBeforeMove - 16.f && ++placed.Fruitless >= 2)
@@ -4249,11 +4314,9 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     const glm::vec3 cOffset{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y, acWanted.z + cLift - cRagdollRoot.z};
     const glm::vec3 cHavokOffset = cOffset * cScale;
 
-    const auto cMoveStart = std::chrono::steady_clock::now();
     WorldWriteLock lock(BhkWorldOf(pHkpWorld));
     if (!lock.Held())
         return false;
-    const auto cLockedAt = std::chrono::steady_clock::now();
     uint32_t moved = 0;
     for (uint8_t* pBody : bodies)
     {
@@ -4275,10 +4338,11 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     placed.ApartBeforeMove = cApart;
     placed.MovedAt = cNow;
     placed.SayAfter = true;
-    const auto cMoveEnd = std::chrono::steady_clock::now();
-    spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies; walk {:.2f} ms, lock {:.2f} ms, move {:.2f} ms)",
-                 apActor->formID, cApart, moved, std::chrono::duration<double, std::milli>(cMoveStart - cWalkStart).count(),
-                 std::chrono::duration<double, std::milli>(cLockedAt - cMoveStart).count(), std::chrono::duration<double, std::milli>(cMoveEnd - cLockedAt).count());
+    ++placed.Streak;
+    spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies); "
+                 "from ({:.0f}, {:.0f}, {:.0f}) to ({:.0f}, {:.0f}, {:.0f}); its cell {:X}, attached {}",
+                 apActor->formID, cApart, moved, cRagdollRoot.x, cRagdollRoot.y, cRagdollRoot.z, acWanted.x, acWanted.y, acWanted.z,
+                 apActor->parentCell ? apActor->parentCell->formID : 0, apActor->parentCell && apActor->parentCell->IsAttached());
     return moved > 0;
 }
 
@@ -5054,9 +5118,12 @@ bool IsRemoteBodyGrabbedHere(Actor* apActor, const glm::vec3& acOwnerPosition) n
     if (glm::distance(acOwnerPosition, watch.OwnerLast) >= 4.f)
         watch.OwnerMovedAt = now;
     watch.OwnerLast = acOwnerPosition;
-    const auto posed = s_bodyPosedByOwnerAt.find(apActor->formID);
+    // Our own placing of it (PlaceCorpse) counts too: it settles from there, and no hand here moved it.
+    const auto placed = s_placedCorpses.find(apActor->formID);
+    const auto cPosedAt = BodyPosedAt(apActor->formID);
     const bool cOwnerMovesIt = now - watch.OwnerMovedAt < std::chrono::milliseconds(1500) ||
-                               (posed != s_bodyPosedByOwnerAt.end() && now - posed->second < std::chrono::milliseconds(1500));
+                               (cPosedAt && now - *cPosedAt < std::chrono::milliseconds(1500)) ||
+                               (placed != s_placedCorpses.end() && now - placed->second.MovedAt < std::chrono::milliseconds(1500));
     if (cOwnerMovesIt)
     {
         watch.LastMoved = {};

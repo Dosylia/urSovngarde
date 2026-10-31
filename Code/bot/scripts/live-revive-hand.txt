@@ -4,15 +4,20 @@
 #
 # ReviveService watches the local hands near a downed party member's body and asks the server after four seconds of holding.
 # The rig's controller is moved by DevBench ("DO hold"), so this checks the hand position and the request, not how the gesture feels.
-# In the rig the held pose lands 65 units from the body, out of reach.
-# The revive comes from the resting pose (46 units) once the hand is back, about 15 s after "DO hold" begins, hence the 25 s wait.
-# Run it right after live-revive: from a fresh start the rig's resting hand stays out of reach (cause unknown).
-# So it checks the request and the server's answer, not the held gesture.
+# "DO hold" stands the player with the body straight ahead, so the held hand lands 46 units from it, within the 50 of a touch.
+# The hold starts about 2 s after the line and takes four seconds, so a revive within 9 s comes from the held hand.
+# Before, the player's heading never turned, the hand missed, and the revive came from the resting hand 15 s later.
 log live revive hand
 waitfor connected 45
 expect known me
 waitfor known other 40
 wait 5
+
+# The bot takes the player's height, and scripts before this one can leave the player on a ledge, 700 units over the ground east of it.
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
+wait 6
+infront 150
+wait 3
 
 log -- this bot goes down
 down
@@ -24,7 +29,7 @@ wait 2
 
 log -- the player holds its right hand on the bot's character for eight seconds
 log DO hold copy right 50 8
-waitfor downstate me revived 25
+waitfor downstate me revived 9
 expect downstate me revived
 wait 3
 log CHECK logged Revive: holding a hand on player

@@ -33,9 +33,13 @@ wait 2
 log DO god on
 wait 3
 log -- the real player walks for six seconds while this bot records what it is sent about them
+log DO mark walked player
 log DO key w 6000
 capture other 8
 wait 2
+# The key reaches the game only if its window has focus; a player who did not walk proves nothing here (10-30, twice).
+log REQUIRE moved walked atleast 100
+log REQUIRE bot logged Captured action names of \w+: \S
 
 log -- the recording, played back as this bot's own character, twice over
 log CHECK slide mark

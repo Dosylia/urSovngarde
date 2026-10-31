@@ -54,10 +54,11 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: ~/.xmake/packages
-                  key: ${{ matrix.runner }}-xmake-${{ hashFiles('**/xmake.lua') }}
+                  key: ${{ matrix.runner }}-xmake-2-${{ hashFiles('**/xmake.lua') }}
                   # The newest earlier cache when an xmake.lua edit changed the key (windows.yml says why).
+                  # Raise the number when a recipe changes how a package is built: its build hash stays, so the old build would come back.
                   restore-keys: |
-                      ${{ matrix.runner }}-xmake-
+                      ${{ matrix.runner }}-xmake-2-
 
             # Install xmake
             - name: Setup xmake
@@ -105,6 +106,21 @@ jobs:
                   TILTED_ACCEPT_EULA=1 LD_LIBRARY_PATH=. timeout 8 ./urSovngardeServer > start.txt 2>&1 || true
                   cat start.txt
                   grep -q "started on port" start.txt
+
+            # A client's handshake is the first use of the crypto library, so a server that starts can still die here.
+            # With no player in the world the bot never ends, so its log is the verdict.
+            # The kill fails if the server has died.
+            - name: A client joins the staged server
+              run: |
+                  cd "$RUNNER_TEMP/server-start"
+                  TILTED_ACCEPT_EULA=1 LD_LIBRARY_PATH=. ./urSovngardeServer > join.txt 2>&1 &
+                  server=$!
+                  timeout 10 sh -c 'until grep -q "started on port" join.txt; do sleep 0.2; done'
+                  timeout 8 "$GITHUB_WORKSPACE/packaged/bin/STBot" "$GITHUB_WORKSPACE/Code/bot/scripts/smoke.txt" \
+                    --server 127.0.0.1:10578 > bot.txt 2>&1 || true
+                  cat join.txt bot.txt
+                  grep -q "Accepted as player" bot.txt
+                  kill "$server"
 
             - name: Create Linux release archive
               if: ${{ inputs.upload-build-for-next-job }}

@@ -1,4 +1,4 @@
-# Every real-game test in one go: the game brought up with nobody in the headset, every live-*.txt script run
+# The default suite in one go: the game brought up with nobody in the headset, the scripts of live-check.py's ALL run
 # against it, one table per batch, and the game taken down again whatever happened.
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\run-live.ps1                  # all of them, in live-check.py's order

@@ -7,22 +7,28 @@
 //!
 //! It is a pure function of numbers with no game types, so it can be tested (see CopyRemovalPolicy tests).
 //!
-//!   - Deleting immediately is a use-after-free: the game still holds handles and makes a virtual call on the copy later.
-//!   - Waiting for zero handles never frees anything: the game's own lists keep their handles while the cell is loaded.
+//!   - Delete() destroys a copy at once, and the game's jobs keep raw pointers to it for a moment after it goes.
+//!     Deleting immediately is then a use-after-free, and no count shows those pointers, so a removed copy is given time.
+//!   - The count read here is the object's strong references, called handles in the logs.
+//!     Every reference in a cell has kOwnHolds of them, which Delete() drops itself, so it never reaches zero while the copy lives.
+//!     A copy with more outlives Delete() until the others let go.
 //!
 //! So the wait is bounded: at most kMaxWaiting copies are held back.
-//! When one more arrives at that limit, the oldest is freed regardless of its handles.
-//! The worst case is an immediate delete, and the usual case frees a copy once the game lets go of it.
+//! A copy that arrives at that limit is freed at once, regardless of its handles.
+//! The worst case is an immediate delete, and the usual case frees a copy after kMaxWaitMs.
 //! Held-back copies are disabled while they wait, so they cost a list slot rather than sound, AI and draw calls.
 namespace CopyRemovalPolicy
 {
+//! The strong references every reference in a cell has: the handle table's entry and the cell's list.
+constexpr uint32_t kOwnHolds = 2;
+
 //! Never hold back more than this many copies.
 //! A player leaving can remove over a hundred copies at once, and each one forced out at the limit is freed while held.
 //! A waiting copy is disabled and costs a list slot; kMaxWaitMs is what keeps the list from growing without end.
 constexpr size_t kMaxWaiting = 256;
 
-//! Give up waiting after this long and free the copy anyway.
-//! A holder that has not let go in a minute will not let go while the cell is loaded.
+//! How long a disabled copy waits before it is deleted.
+//! Long enough for the game's jobs to have finished with it: no crash has come from a copy this old.
 constexpr uint32_t kMaxWaitMs = 60000;
 
 enum class Action
@@ -46,13 +52,13 @@ inline Action OnRemoved(const uint32_t aHandles, const size_t aWaitingCount) noe
 }
 
 //! Why a waiting copy was freed.
-//! Only HandlesGone is what the wait is for; the other two free a copy that is still held, and the log must say so.
+//! Only HandlesGone is what the wait is for; the other two delete a copy something else still holds, and the log must say so.
 enum class Released
 {
-    NotYet,      //!< still held, keep waiting
-    HandlesGone, //!< what the wait is for: nothing claims it any more, so freeing it is safe
-    WaitedOut,   //!< gave up after kMaxWaitMs with handles still outstanding -- freed while held
-    ListFull,    //!< the bound forced it out early, also freed while held
+    NotYet,      //!< still waiting
+    HandlesGone, //!< what the wait is for: the time has passed and only the game's own holds are left
+    WaitedOut,   //!< the time has passed and something else holds it too; the object lives on until that lets go
+    ListFull,    //!< the bound forced it out early
 };
 
 //! Whether a copy that is already waiting should be freed now, and on what grounds.
@@ -68,7 +74,7 @@ inline Released ReleaseReason(const uint32_t aHandles, const uint32_t aWaitedMs,
         return Released::ListFull;
 
     if (aWaitedMs >= kMaxWaitMs)
-        return Released::WaitedOut;
+        return aHandles <= kOwnHolds ? Released::HandlesGone : Released::WaitedOut;
 
     return Released::NotYet;
 }
@@ -78,7 +84,7 @@ inline bool ShouldRelease(const uint32_t aHandles, const uint32_t aWaitedMs, con
     return ReleaseReason(aHandles, aWaitedMs, aOverBound) != Released::NotYet;
 }
 
-//! Whether freeing on these grounds leaves something holding a dangling pointer.
+//! Whether something besides the game's own lists still held the copy when it was deleted.
 inline bool FreedWhileHeld(const Released aReason) noexcept
 {
     return aReason == Released::WaitedOut || aReason == Released::ListFull;
@@ -92,7 +98,7 @@ inline const char* Describe(const Released aReason) noexcept
     case Released::HandlesGone:
         return "the game let go of it";
     case Released::WaitedOut:
-        return "it waited out the limit and was freed while still held";
+        return "it waited out the limit and something else still holds it";
     case Released::ListFull:
         return "the waiting list was full";
     default:

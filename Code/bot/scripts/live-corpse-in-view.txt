@@ -1,0 +1,56 @@
+# A body that lies elsewhere in its owner's game is moved only where the player does not see it jump.
+#
+#   python Tools\VR\live-check.py live-corpse-in-view
+#   python Tools\VR\live-check.py --expect-fail live-corpse-in-view     on a build without the fix: must be RED
+#
+# Each game drops a body with its own ragdoll, and the two land apart, so the copy is moved to where its owner has it.
+# With the player looking at the body it stays where it lies.
+# The two pictures show it: "DO record" cannot, since a moved ragdoll's pelvis node reads the same.
+# Once the player looks away, it goes there.
+log live corpse in view
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- a human of this bot's, 300 units off, killed
+npc temp 753CB
+waitfor owned == 1 20
+wait 8
+npcmove 0 300 0
+wait 4
+npcmove 0 0 0
+wait 2
+npclife dead 0
+wait 8
+log REQUIRE npc dead
+log DO look at npc 500 hold 13000
+wait 2
+log REQUIRE view npc
+log DO logmark
+
+log -- its owner's corpse is 300 units further on, with the player looking at the body
+log SHOT in-view-before
+wait 1
+npcmove 0 300 0
+wait 3
+npcmove 0 0 0
+wait 6
+log CHECK logged CorpseDiag: \w+'s ragdoll lies \d+ units from where its owner's corpse is, in the player's view
+log CHECK absent CorpseDiag: \w+'s ragdoll lay \d+ units from where its owner's corpse is; moved there
+log SHOT in-view-after
+wait 2
+
+log -- the player looks away: it goes there
+log DO look away npc 500 hold 6000
+wait 1
+log REQUIRE view npc away
+wait 4
+log CHECK logged CorpseDiag: \w+'s ragdoll lay \d+ units from where its owner's corpse is; moved there
+wait 3
+log CHECK logged CorpseDiag: \w+'s ragdoll now lies ([0-9]|[1-5][0-9]) units from where its owner's corpse is
+log CHECK game alive
+wait 2
+log done
+stop

@@ -999,6 +999,11 @@ bool Actor::IsDead() const noexcept
     return s_pIsDead(this);
 }
 
+bool Actor::HasLoadedProcess() const noexcept
+{
+    return currentProcess && currentProcess->middleProcess;
+}
+
 bool Actor::IsDragon() const noexcept
 {
     const ActorExtension* pExtension = const_cast<Actor*>(this)->GetExtension();
@@ -1216,6 +1221,9 @@ bool TP_MAKE_THISCALL(HookSpawnActorInWorld, Actor)
 TP_THIS_FUNCTION(TDamageActor, bool, Actor, float aDamage, Actor* apHitter, bool aKillMove);
 static TDamageActor* RealDamageActor = nullptr;
 
+// While a spell's effect does its damage: it got onto its target through HookAddTarget, so its damage counts.
+static thread_local bool s_spellDamage = false;
+
 #ifdef SKYRIMVR
 TP_THIS_FUNCTION(THitTarget, void, Actor, Actor* apTarget, void* apProjectile, bool aIsOffhand);
 static THitTarget* RealHitTarget = nullptr;
@@ -1258,6 +1266,15 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
 
     const auto* pExHittee = apThis->GetExtension();
 
+    // Another player's spell does to this player what it does to an NPC: the game's multiplier for hits by a player, not the far higher one for hits on the player.
+    if (s_spellDamage && apHitter && pExHittee && pExHittee->IsLocalPlayer())
+    {
+        const auto* pExSpellHitter = apHitter->GetExtension();
+        const float cOnPlayer = GameplayFormulas::CalculateRealDamage(apThis, 1.f, false);
+        if (pExSpellHitter && pExSpellHitter->IsRemotePlayer() && cOnPlayer > 0.f)
+            aDamage *= GameplayFormulas::CalculateRealDamage(apHitter, 1.f, false) / cOnPlayer;
+    }
+
     // Against a party, enemies last longer and hit harder, by how many of its players are near this one.
     // The longer life is dealt as less damage from this player, so no actor value changes and none of it reaches a save.
     // Each game scales only its own player's hits on NPCs and NPCs' hits on its own player; hits between players, and between NPCs, followers included, stay as they are.
@@ -1290,7 +1307,7 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
         // Summed per second, because a concentration spell hits each frame and a resting blade touches each second.
         if (const ActorExtension* pHitterExtension = apHitter ? apHitter->GetExtension() : nullptr; pHitterExtension && pHitterExtension->IsRemotePlayer())
         {
-            const bool cRanged = PvpProjectiles::Recent(apHitter->formID);
+            const bool cRanged = s_spellDamage || PvpProjectiles::Recent(apHitter->formID, glm::distance(glm::vec3(apHitter->position), glm::vec3(apThis->position)));
             static float s_damage[2]{};
             static uint32_t s_hits[2]{};
             static std::chrono::steady_clock::time_point s_since[2]{std::chrono::steady_clock::now(), std::chrono::steady_clock::now()};
@@ -1364,8 +1381,9 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
                 spdlog::info("Death sync: this player's blow on NPC copy {:X} sent to its owner; the copy is kept at 1 health until its owner says it died", apThis->formID);
                 // A protected NPC dies only by its own game's player, so its owner's game only puts it down.
                 // This game asks for it instead, and kills it once it owns it, with this player as the killer.
+                // Hits arrive on job threads, and the claim reads the world, so it runs with the world's update.
                 if (apThis->IsProtected() && !apThis->IsEssential())
-                    World::Get().GetCharacterService().ClaimForKillingBlow(apThis);
+                    World::Get().GetRunner().Queue([cFormId = apThis->formID] { World::Get().GetCharacterService().ClaimForKillingBlow(cFormId); });
                 return false;
             }
             return TiltedPhoques::ThisCall(RealDamageActor, apThis, aDamage, apHitter, aKillMove);
@@ -1411,7 +1429,9 @@ void TP_MAKE_THISCALL(HookApplyActorEffect, ActiveEffect, Actor* apTarget, float
         }
     }
 
-    return TiltedPhoques::ThisCall(RealApplyActorEffect, apThis, apTarget, aEffectValue, unk1);
+    s_spellDamage = MagicTarget::IsCast(apThis->pSpell);
+    TiltedPhoques::ThisCall(RealApplyActorEffect, apThis, apTarget, aEffectValue, unk1);
+    s_spellDamage = false;
 }
 
 TP_THIS_FUNCTION(TRegenAttributes, void*, Actor, int aId, float regenValue);

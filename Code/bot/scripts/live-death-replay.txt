@@ -37,14 +37,19 @@ waitfor owned == 1 20
 wait 8
 log REQUIRE npc standing
 wait 4
+# The client poses no body out of view, and the bot's mage stands 200 units east of the player, often behind the headset.
+log DO look at npc 500 hold 22000
+wait 1
+log REQUIRE view npc
 log DO record copy npc 14
 replay npc
 wait 6
 log SHOT copy of npc
 log CHECK npc dead
-log CHECK fall copy within 1500
-log CHECK fall copy like original 700
-log CHECK pose copy like original 30
+log CHECK fall copy within 400
+log CHECK fall copy like original 300
+# Three runs in view on bd2adc0: down at 63, -69 and -71 ms, 15 to 50 from the original; two ragdolls land 19 to 33 apart.
+log CHECK pose copy like original 40
 log CHECK place copy like original 100
 log CHECK still copy 30
 log CHECK still original 30

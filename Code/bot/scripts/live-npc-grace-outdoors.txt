@@ -26,13 +26,13 @@ stay
 wait 3
 
 log -- the player travels seventeen cells north; the bot, still next to her, is given her
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 waitfor ownedby ref:A2C94 me 60
 expect ownedby ref:A2C94 me
 wait 5
 
 log -- the player comes back outdoors: the bot keeps her for a while, then she goes to the leader
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 waitfor nearby other 60
 wait 5
 expect ownedby ref:A2C94 me

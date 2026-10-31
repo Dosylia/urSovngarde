@@ -15,6 +15,7 @@ wait 5
 
 log DO god on
 log DO console set gamehour to 12
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console cow WhiterunWorld 5 -3
 wait 90
 log CHECK logged Dialogue: \w+ \(server id \w+\) says .* in scene \w+ phase \d+; sent

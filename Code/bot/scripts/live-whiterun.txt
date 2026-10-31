@@ -18,6 +18,7 @@ log DO god on
 wait 3
 log -- to the plains outside Whiterun's gate, and this bot with it
 stay
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console cow Tamriel 5 -3
 wait 30
 teleport 22400 -10100

@@ -28,9 +28,10 @@ log CHECK logged WorldObject: 92CFD was put down over there
 log CHECK ref 92CFD 3d
 
 log -- away and back: the plate's cell is built again
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console cow Tamriel 20 -4
 wait 25
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 25
 log DO console player.moveto 92CFD
 wait 8

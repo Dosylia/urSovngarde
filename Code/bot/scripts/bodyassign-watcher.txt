@@ -1,0 +1,28 @@
+# The side that meets a body it does not own. See bodyassign-actor.txt.
+
+log bodyassign watcher
+waitfor connected 45
+collect ownership
+record bodyassign watcher
+
+waitfor known other 40
+expect known other
+
+log keeping anything the server hands me
+ownership accept
+
+log waiting for the other side's body
+wait 22
+
+log meeting the same body and registering it, as a joining game does
+npc A2C94
+wait 16
+expect owned == 0
+
+log a hand on it: a grab still takes it
+claim ref:A2C94
+waitfor owned == 1 10
+expect owned == 1
+wait 8
+log done
+stop

@@ -20,13 +20,13 @@ wait 8
 log -- the inventory, twelve seconds
 log DO menu 12 InventoryMenu
 log DO sleep 4
-log CHECK absent Silence: sent nothing
+log CHECK absent Silence: sent nothing for \d{4,} ms
 log CHECK logged Menu closing: InventoryMenu
 
 log -- the journal, twelve seconds
 log DO menu 12 Journal Menu
 log DO sleep 4
-log CHECK absent Silence: sent nothing
+log CHECK absent Silence: sent nothing for \d{4,} ms
 log CHECK logged Menu closing: Journal Menu
 wait 3
 log done

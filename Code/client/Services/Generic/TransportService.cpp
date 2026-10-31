@@ -247,6 +247,19 @@ void TransportService::HandleUpdate(const UpdateEvent& acEvent) noexcept
 
     m_lastPollTime = static_cast<double>(SteamNetworkingUtils()->GetLocalTimestamp()) / 1000.0;
     Update();
+
+    // Every 30 s: whether updates that come late are this connection's doing.
+    static std::chrono::steady_clock::time_point s_nextQualityLog;
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow >= s_nextQualityLog && IsConnected())
+    {
+        s_nextQualityLog = cNow + std::chrono::seconds(30);
+        const auto cStatus = GetConnectionStatus();
+        spdlog::info("Connection: ping {} ms, quality {:.2f} here and {:.2f} at the other end, {:.0f} packets a second out, {:.0f} in, {} bytes waiting to be acknowledged, {} queued, "
+                     "a message queued now waits {} us",
+                     cStatus.m_nPing, cStatus.m_flConnectionQualityLocal, cStatus.m_flConnectionQualityRemote, cStatus.m_flOutPacketsPerSec, cStatus.m_flInPacketsPerSec,
+                     cStatus.m_cbSentUnackedReliable, cStatus.m_cbPendingReliable, static_cast<int64_t>(cStatus.m_usecQueueTime));
+    }
 }
 
 double TransportService::GetMessageReceiveTime() const noexcept

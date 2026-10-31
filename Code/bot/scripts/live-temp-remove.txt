@@ -29,7 +29,7 @@ wait 10
 log DO god on
 wait 3
 log -- the player leaves, seventeen cells north; this bot stays and is given what the player left
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 waitfor owned >= 1 60
 wait 12
 
@@ -40,7 +40,7 @@ log CHECK game alive
 wait 3
 
 log -- the player comes back to where the creature stood
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 45
 log CHECK game alive
 log CHECK game inworld

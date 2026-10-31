@@ -30,6 +30,10 @@ wait 6
 log REQUIRE npc dead
 
 log -- the living Lydia walks 1200 units east, 300 at a time, inside her cell (34, up to x 143360)
+# The player looks away throughout: a body is not moved in view.
+log DO look away npc 500 hold 36000
+wait 1
+log REQUIRE view npc away
 npcmove 300 0 0
 wait 3
 npcmove 300 0 0

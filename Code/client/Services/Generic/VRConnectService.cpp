@@ -102,6 +102,7 @@ void VRConnectService::Toggle() noexcept
 {
     if (m_state == State::kOnline || m_state == State::kConnecting)
     {
+        spdlog::info("VRConnectService: disconnecting, asked for here (F6 or the menu)");
         // Set before closing: Close() reports the disconnection synchronously, and it must not schedule a retry.
         m_state = State::kIdle;
         m_transport.Close();

@@ -452,8 +452,10 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
         Actor* pActor = Utils::GetByServerId<Actor>(acMessage.Id);
         if (pActor && pActor == PlayerCharacter::Get())
         {
-            // A ranged hit: that player's projectile is replayed here, and its hit or miss here decides (the defender's own copy).
-            if (const uint32_t cCopy = PlayerCopyFormId(acMessage.AttackerPlayerId); cCopy && PvpProjectiles::Recent(cCopy))
+            // An arrow: that player's arrow is replayed here, and its hit or miss here decides (the defender's own copy).
+            const uint32_t cCopy = PlayerCopyFormId(acMessage.AttackerPlayerId);
+            const Actor* pCopy = Cast<Actor>(TESForm::GetById(cCopy));
+            if (pCopy && PvpProjectiles::Recent(cCopy, glm::distance(glm::vec3(pCopy->position), glm::vec3(pActor->position))))
             {
                 spdlog::info("PvP: a hit of {:.0f} from player {} not taken: its projectile is replayed here, and that copy's hit decides", -acMessage.DeltaHealth,
                              acMessage.AttackerPlayerId);
@@ -661,6 +663,13 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
                 {
                     s_nextSaid = now + 5s;
                     spdlog::info("NPC {:X} health corrected from {:.0f} to its owner's {:.0f}", pActor->formID, current, value);
+                }
+
+                // A number alone does not kill a copy (ApplyHealthChange): with no death played it would stay on its feet.
+                if (value < kNpcCopyHealthFloor)
+                {
+                    SayNpcCopyKeptUp(pActor, value);
+                    value = kNpcCopyHealthFloor;
                 }
 
                 pActor->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, value);

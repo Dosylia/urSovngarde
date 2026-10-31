@@ -24,7 +24,10 @@ log CHECK npc dead
 log SHOT before of npc
 wait 4
 
-log -- its owner's corpse lies 300 units further north
+log -- its owner's corpse lies 300 units further north, and the player looks away: a body is not moved in view
+log DO look away npc 500 hold 10000
+wait 1
+log REQUIRE view npc away
 npcmove 0 300 0
 wait 3
 npcmove 0 0 0

@@ -1,0 +1,42 @@
+# Another player's follower taken outdoors does not stay standing in this player's interior.
+#
+#   python Tools\VR\live-check.py live-follower-left
+#   python Tools\VR\live-check.py --expect-fail live-follower-left     on a build without the fix: must be RED
+#
+# One player takes a follower out of an inn while the other stays inside: the one inside kept a frozen copy of her.
+# Here the game's player is in the inn with Lydia, the bot comes in, takes her as its follower, and goes out with her.
+# The player is left in the inn: run this script after a fresh `headless.ps1 up`, which loads the save again.
+# It is moved there by Papyrus, beside the innkeeper: console travel from a worker thread has crashed the rig's draw.
+log live follower left
+waitfor connected 45
+collect ownership party
+expect known me
+waitfor known other 40
+ownership accept
+wait 5
+
+log -- the player in the inn, Lydia beside it and no longer its teammate
+log DO papyrus ObjectReference MoveTo 14 13486 f:60 f:0 f:0 b:false
+wait 14
+cell 133C6
+wait 3
+log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+waitfor known ref:A2C94 40
+wait 3
+log -- the bot takes her
+claim ref:A2C94 follower
+stay
+wait 6
+log REQUIRE ref A2C94 cell same
+
+log -- the bot goes outdoors with her
+cell out
+npcmove 0 0 0
+wait 6
+log CHECK ref A2C94 cell other
+log CHECK game alive
+wait 2
+log done
+stop

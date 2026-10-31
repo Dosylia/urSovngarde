@@ -14,12 +14,12 @@ log DO god on
 wait 3
 
 log -- travel elsewhere: a safe point where the player arrives
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 wait 40
 log CHECK logged PlayerService: safe point in cell \w+ '.*' at \(1[34]\d{4}, 3\d{4},
 
 log -- and back
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 40
 log CHECK logged PlayerService: safe point in cell \w+ '.*' at \(1[34]\d{4}, -3\d{4},
 log DO god off

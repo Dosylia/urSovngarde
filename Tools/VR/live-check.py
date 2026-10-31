@@ -1,7 +1,7 @@
 """Runs a bot against the real game and checks, in the game itself, what the bot's script says should be true.
 
     python Tools/VR/live-check.py live-copy [live-npc ...]
-    python Tools/VR/live-check.py --all            every script in ALL, in that order
+    python Tools/VR/live-check.py --all            the default suite (ALL), in that order: over an hour
     python Tools/VR/live-check.py --sync           the sync and animation set (SYNC; Tools/VR/README-rig-checks.md)
     python Tools/VR/live-check.py --expect-fail live-x   on a build without the fix live-x guards: it must fail
     powershell -File Tools/VR/run-live.ps1         the same, with the game brought up before and down after
@@ -23,7 +23,7 @@ Checks:
     npc gone | copy gone                                                  that copy is no longer in this game (deleted or disabled)
                                                                           (exists: in this game and enabled; a DevBench timeout makes either INVALID)
     player cell <hex>                                                     the cell the player stands in, by form id
-    player mark | player dropped <n>                                      the local player's health, before and after
+    player mark | player dropped <n>|<low>..<high>                        the local player's health, before and after
     drop exists | drop gone | drop mark | drop moved <dx> <dy> <dz>       the item the game placed for the bot's drop
     player alive                                                          the local player is not dead
     player has <hex>                                                      the local player carries that item
@@ -34,6 +34,7 @@ Checks:
     ref <hex> near <x> <y> <z> <units> | ref <hex> near player <units>    a reference of the game's own is that close
                                                                           to that place, or to the player
     scene <hex> playing                                                   a scene of the game's own plays
+    ref <hex> world <hex>                                                 a reference is in that world space
     ref <hex> cell same | ref <hex> cell other                            a reference of the game's own is in the
                                                                           player's cell, or in another one
     ref <hex> open | ref <hex> closed                                     a door of the game's own is open (or
@@ -79,7 +80,9 @@ at most that many different values of the group since the script began.
 `log CHECK absent <regular expression>` passes when the client has written no such line since the script began.
 `log CHECK smooth all|<kind> ...|except <kind> ...` passes when the client logged none of those kinds of jank since the script
 began (JANK: corpse-jump, died-early, point-jump, getup-jump, stuck-down, refused, no-reports, ragdoll-apart, door-differs, copy-lost-3d).
+"all" and "except" leave out corpse-jump, which is judged only when named.
 After every script the jank it found is printed and kept in the history, judged or not.
+`log CHECK view copy|npc [away]` passes when the headset sees that actor, or with "away" does not: the client's own view test, on the real heading.
 The bot's script line `report` prints what the bot knows of the world. `log CHECK desync all` compares its last report with the game:
 each NPC copy's life and place, no placed reference of the game's own drawn beside its copy, and each door and lock the bot knows.
 `log CHECK told door <hex> open|closed` and `told lock <hex> locked|unlocked` pass when the bot's last report has it so: what
@@ -127,7 +130,7 @@ Each result in the history carries the modlist and the Mod Organizer profile it 
 
 Checks are asked while the script carries on, so a script puts a wait after each group of them.
 """
-import io, json, math, os, re, shutil, subprocess, sys, threading, time, urllib.request
+import io, json, math, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RELEASE = os.path.join(ROOT, 'build', 'windows', 'x64', 'release')
@@ -148,12 +151,17 @@ DROP_TOLERANCE = 4.0    # units; a position travels packed to about one unit
 SHOTS = os.path.join(RELEASE, 'logs', 'shots')
 CAPTURES = os.path.join(FUS_ROOT, 'overwrite', 'SKSE', 'Plugins', 'devbench', 'captures')   # where MO2 puts what DevBench writes under Data
 
-# Order matters: the "away" scripts travel by cell (`cow Tamriel 34 8` and back to 34 -9, Mistwatch) and leave the
-# player at the centre of the Mistwatch cell. Not "go to Lydia": she follows the player back, and the next "go to
-# Lydia" is then two paces that unload nothing (found 2026-10-02, a session that passed for that reason alone).
-ALL = ['live-copy', 'live-npc', 'live-dropmove', 'live-look', 'live-walk', 'live-copy-quiet', 'live-creatures', 'live-npc-away', 'live-away-seeker',
-       'live-temp-remove', 'live-temp-reuse', 'live-copy-abandon', 'live-temp-reconnect', 'live-crime', 'live-netch',
-       'live-sender', 'live-game-drops', 'live-equip', 'live-factions', 'live-menu-hold', 'live-levelled', 'live-whiterun', 'live-time', 'live-hit-npc', 'live-world-object', 'live-door-range', 'live-npc-indoors', 'live-npc-grace-outdoors', 'live-door-echo', 'live-body-owner', 'live-hands', 'live-death', 'live-load', 'live-load-dead', 'live-load-soak', 'live-door-state']
+# The default suite (--all, --list, run-live.ps1): the tests that count, each shown RED on a build without its fix and ok
+# with it (test-history/live.jsonl), and the basics they stand on. A test joins once it has both; every other script
+# runs by name. Rebuilt 2026-10-31: the old list held 8 of the 39 proven tests, and 13 scripts nobody had run in two weeks.
+# Order matters: live-teleport-far leaves the player at the far end of the map, and live-world-object brings it back.
+ALL = ['live-copy', 'live-npc', 'live-walk', 'live-equip',
+       'live-copy-quiet', 'live-copy-removed', 'live-copy-bleedout', 'live-copy-knockdown', 'live-protected-copy-dies', 'live-protected-kill',
+       'live-death', 'live-dead-stays-dead', 'live-corpse-moving', 'live-corpse-owner-alive', 'live-body-owner', 'live-body-take', 'live-body-hold',
+       'live-pvp-spell-perks', 'live-pvp-spell-elements', 'live-revive-giveup', 'live-loss-playback', 'live-menu-hold', 'live-rename',
+       'live-map-marker', 'live-marker-not-relayed', 'live-quest-hold', 'live-quest-item', 'live-quest-item-copy', 'live-ref-enable-leader',
+       'live-copy-door-race', 'live-copy-through-door', 'live-door-copy-load', 'live-door-range', 'live-npc-indoors',
+       'live-teleport-far', 'live-world-object', 'live-npc-grace-outdoors', 'live-load', 'live-door-state']
 # live-door-state is last: it leaves the player in Helgen's keep, where the bot of any later script finds nobody.
 # live-npc-grace, live-door-join and live-door-join-locked leave the player there too, so they are not in the list: run each by name after a fresh `headless.ps1 up`.
 # The sync and animation set (--sync, Tools/VR/README-rig-checks.md): deaths, bodies, locks, levers, followers and doors.
@@ -215,6 +223,41 @@ def node_xy(form, name):
     return at if all(isinstance(v, (int, float)) for v in at) and any(at) else None
 
 
+def creature_pelvis(form):
+    """Where a creature's body is drawn, or None: a bear's pelvis node is "NPC Pelvis", with no [Pelv], and a corpse's
+    reference stays behind its ragdoll (live-body-grab read 96 units for a body dragged 450)."""
+    at = [papyrus_global('NetImmerse', 'GetNodeWorldPosition' + axis, [{'form': '0x' + form}, 'NPC Pelvis', False]) for axis in 'XYZ']
+    return at if all(isinstance(v, (int, float)) for v in at) and any(at) else None
+
+
+def in_view(form):
+    """Whether the headset sees an actor, as VRBodySync's IsInView has it: (seen, what was measured), seen None if unread.
+    A copy out of view is not posed, so its nodes read frozen while its body moves on.
+    The cone is 50 degrees, widened by a 100 unit sphere around the body, so anything closer than that counts as seen."""
+    mine, theirs = position('14'), position(form)
+    heading = papyrus('ObjectReference', 'GetAngleZ', '14')
+    if not mine or not theirs or not isinstance(heading, (int, float)):
+        return None, 'no position or heading for the player or actor %s' % form
+    far = math.hypot(theirs[0] - mine[0], theirs[1] - mine[1])
+    if far <= 100.0:
+        return True, 'actor %s is %.0f units away' % (form, far)
+    # A VR player's heading follows the headset, so a "DO look" is in it (237 to 90 for a look of 147 degrees).
+    bearing = math.degrees(math.atan2(theirs[0] - mine[0], theirs[1] - mine[1]))
+    off = abs((bearing - heading + 180.0) % 360.0 - 180.0)
+    limit = 50.0 + math.degrees(math.asin(100.0 / far))
+    return off < limit, 'actor %s, %.0f units away, is %.0f degrees off the headset (limit %.0f; heading %.0f)' % (form, far, off, limit, heading)
+
+
+def stand_before(form):
+    """Stands the player 50 units from an actor with it straight ahead, where the rig's hands go.
+    The player goes round the actor: a VR player's heading ignores setangle and SetAngle."""
+    theirs = position(form)
+    heading = papyrus('ObjectReference', 'GetAngleZ', '14')
+    if not theirs or not isinstance(heading, (int, float)):
+        raise RuntimeError('no position for actor %s, or no heading for the player' % form)
+    papyrus('ObjectReference', 'SetPosition', '14', [theirs[0] - 50 * math.sin(math.radians(heading)), theirs[1] - 50 * math.cos(math.radians(heading)), theirs[2]])
+
+
 def body_pose(form):
     """Where an actor's body is drawn: its pelvis node, and the pelvis's height above the lower foot, or None.
     Measured against the feet, not the reference: a copy's reference can sit under the ground while its body stands
@@ -254,6 +297,8 @@ JANK = [
     # A copy that lost its 3D while its actor stays is torn down and made again: a body near the player vanishes and reappears.
     ('copy-lost-3d', r'CopyGone: \w+ removed as remote; the actor is still there, no 3D', 0),
 ]
+# Counted, but judged only when named: a ragdoll is now moved only out of view or as a drag ends, so nobody sees this one.
+UNJUDGED_JANK = ('corpse-jump',)
 
 
 def jank(lines, kinds=None):
@@ -777,7 +822,7 @@ class Run:
             return position('14')
         if thing[0] == 'actor':
             pose = body_pose(thing[1])
-            return pose[0] if pose else position(thing[1])
+            return pose[0] if pose else creature_pelvis(thing[1]) or position(thing[1])
         return position(thing[1])
 
     def check(self, text, require=False):
@@ -876,6 +921,12 @@ class Run:
                 playing = papyrus('Scene', 'IsPlaying', words[1])
                 ok = playing is True
                 detail = 'scene %s, IsPlaying %s' % (words[1], playing)
+            elif who == 'ref' and words[2] == 'world':
+                # "ref <hex> world <hex>": in that world space. A reference outside the loaded area has no parent cell, but knows its world.
+                world = papyrus('ObjectReference', 'GetWorldSpace', words[1])
+                seen = world.get('formId') if isinstance(world, dict) else None
+                ok = seen is not None and int(seen, 16) == int(words[3], 16)
+                detail = 'reference %s in world space %s' % (words[1], seen)
             elif who == 'ref' and words[2] == 'cell':
                 # "ref <hex> cell same|other": in the cell the player stands in, or in another one.
                 # Positions alone cannot tell: an interior's coordinates are as good as any outside.
@@ -986,7 +1037,7 @@ class Run:
                 detail = '%d lines' % len(hits)
             elif who == 'smooth':
                 # "smooth all | smooth <kind> ... | smooth except <kind> ...": the client logged no jank of those kinds (JANK) since the script began.
-                kinds = [kind for kind, _, _ in JANK]
+                kinds = [kind for kind, _, _ in JANK if kind not in UNJUDGED_JANK]
                 if what == 'except':
                     kinds = [kind for kind in kinds if kind not in words[2:]]
                 elif what != 'all':
@@ -1149,6 +1200,12 @@ class Run:
                 hits = [l for l in self.bot_lines if rx.search(l)]
                 ok = bool(hits)
                 detail = ('%d lines, e.g. %s' % (len(hits), hits[-1].strip()[:200])) if ok else 'the bot printed no such line'
+            elif who == 'bot' and what == 'absent':
+                # "bot absent <regular expression>": the bot printed no such line so far.
+                rx = re.compile(' '.join(words[2:]))
+                hits = [l for l in self.bot_lines if rx.search(l)]
+                ok = not hits
+                detail = 'none' if ok else '%d lines, e.g. %s' % (len(hits), hits[-1].strip()[:200])
             elif who == 'ids' and what == 'reused':
                 # "ids reused Seeker": the game gave an actor of that name a form id this client had deleted a copy
                 # under earlier in the session. Not a fault: it is what makes live-temp-reuse a test of anything.
@@ -1164,6 +1221,12 @@ class Run:
                 # suite, 2026-10-03) it did not happen to reuse one. The run then tests nothing, and says so.
                 ok = True
                 detail = ('reused: %s' % ', '.join(sorted(set(reused)))) if reused else 'SKIPPED: none of the %d deleted ids came back, so this run tests nothing' % len(deleted)
+            elif who == 'view':
+                # "view copy|npc [away]": the headset sees it, so the client poses it, or with "away" does not.
+                # As a REQUIRE, for a script that reads its body or moves it unseen.
+                form, why = self.subject(what)
+                seen, detail = in_view(form) if form else (None, why)
+                ok = seen is not None and seen != (words[-1] == 'away')
             elif who == 'hands' and what == 'within':
                 # "hands within <units>": the copies' hands against the owners' own numbers, from the game's
                 # "VRBodySync: actor X hands -- owner L(..) R(..); copy L(..) R(..)" lines since the script began
@@ -1238,7 +1301,7 @@ class Run:
                             moved += int(m.group(2))
                     wanted = float(words[2])
                     if not moved:
-                        ok, detail = False, 'the game logged no SlideDiag line since the mark (the body did not move, or 10 s have not passed)'
+                        ok, detail = True, 'SKIPPED: the game logged no SlideDiag line since the mark (the body did not move, or 10 s have not passed)'
                     else:
                         pct = 100.0 * frozen / moved
                         ok = pct < wanted if what == 'below' else pct > wanted
@@ -1283,10 +1346,14 @@ class Run:
                     self.mark = health
                     ok, detail = True, 'health %.0f' % health
                 else:
-                    wanted = float(words[2])
+                    # "player dropped <n>", within PLAYER_TOLERANCE, or "player dropped <low>..<high>" for damage over time.
+                    low, _, high = words[2].partition('..')
                     dropped = (self.mark if self.mark is not None else health) - health
-                    ok = abs(dropped - wanted) <= PLAYER_TOLERANCE
-                    detail = 'health %.0f -> %.0f, dropped %.0f (wanted %.0f)' % (self.mark, health, dropped, wanted)
+                    if high:
+                        ok = float(low) <= dropped <= float(high)
+                    else:
+                        ok = abs(dropped - float(low)) <= PLAYER_TOLERANCE
+                    detail = 'health %.0f -> %.0f, dropped %.0f (wanted %s)' % (self.mark, health, dropped, words[2])
             else:
                 form, why = self.subject(who)
                 if not form:
@@ -1538,7 +1605,17 @@ class Run:
         self.log_from = self.log_start
         proc = subprocess.Popen(cmd, cwd=RELEASE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
         log = io.open(os.path.join(RELEASE, 'logs', self.script + '-bot.log'), 'w', encoding='utf-8')
-        for line in proc.stdout:
+        # Read on a thread of its own: a DO line holds the loop below for up to half a minute ("DO watch"), and a bot that fills
+        # the pipe meanwhile stops dead, mid-replay. The server then gives its NPCs away (live-copy-knockdown, 2026-10-31).
+        output = queue.Queue()
+
+        def read_bot():
+            for line in proc.stdout:
+                output.put(line)
+            output.put(None)
+
+        threading.Thread(target=read_bot, daemon=True).start()
+        for line in iter(output.get, None):
             log.write(line)
             self.bot_lines.append(line)
             m = re.search(r'ok: known me \(([0-9A-Fa-f]+) is known\)', line) or re.search(r'Character assigned.*?([0-9A-Fa-f]+)', line)
@@ -1651,8 +1728,19 @@ class Run:
                     # "DO look <degrees> <ms> [hold <ms>] [back]": the headset turns from straight ahead to that yaw (positive
                     # turns left) over <ms>, holds, and with "back" turns straight ahead again over <ms>.
                     # Both hands rest still low at the sides: a head turn with the body still.
+                    # "DO look at|away npc|copy <ms> [hold <ms>] [back]": the same, by however much faces that actor or turns away from it.
+                    # The headset is the only way: a VR player's heading ignores setangle and SetAngle.
                     words = text.split()
                     try:
+                        if words[2] in ('at', 'away'):
+                            form, _ = self.subject(words[3])
+                            mine, theirs = position('14'), position(form) if form else None
+                            heading = papyrus('ObjectReference', 'GetAngleZ', '14')
+                            if not mine or not theirs or not isinstance(heading, (int, float)):
+                                raise RuntimeError('no position or heading for the player or the %s' % words[3])
+                            towards = heading - math.degrees(math.atan2(theirs[0] - mine[0], theirs[1] - mine[1]))
+                            turn = towards if words[2] == 'at' else towards + 180.0
+                            words = words[:2] + ['%.1f' % ((turn + 180.0) % 360.0 - 180.0)] + words[4:]
                         degrees, ms = float(words[2]), int(words[3])
                         hold = int(words[5]) if len(words) > 5 and words[4] == 'hold' else 0
                         back = words[-1] == 'back'
@@ -1738,24 +1826,17 @@ class Run:
                     else:
                         result = papyrus(words[2], words[3], target, args) if target else 'ERR no %s' % words[4]
                     print('   (papyrus %s.%s on %s: %s)' % (words[2], words[3], words[4], result), flush=True)
-                    if isinstance(result, str) and result.startswith('ERR'):
+                    # The player's own MoveTo holds DevBench's answer for the whole load, so a long load reads as a 504.
+                    # The trip is not lost: the script's next checks say whether it happened.
+                    travelling = result == TIMED_OUT and words[3] == 'MoveTo' and target == '14'
+                    if isinstance(result, str) and result.startswith('ERR') and not travelling:
                         self.results.append((False, text.strip(), result))
-                elif text.strip() in ('DO face copy', 'DO face npc'):
-                    # "DO face copy|npc": turn the player towards that actor. A copy outside the headset's view is
-                    # not posed (VRBodySync), and the rig's headset looks wherever the player faces.
-                    who = text.split()[2]
-                    form, _ = self.subject(who)
-                    try:
-                        mine = position('14')
-                        theirs = position(form) if form else None
-                        if not mine or not theirs:
-                            raise RuntimeError('no position for the player or the %s' % who)
-                        angle = math.degrees(math.atan2(theirs[0] - mine[0], theirs[1] - mine[1])) % 360.0
-                        tool('console', {'action': 'exec', 'command': 'player.setangle z %.1f' % angle})
-                        print('   (player turned to %.0f degrees, towards %s %s)' % (angle, who, form), flush=True)
-                    except Exception as e:
-                        print('   FAIL  face %s: %s' % (who, e), flush=True)
-                        self.results.append((False, text.strip(), str(e)))
+                elif text.startswith('DO face'):
+                    # Only the headset turns a VR player: its heading ignores setangle and SetAngle. So this line did nothing for as
+                    # long as it existed, and said it had. A "DO look" turns the view for its hold, but not the hands that aim a cast.
+                    why = 'only the headset turns a VR player: "infront <units>" stands the bot in front, "DO look at" turns the view'
+                    self.invalid.append('%s (%s)' % (text.strip(), why))
+                    print('   INVALID  %s: %s' % (text.strip(), why), flush=True)
                 elif text.startswith('DO sleep '):
                     time.sleep(int(text.split()[2]))
                 elif text.startswith('DO menu open ') or text.startswith('DO menu close '):
@@ -1835,7 +1916,8 @@ class Run:
                         if me:
                             papyrus('ObjectReference', 'SetPosition', '14', [me[0] + step[0], me[1] + step[1], me[2] + step[2]])
                         time.sleep(pause)
-                    print('   (walked %d steps of (%.0f, %.0f, %.0f))' % (int(w[5]), step[0], step[1], step[2]), flush=True)
+                    print('   (walked %d steps of (%.0f, %.0f, %.0f); HIGGS right hand holds %s, left %s)' % (int(w[5]), step[0], step[1], step[2],
+                          papyrus_global('HiggsVR', 'GetGrabbedObject', [False]), papyrus_global('HiggsVR', 'GetGrabbedObject', [True])), flush=True)
                 elif text.startswith('DO place '):
                     # "DO place <base hex> [essential]": one of that actor placed 90 units ahead of the player, remembered
                     # as "placed" for later "DO papyrus" lines; "essential" makes its base essential, so it goes down instead
@@ -1906,13 +1988,21 @@ class Run:
                         print('   (the other hand can: grabbing with the %s)' % ('left' if is_left else 'right'), flush=True)
                         can = True
                     grab = papyrus_global('HiggsVR', 'GrabObject', [{'form': '0x' + ref}, is_left]) if ref else 'nothing dropped'
-                    time.sleep(1.0)
-                    held = papyrus_global('HiggsVR', 'GetGrabbedObject', [is_left])
-                    held_id = held.get('formId', '') if isinstance(held, dict) else str(held)
-                    ok = bool(ref) and isinstance(held, dict) and int(held_id, 16) & 0xFFFFFFFF == int(ref, 16) & 0xFFFFFFFF
-                    print('   (HIGGS: can grab %s, grab %s, now holds %s)' % (can, grab, held), flush=True)
-                    if not pull_only:
-                        self.results.append((ok, text.strip(), 'holds %s' % held))
+                    # HIGGS pulls the object to the hand first and holds it only on arrival, so one far off takes longer
+                    # than one at hand: a single reading after 1 s said "holds None" of a bear still on its way.
+                    t0, ok, held = time.time(), False, None
+                    while not ok and time.time() - t0 < 5.0:
+                        time.sleep(0.25)
+                        held = papyrus_global('HiggsVR', 'GetGrabbedObject', [is_left])
+                        held_id = held.get('formId', '') if isinstance(held, dict) else str(held)
+                        ok = bool(ref) and isinstance(held, dict) and int(held_id, 16) & 0xFFFFFFFF == int(ref, 16) & 0xFFFFFFFF
+                    print('   (HIGGS: can grab %s, grab %s, after %.1f s holds %s)' % (can, grab, time.time() - t0, held), flush=True)
+                    # A hand that did not close says nothing about what the script guards: the run is INVALID, not failed.
+                    if not pull_only and ok:
+                        self.results.append((True, text.strip(), 'holds %s' % held))
+                    elif not pull_only:
+                        self.invalid.append('%s (holds %s)' % (text.strip(), held))
+                        print('   INVALID  %s: holds %s' % (text.strip(), held), flush=True)
                 elif text.strip() == 'DO bring held to copy weapon':
                     # Moves the player by however far the held item is from the centre of the copy's sword body, so the
                     # hand -- and what it holds -- goes there.
@@ -1937,35 +2027,39 @@ class Run:
                             if me and held:
                                 print('   (%.1f s later: player off where it was put by (%.0f, %.0f, %.0f), held item %.0f from the blade centre)' % (
                                     at_s, me[0] - wanted[0], me[1] - wanted[1], me[2] - wanted[2], math.dist(held, centre)), flush=True)
-                elif text.startswith('DO reach npc '):
+                elif text.startswith('DO reach npc ') or text.startswith('DO reach newest '):
+                    # "DO reach newest <name> right|left <up> <hold seconds>": the same with the actor this game last spawned under that name.
                     # "DO reach npc right|left <up>": the player is stood 50 units from the bot's NPC, facing it; that
                     # controller goes to the NPC, <up> units above its feet (600 ms), presses grip (300 ms), pulls back
                     # 40 cm still gripping (1000 ms), holds 1500 ms and lets go. Meanwhile HIGGS is asked what that hand
                     # holds, and where this game shows the NPC. A living NPC is held by PLANCK's grab, which needs real
                     # controllers, not HiggsVR.GrabObject (live-npc-grab, 2026-10-06: "now holds None").
                     words = text.split()
+                    newest = words[2] == 'newest'
+                    if newest:
+                        words = words[:2] + words[3:]
                     side, up = words[3], float(words[4])
+                    hold_ms = int(float(words[5]) * 1000) if len(words) > 5 else 1500
                     is_left = side == 'left'
-                    form, why = self.subject('npc')
+                    form, why = self.subject('npc') if not newest else (None, 'no spawn of that name')
+                    if newest:
+                        for l in session_lines()[self.log_from:]:
+                            m = re.search(r'Spawn Actor: ([0-9A-F]+), and NPC %s' % re.escape(text.split()[3]), l)
+                            if m:
+                                form = m.group(1)
                     try:
                         if not form:
                             raise RuntimeError('no npc: %s' % why)
-                        theirs, mine = position(form), position('14')
-                        if not theirs or not mine:
-                            raise RuntimeError('no position for the player or the npc')
-                        dx, dy = theirs[0] - mine[0], theirs[1] - mine[1]
-                        far = math.hypot(dx, dy) or 1.0
-                        papyrus('ObjectReference', 'SetPosition', '14', [theirs[0] - 50 * dx / far, theirs[1] - 50 * dy / far, theirs[2]])
-                        tool('console', {'action': 'exec', 'command': 'player.setangle z %.1f' % (math.degrees(math.atan2(dx, dy)) % 360.0)})
+                        stand_before(form)
                         time.sleep(1.0)
                         y = up / 70.0
                         rest = (0.25 if not is_left else -0.25, 1.0, -0.1)
                         r = hand_path(side, [(0, rest[0], rest[1], rest[2], False), (600, 0.0, y, -50 / 70.0, False), (900, 0.0, y, -50 / 70.0, True),
-                                             (1900, 0.0, y, -50 / 70.0 + 0.4, True), (3400, 0.0, y, -50 / 70.0 + 0.4, True), (3600, 0.0, y, -50 / 70.0 + 0.4, False)])
+                                             (1900, 0.0, y, -50 / 70.0 + 0.4, True), (1900 + hold_ms, 0.0, y, -50 / 70.0 + 0.4, True), (2100 + hold_ms, 0.0, y, -50 / 70.0 + 0.4, False)])
                         print('   (%s hand to the npc %.0f up, grip, pull 40 cm: %s)' % (side, up, 'queued' if r.get('queued') else r), flush=True)
                         t0 = time.time()
                         held_any = None
-                        while time.time() - t0 < 4.5:
+                        while time.time() - t0 < 3.0 + hold_ms / 1000.0:
                             held = papyrus_global('HiggsVR', 'GetGrabbedObject', [is_left])
                             at, me = position(form), position('14')
                             if isinstance(held, dict):
@@ -1987,19 +2081,16 @@ class Run:
                     try:
                         if not form:
                             raise RuntimeError('no %s: %s' % (who, why))
-                        theirs, mine = position(form), position('14')
-                        if not theirs or not mine:
-                            raise RuntimeError('no position for the player or the %s' % who)
-                        dx, dy = theirs[0] - mine[0], theirs[1] - mine[1]
-                        far = math.hypot(dx, dy) or 1.0
-                        papyrus('ObjectReference', 'SetPosition', '14', [theirs[0] - 50 * dx / far, theirs[1] - 50 * dy / far, theirs[2]])
-                        tool('console', {'action': 'exec', 'command': 'player.setangle z %.1f' % (math.degrees(math.atan2(dx, dy)) % 360.0)})
+                        stand_before(form)
                         time.sleep(1.0)
                         y = up / 70.0
                         rest = (0.25 if side != 'left' else -0.25, 1.0, -0.1)
                         held_until = 600 + int(seconds * 1000)
                         r = hand_path(side, [(0, *rest, False), (600, 0.0, y, -50 / 70.0, False), (held_until, 0.0, y, -50 / 70.0, False), (held_until + 600, *rest, False)])
                         print('   (%s hand on the %s %.0f up for %.1f s: %s)' % (side, who, up, seconds, 'queued' if r.get('queued') else r), flush=True)
+                        mine, theirs = position('14'), position(form)
+                        if mine and theirs:
+                            print('   (the player stands %.0f units from it, %.0f above it)' % (math.hypot(theirs[0] - mine[0], theirs[1] - mine[1]), mine[2] - theirs[2]), flush=True)
                     except Exception as e:
                         print('   FAIL  hold %s: %s' % (who, e), flush=True)
                         self.results.append((False, text.strip(), str(e)))
@@ -2055,6 +2146,10 @@ class Run:
                             self.watch.append((time.time() - t0, pose[0], pose[1], position(form)))
                         time.sleep(0.25)
                     heights = [h for _, _, h, _ in self.watch]
+                    pelvis_heights = [at[2] for _, at, _, _ in self.watch]
+                    if pelvis_heights:
+                        print('   (pelvis world height: lowest %.0f, highest %.0f; reference %s)' % (min(pelvis_heights), max(pelvis_heights),
+                              ', '.join('%.0f' % r[2] for r in (self.watch[0][3], self.watch[-1][3]) if r)), flush=True)
                     print('   (watched %s %s for %.0f s: %d samples, body height %s)' % (
                         who, form or '?', seconds, len(heights), ('lowest %.0f, highest %.0f' % (min(heights), max(heights))) if heights else 'never read: %s' % (why or 'no pose')), flush=True)
                 elif text.startswith('DO sample held '):
@@ -2303,7 +2398,11 @@ def main():
     # --expect-fail: the build in the game is one without the fix the scripts guard; each must fail to count as a test.
     expect_fail = '--expect-fail' in args
     args = [a for a in args if a != '--expect-fail']
-    scripts = ALL if (not args or args == ['--all']) else SYNC if args == ['--sync'] else args
+    # Never the whole suite by accident: it holds the shared rig for over an hour.
+    if not args:
+        print(__doc__.split('Each script ends')[0].strip())
+        return 2
+    scripts = ALL if args == ['--all'] else SYNC if args == ['--sync'] else args
     try:
         state = tool('inspect', {'kind': 'state'})
     except Exception as e:

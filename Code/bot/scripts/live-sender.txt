@@ -59,10 +59,10 @@ log -- the player goes elsewhere; this bot follows the player's cell when told
 log DO god on
 wait 3
 # Waited for, not a fixed time: a travel's load takes over 40 s on MGO.
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 waitfor samecell other 90
 expect samecell other
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 waitfor samecell other 90
 expect samecell other
 # The cell is announced before the loading screen has gone, and the console answers nothing until it has.

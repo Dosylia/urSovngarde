@@ -8,6 +8,7 @@ waitfor known other 40
 wait 5
 log DO god on
 log DO combat on
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console cow Tamriel 20 -4
 wait 20
 # The bot goes to the battle marker too, or the server keeps the soldiers out of its view.
@@ -23,7 +24,7 @@ log CHECK game alive
 wait 5
 log DO combat off
 log DO god off
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 30
 log CHECK game alive
 wait 5

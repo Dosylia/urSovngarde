@@ -1,0 +1,36 @@
+# A loading screen during the respawn fade is not a loaded save: the respawn goes on.
+#
+#   python Tools\VR\live-check.py live-respawn-teleport
+#   python Tools\VR\live-check.py --expect-fail live-respawn-teleport     on a build without the fix: must be RED
+#
+# The game's player goes down, gives up the wait with both grips, and is teleported while the screen fades.
+# Only a loaded save may call the respawn off.
+# The player is left in the inn: run this script after a fresh `headless.ps1 up`, which loads the save again.
+log live respawn teleport
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a safe point here
+log DO menu 2 Sleep/Wait Menu
+wait 6
+log REQUIRE logged PlayerService: safe point in cell
+
+log -- the player goes down and gives up the wait
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+wait 2
+log DO grip both 3500
+wait 5
+log REQUIRE logged PlayerService: the player gave up the wait
+
+log -- a teleport during the fade
+log DO papyrus ObjectReference MoveTo 14 13486 f:60 f:0 f:0 b:false
+wait 14
+log CHECK absent PlayerService: a save was loaded during the respawn
+log CHECK logged PlayerService: respawning player
+wait 3
+log CHECK game alive
+log done
+stop

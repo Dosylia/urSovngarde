@@ -20,6 +20,9 @@ log DO papyrus ActorBase SetEssential A2C8E b:false
 log DO papyrus ActorBase SetProtected A2C8E b:true
 
 log -- a Lydia the bot owns, at 5 health: this game holds her copy
+# The rig's controllers point straight ahead, and a VR player cannot be turned: the bot's character goes there.
+infront 200
+wait 3
 npc temp A2C8E
 waitfor owned == 1 20
 wait 8
@@ -27,8 +30,7 @@ npclife alive 5
 wait 4
 log CHECK npc alive
 
-log -- the player faces her and casts a Fireball at her (Spell.Cast, there is no sword arm without a controller)
-log DO face npc
+log -- the player casts a Fireball at her (Spell.Cast, there is no sword arm without a controller)
 log DO papyrus Spell Cast 1C789 14 npc
 wait 6
 log CHECK npc dead

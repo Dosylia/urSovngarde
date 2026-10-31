@@ -1,0 +1,26 @@
+# A copy of an NPC that arrives already dead, its health gone, lies down in this game.
+#
+#   python Tools\VR\live-check.py live-copy-came-dead
+#   python Tools\VR\live-check.py --expect-fail live-copy-came-dead     on a build without the fix: must be RED
+#
+# A creature killed while its game was offline is registered dead, with no health left, when that game comes back.
+# Its copy here died on arrival with nothing played: dead in this game and still standing, with no ragdoll.
+# The bot registers a human (Aspiring Mage, Skyrim.esm 753CB) in that state.
+log live copy came dead
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- a human of this bot's, registered dead with no health left
+npc temp 753CB dead
+waitfor owned == 1 20
+wait 6
+log SHOT arrived of npc
+log REQUIRE npc dead
+log CHECK npc lying
+log CHECK game alive
+wait 2
+log done
+stop

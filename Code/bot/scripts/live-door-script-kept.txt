@@ -1,0 +1,69 @@
+# A door a script opened in this game is not shut by the state the server kept from an older activation.
+#
+#   python Tools\VR\live-check.py live-door-script-kept
+#   python Tools\VR\live-check.py --expect-fail live-door-script-kept     on a build without the change: must be RED
+#
+# The server keeps a door's state after each activation and gives it to a game entering the cell (live-door-join).
+# A member's scripts stay its own, so that state does not follow them.
+# Here the bot leads and this game is a member. The bot shuts Helgen keep's jail door F8239, and a script here opens it.
+# The player goes to Riverwood's inn and comes back, with the bot in the keep so that the server still keeps the state.
+# The door must still be open here. One trip only: a second one in the same run has hit a crash at a load in the rig.
+# It leaves the player in Helgen's keep: run it by name after a fresh `headless.ps1 up`.
+party lead
+log live door script kept
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+# "info] " is in the bot's own log line, not in its echo of this check.
+log REQUIRE bot logged info\] Leading the party
+
+log DO god on
+log -- the player into Helgen's keep, next to the door; the bot into its cell, where it stays
+log DO papyrus ObjectReference MoveTo 14 9B0A5 f:60 f:0 f:0 b:false
+wait 12
+cell 5DE24
+stay
+wait 4
+
+log -- the bot shuts the door: the server keeps "closed"
+activate F8239 by me 1
+wait 5
+log REQUIRE ref F8239 closed
+wait 2
+
+log -- a script in this game opens it; a member's script is not sent
+log DO papyrus ObjectReference SetOpen F8239 b:true
+wait 6
+log REQUIRE ref F8239 open
+wait 2
+
+log -- the player leaves for Riverwood's inn and comes back
+log DO papyrus ObjectReference MoveTo 14 13486 f:60 f:0 f:0 b:false
+wait 16
+log REQUIRE player cell 133C6
+wait 3
+log DO papyrus ObjectReference MoveTo 14 9B0A5 f:60 f:0 f:0 b:false
+wait 16
+log REQUIRE player cell 5DE24
+wait 3
+
+log -- the door is as this game's script left it
+log CHECK ref F8239 open
+log CHECK absent Door F8239: closed in the other games when this game came in; set closed
+log CHECK logged Door F8239: closed in the other games when this game came in; left as this game's script left it
+
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

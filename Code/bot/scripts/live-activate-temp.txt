@@ -1,0 +1,30 @@
+# A temporary reference's activation stays in this game: no other game has that reference.
+#
+#   python Tools\VR\live-check.py live-activate-temp
+#   python Tools\VR\live-check.py --expect-fail live-activate-temp     on a build that sends it: must be RED
+#
+# A temporary form id means something else in each game, so the other game could only log `Failed to retrieve object to activate`.
+# Here a door placed at the player (base 163F0, ImpJailDoor02) is used, then a bottle every game has (92CFE, at Mistwatch).
+# The bot must be told of the bottle only.
+log live activate temp
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a door placed here exists only in this game; the player uses it
+log DO place 163F0
+wait 3
+log DO papyrus ObjectReference Activate placed 14 b:false
+wait 5
+expect activations == 0
+
+log -- a reference every game has: its activation is still sent
+log DO papyrus ObjectReference Activate 92CFE 14 b:false
+wait 5
+expect activations == 1
+
+wait 2
+log CHECK game alive
+log done
+stop

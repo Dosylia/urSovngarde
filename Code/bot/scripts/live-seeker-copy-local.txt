@@ -30,14 +30,14 @@ log CHECK logged Gained ownership of actor
 wait 3
 
 log -- the player leaves the copy behind
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 wait 40
 log CHECK game alive
 log CHECK logged CopyGone: \w+ removed as local.*made by this client: yes
 wait 3
 
 log -- the player comes back
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 45
 log CHECK game alive
 log CHECK game inworld

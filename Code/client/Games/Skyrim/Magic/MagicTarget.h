@@ -63,6 +63,14 @@ struct MagicTarget
 
     virtual ~MagicTarget();
 
+    // A factor another game sent is believed only within what perks could give.
+    static bool IsSaneCasterFactor(float aFactor) noexcept;
+    // A spell or a staff's enchantment: other games replay its projectile or beam.
+    // A weapon's strike enchantment is not one: it travels as the hit, weighed by the defender's rule.
+    static bool IsCast(MagicItem* apSpell) noexcept;
+    // One hit of an aimed spell: other games replay its projectile, so their replayed hit decides, and the caster's game only reports how strong it was.
+    static bool IsReplayedHit(EffectItem* apEffect, MagicItem* apSpell) noexcept;
+
     Actor* GetTargetAsActor();
 
     bool AddTarget(AddTargetData& arData, float aCasterPerkFactor, bool aApplyStaminaPerkBonus) noexcept;

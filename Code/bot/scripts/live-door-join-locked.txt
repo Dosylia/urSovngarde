@@ -29,6 +29,7 @@ log REQUIRE ref 9B0A5 locked
 wait 3
 
 log -- the player leaves for Riverwood's inn; the bot opens the door while the player is away
+# Console travel, which can crash a game that has been up a while (VR_TODO): run this on a fresh headless.ps1 up.
 log DO console coc RiverwoodSleepingGiantInn
 wait 20
 log REQUIRE player cell 133C6

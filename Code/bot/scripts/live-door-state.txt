@@ -15,22 +15,22 @@ waitfor connected 45
 expect known me
 waitfor known other 40
 wait 5
+log REQUIRE bot logged info\] In the party of player
 
 log DO god on
 log -- the player into Helgen's keep, next to the door, which is closed first
 log DO console player.moveto 9B0A5
 wait 12
-# The bot does not follow on its own: the server takes the player out of its view before it says where she went.
-# The server passes a door on only to players in the door's cell.
-cell 5DE24
-wait 4
 # DevBench's Papyrus calls take effect a little after they return, so each one is given a few seconds.
+# Before the bot comes in: this game leads, so a script's move is sent, and the bot's count must start at 0.
 log DO papyrus ObjectReference SetOpen 9B0A5 b:false
 wait 6
 log DO papyrus ObjectReference IsLocked 9B0A5
 log REQUIRE ref 9B0A5 closed
-# The checks run while the bot goes on: they are given time before the bot changes the door.
-wait 3
+# The bot does not follow on its own: the server takes the player out of its view before it says where she went.
+# The server passes a door on only to players in the door's cell.
+cell 5DE24
+wait 4
 
 log -- opened in another game by an NPC this game has no copy of
 activate 9B0A5 by nobody 3
@@ -74,7 +74,8 @@ log CHECK ref 9B0A5 open
 log CHECK ref 9B0A5 unlocked
 log CHECK logged Door 9B0A5: opened in another game \(by server id 7FFFFF0, not here, from state 3\); set open here from state 3, and unlocked: it was locked here
 # The unlock may go out as a lock change; the door opening itself still does not.
-expect activations == 1
+# The script that shut the door before the lock is the one sent: this game leads the party.
+expect activations == 2
 
 log -- a script blocks the door: this game's player uses it, it stays shut, and nothing goes to the others
 log DO papyrus ObjectReference SetOpen 9B0A5 b:false
@@ -87,14 +88,15 @@ log DO papyrus ObjectReference Activate 9B0A5 14 b:false
 wait 4
 log CHECK ref 9B0A5 closed
 log CHECK logged Door 9B0A5 activated by 14, but a script blocks its activation; not sent
-expect activations == 1
+# The script that shut the door for this step is sent; the blocked use is not.
+expect activations == 3
 
 log -- the blocking script opens the door itself (Activate with default processing only): it opens, and that is sent
 log DO papyrus ObjectReference Activate 9B0A5 14 b:true
 wait 4
 log CHECK ref 9B0A5 open
 # The bot's count decides: the earlier step already logged a sent opening of this door.
-expect activations == 2
+expect activations == 4
 log DO papyrus ObjectReference BlockActivation 9B0A5 b:false
 wait 2
 

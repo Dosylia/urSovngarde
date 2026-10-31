@@ -18,6 +18,11 @@ Git history has the full investigation notes behind each item.
 | `uGridsToLoad = 5` | The server refuses the connection. | Checked on connect. |
 | The **VR Address Library file that matches Community Shaders**: Emma's combined file (0.275.0 with every 0.158.0 id at its old address; section on it below) | Crash a second into the first load, before connecting, in shadow rendering: `SkyrimVR.exe+0x1354e5a`, which the crash logger names `100997+0x13A`. A plain newer library moves id 100997 to 0x1354D20 and the installed Community Shaders 0.8.7 patches there. Seen, twice on 2026-10-06 (19:41, 19:43), after installing Engine Fixes 7.10. | Not by the mod: give everyone the same library file. |
 
+- **SteamVR would not start** (2026-10-18): `bind: 10013` on 127.0.0.1:27062, SteamVR's web port, inside a range Windows reserved
+  (27018-27117, Hyper-V, WSL or Docker), then "Failed to start server with error 146". It blocks the headset too. Cleared by
+  `net stop winnat` and `net start winnat` as administrator; if it comes back, `netsh int ipv4 set dynamic tcp start=49152 num=16384`
+  keeps the reservations away from SteamVR's ports.
+
 ## 2b. Audit of 2026-09-18 (external, then re-checked here)
 
 A friend ran an automated audit of every address this client resolves. Its own conclusion was that
@@ -118,10 +123,10 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
 | Projectile null-handle patch | **On** since 2026-09-16 | SE 33672 is in the VR address library (0x554980). The VR frame differs, so the patch point is +0x397 (`mov rbx, [rsp+0x58]`) with a 0x158 frame, checked in the VR code. |
 | Renderer and input byte patches | **Off** | Addresses unverified; a wrong patch silently corrupts code. |
 | Naked-NPC re-equip workaround | **Off** | `GetArmorInSlot` doesn't exist on VR. |
-| Projectile metadata (spell, weapon, ammo, cell) | **Not sent** | `Projectile::LaunchData` layout is wrong on VR. A remote shooter's projectile is launched and then deleted, because VR's `LaunchSpell` doesn't null-check. |
+| Projectile metadata (spell, weapon, ammo, cell) | **Sent** | Each id is sent only when it maps back to its pointer (`ValidFormId`), so a wrong `Projectile::LaunchData` layout would cost an unsynced projectile, not a crash. A remote shooter's projectile is launched and then deleted, because VR's `LaunchSpell` doesn't null-check. A spell or projectile a mod makes at run time (NPC Spell Variance on MGO) has an id only its own game knows, so other games cannot show it (`Remote projectile from X not launched`). |
 | First-person checks and camera switching | Always third person, no switching | VR has no first-person graph (same as CommonLibVR). |
 | `Actor::Kill`, `Respawn` | Called by address | Chosen before the vtable was fully checked; works. |
-| Mount sync | **On** since 2026-09-15 | `InitiateMountPackage` (SE 36881, VR 0x60e300) checked in the VR code: the rider takes ownership of the horse, and the other client mounts the remote rider on it. |
+| Mount sync | **Partial**, parked 2026-10-12 | `InitiateMountPackage` (SE 36881, VR 0x60e300) checked in the VR code: the rider takes ownership of the horse, and the other client gives the rider's copy the mount package, which it accepts, but the copy never gets on: copies run no AI of their own (VR_TODO.md, "Mounts"). |
 
 ## 5. VR-specific sync added in this port
 
@@ -177,26 +182,17 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
 
 ## 6. Open bugs
 
-- **Many sync hooks were enabled at once** (see section 5) and are untested in play. If a crash
-  points at one of them, its address is the first suspect.
-- **VR menu shows an empty tab.** The page paints at 1600x900, runs its scripts (CEF console log), and SteamVR
-  accepts the frame. Two causes are fixed, untested: the pixel upload was never flushed on our own D3D11
-  device (it never presents, so SteamVR could read a blank shared texture), and the UI is mostly transparent
-  (it's made to sit over the game), so it is now blended over an opaque panel. The upload log line gives the
-  share of the page that has content.
-- **Crash while quitting the game** (every quit wrote a ~100 MB dump): mimalloc freeing a pointer into a
-  plugin's image (po3's ENB light plugin) during exit. Frees are now skipped once exit has started
-  (`Memory.cpp`); untested.
+- **Frees are skipped while the game exits** (`Memory.cpp`): mimalloc was handed a pointer into a plugin's image (po3's ENB
+  light plugin) during exit, and every quit wrote a ~100 MB dump. The hub has no mimalloc crash in 80 reports (2026-10-31).
 - **Remote player's bare face out of the helmet, and the body flickering**, seen only in one interior
-  (Gallows Rock, cell `15273`). Outside it looks right, and yesterday's build (`8670d4c4`) shows
-  the same thing there, so it isn't a regression. Ruled out by logs: the face, hair and helmet are all skinned
+  (Gallows Rock, cell `15273`, 2026-09-14). Outside it looks right, and the build before (`8670d4c4`) showed
+  the same thing there, so it was no regression. Ruled out by logs: the face, hair and helmet are all skinned
   to the real skeleton head bone, and nothing fights the actor's position. Cause unknown.
-- **Players with different modlists** are missing each other's NPCs (`Failed to retrieve Actor X,
-  possibly missing mod`), so those NPCs can't sync.
-- **Shared follower** in both saves (Lydia): both clients claim her and ownership bounces. Dismiss
-  her in one save.
-- **Remote dragons:** the client grid check still passes `IsDragon = false` for entities without a
-  local actor.
+- **Players with different modlists:** an NPC whose base form a game does not have cannot be shown there
+  (`Failed to retrieve Actor X, it will not be spawned, possibly missing mod`, `Failed to retrieve NPC`). A reference a
+  game lacks, with its base present, gets a copy of the owner's base in its place (`Stand-in:`).
+- **Shared follower** in both saves (Lydia): each game asks for her back as she goes, so after three quick passes
+  she stays with one game, and the other shows a copy that follows the player of that game. Dismiss her in one save.
 - **Intermittent crash in the script engine on a freed temporary form -- a game/modlist crash, not ours.**
   Fingerprint: top frame `SkyrimVR.exe+0x93CE17` (`SkyrimScript::HandlePolicy`, turning a script handle into an
   object), `RDI = 0x3D`, `R15 = SkyrimVM*`, an access violation *executing* a heap-like address -- very often exactly
@@ -226,17 +222,44 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     the release's PDB): `Cast<TESObjectREFR>(TESForm::GetById(targetId))` on the target of a copy's replayed action.
     Our side now guarded everywhere: `TESForm::GetById` returns null for a form whose vtable is not in the game image
     (`IsLiveGameObject`, moved there from one spawn path) and logs `Form lookup: X resolved to freed memory`.
+  - Again on v1.9.6, both in Jorrvaskr, the two players of the 2026-10-29 reports: report `20261030-022832-3012cf6f`
+    (`+0x93CE17` at the top of the stack, `RDI 0x3D`, form `FF0012DD`, the memory reused by a `ValueModifierEffect`, a
+    vtable inside the image, so `IsLiveGameObject` would pass it), and report `20261030-040047-015fab90` (our
+    `AnimationSystem::Update` again, `VCRUNTIME140.dll+0x4C3A`, fixed in v1.9.7 by the `GetById` guard; reports hold no
+    dump, so that object was not read; its vtable[-1] was a heap address).
   - Suspects, unproven: EngineFixesVR form caching (a stale id-to-form cache entry would hand out exactly this
     pointer), PapyrusTweaks (loaded on both machines). Whether co-op makes it more frequent is open: Emma's came 0.44 s
     after spawning a batch of the other player's actors.
+  - How the cache can go stale (Engine Fixes SE 7.11 source, `form_caching.h`; EngineFixesVR's own source was not read):
+    on a miss, `TESForm_GetFormByNumericId` reads the game's map, then stores the pointer as a second step. A form deleted
+    between the two has nothing to erase, and its freed pointer stays cached until the id is used again; a hit is
+    returned unchecked. Without the cache a deleted id reads as no form. EngineFixesVR's `formcaching.cpp` and tbb
+    frames are left on both stacks of 2026-10-30, a hint only. Co-op makes and deletes many temporary forms.
+  - Where it crashes (read from the running game): `SkyrimScript::HandlePolicy::HandleIsType` (vtable slot 1, +0x93CCE0) looks the
+    form up, and for type 0x3D calls `form->vfunc[0x160/8]` at +0x93CE11; +0x93CE17 is that call's return. The hub has this family
+    (RDI 0x3D, RSI a form handle) 5 times on 3 installs, v1.9.4 (1) and v1.9.6 (4), the last on 10-30.
+  - Guard, build 4df623a: that function is hooked, and a form handle whose lookup gives anything but that form is answered as
+    no such form (`FormGuard:`). Our `GetById` now checks the id too, which a `ValueModifierEffect` in the freed memory would
+    have passed. It cannot be shown red here: this modlist has `FormCaching = false`. Rig, on 4df623a: about 10,000 checks a second
+    at 88 to 94 ns each, so about 1 ms in every second, none answered stale in over 2 million, through loads and the rig's
+    scripts. To see: a player with `FormCaching` on logs `FormGuard: script handle X ... stale`, and the crash does not come.
 
-- **Crash when the other player's NPC walks through a load door by itself in your game (v1.9.6) -- fixed since
-  build 1a569f4, not released.**
+- **After a player rejoins: bodies change owner, and a corpse can flicker -- first half fixed in build aa045e7, to be seen in
+  play.** A joining game registers every actor it has. The server gave it any dead body as if a hand had grabbed it, so that
+  game's corpse became the truth (`bodyassign`). A copy of a creature that died while its game was offline died as its
+  values were set, with nothing played, and stood there (`live-copy-came-dead`). The flicker is limited in build d2fd00c: moves
+  in a row wait 1, 2, 4, 8, then 16 s (`live-corpse-moving`, 21 moves to 4).
+  Open: what makes a body's position jump by thousands of units. It happens within a second of a grid change far more often
+  than chance (20 of 162 big moves, chance 0.5), and not only after a rejoin. `CorpseDiag` names both positions and the cell.
+
+- **Crash when the other player's NPC walks through a load door by itself in your game (v1.9.6) -- fixed in v1.9.7.**
+  One report (hub #43); no report from v1.9.7 exists yet, so it is not shown gone.
   Report `…-21843b8f` (2026-10-29 01:43 UTC, Dragonsreach): `SkyrimVR.exe+0xD8A96D` (SE 74377), the game's find-node-by-name (VR
   0x140D8A900) making a virtual call on a freed 3D root, from a job thread with an NPC's `MovementControllerNPC` on the
   stack. 0.5 s before, this game's AI had walked the other game's Irileth copy through door 16707 and the game unloaded
   it. Since 1a569f4 `HookActivate` refuses a copy's own load door use (`DoorCopy:` line, `live-door-copy-load`). The
-  crash itself is not reproduced. The owner's own door use is still replayed on its copy, which unloads it the same way.
+  crash itself is not reproduced. The owner's own door use is replayed on its copy too, and that stops at the same refusal
+  (rig, `live-door-copy-replay`, 2026-10-31): the copy stays loaded until its owner's game says where it went.
 
 - **Freeze after closing the unpaused map -- cause found, fixed in build b20765d, seen fixed by player 1.** Player 1 twice
   on 2026-10-28, player 2 several times since, each within a second of closing the map, which runs unpaused online
@@ -274,7 +297,7 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   - What the crashing trips share: three or more copies this client had made (`Actor::Create`) left behind, which the
     game destroys during the load -- by the time the client notices, they are gone from the game already (`CopyGone`
     lines). Three Seeker copies next to the game's own Seekers: five crashes in five (`live-copy-abandon` before the
-    fix below). Eight bear copies and the bot's character, nothing else: crashed on the first trip that left them
+    identity fix). Eight bear copies and the bot's character, nothing else: crashed on the first trip that left them
     (`live-spawn-burst`, 2026-10-03 02:25). One or two copies left behind (a Seeker, a bear, the bot's character, in
     either owner's hands): clean in about fifteen trips. So it is the number of copies, not the kind, and not who
     runs them: `live-copies-left-3` crashes in a fresh session, `live-copies-left-2` does not.
@@ -293,25 +316,19 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     passed.
   - Tried from our side, none of it a fix: disposing of copies this client runs when their cell unloads (it never ran:
     after a teleport the game has already destroyed them when the client notices); taking our own creatures back
-    instead of copying them (right for its own reasons, see the next entry; it only removed the copies from one
+    instead of copying them (right for its own reasons; it only removed the copies from one
     test); disabling every copy of ours the moment a loading screen is queued (the game then crashed during the
     load, in `BSExtraDataList::GetExtraData` on garbage). PLANCK's own settings only exclude by race.
-  - The first explanation, a creature and its copy side by side, was wrong: the identity fix below removed the copies
-    from `live-copy-abandon`, and that is all it did for the crash.
-- **A creature this game made came back twice -- fixed 2026-10-03.** A temporary actor (placed by console, a quest
-  spawn, a random encounter) has no id two games agree on. When its maker walked away the server gave it to the other
-  player; when the maker came back the server sent it as "a character with no reference of its own", the maker's
-  client made a copy of it next to the game's own actor, and also announced its own actor as a new character. Three
-  Seekers placed, six standing. Now the client remembers which server character its own actor became
-  (`s_handedAway` in `CharacterService.cpp`), does not announce it again when it is back in view, and takes it back
-  as the same actor when the server sends it; the record ends when the server removes the character or the
-  connection ends. Not handled: the server's message arriving before the game has the actor loaded again (never
-  seen; the log line is `a copy of it stands here too; not handled`).
+  - The first explanation, a creature and its copy side by side, was wrong: the identity fix (`s_handedAway` in
+    `CharacterService.cpp`) removed the copies from `live-copy-abandon`, and that is all it did for the crash.
+  - Not reproduced on 2026-10-31 (rig, fresh sessions, Papyrus travel 17 cells within Tamriel, PLANCK on): `live-copies-left-3`
+    twice on e20c11e and once on 474ec2b, `live-spawn-burst` once on e20c11e, copies gone from the game on arrival, no crash.
+    Too few runs to call it gone; on 10-03 it crashed every time. The hub has none of these addresses on any version, and one
+    crash of its kin (#30).
 
 - **The game grows with every loading screen, in Emma's modlist -- found 2026-10-03, not ours.** (2026-10-10: DynDOLOD
   DLL NG **Alpha-43** ends the thread leak: over four round trips threads stayed at about 193, against 222 to 296 on
-  Alpha-32, and private memory grew half as much, 10.0 to 10.7 GB against 9.7 to 11.2; VR_TODO, "Long sessions
-  grow".) Four round trips
+  Alpha-32, and private memory grew half as much, 10.0 to 10.7 GB against 9.7 to 11.2.) Four round trips
   between Mistwatch and Windhelm's docks by console (`cow Tamriel 34 8` and back) took the game from 8.6 to 10.4 GB
   of private memory and from 236 to 287 threads; connected or not made no difference (8.6 to 10.3 GB over three
   trips connected). The threads are DynDOLOD's: `DynDOLOD.DLL` (DynDOLOD DLL NG Alpha-32; MO2 lists Alpha-33) starts
@@ -323,7 +340,8 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     (35201) -> `TES::PurgeBufferedCells` (13159) -> a wait; a worker in the same allocator and the same path, on a
     `BSReadWriteLock` (66977). The game ran out of its own heap and its clean-up deadlocked. 13.4 GB private, 376
     threads, 5.6 GB of commit left on the machine. EngineFixesVR's `MemoryManager` (which replaces that allocator)
-    is `false` in the modlist.
+    was `false` in the modlist then; since 2026-10-25 it runs Engine Fixes VR 7.7.1 with `bOverrideMemoryManager = true`
+    (VR_TODO, "Freeze at a load").
   - Crashed at 12:32 (the next run, eighth script, a trip away): in an AMD driver thread (`amdxx64.dll`), a call to
     0x7FFC00000028; 11.5 GB private, 265 threads. First time among 106 crash reports. Again at 15:48, on the first
     trip of a fresh game (`cow Tamriel 33 -9`), so not only the growth: the same frame (`amdxx64.dll+0x1280B0`), a
@@ -332,7 +350,7 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   - Also frozen, the same way as far as could be seen: loading Emma's Autosave2 of 2026-10-03 09:32:50 in a fresh
     game, with this build and the one before. Not looked into further.
   The rig restarts the game every six scripts since (`run-live.ps1 -Batch`). In play, a long session with many
-  loading screens is where this would show; the modlist is Emma's (see VR_TODO.md, "Waiting on a test or action").
+  loading screens is where this would show; the modlist is Emma's.
   To name a frame of our own exe in a debugger, use the linker map (`build/.../SkyrimTogetherVR.map`): the exe has
   no debug directory, so cdb finds no pdb. Game frames show as `game_seg+X`, which is `SkyrimVR.exe+(X+0x101000)`.
 
@@ -491,16 +509,15 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
 - **Don't keep a debugger attached during play sessions.** Thread creation in DynDOLOD and similar
   plugins makes it stutter.
 
-## Crashes of the 2026-10-10 morning session (v1.9.0-6-gdeb36762)
+## CEF cannot start its GPU process (hub #14, `libcef.dll+7A52582`)
 
-- Emma, 11:17:21, after teleporting: `SkyrimVR.exe+0x534D71`, a write to 0x6C (a null pointer plus 0x6C) on a game
-  worker thread, 200 ms after the arrival's NPC copies were spawned (Lydia last). No frame of ours on the stack, nothing
-  deleted that session. Hub report 20261010-091730-c3ab5319. First time seen at this address; watch for a second one
-  before naming a cause.
-- Seen, 11:15:44, at the main menu, not yet connected: `libcef.dll` int3. CEF's own log says it all: "GPU process launch
-  failed: error_code=63" nine times in 30 ms, then "GPU process isn't usable. Goodbye." CEF could not start its helper
-  program at all. Emma: it is the crash when leaving (three that morning). Hub report 20261010-091857-9cb48f47.
-  **Open again.** The fix in 6dcc25a1 (CEF's GPU work in the game process: `disable-gpu`, `disable-gpu-compositing`,
+- 8 crash logs in the hub's 80 reports (2026-10-31): 3 from one machine on v1.9.0-6, last 2026-10-10, and 5 from the rig
+  on v1.9.6-20, last 2026-10-24. No report from v1.9.7 exists yet. None came on leaving the game and none in play: 7 came
+  within about a second of `Menu queued: Main Menu`, 26 to 120 s into the session, and 1 during a load, not connected.
+- `libcef.dll` int3. CEF's own log, on the one machine: "GPU process launch failed: error_code=63" nine times in 30 ms,
+  then "GPU process isn't usable. Goodbye." CEF could not start its helper program at all. Cause unknown: the reports do
+  not carry that log. Hub report 20261010-091857-9cb48f47.
+  **Open.** The fix in 6dcc25a1 (CEF's GPU work in the game process: `disable-gpu`, `disable-gpu-compositing`,
   `in-process-gpu`) was worse than the crash and is taken out. In the game the GPU thread could not make a GL context
   and retried without end, logging every try ("Failed to create GLES3 context", "kFatalFailure", "Failed to create
   SharedImageStub", all in the same millisecond): `logs/cef_debug.log` reached 8 GB between 11:40 and 12:02, E: had 0

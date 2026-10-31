@@ -133,6 +133,7 @@ PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_settingsConnection = m_dispatcher.sink<ServerSettings>().connect<&PlayerService::OnServerSettingsReceived>(this);
     m_notifyRespawnConnection = m_dispatcher.sink<NotifyPlayerRespawn>().connect<&PlayerService::OnNotifyPlayerRespawn>(this);
     m_downedStateConnection = m_dispatcher.sink<NotifyDownedState>().connect<&PlayerService::OnNotifyDownedState>(this);
+    EventDispatcherManager::Get()->loadGameEvent.RegisterSink(this);
     m_gridCellChangeConnection = m_dispatcher.sink<GridCellChangeEvent>().connect<&PlayerService::OnGridCellChangeEvent>(this);
     m_cellChangeConnection = m_dispatcher.sink<CellChangeEvent>().connect<&PlayerService::OnCellChangeEvent>(this);
     m_playerDialogueConnection = m_dispatcher.sink<PlayerDialogueEvent>().connect<&PlayerService::OnPlayerDialogueEvent>(this);
@@ -498,7 +499,7 @@ void PlayerService::RunRespawnUpdates() noexcept
         m_downedAt = cNow;
         m_respawnDeadline = cNow + 5s;
         m_standingUp = false;
-        m_loadingSeen = false;
+        m_saveLoaded = false;
         m_giveUpSince = {};
         m_transport.Send(PlayerDownedRequest());
         float highest = pPlayer->position.z;
@@ -521,8 +522,8 @@ void PlayerService::RunRespawnUpdates() noexcept
 
         if (!pPlayer->actorState.IsBleedingOut())
         {
-            // After a loading screen the player is up in a loaded save: no respawn, as when playing alone.
-            if (m_loadingSeen)
+            // After a loaded save the player is up in it: no respawn, as when playing alone.
+            if (m_saveLoaded)
             {
                 spdlog::info("PlayerService: a save was loaded while down; up again without a respawn");
                 StopHeartbeat();
@@ -553,7 +554,8 @@ void PlayerService::RunRespawnUpdates() noexcept
     }
 
     // A save loaded during the fade: the player is in that save now, so the respawn is called off and the screen comes back.
-    if (m_loadingSeen)
+    // Only a save: a teleport's loading screen leaves the player down.
+    if (m_saveLoaded)
     {
         spdlog::info("PlayerService: a save was loaded during the respawn; the respawn is called off");
         m_downState = DownState::kUp;
@@ -611,7 +613,6 @@ void PlayerService::StartRespawn(const SafePoint& acWhere) noexcept
     Utils::ShowHudMessage(String(cLine.c_str()));
     m_downState = DownState::kRespawning;
     m_respawnPoint = acWhere;
-    m_loadingSeen = false;
     // The screen is black after 5 s (2 s, then a 3 s fade): the respawn happens then.
     m_respawnAt = std::chrono::steady_clock::now() + 5s;
     FadeOutGame(true, true, 3.0f, true, 2.0f);
@@ -645,10 +646,7 @@ void PlayerService::RunSafePointUpdates() noexcept
     const bool cResting = pUI->GetMenuOpen(BSFixedString("Sleep/Wait Menu"));
     // The game autosaves as a loading screen or a sleep or wait ends; two seconds after the last sign of one, the player stands where it was placed.
     if (cLoading)
-    {
-        m_loadingSeen = true;
         m_safePointAt = cNow + 2s;
-    }
     if (m_restMenuOpen && !cResting)
         m_safePointAt = cNow + 2s;
     m_restMenuOpen = cResting;
@@ -657,6 +655,12 @@ void PlayerService::RunSafePointUpdates() noexcept
         return;
     m_safePointAt = {};
     RecordSafePoint();
+}
+
+BSTEventResult PlayerService::OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*)
+{
+    m_saveLoaded = true;
+    return BSTEventResult::kOk;
 }
 
 void PlayerService::RecordSafePoint() noexcept

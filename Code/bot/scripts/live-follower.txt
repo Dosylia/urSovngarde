@@ -30,7 +30,7 @@ log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
 wait 5
 
 log -- the player leaves; Lydia stays with this bot and is given to it
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
 wait 30
 log CHECK logged Actor \w+ is now owned by player
 log CHECK logged Follower A2C94 \(server id \w+\) was given to player \w+; not near this player

@@ -174,9 +174,9 @@ void World::ReportPerformance(double aFrameMs, double aUpdateMs) noexcept
         }
     }
 
-    spdlog::info("Perf last {} s: {} frames, avg {:.1f} ms ({:.0f} fps), p95 {:.1f} ms, p99 {:.1f} ms, {} frames over 50 ms; mod update avg {:.2f} ms, max {:.1f} ms{}{}",
+    spdlog::info("Perf last {} s: {} frames, avg {:.1f} ms ({:.0f} fps), p95 {:.1f} ms, p99 {:.1f} ms, {} frames over 50 ms; mod update avg {:.2f} ms, max {:.1f} ms, longest frame {:.0f} ms{}{}",
                  std::chrono::duration_cast<std::chrono::seconds>(now - m_perfIntervalStart).count(), frames, averageMs, 1000.0 / averageMs, percentile(0.95),
-                 percentile(0.99), over50, m_perfUpdateTotalMs / frames, m_perfUpdateMaxMs, hooks, pause);
+                 percentile(0.99), over50, m_perfUpdateTotalMs / frames, m_perfUpdateMaxMs, m_perfFrameTimes.back(), hooks, pause);
 
     m_perfFrameTimes.clear();
     m_perfUpdateTotalMs = 0.0;

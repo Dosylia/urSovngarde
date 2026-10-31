@@ -141,3 +141,6 @@ static_assert(sizeof(TESForm) == 0x20);
 
 //! Whether a pointer from a form lookup is still a real game object: readable, with its vtable inside the game image.
 bool IsLiveGameObject(const TESForm* apForm) noexcept;
+
+//! Whether the game's own lookup of this id gives something that is not that form: freed, or reused by another object.
+bool IsStaleFormId(uint32_t aId) noexcept;

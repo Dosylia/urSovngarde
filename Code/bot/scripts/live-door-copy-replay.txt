@@ -1,0 +1,37 @@
+# An NPC's use of a load door in its owner's game does not take its copy through the door here.
+#
+#   python Tools\VR\live-check.py live-door-copy-replay
+#
+# A game replays such a use on the copy, and the refusal of a copy's own door use stops it (live-door-copy-load).
+# The owner's next report moves or removes the copy (live-copy-through-door).
+# Here the bot's NPC copy stands beside the player, and the bot says that NPC used Mistwatch's upper door.
+# The copy must stay loaded where it is. The bot then says nothing more of it, where a real owner's report would follow.
+log live door copy replay
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log CHECK player in Tamriel
+
+log -- the bot brings its own Lydia; the game shows a copy of her
+npc temp A2C8E
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc 3d
+log DO mark start npc
+
+log -- its owner's game says it used the load door
+activate 3F558 by npc
+wait 3
+log CHECK npc 3d
+log CHECK moved start atmost 300
+log CHECK logged Door 3F558: [0-9A-F]+ activated it in another game from state 3; done here too
+log CHECK logged DoorCopy: load door 3F558 not used by [0-9A-F]+, a copy of another game's actor
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

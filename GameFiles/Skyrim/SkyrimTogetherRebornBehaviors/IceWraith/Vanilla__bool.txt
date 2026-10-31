@@ -1,0 +1,4 @@
+bAnimationDriven
+bAllowRotation
+IsAttackReady
+bEquipOk

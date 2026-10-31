@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <RecentDeletes.h>
+#include <CopyRemovalPolicy.h>
 
 #include <chrono>
 
@@ -63,8 +64,8 @@ void Record(const void* apActor, const uint32_t aFormId, const uint32_t aHandles
     s_ring[slot].Stamp = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
 
     // Logged as it happens, not only on a crash.
-    // An actor deleted while something still holds a handle to it is a use-after-free waiting to happen.
-    if (!(aFlags & kLeftToGame) && (aHandles > 0 || (aFlags & (kPlayerCombatTarget | kOtherCombatTarget))))
+    // The game's own two holds on every reference are not a claim: Delete() drops them itself.
+    if (!(aFlags & kLeftToGame) && (aHandles > CopyRemovalPolicy::kOwnHolds || (aFlags & (kPlayerCombatTarget | kOtherCombatTarget))))
         spdlog::warn("DeleteClaim: deleting {:X} while something still holds it -- {}", aFormId, DescribeClaims(aFlags, aHandles));
 }
 

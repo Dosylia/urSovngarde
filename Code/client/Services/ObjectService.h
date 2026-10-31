@@ -17,6 +17,7 @@ struct AssignObjectsResponse;
 struct NotifyScriptAnimation;
 struct ReferenceEnableEvent;
 struct NotifyReferenceEnable;
+struct ScriptDoorEvent;
 struct UpdateEvent;
 
 /**
@@ -39,6 +40,7 @@ private:
     void OnNotifyScriptAnimation(const NotifyScriptAnimation&) noexcept;
     void OnReferenceEnableEvent(const ReferenceEnableEvent&) noexcept;
     void OnNotifyReferenceEnable(const NotifyReferenceEnable&) noexcept;
+    void OnScriptDoorEvent(const ScriptDoorEvent&) noexcept;
     void OnUpdate(const UpdateEvent&) noexcept;
     bool ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexcept;
 
@@ -60,6 +62,7 @@ private:
     entt::scoped_connection m_scriptAnimationNotifyConnection;
     entt::scoped_connection m_referenceEnableConnection;
     entt::scoped_connection m_referenceEnableNotifyConnection;
+    entt::scoped_connection m_scriptDoorConnection;
     entt::scoped_connection m_updateConnection;
 
     // References this game's scripts switched while it leads the party, sent at the next update: form id and enabled, in order.
@@ -67,6 +70,9 @@ private:
     // The leader's switches for references not in this game yet (their cell not loaded), tried again every 2 s.
     Map<uint32_t, bool> m_enableWaiting;
     double m_enableRetry = 0.0;
+    // Doors this game's scripts moved while it does not lead the party, by form id.
+    // The state the server keeps follows only uses of a door, so it does not know of these.
+    Set<uint32_t> m_doorsMovedHere;
     // Locks set here as another game had them, by form id, and when: the game's lock change they cause is not sent back.
     Map<uint32_t, std::pair<bool, std::chrono::steady_clock::time_point>> m_lockFromOtherGame;
 };

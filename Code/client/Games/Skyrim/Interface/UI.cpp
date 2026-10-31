@@ -5,6 +5,7 @@
 #include "immersive_launcher/stubs/DllBlocklist.h"
 
 #include <World.h>
+#include <CrashHandler.h>
 #include <PatchCheck.h>
 #include <Services/CalendarService.h>
 #include <Interface/Menus/SleepWaitMenu.h>
@@ -262,7 +263,10 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
         const BSFixedString* pName = apSelf->LookupMenuNameByInstance(apMenu);
         spdlog::info("Menu queued: {}{} (connected {})", pName ? pName->AsAscii() : "?", apMenu->PausesGame() ? " [pauses]" : "", World::Get().GetTransport().IsConnected() ? "yes" : "no");
         if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Loading Menu") == 0)
+        {
             ++s_loadingScreensQueued;
+            FreezeWatchdog::NoteLoadingScreen();
+        }
         // A sleep fades out a couple of seconds before the clock moves; the party fades with it.
         if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Fader Menu") == 0)
             CalendarService::OnFaderQueued();

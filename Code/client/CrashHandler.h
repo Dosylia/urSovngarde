@@ -11,10 +11,11 @@ void Leave() noexcept;
 
 //! Logs where the game is stuck when no frame has finished for 25 s, since a freeze leaves no crash report.
 //! World::Update calls Beat() every frame.
-//! Also logs the process's memory and thread count every 30 s.
+//! Also logs the process's memory and thread count every 30 s, and where the game is in a frame that takes 200 ms or more.
 namespace FreezeWatchdog
 {
 void Beat() noexcept;
+void NoteLoadingScreen() noexcept;
 void Start() noexcept;
 } // namespace FreezeWatchdog
 

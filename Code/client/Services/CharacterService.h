@@ -61,7 +61,7 @@ struct CharacterService
 
     bool RequestOwnership(uint32_t aFormId, uint32_t aServerId, entt::entity aEntity, bool aKillingBlow = false) const noexcept;
     // This player's killing blow on another player's protected NPC: asks for it, and kills it once it is this game's.
-    void ClaimForKillingBlow(Actor* apActor) noexcept;
+    void ClaimForKillingBlow(uint32_t aFormId) noexcept;
     // Brings the server's copy of an actor's inventory in line with this game's, one entry at a time.
     void SendInventoryDifference(Actor* apActor, uint32_t aServerId, uint32_t aOwnershipEpoch, const Inventory& acServerInventory) const noexcept;
 
@@ -103,6 +103,7 @@ private:
     bool MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept;
 
     void RequestServerAssignment(entt::entity aEntity) const noexcept;
+    void RunNotAnnounced() const noexcept;
     void CancelServerAssignment(entt::entity aEntity, uint32_t aFormId, Actor* apActor) const noexcept;
     void DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept;
     void ClaimCopyId(entt::entity aEntity, uint32_t aFormId) const noexcept;

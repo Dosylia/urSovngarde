@@ -263,6 +263,14 @@ void InventoryService::OnNotifyEquipmentChanges(const NotifyEquipmentChanges& ac
     if (IsMyFollower(pActor, acMessage.ServerId, "an equipment change"))
         return;
 
+    // The game's equip code reads the actor's AI process, and an actor not loaded here has none.
+    // What it wears comes with its next assignment.
+    if (!pActor->HasLoadedProcess())
+    {
+        spdlog::info("Equipment sync: remote actor {:X} has no AI process here; change not applied", pActor->formID);
+        return;
+    }
+
     // No item: an equipment snapshot (see RunEquipmentSnapshotUpdates).
     if (!acMessage.ItemId)
     {

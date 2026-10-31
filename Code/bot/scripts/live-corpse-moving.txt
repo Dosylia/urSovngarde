@@ -1,0 +1,117 @@
+# A body its owner keeps moving, with no bones sent, is not pulled after it twice a second.
+#
+#   python Tools\VR\live-check.py live-corpse-moving
+#   python Tools\VR\live-check.py --expect-fail live-corpse-moving     on a build without the fix: must be RED
+#
+# A corpse was moved 134 times in 4 minutes, in bursts of one move every half second: on screen it flickered.
+# The bot's body moves 40 units every quarter second for 10 s, too far for each move to settle, then stops.
+# The copy must still end up where the owner left it.
+log live corpse moving
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log -- a human of this bot's, killed
+npc temp 753CB
+waitfor owned == 1 20
+wait 8
+npclife dead 0
+wait 8
+log REQUIRE npc dead
+log DO logmark
+
+log -- it keeps moving, with no bones, and the player looks away: a body is not moved in view
+log DO look away npc 500 hold 34000
+wait 1
+log REQUIRE view npc away
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+npcmove 0 40 0
+wait 0.25
+log CHECK fewer 9 CorpseDiag: \w+'s ragdoll lay \d+ units from where its owner's corpse is; moved there
+
+log -- it rests: the copy goes where the owner left it
+wait 20
+log CHECK logged CorpseDiag: \w+'s ragdoll now lies
+log CHECK game alive
+wait 2
+log done
+stop

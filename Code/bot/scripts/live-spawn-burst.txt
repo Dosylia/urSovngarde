@@ -20,8 +20,9 @@ stay
 log DO god on
 wait 3
 log -- the player leaves
-log DO console cow Tamriel 34 8
+log DO papyrus ObjectReference MoveTo 14 35E6E f:60 f:0 f:0 b:false
 wait 40
+log REQUIRE logged Grid change: reporting centre \(34, 8\)
 
 log -- this bot brings eight bears where the player was
 npc temp 23A8A
@@ -36,7 +37,7 @@ waitfor owned == 8 30
 wait 5
 
 log -- the player comes back to all of them at once
-log DO console cow Tamriel 34 -9
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:60 f:0 f:0 b:false
 wait 40
 log CHECK game alive
 log CHECK logged Spawn Actor: \w+, and NPC Bear
