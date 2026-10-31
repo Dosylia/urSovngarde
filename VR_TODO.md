@@ -368,6 +368,45 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Open work
 
+- [ ] **The Civil War questline stops syncing after the first hold** (session 2026-10-31 on d40cc8b, 14:26: player 2's quest did not move on to Liberate Hjaalmarch, and it has
+      "never really synced since Liberate Falkreath"). Not fixed, not tested.
+      Log: player 1's game reached stage 4 of `CW` (0x19E53, the main Civil War quest) at 14:25:52, and player 2's refused it in the same second: `Remote quest 19E53 already reached stage 4,
+      current stage: 255`. Those are the only lines about that quest in either log. The refusal is ours: `QuestService::OnQuestUpdate` drops a stage this game has already reached.
+      Inferred, not read yet: the quest runs again for each hold, so a stage that is new in the game that restarted it is an old one in the other, still at 255 from the last hold. That fits "since Falkreath".
+      Not checked: that `CW` really restarts, and what player 2's game did at the end of Falkreath.
+      Next: read how `CW` restarts, then carry that restart to the other game, so the stage is new there too. Simply letting lower stages through would replay finished quests.
+- [ ] **Ulfric's lines not heard by the other player** (14:25: "both players hearing the dialogues" is not done). Not fixed.
+      Log: all 8 of his lines from 14:24:55 to 14:25:55 went out, and player 2's game logged `played here` for each, the last five at 126 to 140 units. `game's answer` was 0.00 for all 8.
+      That answer settles nothing yet: it is 0.00 for 1114 of the 1277 lines in that log, at every distance. So `played here` only says the call ran, not that a sound played.
+      Next: learn what `SpeakSound` returns, and log whether a sound really started.
+- [ ] **Dead on one side, standing on the other, again** (14:29, 14:44, 14:52 on d40cc8b; see "Dead NPCs in two games"). Not fixed. At 14:52 it came after some time in place, not on a load.
+      14:44, Death Hounds, dead for player 2 and standing for player 1, the case with a clear log: hound 1A002 (401A002 at its owner, player 2; 301A002 as player 1's copy). Player 1's blows from 14:44:13 to :17
+      reach the owner as `health 121 to 104, already dead`, while the copy logs `kept at 1 health until its owner says it died`. The owner's log has no `is now dead, telling the server` for it. So no death word
+      was sent, and those blows do not ask for one: the copy waits for a word that never comes.
+      14:29, a guard dead for player 1 and standing for player 2: neither log has a death line from 14:28:00 to 14:29:40, and which guard it was is not known.
+      14:52, Imperials getting up for player 1 while walking around, and an ice troll standing for player 2: no line says it, as nothing logs a body getting up.
+      Next: an owner that gets a blow on an NPC already dead sends its death again. Find how the hound died with no line. Log a copy going from lying to standing, so the next session names the actor.
+      Bandit CC591 of 10-26 (27 killing blows) may be the same thing; not checked.
+- [ ] **A follower with no server id after a hand-over, so the other player loses her** (14:43: Lydia not visible to player 2, or not where player 1 sees her). Not fixed.
+      Log: she went to player 2 at 14:37:16 (`Actor 100045 is now owned by player 2`) and left that game at 14:37:55 (`Transferring ownership of local actor`). She spawned again in player 1's game at 14:38:38.
+      From 14:40:46 to 14:56:06 that game logged `server id not found for form id A2C94` 43 times, and her health changes as `not sent: it has no server id and none is pending`. So her game no longer sent her.
+      No line says why the spawn got no id, and the server's log of that session was not read.
+      Next: follow that hand-over on the server: who holds 100045 after 14:37:55, and why the spawn at 14:38:38 is not registered.
+- [ ] **Findings from reading the game's code** (2026-10-31, checked against the game's instructions and public layouts). None of this ran on a real game, so every effect on play is inferred.
+      Check each against our code before acting: two claims did not hold when that was done.
+      - Check first: `BSAnimationGraphManager` has `lock` at 0xA0 and the graph index at 0xB0, AE offsets; a public VR layout gives 0x98 and 0xA8. If so, the client takes the wrong lock each time it touches a copy's graph.
+        Reading one game function that takes the lock settles it.
+      - Confirmed: `HookActorProcess` (id 37356, VR 0x1406226a0) sits on a small alarm check. It never sees an actor and skips nothing, so copies run their own AI, against "Remote AI suppression" in KNOWN_ISSUES.
+        It may be what writes a copy's graph each frame (see "An NPC taken over while it walks"). Moving it to 0x1405e0e20 stops the movement step, not the AI, and needs a real game. A decision, not a quick fix.
+      - One check only: `ApplyAnimationVariables` (id 39004) reads a third argument in r8b, and the live `ForceAction` path passes none, so a copy may get the wrong variables after a forced action.
+      - Confirmed, small: `InterruptCast` (SE 33630) is called without its bool, so a copy's magicka refund depends on a leftover register.
+      - Suspect: `CalculateRealDamage` applies the multiplier the game skips for a fall, so the health change sent for fall damage is too high. A hit by a player never takes that path.
+      - Suspect: `fYAngle` at launch data +0x50 is a pointer in a public layout, and we send its low half as an angle (`Projectile.cpp`, `CombatService.cpp`). It is on every arrow and spell replay.
+      - Suspect, not read: `UnEquipShout` (a shout may stay on a copy), subtitles (text may be a `BSString`, so garbage or a crash), `StatsMenu` +0xC0 (skills menu unpaused), `AddSkillExperience`'s arguments, `MoveTo`'s handle.
+      - Wrong, no effect today: `MenuControls` flags sit at +0x8B on VR; override 21600 is the `PlaySound` console handler; `DropObject` (id 40454) is PlayerCharacter's, which would corrupt memory on a copy,
+        but the server never forwards a drop, so nothing reaches it.
+      - Checked and right: `UI+0x1C9` and the cull's `+0x50`, as the map fix reads them. A replayed cast's slot reads only the six arguments we pass.
+
 - [ ] **QuietStop misses a walking NPC copy whose own AI stands** (next item, left out of the takeover build on purpose)
       `InterpolationSystem::Update` reads `LegSpeed` before that tick's variables load, so it reads what this game's AI wrote on the
       copy, not the owner's report (see "An NPC taken over while it walks"). A walking NPC copy whose AI stands reads 0. It is not stopped
@@ -403,8 +442,8 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       and as well as the report if the copy is rebuilt mid-burn. A PROTOCOL CHANGE (a spell's hit has no tick): both players and the server update together.
       Scripts changed to this: `live-pvp-projectile`, `live-pvp-concentration`, `live-pvp-spell-perks`, `live-pvp-spell-elements`; they check one side only.
       Still open for play: a ward held against a spell, and Chain Lightning.
-- [!] **PvP: where a held spell is drawn, and one damage rule** (session 2026-10-31 14:10 to 15:05: "a giant offset", "sometimes 20cm off, other time like whole meters"). Build dd9f756,
-      uncommitted on 87e6a1fc. Rig and two real games on one PC, not seen in play. A PROTOCOL CHANGE (`VRPose`): both players and the server update together.
+- [!] **PvP: where a held spell is drawn, and one damage rule** (session 2026-10-31 14:10 to 15:05: "a giant offset", "sometimes 20cm off, other time like whole meters"). Commit 4b2f8e0b, in build
+      e6c7900c. Rig and two real games on one PC, not seen in play. A PROTOCOL CHANGE (`VRPose`): both players and the server update together.
       Why it was off: a held spell only sends "cast", and the other game casts it again on the copy. There the game aims a copy's flame or beam by its body, each frame. The caster's real
       one follows the hand, turned by the spell mods. In that session the caster's game landed 18 of 21 and 8 of 12 presses, and the replay touched the target on 6 and 2.
       The defender's rule was not the cause: spells have not gone through it since f0eeccfc.
