@@ -659,14 +659,22 @@ namespace
 // Actors, items, lights and temporary references are synced their own way, or not at all.
 // SkyrimTogether.esp's references, the players' map markers, are each game's own.
 // The same form in another game marks someone else, and moving one switches it off and on.
+// DynDOLOD's are too: its scripts switch them by this player's distance, and each player generates a different file.
+bool IsReferenceOf(const Mod* apPlugin, const uint32_t aFormId) noexcept
+{
+    if (!apPlugin || !apPlugin->IsLoaded())
+        return false;
+    if (apPlugin->IsLite())
+        return (aFormId >> 24) == 0xFE && ((aFormId >> 12) & 0xFFF) == apPlugin->liteId;
+    return (aFormId >> 24) == apPlugin->standardId;
+}
+
 bool IsOwnPluginReference(uint32_t aFormId) noexcept
 {
-    static const Mod* s_pPlugin = ModManager::Get()->GetByName("SkyrimTogether.esp");
-    if (!s_pPlugin || !s_pPlugin->IsLoaded())
-        return false;
-    if (s_pPlugin->IsLite())
-        return (aFormId >> 24) == 0xFE && ((aFormId >> 12) & 0xFFF) == s_pPlugin->liteId;
-    return (aFormId >> 24) == s_pPlugin->standardId;
+    static const Mod* s_pMarkers = ModManager::Get()->GetByName("SkyrimTogether.esp");
+    static const Mod* s_pLodPlugin = ModManager::Get()->GetByName("DynDOLOD.esp");
+    static const Mod* s_pLodMaster = ModManager::Get()->GetByName("DynDOLOD.esm");
+    return IsReferenceOf(s_pMarkers, aFormId) || IsReferenceOf(s_pLodPlugin, aFormId) || IsReferenceOf(s_pLodMaster, aFormId);
 }
 
 bool IsSharedSwitchKind(const TESObjectREFR* apRef) noexcept
