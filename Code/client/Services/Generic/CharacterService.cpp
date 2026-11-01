@@ -924,8 +924,7 @@ void CharacterService::ReconcileActorData(
             if (aIsLocalOwner || !m_world.any_of<WaitingFor3D>(aEntity))
                 apActor->Kill();
         }
-        // Respawn resets the reference, which re-rolls a leveled actor and reloads its 3D.
-        // The owner would then find it again as a new actor, so it keeps its local death and the death sync reports it.
+        // An owner keeps its local death, and the death sync reports it.
         else if (aIsLocalOwner)
             spdlog::warn("Keeping actor {:X} dead although the server has it alive", apActor->formID);
         else if (IsDeadAgainstOwner(apActor, false))
@@ -1062,6 +1061,38 @@ void CharacterService::ClaimForKillingBlow(const uint32_t aFormId) noexcept
         return;
     m_killingBlows[cServerId] = cNow + cKillWithin;
     spdlog::info("KillingBlow: {:X} (server id {:X}) is protected, so its owner's game cannot let this player kill it; asked for it, to kill it here", aFormId, cServerId);
+}
+
+void CharacterService::ReviveActor(const uint32_t aFormId) noexcept
+{
+    constexpr auto cReviveWithin = std::chrono::seconds(3);
+
+    Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    if (!pActor || !pActor->IsDead())
+        return;
+
+    // Revived here directly: this game's own actor, whose word reaches every game, or a body dead only here.
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [&view, aFormId](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
+    if (it == view.end() || !view.get<RemoteComponent>(*it).DeadAtOwner)
+    {
+        pActor->Respawn();
+        return;
+    }
+
+    const uint32_t cServerId = view.get<RemoteComponent>(*it).Id;
+    if (!RequestOwnership(aFormId, cServerId, *it))
+        return;
+    m_revivals[cServerId] = std::chrono::steady_clock::now() + cReviveWithin;
+    spdlog::info("Revive: {:X} (server id {:X}) is another game's, and only its owner's word reaches every game; asked for it, to revive it here", aFormId, cServerId);
+}
+
+void CharacterService::AnnounceAgain(const uint32_t aFormId) noexcept
+{
+    auto view = m_world.view<FormIdComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [&view, aFormId](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
+    if (it != view.end() && std::find(s_notAnnounced.begin(), s_notAnnounced.end(), *it) == s_notAnnounced.end())
+        s_notAnnounced.push_back(*it);
 }
 
 void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
@@ -2235,6 +2266,16 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
             else
                 spdlog::info("KillingBlow: {:X} (server id {:X}) came too late or already dead; kept as it is", pActor->formID, acMessage.ServerId);
         }
+
+        // Asked for by ReviveActor; the death sync takes it from here.
+        if (const auto revival = m_revivals.find(acMessage.ServerId); revival != m_revivals.end())
+        {
+            const bool cInTime = std::chrono::steady_clock::now() < revival->second;
+            m_revivals.erase(revival);
+            if (cInTime && pActor->IsDead())
+                pActor->Respawn();
+            spdlog::info("Revive: {:X} (server id {:X}) came to this game {}; now dead: {}", pActor->formID, acMessage.ServerId, cInTime ? "in time" : "too late", pActor->IsDead());
+        }
         return;
     }
 
@@ -2337,6 +2378,19 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
         const auto itor = std::find_if(std::begin(formView), std::end(formView), [cOwnId, formView](entt::entity aOther) { return formView.get<FormIdComponent>(aOther).Id == cOwnId; });
         if (itor != std::end(formView))
             ProcessNewEntity(*itor);
+    }
+
+    // A character the leader switched off leaves the server while its owner still runs it.
+    // Its owner lets go of it here, so that the actor can be announced again when it is switched back on.
+    if (acMessage.Gone)
+    {
+        const auto localView = m_world.view<LocalComponent>();
+        const auto localIt = std::find_if(std::begin(localView), std::end(localView), [id = acMessage.ServerId, localView](entt::entity entity) { return localView.get<LocalComponent>(entity).Id == id; });
+        if (localIt != std::end(localView))
+        {
+            m_world.remove<LocalAnimationComponent, LocalComponent>(*localIt);
+            return;
+        }
     }
 
     auto view = m_world.view<RemoteComponent>();

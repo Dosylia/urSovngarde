@@ -420,6 +420,16 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       14:52, Imperials getting up for player 1 while walking around, and an ice troll standing for player 2: no line says it, as nothing logs a body getting up.
       Next: an owner that gets a blow on an NPC already dead sends its death again. Find how the hound died with no line. Log a copy going from lying to standing, so the next session names the actor.
       Bandit CC591 of 10-26 (27 killing blows) may be the same thing; not checked.
+- [!] **An NPC revived at its owner stays a body in the other game** (rig, two real games, 2026-11-01). Build v1.9.7-16-g2fb3bc58-dirty.84d6682, its last part never run, not seen in play.
+      A script called Resurrect on an Imperial Soldier in its owner's game only. On 355ef2d it stayed dead in the other game, 0 of 3 rounds alive, health -99902, the owner's killing blow: `Reset()` unloaded the copy, and it was announced again with the server's stale health.
+      On VR `Respawn` no longer calls `Reset()`. On 11f01df, 5 of 10 rounds then held, with equal health and about 1 unit apart. In the others the copy is dead again 50 to 100 ms after the revive, health full, with no call to KillImpl. Why is not known. A Papyrus Resurrect from our code did no better, 5 of 10 as well.
+      84d6682 repeats the revive each second, 5 times at most, until it lasts: `Death sync: remote actor ... fell dead again after its revival`. A repeat has repaired it before, but this code has never run. If bodies still stay dead, count those lines.
+      Which real revives reach this (quest scripts, mods, Reanimate) is not known.
+- [!] **Calls for other plugins: leader check, switch an actor, revive an actor** (owner's yes on 2026-11-01, an exception to bugs only). Build 84d6682, no protocol change, client and server. Rig on 11f01df; 84d6682 changes nothing here but the revive.
+      `urSovngarde_IsConnected`, `IsPartyLeader`, `SwitchActor`, `ReviveActor` in `Code/client/PluginCalls.cpp`, found with GetProcAddress on the main module: red on 355ef2d, found and right on 11f01df.
+      Switch off, alive and dead: off in both games in 0.3 s, stayed off 45 s. Back on in 0.4 s, one soldier, 1 unit apart. The first on froze the leader's game, as draining the task queue held its lock: calls now run outside it.
+      Revive of a body the member owns: alive in both, but 310 units apart 6 s later, and health 98 against 106. Not read further.
+      A game that rejoins after a switch: not proven, the one run used a soldier already dead and off.
 - [!] **A follower with no server id after a hand-over, so the other player loses her** (10-31 14:43, and 11-01 12:42: Lydia fighting for player 2 alone). Fixed in build v1.9.7-12-g629aaced-dirty.090ea03, protocol change, not seen in play.
       Cause, both times: her owner's game dropped her (`Transferring ownership of local actor`), nobody was in range of her last place, so the server removed her (`Removing actor ... no eligible owner remains`). The other game still ran her, with no server id: `server id not found for form id A2C94`.
       Fix: `NotifyRemoveCharacter` says when the server no longer has a character (`Gone`), and a game where that reference stands announces it again and runs it.

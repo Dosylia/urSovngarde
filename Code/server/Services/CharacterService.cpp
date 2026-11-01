@@ -25,6 +25,7 @@
 #include <Messages/RequestFactionsChanges.h>
 #include <Messages/NotifyFactionsChanges.h>
 #include <Messages/NotifyRemoveCharacter.h>
+#include <Messages/NotifyReferenceEnable.h>
 #include <Messages/RequestOwnershipTransfer.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
@@ -341,6 +342,29 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
 
     const auto isPlayer = (refId.ModId == 0 && refId.BaseId == 0x14);
     const auto isCustom = isPlayer || refId.ModId == std::numeric_limits<uint32_t>::max();
+
+    // An actor the party's leader switched off stays off in every game.
+    // Given a character, the copy made for another game would switch it back on there.
+    const auto* pParty = isCustom ? nullptr : m_world.GetPartyService().GetPlayerParty(acMessage.pPlayer);
+    if (pParty)
+    {
+        const auto cSwitch = pParty->ReferenceEnabled.find(refId);
+        if (cSwitch != pParty->ReferenceEnabled.end() && !cSwitch->second)
+        {
+            spdlog::info("ReferenceEnable: {:X}:{:X} asked for a character, but the leader switched it off; player {} is told to switch it off too", refId.ModId, refId.BaseId,
+                         acMessage.pPlayer->GetId());
+
+            NotifyReferenceEnable notify{};
+            notify.Changes.push_back(ReferenceEnableState{refId, false});
+            acMessage.pPlayer->Send(notify);
+
+            // No epoch: the game ends its wait and keeps the actor out of the server.
+            AssignCharacterResponse response{};
+            response.Cookie = message.Cookie;
+            acMessage.pPlayer->Send(response);
+            return;
+        }
+    }
 
     // Check if id is the player
     if (!isCustom)

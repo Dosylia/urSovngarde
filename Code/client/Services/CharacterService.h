@@ -62,6 +62,10 @@ struct CharacterService
     bool RequestOwnership(uint32_t aFormId, uint32_t aServerId, entt::entity aEntity, bool aKillingBlow = false) const noexcept;
     // This player's killing blow on another player's protected NPC: asks for it, and kills it once it is this game's.
     void ClaimForKillingBlow(uint32_t aFormId) noexcept;
+    // Revives a dead actor for every game: a copy here is asked for first, and revived once this game owns it.
+    void ReviveActor(uint32_t aFormId) noexcept;
+    // An actor switched back on soon after it left the server: discovery still knows it and will not find it again.
+    void AnnounceAgain(uint32_t aFormId) noexcept;
     // Brings the server's copy of an actor's inventory in line with this game's, one entry at a time.
     void SendInventoryDifference(Actor* apActor, uint32_t aServerId, uint32_t aOwnershipEpoch, const Inventory& acServerInventory) const noexcept;
 
@@ -142,6 +146,8 @@ private:
 
     // Protected NPCs this player landed a killing blow on, by server id, until when they are killed once this game owns them.
     TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> m_killingBlows;
+    // Bodies asked for to be revived, by server id, until when they are revived once this game owns them.
+    TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> m_revivals;
 
     float m_cachedExperience = 0.f;
 

@@ -25,6 +25,8 @@
 #include <Structs/DoorState.h>
 
 #include <PlayerCharacter.h>
+#include <Games/ActorExtension.h>
+#include <Games/Skyrim/Interface/UI.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
 #include <Forms/BGSEncounterZone.h>
@@ -697,6 +699,24 @@ bool IsSharedSwitchKind(const TESObjectREFR* apRef) noexcept
     }
 }
 
+// An actor reaches the leader's switches only through ObjectService::SwitchActor.
+// So one arriving here was handed over by a plugin, and the game's own scripts never send one.
+bool IsSwitchableActor(TESObjectREFR* apRef) noexcept
+{
+    return apRef && apRef->formID < 0xFF000000 && apRef != PlayerCharacter::Get() && Cast<Actor>(apRef);
+}
+
+// The game owns an actor while it loads or disposes of one, and disabling it then crashes.
+// A rebuild of the actor would also undo the switch, so the switch waits for all of these.
+bool IsSettledActor(TESObjectREFR* apRef) noexcept
+{
+    UI* pUI = UI::Get();
+    if ((pUI && pUI->GetMenuOpen(BSFixedString("Loading Menu"))) || apRef->IsStillLoading() || (!apRef->GetNiNode() && !apRef->IsDisabled()))
+        return false;
+    const ActorExtension* pExtension = Cast<Actor>(apRef)->GetExtension();
+    return pExtension && pExtension->Reconciliation == ActorExtension::ReconciliationStage::None;
+}
+
 // How the leader's switches went here since the last line about them.
 size_t s_enableSwitched = 0;
 size_t s_enableAlreadySo = 0;
@@ -729,7 +749,7 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
     if (!pRef)
         return false;
     // The leader sends only these kinds; another plugin at the same id here is left alone.
-    if (!IsSharedSwitchKind(pRef) || pRef->IsDeleted())
+    if ((!IsSharedSwitchKind(pRef) && !IsSwitchableActor(pRef)) || pRef->IsDeleted())
     {
         ++s_enableLeftAlone;
         return true;
@@ -739,11 +759,14 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
         ++s_enableAlreadySo;
         return true;
     }
+    const bool cActor = IsSwitchableActor(pRef);
+    if (cActor && !IsSettledActor(pRef))
+        return false;
 
-    // A door, container, activator or furniture that comes or goes is one a player can see missing.
+    // A door, container, activator, furniture or actor that comes or goes is one a player can see missing.
     // Markers and statics switch by the hundred and are left out.
     const auto cType = static_cast<uint8_t>(pRef->baseForm->formType);
-    if (cType == 24 || cType == 25 || cType == 28 || cType == 29 || cType == 40)
+    if (cType == 24 || cType == 25 || cType == 28 || cType == 29 || cType == 40 || cActor)
         spdlog::info("ReferenceEnable: {:X} (base {:X}, form type {}) switched {} here, as the leader's game has it", pRef->formID, pRef->baseForm->formID, cType,
                      aEnabled ? "on" : "off");
 
@@ -751,11 +774,37 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
         pRef->EnableImpl();
     else
         pRef->Disable();
-    if (aEnabled == !pRef->IsDisabled())
+    if (cActor && aEnabled)
+        m_world.GetCharacterService().AnnounceAgain(aFormId);
+
+    // An actor's disable is only queued, so it has not landed yet.
+    if (aEnabled == !pRef->IsDisabled() || cActor)
         ++s_enableSwitched;
     else
         spdlog::warn("ReferenceEnable: {:X} (base {:X}) did not take the leader's switch {}", pRef->formID, pRef->baseForm->formID, aEnabled ? "on" : "off");
     return true;
+}
+
+void ObjectService::SwitchActor(uint32_t aFormId, bool aEnabled) noexcept
+{
+    if (!m_transport.IsConnected() || !m_world.GetPartyService().IsLeader())
+        return;
+
+    ReferenceEnableState state{};
+    state.Enabled = aEnabled;
+    if (!m_world.GetModSystem().GetServerModId(aFormId, state.Id.ModId, state.Id.BaseId))
+    {
+        spdlog::warn("ReferenceEnable: no server id for actor {:X}, so it was not switched", aFormId);
+        return;
+    }
+
+    // Sent before the switch here: an actor switched on is announced by this game, and the server must know by then.
+    RequestReferenceEnable request{};
+    request.Changes.push_back(state);
+    m_transport.Send(request);
+
+    if (!ApplyReferenceEnable(aFormId, aEnabled))
+        m_enableWaiting[aFormId] = aEnabled;
 }
 
 void ObjectService::OnNotifyReferenceEnable(const NotifyReferenceEnable& acMessage) noexcept

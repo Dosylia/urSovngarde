@@ -1128,10 +1128,10 @@ void Actor::Respawn() noexcept
 {
 #ifdef SKYRIMVR
     // Resurrect(resetInventory, attach3D) = SE 36331, by address like KillImpl above.
+    // No Reset here: it unloads the actor, and a copy announced again that way comes back dead.
     TP_THIS_FUNCTION(TResurrect, void, Actor, bool aResetInventory, bool aAttach3D);
     POINTER_SKYRIMSE(TResurrect, s_resurrect, 0, 36331);
     TiltedPhoques::ThisCall(s_resurrect, this, false, true);
-    Reset();
     return;
 #endif
     Resurrect(false);

@@ -6,6 +6,7 @@
 #include <dinput.h>
 #include <WindowsHook.hpp>
 
+#include <PluginCalls.h>
 #include <World.h>
 #include <ScriptExtender.h>
 
@@ -176,6 +177,7 @@ void TiltedOnlineApp::Update()
     }
 
     World::Get().Update();
+    RunPluginCalls();
 }
 
 bool TiltedOnlineApp::Attach()

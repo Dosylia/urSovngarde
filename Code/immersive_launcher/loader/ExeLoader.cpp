@@ -304,6 +304,8 @@ bool ExeLoader::Load(const uint8_t* apProgramBuffer)
     auto sourceChecksum = sourceNtHeader->OptionalHeader.CheckSum;
     auto sourceTimestamp = sourceNtHeader->FileHeader.TimeDateStamp;
     auto sourceDebugDir = sourceNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
+    // Other plugins find this mod's calls through it, and the game has no exports of its own.
+    auto sourceExportDir = sourceNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 
     LoadSections(ntHeader);
 
@@ -331,6 +333,7 @@ bool ExeLoader::Load(const uint8_t* apProgramBuffer)
     sourceNtHeader->OptionalHeader.CheckSum = sourceChecksum;
     sourceNtHeader->FileHeader.TimeDateStamp = sourceTimestamp;
     sourceNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG] = sourceDebugDir;
+    sourceNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT] = sourceExportDir;
     m_pBinary = nullptr;
 
     // Set a hook to check if anything loaded messes with critical hooks.

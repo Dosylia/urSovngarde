@@ -28,6 +28,9 @@ class ObjectService final : public BSTEventSink<TESActivateEvent>
 public:
     ObjectService(World&, entt::dispatcher&, TransportService&);
 
+    // The leader's switch of a placed actor another plugin handed over, for every game of the party.
+    void SwitchActor(uint32_t aFormId, bool aEnabled) noexcept;
+
 private:
     void OnDisconnected(const DisconnectedEvent&) noexcept;
     void OnCellChange(const CellChangeEvent&) noexcept;

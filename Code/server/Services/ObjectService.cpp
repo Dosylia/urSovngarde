@@ -4,6 +4,7 @@
 #include <World.h>
 #include <Components.h>
 
+#include <Events/CharacterRemoveEvent.h>
 #include <Events/PlayerLeaveCellEvent.h>
 
 #include <Messages/ActivateRequest.h>
@@ -257,6 +258,19 @@ void ObjectService::OnReferenceEnableRequest(const PacketEvent<RequestReferenceE
         if (pMember != acMessage.pPlayer)
             pMember->Send(notify);
     }
+
+    // A character switched off leaves the server: a spawn sent to a game coming into range would switch it back on there.
+    TiltedPhoques::Vector<uint32_t> switchedOff;
+    const auto characters = m_world.view<FormIdComponent, CharacterComponent>();
+    for (const auto cEntity : characters)
+    {
+        const auto cSwitch = pParty->ReferenceEnabled.find(characters.get<FormIdComponent>(cEntity).Id);
+        if (cSwitch != pParty->ReferenceEnabled.end() && !cSwitch->second)
+            switchedOff.push_back(World::ToInteger(cEntity));
+    }
+    for (const uint32_t cServerId : switchedOff)
+        m_world.GetDispatcher().trigger(CharacterRemoveEvent(cServerId));
+
     // At most one line every 10 s, with how many came since the last.
     static std::chrono::steady_clock::time_point s_nextLog{};
     static size_t s_since = 0;

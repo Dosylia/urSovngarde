@@ -156,6 +156,45 @@ void ActorValueService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcep
         m_world.remove<ActorValuesComponent>(*it);
 }
 
+namespace
+{
+// A copy revived on its owner's word can be dead again within 100 ms, with no kill and its health full.
+// The word comes only once, so each revival is checked a second later and repeated until it lasts.
+struct CopyRevival
+{
+    std::chrono::steady_clock::time_point CheckAt{};
+    uint32_t TriesLeft{};
+};
+TiltedPhoques::Map<uint32_t, CopyRevival> s_copyRevivals;
+
+void RunCopyRevivals() noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = s_copyRevivals.begin(); it != s_copyRevivals.end();)
+    {
+        if (cNow < it->second.CheckAt)
+        {
+            ++it;
+            continue;
+        }
+
+        Actor* pActor = Cast<Actor>(TESForm::GetById(it->first));
+        const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+        if (!pExtension || !pExtension->IsRemote() || !pActor->IsDead() || it->second.TriesLeft == 0)
+        {
+            it = s_copyRevivals.erase(it);
+            continue;
+        }
+
+        pActor->Respawn();
+        it.value().CheckAt = cNow + 1s;
+        --it.value().TriesLeft;
+        spdlog::info("Death sync: remote actor {:X} fell dead again after its revival; revived again, {} tries left", pActor->formID, it->second.TriesLeft);
+        ++it;
+    }
+}
+} // namespace
+
 void ActorValueService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
     PerfScope perfScope("ActorValueService::OnUpdate");
@@ -164,6 +203,7 @@ void ActorValueService::OnUpdate(const UpdateEvent& acEvent) noexcept
     RunHeldHits();
     RunDeathStateUpdates();
     RunActorValuesUpdates();
+    RunCopyRevivals();
 }
 
 void ActorValueService::BroadcastActorValues() noexcept
@@ -857,6 +897,10 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
     if (pActor->IsDead() != acMessage.IsDead)
     {
         acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
+        if (acMessage.IsDead)
+            s_copyRevivals.erase(pActor->formID);
+        else
+            s_copyRevivals[pActor->formID] = CopyRevival{std::chrono::steady_clock::now() + 1s, 5};
         spdlog::info("Death sync: remote actor {:X} set {} by its owner (now dead: {})", pActor->formID, acMessage.IsDead ? "dead" : "alive", pActor->IsDead());
     }
     else
