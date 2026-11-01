@@ -168,6 +168,124 @@ void RunGainedMoving() noexcept
     }
 }
 
+// Whether the phase waits on a package of an NPC remote here.
+// Packages only complete on the client running the NPC's AI, so this copy of the scene can't get past the phase on its own.
+static bool IsPhaseStuckOnRemotePackage(BGSScene* apScene, uint32_t aPhaseIndex) noexcept
+{
+    // A phase with completion conditions ends once they pass, even mid-action, so this copy catches up within milliseconds.
+    const BGSScenePhase* pPhase = apScene->phases[aPhaseIndex];
+    if (!pPhase || pPhase->HasCompletionConditions())
+        return false;
+
+    for (BGSSceneAction* pAction : apScene->actions)
+    {
+        if (!pAction || pAction->GetType() != BGSSceneAction::Type::kPackage || !pAction->BlocksPhase(aPhaseIndex))
+            continue;
+
+        Actor* pActor = Cast<Actor>(apScene->owningQuest ? apScene->owningQuest->GetAliasedRef(pAction->actorId) : nullptr);
+        ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+        if (pExtension && pExtension->IsRemote())
+            return true;
+    }
+
+    return false;
+}
+
+// Whether the local copy of the line's scene voices it itself or already did, so the sender's would cut it off and end the phase early.
+// A copy stuck in an earlier phase on a remote NPC's package never reaches the line, so it plays the sender's.
+static bool IsLineVoicedByLocalScene(Actor* apActor, const GameId& acSceneId, uint32_t aScenePhase) noexcept
+{
+    BGSScene* pScene = apActor->GetCurrentScene();
+    if (!acSceneId || !pScene || !pScene->isPlaying || pScene->formID != World::Get().GetModSystem().GetGameId(acSceneId))
+        return false;
+
+    // At or past the sender's phase. A phase index past the end means the scene is starting or ending here.
+    const uint32_t cPhase = pScene->currentPhaseIndex;
+    if (cPhase >= aScenePhase || cPhase >= pScene->phases.length)
+        return true;
+
+    return !IsPhaseStuckOnRemotePackage(pScene, cPhase);
+}
+
+// The game's first call for a voice line only starts loading its lip file, and plays nothing.
+// So a line is asked for again once that file has loaded, which also moves the NPC's mouth.
+struct PendingLine
+{
+    String File;
+    GameId SceneId;
+    uint32_t ScenePhase{};
+    std::chrono::steady_clock::time_point AskedAt{};
+};
+// By server id: a copy's form id can pass to another actor while a line waits.
+TiltedPhoques::Map<uint32_t, PendingLine> s_pendingLines;
+
+bool StartLine(Actor* apActor, const char* acpFile) noexcept
+{
+    constexpr uint32_t cNoSound = 0xFFFFFFFF;
+    uint32_t soundHandle[3]{};
+    apActor->SpeakSound(acpFile, soundHandle);
+    return soundHandle[0] != cNoSound;
+}
+
+// Reads the load state of the actor's lip file the way the game's own dialogue does (0x14066da92).
+bool IsLipLoading(const Actor* apActor) noexcept
+{
+    constexpr size_t cLipEntry = 0x3B8;
+    constexpr size_t cLoadState = 0xC;
+    constexpr uint32_t cLoadStateBits = 0x70000000;
+    constexpr uint32_t cQueued = 0x10000000;
+    constexpr uint32_t cLoading = 0x20000000;
+
+    // The third word of the process: an actor near the player has its high process data there.
+    const auto* pHighData = apActor->currentProcess ? static_cast<const uint8_t*>(apActor->currentProcess->unk8) : nullptr;
+    if (!pHighData)
+        return false;
+
+    const uint8_t* pEntry = *reinterpret_cast<const uint8_t* const*>(pHighData + cLipEntry);
+    if (!pEntry)
+        return false;
+
+    const uint32_t cState = *reinterpret_cast<const uint32_t*>(pEntry + cLoadState) & cLoadStateBits;
+    return cState == cQueued || cState == cLoading;
+}
+
+void RunPendingLines() noexcept
+{
+    constexpr auto cLipWait = std::chrono::seconds(1);
+    constexpr auto cGiveUpAfter = std::chrono::seconds(3);
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = s_pendingLines.begin(); it != s_pendingLines.end();)
+    {
+        const PendingLine& cLine = it->second;
+        Actor* pActor = Utils::GetByServerId<Actor>(it->first);
+        if (!pActor || !pActor->GetNiNode() || pActor->actorState.IsDeadOrDying() || IsLineVoicedByLocalScene(pActor, cLine.SceneId, cLine.ScenePhase))
+        {
+            it = s_pendingLines.erase(it);
+            continue;
+        }
+
+        const auto cWaited = std::chrono::duration_cast<std::chrono::milliseconds>(cNow - cLine.AskedAt);
+        if (cWaited < cLipWait && IsLipLoading(pActor))
+        {
+            ++it;
+            continue;
+        }
+
+        if (StartLine(pActor, cLine.File.c_str()))
+        {
+            spdlog::info("Dialogue: {:X} says {}; started here after {} ms", pActor->formID, cLine.File.c_str(), cWaited.count());
+            it = s_pendingLines.erase(it);
+        }
+        else if (cWaited > cGiveUpAfter)
+        {
+            spdlog::warn("Dialogue: {:X} says {}; the game had not started it after {} ms, so it is dropped", pActor->formID, cLine.File.c_str(), cWaited.count());
+            it = s_pendingLines.erase(it);
+        }
+        else
+            ++it;
+    }
+}
+
 // By its owner's reports, not its graph: this game's AI writes its own speed there, even on a copy.
 // A slow walker reports about 60 units a second, and a standing body none.
 void NoteGainedMoving(Actor* apActor, const InterpolationComponent* apInterpolation) noexcept
@@ -1133,6 +1251,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     SpawnReveal::Tick();
     RunFollowerReclaims();
     RunGainedMoving();
+    RunPendingLines();
     RunTakeoverDiag(m_world);
 
     {
@@ -1273,6 +1392,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
     s_ownCopies.clear();
     s_handedAway.clear();
+    s_pendingLines.clear();
 
     m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>();
 
@@ -2542,45 +2662,6 @@ void CharacterService::OnNotifySyncExperience(const NotifySyncExperience& acMess
     pPlayer->AddSkillExperience(PlayerCharacter::LastUsedCombatSkill, acMessage.Experience);
 }
 
-// Whether the phase waits on a package of an NPC remote here.
-// Packages only complete on the client running the NPC's AI, so this copy of the scene can't get past the phase on its own.
-static bool IsPhaseStuckOnRemotePackage(BGSScene* apScene, uint32_t aPhaseIndex) noexcept
-{
-    // A phase with completion conditions ends once they pass, even mid-action, so this copy catches up within milliseconds.
-    const BGSScenePhase* pPhase = apScene->phases[aPhaseIndex];
-    if (!pPhase || pPhase->HasCompletionConditions())
-        return false;
-
-    for (BGSSceneAction* pAction : apScene->actions)
-    {
-        if (!pAction || pAction->GetType() != BGSSceneAction::Type::kPackage || !pAction->BlocksPhase(aPhaseIndex))
-            continue;
-
-        Actor* pActor = Cast<Actor>(apScene->owningQuest ? apScene->owningQuest->GetAliasedRef(pAction->actorId) : nullptr);
-        ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
-        if (pExtension && pExtension->IsRemote())
-            return true;
-    }
-
-    return false;
-}
-
-// Whether the local copy of the line's scene voices it itself or already did, so the sender's would cut it off and end the phase early.
-// A copy stuck in an earlier phase on a remote NPC's package never reaches the line, so it plays the sender's.
-static bool IsLineVoicedByLocalScene(Actor* apActor, const GameId& acSceneId, uint32_t aScenePhase) noexcept
-{
-    BGSScene* pScene = apActor->GetCurrentScene();
-    if (!acSceneId || !pScene || !pScene->isPlaying || pScene->formID != World::Get().GetModSystem().GetGameId(acSceneId))
-        return false;
-
-    // At or past the sender's phase. A phase index past the end means the scene is starting or ending here.
-    const uint32_t cPhase = pScene->currentPhaseIndex;
-    if (cPhase >= aScenePhase || cPhase >= pScene->phases.length)
-        return true;
-
-    return !IsPhaseStuckOnRemotePackage(pScene, cPhase);
-}
-
 void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
 {
     if (!m_transport.IsConnected())
@@ -2643,13 +2724,22 @@ void CharacterService::OnNotifyDialogue(const NotifyDialogue& acMessage) noexcep
     }
 
     pActor->StopCurrentDialogue(true);
-    const float cAnswer = pActor->SpeakSound(acMessage.SoundFilename.c_str());
-    // How it was played, so that a line the player did not hear can be told apart from one never started.
+    s_pendingLines.erase(acMessage.ServerId);
+    const bool cStarted = StartLine(pActor, acMessage.SoundFilename.c_str());
+
     const PlayerCharacter* pPlayer = PlayerCharacter::Get();
     const float cDistance = pPlayer ? glm::distance(static_cast<glm::vec3>(pActor->position), static_cast<glm::vec3>(pPlayer->position)) : -1.f;
+
+    // The game refuses an actor too far to hear every time, so one past a cell away is not asked again.
+    constexpr float cVoiceReach = 4096.f;
+    const bool cWaits = !cStarted && cDistance < cVoiceReach;
+    if (cWaits)
+        s_pendingLines[acMessage.ServerId] = PendingLine{acMessage.SoundFilename, acMessage.SceneId, acMessage.ScenePhase, std::chrono::steady_clock::now()};
+
+    // How it was played, so that a line the player did not hear can be told apart from one never started.
     const UI* pUI = UI::Get();
-    spdlog::info("Dialogue: {:X} (server id {:X}) says {}; played here (game's answer {:.2f}, {:.0f} units from the player, 3D {}, pause counter {})", pActor->formID,
-                 acMessage.ServerId, acMessage.SoundFilename.c_str(), cAnswer, cDistance, pActor->GetNiNode() ? "yes" : "no", pUI ? pUI->numPausesGame : 0);
+    spdlog::info("Dialogue: {:X} (server id {:X}) says {}; {} ({:.0f} units from the player, 3D {}, pause counter {})", pActor->formID, acMessage.ServerId,
+                 acMessage.SoundFilename.c_str(), cStarted ? "started here" : cWaits ? "waiting for its lip file" : "not started, too far away", cDistance, pActor->GetNiNode() ? "yes" : "no", pUI ? pUI->numPausesGame : 0);
 }
 
 void CharacterService::OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept

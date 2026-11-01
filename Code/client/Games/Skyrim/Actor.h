@@ -258,7 +258,8 @@ struct Actor : TESObjectREFR
     void DropObject(TESBoundObject* apObject, ExtraDataList* apExtraData, int32_t aCount, NiPoint3* apLocation, NiPoint3* apRotation) noexcept;
     void DropOrPickUpObject(const Inventory::Entry& arEntry, NiPoint3* apPoint, NiPoint3* apRotate) noexcept;
     // Returns what the game's speak function returns.
-    float SpeakSound(const char* pFile);
+    //! apSoundHandle receives the game's BSSoundHandle, three words. Its first, the sound id, stays -1 when no sound started.
+    float SpeakSound(const char* pFile, uint32_t* apSoundHandle = nullptr);
     void StartCombatEx(Actor* apTarget) noexcept;
     void SetCombatTargetEx(Actor* apTarget) noexcept;
     void StartCombat(Actor* apTarget) noexcept;

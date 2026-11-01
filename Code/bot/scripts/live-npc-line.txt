@@ -1,0 +1,31 @@
+# A line another game's NPC speaks makes a sound in this game, even when its lip file is not loaded yet.
+#
+#   python Tools\VR\live-check.py live-npc-line
+#
+# The game's first call for a voice line only starts loading its lip file, and plays nothing, so the line is asked for again.
+# This shows the game started a sound, not that anyone heard it: the rig has no ears, so play decides.
+log live npc line
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+
+log DO god on
+log -- the bot brings an NPC beside the player
+npc temp A2C8E
+waitfor owned == 1 20
+wait 8
+log REQUIRE npc 3d
+
+log -- lines of a conversation
+say Data\Sound\Voice\Skyrim.esm\MaleUniqueUlfric\CW_CWSharedInfo_000A6CCF_1.wav
+wait 6
+say Data\Sound\Voice\Skyrim.esm\MaleUniqueUlfric\Favor254_Favor254QuestGive_000E0B8A_1.wav
+wait 6
+log CHECK logged says .*CW_CWSharedInfo_000A6CCF_1.wav; started here
+log CHECK logged says .*Favor254QuestGive_000E0B8A_1.wav; started here
+log CHECK game alive
+wait 2
+log done
+stop

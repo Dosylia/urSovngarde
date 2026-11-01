@@ -49,6 +49,7 @@
 #include <Messages/NotifyPlayerJoined.h>
 #include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifyRemoveCharacter.h>
+#include <Messages/DialogueRequest.h>
 #include <Messages/RequestSetWaypoint.h>
 #include <Messages/NotifyRespawn.h>
 #include <Messages/PlayerRespawnRequest.h>
@@ -3372,6 +3373,24 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // "release <server id|ref:<hex>|any> [at <x> <y> <z>]": with "at", the actor was last seen at that place in Skyrim's
     // worldspace, as a game says when it lets go of an actor it unloaded; the server then tells the other players to
     // move it there (NotifyActorTeleport).
+    // "say <voice file>": an NPC this bot owns speaks that line, which the server sends to the other players in range.
+    if (name == "say" && !args.empty())
+    {
+        for (const auto& actor : m_actors)
+        {
+            if (!actor.OwnedByUs || actor.IsPlayer || actor.ServerId == m_serverId)
+                continue;
+
+            DialogueRequest request{};
+            request.ServerId = actor.ServerId;
+            request.SoundFilename = args[0].c_str();
+            SendMsg(request);
+            return true;
+        }
+        spdlog::warn("[script] say: this bot owns no NPC to speak");
+        return true;
+    }
+
     // "waypoint <hex form>": this player sets a waypoint on that world space or cell, which the server relays to the party.
     if (name == "waypoint" && !args.empty())
     {
