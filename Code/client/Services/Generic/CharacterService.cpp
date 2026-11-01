@@ -168,6 +168,16 @@ void RunGainedMoving() noexcept
     }
 }
 
+// By its owner's reports, not its graph: this game's AI writes its own speed there, even on a copy.
+// A slow walker reports about 60 units a second, and a standing body none.
+void NoteGainedMoving(Actor* apActor, const InterpolationComponent* apInterpolation) noexcept
+{
+    constexpr float cMovingSpeed = 20.f;
+    const bool cOwnGraphCopy = apActor->GetExtension()->IsRemote() && apInterpolation && !apInterpolation->ForeignGraph;
+    if (const float cCopySpeed = cOwnGraphCopy ? InterpolationSystem::ReportedSpeed(apActor->formID, *apInterpolation) : 0.f; cCopySpeed > cMovingSpeed)
+        s_gainedMoving.push_back({apActor->formID, cCopySpeed, std::chrono::steady_clock::now() + std::chrono::milliseconds(500)});
+}
+
 // TEMPORARY: what a living NPC carries over from being a copy, read as it is gained and 3 s later.
 // In flags1, bits 0-3 are its moving directions and bits 6-8 walking, running and sprinting.
 // In flags2, bits 5-7 are its weapon: 0 sheathed, 3 drawn, 4 wanting to sheathe, 5 sheathing.
@@ -294,6 +304,7 @@ struct BaseMatch
 // Compares the owner's base with the local one: a differing base is "foreign" when it is another kind of creature.
 // Same name means same kind: a levelled list mixes humanoid races freely (Nord and Breton bandits share one graph).
 // Only when the names differ does the race decide (Elk vs Deer is foreign; Dragon vs Blood Dragon is not).
+// Two people are never foreign, whatever their races: a stand-in made from the owner's pick would lose the name its reference shows.
 // Races come from Actor::race and TESNPC::raceForm; if those disagree for the local actor, the race is not trusted.
 BaseMatch CompareBase(World& aWorld, Actor* apActor, const GameId& acRemoteBaseId, const bool aLog) noexcept
 {
@@ -330,7 +341,7 @@ BaseMatch CompareBase(World& aWorld, Actor* apActor, const GameId& acRemoteBaseI
     }
     else if (apActor->race && pLocalBase->raceForm.race == apActor->race && pRemoteBase->raceForm.race)
     {
-        match.Foreign = pRemoteBase->raceForm.race != apActor->race;
+        match.Foreign = pRemoteBase->raceForm.race != apActor->race && !(Actor::IsPersonRace(apActor->race) && Actor::IsPersonRace(pRemoteBase->raceForm.race));
         pHow = "race";
     }
     else
@@ -1764,6 +1775,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
         if (!entity)
         {
+            // The reference itself takes the character now, so an old stand-in's record must not keep disabling it.
+            s_ghosts.erase(cActorId);
+
             const auto view = m_world.view<FormIdComponent>();
             const auto itor = std::find_if(std::begin(view), std::end(view), [cActorId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == cActorId; });
 
@@ -2048,13 +2062,7 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
             return;
         }
 
-        // By its owner's reports, not its graph: this game's AI writes its own speed there, even on a copy.
-        // A slow walker reports about 60 units a second, and a standing body none.
-        constexpr float cMovingSpeed = 20.f;
-        const auto* pCopyInterpolation = m_world.try_get<InterpolationComponent>(cEntity);
-        const bool cOwnGraphCopy = pActor->GetExtension()->IsRemote() && pCopyInterpolation && !pCopyInterpolation->ForeignGraph;
-        if (const float cCopySpeed = cOwnGraphCopy ? InterpolationSystem::ReportedSpeed(pActor->formID, *pCopyInterpolation) : 0.f; cCopySpeed > cMovingSpeed)
-            s_gainedMoving.push_back({pActor->formID, cCopySpeed, std::chrono::steady_clock::now() + std::chrono::milliseconds(500)});
+        NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
 
         // TEMPORARY: see LogTakeoverState.
         if (!pActor->IsDead())
@@ -2196,8 +2204,9 @@ void CharacterService::RunFollowerReclaims() const noexcept
 
 void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage) const noexcept
 {
-    // Removals go to every player, in range or not, so a record kept for a character nobody has any more ends here.
-    if (const auto handed = s_handedAway.find(acMessage.ServerId); handed != s_handedAway.end())
+    // A character gone from the server goes to every player, in range or not, so a record kept for one nobody has any more ends here.
+    // One that only left this player's view is still on the server, and comes back as the same actor.
+    if (const auto handed = s_handedAway.find(acMessage.ServerId); acMessage.Gone && handed != s_handedAway.end())
     {
         const uint32_t cOwnId = handed->second.FormId;
         s_handedAway.erase(handed);
@@ -2221,6 +2230,7 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
         // A copy whose 3D has not loaded yet has no FormIdComponent; the spawn put its id on the RemoteComponent.
         // Left behind, it would be taken for an actor of this game's own, and stay without its gear.
         const auto& cRemote = view.get<RemoteComponent>(*itor);
+        const bool cDeadAtOwner = cRemote.DeadAtOwner;
         uint32_t formId = 0;
         if (const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(*itor))
             formId = pFormIdComponent->Id;
@@ -2238,6 +2248,8 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
                 CharacterService::DeleteTempActor(formId);
             else if (pActor)
             {
+                if (acMessage.Gone && !cDeadAtOwner)
+                    NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
                 pActor->GetExtension()->SetRemote(false);
 #ifdef SKYRIMVR
                 VRBodySync::ClearRemotePose(formId);
@@ -2246,6 +2258,28 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
         }
 
         DeleteRemoteEntityComponents(cEntity);
+
+        // Gone for everybody while it stands here, so this game runs it now, and unannounced nobody else would see it.
+        // A follower's own game can drop her at a gate while her reference walks on in the other game.
+        // One dead at its owner stays out of this: announced from a copy that missed the death, it would come back alive.
+        // One being rebuilt for a pick has no 3D for a moment, and discovery will not bring it back.
+        Actor* pReference = Cast<Actor>(TESForm::GetById(formId));
+        const bool cOwnReference = pReference && !pReference->IsTemporary();
+        const bool cRebuilding = cOwnReference && pReference->GetExtension()->Reconciliation != ActorExtension::ReconciliationStage::None;
+        if (acMessage.Gone && !cDeadAtOwner && cOwnReference && (cRebuilding || (pReference->GetNiNode() && !pReference->IsDisabled())) && m_world.all_of<FormIdComponent>(cEntity))
+        {
+            spdlog::info("Character {:X} is gone from the server while {:X} stands here; announced again from this game", acMessage.ServerId, formId);
+            s_teleportsRefused.erase(formId);
+            InterpolationSystem::Forget(formId);
+            // A pick not started on belonged to the owner that is gone; this game's own stands now.
+            if (!cRebuilding)
+            {
+                m_pendingLeveledConforms.erase(formId);
+                m_conformEquipment.erase(formId);
+            }
+            ProcessNewEntity(cEntity);
+            return;
+        }
 
         // A reference standing here that its owner took through a door: announced again, it comes back with its owner's place.
         // Its assignment then moves it out (OnAssignCharacter).

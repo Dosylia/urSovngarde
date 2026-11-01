@@ -630,6 +630,26 @@ TEST_CASE("Packets", "[encoding.packets]")
             REQUIRE(pRecv->State.Objectives.back() == WarState::kFailed);
         }
     }
+
+    SECTION("NotifyRemoveCharacter")
+    {
+        for (const bool cGone : {false, true})
+        {
+            Buffer buff(100);
+            NotifyRemoveCharacter sendMessage;
+            sendMessage.ServerId = 0x100005;
+            sendMessage.Gone = cGone;
+
+            Buffer::Writer writer(&buff);
+            sendMessage.Serialize(writer);
+            Buffer::Reader reader(&buff);
+            auto pMessage = ServerMessageFactory{}.Extract(reader);
+            REQUIRE(pMessage);
+            const auto pRecv = CastUnique<NotifyRemoveCharacter>(std::move(pMessage));
+            REQUIRE(*pRecv == sendMessage);
+            REQUIRE(pRecv->Gone == cGone);
+        }
+    }
 }
 
 TEST_CASE("Damaged messages are dropped", "[encoding.damaged]")

@@ -1007,20 +1007,13 @@ bool Actor::HasLoadedProcess() const noexcept
     return currentProcess && currentProcess->middleProcess;
 }
 
-bool Actor::IsDragon() const noexcept
+// TESRace: BGSKeywordForm at +0x70 (keywords +0x78, count +0x80).
+static bool RaceHasKeyword(const TESRace* apRace, const uint32_t aKeywordId) noexcept
 {
-    const ActorExtension* pExtension = const_cast<Actor*>(this)->GetExtension();
-    if (BehaviorVar::IsDragon(pExtension->GraphDescriptorHash))
-        return true;
-
-    // A modded dragon behavior is only recognized after the actor is sent to the server, which then gives it too small a range.
-    // The race keyword ActorTypeDragon is known right away.
-    // TESRace: BGSKeywordForm at +0x70 (keywords +0x78, count +0x80).
     constexpr uint8_t cRaceFormType = 14;
     constexpr uint8_t cKeywordFormType = 4;
-    constexpr uint32_t cActorTypeDragon = 0x35D59;
 
-    const TESForm* pRace = reinterpret_cast<const TESForm*>(race);
+    const TESForm* pRace = reinterpret_cast<const TESForm*>(apRace);
     if (!pRace || static_cast<uint8_t>(pRace->formType) != cRaceFormType)
         return false;
 
@@ -1032,11 +1025,29 @@ bool Actor::IsDragon() const noexcept
     for (uint32_t i = 0; i < count; ++i)
     {
         const TESForm* pKeyword = ppKeywords[i];
-        if (pKeyword && static_cast<uint8_t>(pKeyword->formType) == cKeywordFormType && pKeyword->formID == cActorTypeDragon)
+        if (pKeyword && static_cast<uint8_t>(pKeyword->formType) == cKeywordFormType && pKeyword->formID == aKeywordId)
             return true;
     }
 
     return false;
+}
+
+bool Actor::IsDragon() const noexcept
+{
+    const ActorExtension* pExtension = const_cast<Actor*>(this)->GetExtension();
+    if (BehaviorVar::IsDragon(pExtension->GraphDescriptorHash))
+        return true;
+
+    // A modded dragon behavior is only recognized after the actor is sent to the server, which then gives it too small a range.
+    // The race keyword ActorTypeDragon is known right away.
+    constexpr uint32_t cActorTypeDragon = 0x35D59;
+    return RaceHasKeyword(race, cActorTypeDragon);
+}
+
+bool Actor::IsPersonRace(const TESRace* apRace) noexcept
+{
+    constexpr uint32_t cActorTypeNPC = 0x13794;
+    return RaceHasKeyword(apRace, cActorTypeNPC);
 }
 
 #ifdef SKYRIMVR

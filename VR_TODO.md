@@ -419,11 +419,18 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       14:52, Imperials getting up for player 1 while walking around, and an ice troll standing for player 2: no line says it, as nothing logs a body getting up.
       Next: an owner that gets a blow on an NPC already dead sends its death again. Find how the hound died with no line. Log a copy going from lying to standing, so the next session names the actor.
       Bandit CC591 of 10-26 (27 killing blows) may be the same thing; not checked.
-- [ ] **A follower with no server id after a hand-over, so the other player loses her** (14:43: Lydia not visible to player 2, or not where player 1 sees her). Not fixed.
-      Log: she went to player 2 at 14:37:16 (`Actor 100045 is now owned by player 2`) and left that game at 14:37:55 (`Transferring ownership of local actor`). She spawned again in player 1's game at 14:38:38.
-      From 14:40:46 to 14:56:06 that game logged `server id not found for form id A2C94` 43 times, and her health changes as `not sent: it has no server id and none is pending`. So her game no longer sent her.
-      No line says why the spawn got no id, and the server's log of that session was not read.
-      Next: follow that hand-over on the server: who holds 100045 after 14:37:55, and why the spawn at 14:38:38 is not registered.
+- [!] **A follower with no server id after a hand-over, so the other player loses her** (10-31 14:43, and 11-01 12:42: Lydia fighting for player 2 alone). Fixed in build v1.9.7-12-g629aaced-dirty.090ea03, protocol change, not seen in play.
+      Cause, both times: her owner's game dropped her (`Transferring ownership of local actor`), nobody was in range of her last place, so the server removed her (`Removing actor ... no eligible owner remains`). The other game still ran her, with no server id: `server id not found for form id A2C94`.
+      Fix: `NotifyRemoveCharacter` says when the server no longer has a character (`Gone`), and a game where that reference stands announces it again and runs it.
+      Rig: `live-gone-here` red on 629aaced, ok on 090ea03. A fresh reviewer's five findings on it are in the same build.
+      In play, check: leave a city through a gate with a follower behind you. Both players must see her, and no `server id not found` line. A `Character ... is gone from the server while` line is the fix acting.
+- [!] **A levelled NPC of another race became a stand-in that lost its name** (11-01 13:01, Nilheim: Guard for player 2, Bandit Marauder for player 1). Fixed in build v1.9.7-12-g629aaced-dirty.090ea03, not seen in play.
+      Nilheim's bandits take their name from their own base and their looks from a levelled list. An Orc roll against a Nord roll counted as another kind of creature, so a stand-in of the bare pick replaced the reference.
+      Fix: two people are never foreign; the reference takes the owner's pick and keeps its name.
+      Rig: `live-person-race` ok on 090ea03, the game's Orc conformed to the bot's Nord and reads Guard. No red run; the red is the session's log (`Ghost: reference 72A8D rolled as Bandit Plunderer`).
+      In play, check: no `Ghost: reference` line for people, and both players read the same name at Nilheim.
+- [!] **The bridge east of Nilheim differs in player 1's save** (11-01 13:06). Not a sync bug. See KNOWN_ISSUES "A save can give a reference its vanilla base at a plugin's position".
+      Repaired on player 1's install with a one-line swap file. Rig on save 68: the right bridge, deck at z 10120. Not seen in play. In play, check: both players walk the same bridge there.
 - [ ] **Findings from reading the game's code** (2026-10-31, checked against the game's instructions and public layouts). None of this ran on a real game, so every effect on play is inferred.
       Check each against our code before acting: two claims did not hold when that was done.
       - Check first: `BSAnimationGraphManager` has `lock` at 0xA0 and the graph index at 0xB0, AE offsets; a public VR layout gives 0x98 and 0xA8. If so, the client takes the wrong lock each time it touches a copy's graph.
@@ -501,6 +508,7 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Cause: `cbp.dll` (CBPC) detours `Main::Update` when the main menu opens, follows a jump at the function's start, and copies the bytes it finds there without relocating them. Since `0dfd9747` our hook sat on that function, so the copy held `HookMainLoop`'s first call, which landed in the heap. In 12 of 12 crashes the slot at `rsp` minus `rip` is that call's displacement.
       Fix: `SkyrimVM64.cpp` swaps the main loop's only call to `Main::Update` (`+0x5B6E8F`) and leaves the function alone. Rig on v1.9.7-11-g83be966c-dirty.13cdf81: past the main menu, save loaded, connected, `live-load` 9 of 9; the live chain read from memory is `hdtsmp64.dll`, `HookMainLoop`, then `cbp.dll` on `Main::Update`.
       Not run: the rest of the MGO scripts (doors, gameplay), which the rig was stopped before, and any FUS start with this build. In play, check on FUS and MGO that a save loads and that a granted sleep's OK button works.
+      Build v1.9.7-12-g629aaced-dirty.090ea03, client and server, deployed to FUS and MGO on 2026-11-01. Unit tests pass, and the rig ran on it on FUS only. Its protocol changed, so both players and the server need it together.
 - [ ] **Player 2's game piles up threads, and they stand in DynDOLOD.DLL** Highest counts: 4959 on 2026-10-24, 2987 on 10-25, 998 on 10-28, 802 on
       10-30, 1195 on 10-31 (205 at 08:06, 1195 at 08:16). `ThreadOwners:` at 08:14 read DynDOLOD.DLL in 23 of 24. Player 1's game stays near 170 to 270,
       on v3.0.43. Cause found 2026-11-01: player 2's FUS profile has Alpha-43 installed (`DynDOLOD DLL NG and Scripts`) but switched off since at least 10-17, and still runs Alpha-32 (`DynDOLOD DLL NG`), as every crash log to 10-31 00:27 shows (`DynDOLOD.DLL v3.0.32`).

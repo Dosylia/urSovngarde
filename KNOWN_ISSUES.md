@@ -540,6 +540,28 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
 - **Don't keep a debugger attached during play sessions.** Thread creation in DynDOLOD and similar
   plugins makes it stutter.
 
+## A save can give a reference its vanilla base at a plugin's position
+
+- Seen 2026-11-01 at the bridge east of Nilheim (`0x4A1BB`): player 1 walked a lower bridge with planks in the air, and player 2 walked 170 units above them.
+- Lux Via moves that bridge and changes its base to its own hump bridge. Player 1's saves since October hold a change form for it (`CELL_CHANGED`), and the reference loads at Lux Via's position with the vanilla base `0xB27AE`: a level vanilla bridge 149 units low, under Lux Via's scaffolding.
+- Rig, same modlist: a level 30 save with that entry reads base `0xB27AE`. Save 59 of 09-27, without it, reads Lux Via's `0x248A12`, and the game drops the player on its deck at z 10120, the mesh's height.
+  Player 2's heights fit that deck, so that game is the right one. Plugins do not explain it: one modlist gives both results, depending on the save.
+- Repair on player 1's install only: `[References]` in `E:\FUS\overwrite\NilheimBridge_SWAP.ini`, `0x04A1BB~Skyrim.esm|0x248A12~Lux Via.esp`. Rig on save 68: base `0x248A12`, deck at z 10120. The save is not edited, and deleting the file undoes it.
+- Natural Waterfalls' `0xE7FD1` and `0xE7FD3` also hold entries. They keep the plugin's base at the vanilla position, up to about 340 units from where player 2's game has them.
+- The entries start after 09-27 along the route played then. **Open:** what writes them, why the bridge lost its base and those two did not, and whether another save gets one.
+
+## The game ended without a crash as its interface helpers stopped one by one
+
+- Seen once, 2026-11-01 on eed5ad8, in play: `process-end.log` has status 0 through `libcef.dll+0x16737d8`, the only one
+  of 102 game ends in that file to come through `libcef`. No crash block, dump or Windows application error, and no
+  `Sending Quit` to the game in SteamVR's log.
+- `cef_debug.log`: "Network service crashed" at 08:20:30.2, "Tab Killed" at 08:20:35.2, "GPU process exited unexpectedly:
+  exit_code=-1073741510" at 08:20:40.3, and the game gone 60 ms later.
+- 0xC000013A is what Windows gives a process when its console closes or gets Ctrl+C. Local builds open a console
+  (`Launcher.cpp:81`: `IS_MASTER` tests for a branch called master, ours is main), and the steps 5 s apart fit Windows
+  waiting on each process attached to a closing console. The player had run an installer on the desktop 32 s earlier.
+  **Open.** Not proven: nothing logs a console closing. If it comes back, ask whether that window was touched.
+
 ## CEF cannot start its GPU process (hub #14, `libcef.dll+7A52582`)
 
 - 8 crash logs in the hub's 80 reports (2026-10-31): 3 from one machine on v1.9.0-6, last 2026-10-10, and 5 from the rig

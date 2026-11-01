@@ -1,0 +1,36 @@
+# Two people of different races at one levelled point: the reference takes the owner's pick and keeps its own name.
+#
+#   python Tools\VR\live-check.py live-person-race
+#
+# Nilheim's bandits are named Guard by their own base, which takes only its looks from a levelled list.
+# An Orc pick here against a Nord pick at the owner used to count as another kind of creature.
+# A stand-in of the bare pick, named Bandit Marauder, then replaced the reference, and the two players saw different names.
+# Here the bot claims Nilheim's 72A8D as a Nord while the player is away, and the test save has it as an Orc.
+# A run counts only when (REQUIRE): the game's own roll differed, so that it had something to conform.
+log live person race
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+log DO god on
+log -- this bot claims the point as a Nord woman
+npc 72A8D base 39D20 pick 39D20
+waitfor owned >= 1 20
+wait 3
+
+log -- the player goes to Nilheim, where the game loads its own Orc
+log DO papyrus ObjectReference MoveTo 14 72A8D f:150 f:0 f:0 b:false
+wait 25
+
+log REQUIRE logged Queued leveled NPC reconciliation for actor 72A8D
+log CHECK logged Completed leveled NPC reconciliation for actor 72A8D
+log CHECK ref 72A8D enabled
+log CHECK ref 72A8D near player 1500
+log DO papyrus ObjectReference GetDisplayName 72A8D
+log CHECK game alive
+wait 2
+log done
+stop

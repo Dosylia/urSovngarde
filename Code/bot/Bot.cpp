@@ -3304,13 +3304,15 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.CurrentActorData.IsDead = cDead;
         // "npc <reference> pick <hex base>": what a levelled spawn point rolled on this side. The other games then
         // conform their own actor at that point to it (live-levelled, 2026-10-03: a bear's point claimed as a goat).
+        // "npc <reference> base <hex base>": the base this side reports, as a real game reports the template of its pick.
         for (size_t i = 1; i + 1 < args.size(); ++i)
-            if (args[i] == "pick")
-            {
-                uint32_t pickId = 0;
-                if (ParseHex(args[i + 1], pickId))
-                    request.LeveledNpcPickId = Skyrim(pickId);
-            }
+        {
+            uint32_t hexId = 0;
+            if (args[i] == "pick" && ParseHex(args[i + 1], hexId))
+                request.LeveledNpcPickId = Skyrim(hexId);
+            else if (args[i] == "base" && ParseHex(args[i + 1], hexId))
+                request.FormId = Skyrim(hexId);
+        }
         SendMsg(request);
         m_npcPosition = m_position;
 

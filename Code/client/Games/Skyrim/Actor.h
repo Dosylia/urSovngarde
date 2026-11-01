@@ -210,6 +210,8 @@ struct Actor : TESObjectREFR
     ActorValues GetEssentialActorValues() const noexcept;
     [[nodiscard]] bool IsDead() const noexcept;
     [[nodiscard]] bool IsDragon() const noexcept;
+    //! Whether a race is a person's, which all share the human skeletons and animation graph.
+    [[nodiscard]] static bool IsPersonRace(const TESRace* apRace) noexcept;
     //! Whether the game's equip code can run on this actor: an AI process with its middle-high data, as actors loaded here have.
     [[nodiscard]] bool HasLoadedProcess() const noexcept;
     [[nodiscard]] bool IsWearingBodyPiece() const noexcept;

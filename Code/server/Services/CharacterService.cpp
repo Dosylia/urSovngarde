@@ -487,6 +487,7 @@ void CharacterService::OnCharacterRemoveEvent(const CharacterRemoveEvent& acEven
 
     NotifyRemoveCharacter response;
     response.ServerId = acEvent.ServerId;
+    response.Gone = true;
 
     for (auto pPlayer : m_world.GetPlayerManager())
         pPlayer->Send(response);
