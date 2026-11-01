@@ -68,6 +68,7 @@
 #include <Messages/RequestOwnershipTransfer.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
+#include <Messages/RequestFollowerState.h>
 #include <Messages/MountRequest.h>
 #include <Messages/NotifyMount.h>
 #include <Messages/NewPackageRequest.h>
@@ -99,8 +100,66 @@ namespace
 // Adopting the wrong creature freezes it or makes it slide, so the owner's creature is spawned here as a copy instead.
 // The local reference (the "ghost") is disabled while its copy stands in, and is never assigned to the server.
 // A ghost is enabled again when its copy is deleted, on disconnect, or when this client goes away.
-// Disable is saved with the reference: a crash while a ghost is disabled leaves that spawn point disabled in the save.
+// The save guard (Actor.cpp) writes a ghost to a save as enabled, so a save made meanwhile does not keep it disabled.
+// A value of 0: no copy yet, as for this player's own follower while another player's stands far away (s_hiddenFollowers).
 TiltedPhoques::Map<uint32_t, uint32_t> s_ghosts;
+
+// Followers of this player that another player's follower hides while it is far from here: server id -> reference.
+// No copy is on its way for them, so they come back when the server no longer has that character.
+TiltedPhoques::Map<uint32_t, uint32_t> s_hiddenFollowers;
+
+// References that stopped being ghosts, to be announced: discovery does not raise one again whose 3D came back quickly.
+TiltedPhoques::Vector<uint32_t> s_releasedGhosts;
+
+// Released while the game's disable was still on its way: enabled once it has landed, or it would stay disabled, and in a save too.
+struct PendingGhostEnable
+{
+    uint32_t FormId{};
+    std::chrono::steady_clock::time_point GiveUpAt{};
+};
+TiltedPhoques::Vector<PendingGhostEnable> s_pendingGhostEnables;
+
+// No longer hidden by this game: enables it now, or once when its disable has landed. One this game did not hide is left alone.
+void StopHiding(Actor* apGhost) noexcept
+{
+    auto* pExtension = apGhost->GetExtension();
+    if (!pExtension || !pExtension->IsHiddenHere())
+        return;
+    pExtension->SetHiddenHere(false);
+    if (apGhost->IsDisabled())
+        apGhost->EnableImpl();
+    else
+        s_pendingGhostEnables.push_back({apGhost->formID, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
+}
+
+// Hides a ghost in this game only: the save guard (Actor.cpp) writes it to a save as enabled.
+// One disabled already is left alone: it is disabled by this game's own save or scripts, and nothing here enables it again.
+// The game's disable lands a little later, so one just asked for is not asked for again.
+void HideGhost(Actor* apGhost) noexcept
+{
+    constexpr auto cDisableLandsWithin = std::chrono::seconds(3);
+    static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_askedAt;
+
+    if (apGhost->IsDisabled())
+        return;
+    const auto cNow = std::chrono::steady_clock::now();
+    auto* pExtension = apGhost->GetExtension();
+    if (const auto asked = s_askedAt.find(apGhost->formID); pExtension && pExtension->IsHiddenHere() && asked != s_askedAt.end() && cNow - asked->second < cDisableLandsWithin)
+        return;
+    s_askedAt[apGhost->formID] = cNow;
+    apGhost->Disable();
+    if (pExtension)
+        pExtension->SetHiddenHere(true);
+}
+
+// What the server was last told about a follower of this player: server id -> state.
+struct FollowerReport
+{
+    bool Told{false};
+    uint8_t Differs{0}; // checks in a row where the game says otherwise
+    uint64_t Visit{0};
+};
+TiltedPhoques::Map<uint32_t, FollowerReport> s_followerReports;
 
 // Temporary actors this game made that now belong to another player and are out of view: server id -> local actor.
 // The server sends such an actor back as a character without a reference, so every client makes a copy of it.
@@ -113,17 +172,6 @@ struct HandedAway
     uint32_t BaseFormId{}; // 0 when the actor was already gone from the game when it was let go
 };
 TiltedPhoques::Map<uint32_t, HandedAway> s_handedAway;
-
-// A follower in two players' saves: each game asks for her back as she goes, and each claim is granted at once.
-// Three passes, each within 2 s of this game getting her, mean that.
-// She then stays with the other game until she leaves this player's view or the connection ends.
-struct FollowerPasses
-{
-    std::chrono::steady_clock::time_point GainedAt{};
-    uint32_t Quick = 0;
-};
-TiltedPhoques::Map<uint32_t, FollowerPasses> s_followerPasses;
-std::unordered_set<uint32_t> s_sharedFollowers;
 
 // NPCs gained while their owner's reports had them moving.
 // This game's AI shows what it wants a moment later: a speed if it walks them on, none if it has them standing.
@@ -560,9 +608,9 @@ Actor* StandInForForeignCreature(Actor* apLocal, TESNPC* apOwnerBase) noexcept
     // Only a loaded creature is disabled now: one without 3D may be in the middle of being disposed of by the game.
     // Disabling it then crashes in the game's movement code (SkyrimVR.exe+0x714EB2).
     // One that is not loaded is disabled once it loads (ProcessNewEntity).
-    const bool cLoaded = apLocal->GetNiNode() != nullptr && !apLocal->IsDeleted();
+    const bool cLoaded = apLocal->GetNiNode() != nullptr && !apLocal->IsDeleted() && !apLocal->IsStillLoading();
     if (cLoaded)
-        apLocal->Disable();
+        HideGhost(apLocal);
 
     spdlog::info("Ghost: reference {:X} rolled as {} ({:X}) here but the owner has {} ({:X}); copy {:X} stands in for it and the local one is {}", apLocal->formID,
                  pLocalBase ? pLocalBase->fullName.value.AsAscii() : "?", pLocalBase ? pLocalBase->formID : 0, apOwnerBase->fullName.value.AsAscii(), apOwnerBase->formID,
@@ -576,9 +624,27 @@ void EnableGhost(const uint32_t aGhostFormId) noexcept
         return;
 
     Actor* pGhost = Cast<Actor>(TESForm::GetById(aGhostFormId));
-    if (pGhost && pGhost->IsDisabled())
-        pGhost->EnableImpl();
+    if (pGhost)
+        StopHiding(pGhost);
+    s_releasedGhosts.push_back(aGhostFormId);
     spdlog::info("Ghost: reference {:X} is a normal local creature again{}", aGhostFormId, pGhost ? "" : " (not loaded)");
+}
+
+// Another player's follower is shown on a copy, and this game's own reference stays as its save has it.
+// Null when no copy can be made or a save would keep her hidden; she is then shown on the reference, as any other NPC.
+Actor* FollowerCopy(Actor* apLocal, TESNPC* apOwnerBase, const uint32_t aServerId, const uint32_t aPlayerId) noexcept
+{
+    if (!apOwnerBase || !Actor::IsSaveGuarded())
+    {
+        spdlog::warn("Follower: {:X} (server id {:X}) stays on this game's own reference: {}", apLocal->formID, aServerId, apOwnerBase ? "saves are not guarded" : "no base to copy");
+        return nullptr;
+    }
+    Actor* pCopy = StandInForForeignCreature(apLocal, apOwnerBase);
+    if (!pCopy)
+        return nullptr;
+    pCopy->GetExtension()->SetFollowerCopy(true);
+    spdlog::info("Follower: {:X} (server id {:X}) is player {:X}'s; copy {:X} shows her, and this game's own reference is left as it is", apLocal->formID, aServerId, aPlayerId, pCopy->formID);
+    return pCopy;
 }
 
 // Called for every temporary actor this client deletes: if it was a stand-in, its ghost comes back.
@@ -671,19 +737,38 @@ void RunGhostChecks() noexcept
     static std::chrono::steady_clock::time_point s_nextCheck{};
     static TiltedPhoques::Map<uint32_t, uint32_t> s_redisabled; // ghost form id -> times disabled again
     const auto cNow = std::chrono::steady_clock::now();
-    if (s_ghosts.empty() || cNow < s_nextCheck || IsProcessExiting())
+    // The first check two seconds after a ghost appears, not in the frame it was hidden, when its disable has not landed yet.
+    if (s_ghosts.empty())
+    {
+        s_nextCheck = cNow + std::chrono::seconds(2);
+        return;
+    }
+    if (cNow < s_nextCheck || IsProcessExiting())
         return;
     s_nextCheck = cNow + std::chrono::seconds(2);
 
+    TiltedPhoques::Vector<uint32_t> noLongerFollowers;
     for (const auto& [ghost, copy] : s_ghosts)
     {
         Actor* pGhost = Cast<Actor>(TESForm::GetById(ghost));
+        // Hidden with no copy only as this player's follower: after a load of a save where she is not one, she is not hidden any more.
+        if (pGhost && copy == 0 && !pGhost->IsPlayerFollower())
+        {
+            noLongerFollowers.push_back(ghost);
+            continue;
+        }
         if (!pGhost || pGhost->IsDisabled() || !pGhost->GetNiNode() || pGhost->IsDeleted() || pGhost->IsStillLoading())
             continue;
-        pGhost->Disable();
+        HideGhost(pGhost);
         const uint32_t cTimes = ++s_redisabled[ghost];
         if (cTimes == 1 || cTimes % 10 == 0)
             spdlog::info("Ghost: reference {:X} was enabled again with its 3D while copy {:X} stands in; disabled again ({} times)", ghost, copy, cTimes);
+    }
+
+    for (const uint32_t cGhost : noLongerFollowers)
+    {
+        s_ghosts.erase(cGhost);
+        EnableGhost(cGhost);
     }
 }
 //! The values a copy that is to be dead starts with: a little health, so that it lives until it is killed with its 3D.
@@ -1022,10 +1107,6 @@ bool CharacterService::RequestOwnership(const uint32_t aFormId, const uint32_t a
         return false;
     }
 
-    // See s_sharedFollowers. Her body or a killing blow still goes as for anyone.
-    if (!aKillingBlow && !pActor->IsDead() && s_sharedFollowers.count(pActor->formID))
-        return false;
-
     const auto* pRemoteComponent = m_world.try_get<RemoteComponent>(aEntity);
     if (!pRemoteComponent || pRemoteComponent->Id != aServerId || pRemoteComponent->OwnershipEpoch == 0)
         return false;
@@ -1034,7 +1115,8 @@ bool CharacterService::RequestOwnership(const uint32_t aFormId, const uint32_t a
     request.ServerId = aServerId;
     request.ExpectedOwnershipEpoch = pRemoteComponent->OwnershipEpoch;
     // The server lets a player claim their own follower whoever leads the party (see CanClaimOwnership).
-    request.Follower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
+    // A body is nobody's follower: it goes by the rules for bodies, flag or no flag.
+    request.Follower = pActor->IsPlayerFollower() && !pActor->IsDead();
     request.KillingBlow = aKillingBlow;
 
     if (!m_transport.Send(request))
@@ -1101,6 +1183,9 @@ void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
         return;
 
     Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    // Gone already: what it stood in for is not left hidden.
+    if (!pActor)
+        ReleaseGhostOf(aFormId);
     if (pActor && ((pActor->formID & 0xFF000000) == 0xFF000000))
     {
         const uint32_t refWord = static_cast<uint32_t>(pActor->handleRefObject.refCount);
@@ -1281,6 +1366,8 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     RunGhostChecks();
     SpawnReveal::Tick();
     RunFollowerReclaims();
+    RunFollowerReports();
+    RunReleasedGhosts();
     RunGainedMoving();
     RunPendingLines();
     RunTakeoverDiag(m_world);
@@ -1385,8 +1472,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
         return;
     }
 
-    s_followerPasses.clear();
-    s_sharedFollowers.clear();
+    s_followerReports.clear();
 
     auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
     for (auto entity : remoteView)
@@ -1412,6 +1498,18 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
             pExtension->SetRemote(false);
     }
 
+    // A copy of another player's follower does not stay on as a second one, even one not loaded yet: this game's own comes back with the ghosts below.
+    TiltedPhoques::Vector<uint32_t> followerCopies;
+    for (const uint32_t cFormId : s_ownCopies)
+    {
+        Actor* pCopy = Cast<Actor>(TESForm::GetById(cFormId));
+        const ActorExtension* pExtension = pCopy ? pCopy->GetExtension() : nullptr;
+        if (pExtension && pExtension->IsFollowerCopy())
+            followerCopies.push_back(cFormId);
+    }
+    for (const uint32_t cFormId : followerCopies)
+        DeleteTempActor(cFormId);
+
     // Every remaining copy now belongs to the game, so s_ownCopies is emptied; their ids will be reused.
     // The ones still standing are remembered for the clean-up on the next connect (s_lastConnectionCopies).
     // Added to, not replaced: a failed connection attempt also reports a disconnection, with s_ownCopies already empty.
@@ -1428,6 +1526,8 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>();
 
     ReleaseAllGhosts();
+    s_releasedGhosts.clear();
+    s_hiddenFollowers.clear();
     for (const auto& [formId, pickFormId] : m_pendingLeveledConforms)
     {
         if (auto* pActor = Cast<Actor>(TESForm::GetById(formId)))
@@ -1465,6 +1565,9 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
 #if (!IS_MASTER)
     m_world.remove<ReplayedActionsDebugComponent>(cEntity);
 #endif
+
+    // What the server now has, so that only a later change is reported.
+    s_followerReports[acMessage.ServerId].Told = acMessage.FollowerOfPlayerId == m_transport.GetLocalPlayerId();
 
     if (isCancelled)
     {
@@ -1530,7 +1633,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         m_weaponDrawUpdates.erase(pActor->formID);
 
         // This player's follower coming back: her gear here is the truth, and the server's copy is corrected instead.
-        const bool cMyFollower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
+        const bool cMyFollower = pActor->IsPlayerFollower();
         if (cMyFollower)
             SendInventoryDifference(pActor, acMessage.ServerId, acMessage.OwnershipEpoch, acMessage.CurrentInventory);
 
@@ -1559,33 +1662,74 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         // The owner has another kind of creature here (the response carries the owner's base): a copy stands in for it.
         // The copy is set up through the deferred path a temporary actor takes; the local reference becomes a ghost.
         // Not for a body here that is alive at its owner (IsDeadAgainstOwner): it stays a body, see ReconcileActorData.
-        if (const BaseMatch match = CompareBase(m_world, pActor, acMessage.BaseId, false);
-            match.Foreign && match.pOwnerBase && !IsDeadAgainstOwner(pActor, acMessage.IsDead))
-        {
-            if (Actor* pCopy = StandInForForeignCreature(pActor, match.pOwnerBase))
-            {
-                CharacterSpawnRequest spawn{};
-                spawn.ServerId = acMessage.ServerId;
-                spawn.BaseId = acMessage.BaseId;
-                spawn.Position = acMessage.Position;
-                spawn.CellId = acMessage.CellId;
-                spawn.InitialActorValues = acMessage.AllActorValues;
-                spawn.InventoryContent = acMessage.CurrentInventory;
-                spawn.ActionsToReplay = acMessage.ActionsToReplay;
-                spawn.PlayerId = acMessage.PlayerId;
-                spawn.IsDead = acMessage.IsDead;
-                spawn.IsWeaponDrawn = acMessage.IsWeaponDrawn;
+        // Another player's follower also gets a copy, whatever this game's own reference is like.
+        const BaseMatch match = CompareBase(m_world, pActor, acMessage.BaseId, false);
+        const bool cOtherFollower = acMessage.FollowerOfPlayerId && acMessage.FollowerOfPlayerId != m_transport.GetLocalPlayerId() && !pActor->IsTemporary();
 
-                const entt::entity copyEntity = m_world.create();
-                m_world.emplace<RemoteComponent>(copyEntity, acMessage.ServerId, pCopy->formID, acMessage.OwnershipEpoch).DeadAtOwner = acMessage.IsDead;
-                pCopy->MoveTo(PlayerCharacter::Get()->parentCell, acMessage.Position);
-                pCopy->SetActorValues(acMessage.IsDead && !pCopy->IsDead() ? ValuesUntilKilled(acMessage.AllActorValues) : acMessage.AllActorValues);
-                auto& copyInterpolation = InterpolationSystem::Setup(m_world, copyEntity);
-                copyInterpolation.Position = acMessage.Position;
-                AnimationSystem::Setup(m_world, copyEntity);
-                m_world.emplace<WaitingFor3D>(copyEntity, spawn);
-                return;
+        // She stands far from here, so no copy goes up; the server sends one if she comes into range.
+        // This game's own reference stays this game's: hidden if she is this player's follower too, otherwise an ordinary NPC here that the server does not hear about.
+        if (cOtherFollower && !IsPlaceLoadedHere(m_world, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position))
+        {
+            // Saves must not keep her hidden, so without the guard she is left as she is too.
+            const bool cHide = pActor->IsPlayerFollower() && Actor::IsSaveGuarded();
+            if (cHide)
+            {
+                s_ghosts[pActor->formID] = 0;
+                s_hiddenFollowers[acMessage.ServerId] = pActor->formID;
+                // Only a loaded one: this can be a reference just released, with no 3D yet. RunGhostChecks hides it once it has its 3D.
+                if (pActor->GetNiNode() && !pActor->IsDeleted() && !pActor->IsStillLoading())
+                    HideGhost(pActor);
             }
+            m_world.remove<EarlyAnimationBufferComponent>(cEntity);
+            spdlog::info("Follower: {:X} (server id {:X}) is player {:X}'s, far from here; this game's own reference is {}", pActor->formID, acMessage.ServerId, acMessage.FollowerOfPlayerId,
+                         cHide ? "hidden, as this player's follower too" : "left as it is");
+            return;
+        }
+
+        Actor* pCopy = nullptr;
+        if (cOtherFollower)
+        {
+            // As a copy made from a spawn is.
+            CharacterSpawnRequest baseOnly{};
+            baseOnly.ServerId = acMessage.ServerId;
+            baseOnly.BaseId = acMessage.BaseId;
+            baseOnly.LeveledNpcPickId = acMessage.LeveledNpcPickId;
+            pCopy = FollowerCopy(pActor, BaseForCopy(m_world, baseOnly), acMessage.ServerId, acMessage.FollowerOfPlayerId);
+        }
+        else if (match.Foreign && match.pOwnerBase && !IsDeadAgainstOwner(pActor, acMessage.IsDead))
+            pCopy = StandInForForeignCreature(pActor, match.pOwnerBase);
+        if (pCopy)
+        {
+            CharacterSpawnRequest spawn{};
+            spawn.ServerId = acMessage.ServerId;
+            // As a spawn for a reference has it: if this copy goes before it has its 3D, the next one stands in for the same reference.
+            m_world.GetModSystem().GetServerModId(pActor->formID, spawn.FormId);
+            spawn.BaseId = acMessage.BaseId;
+            spawn.LeveledNpcPickId = acMessage.LeveledNpcPickId;
+            spawn.Position = acMessage.Position;
+            spawn.CellId = acMessage.CellId;
+            spawn.InitialActorValues = acMessage.AllActorValues;
+            spawn.InventoryContent = acMessage.CurrentInventory;
+            spawn.FactionsContent = acMessage.FactionsContent;
+            spawn.ActionsToReplay = acMessage.ActionsToReplay;
+            spawn.PlayerId = acMessage.PlayerId;
+            spawn.IsDead = acMessage.IsDead;
+            spawn.IsWeaponDrawn = acMessage.IsWeaponDrawn;
+            spawn.FollowerOfPlayerId = acMessage.FollowerOfPlayerId;
+
+            const entt::entity copyEntity = m_world.create();
+            auto& copyRemote = m_world.emplace<RemoteComponent>(copyEntity, acMessage.ServerId, pCopy->formID, acMessage.OwnershipEpoch);
+            copyRemote.DeadAtOwner = acMessage.IsDead;
+            if (pCopy->baseForm)
+                copyRemote.CachedBaseId = pCopy->baseForm->formID;
+            ClaimCopyId(copyEntity, pCopy->formID);
+            pCopy->MoveTo(PlayerCharacter::Get()->parentCell, acMessage.Position);
+            pCopy->SetActorValues(acMessage.IsDead && !pCopy->IsDead() ? ValuesUntilKilled(acMessage.AllActorValues) : acMessage.AllActorValues);
+            auto& copyInterpolation = InterpolationSystem::Setup(m_world, copyEntity);
+            copyInterpolation.Position = acMessage.Position;
+            AnimationSystem::Setup(m_world, copyEntity);
+            m_world.emplace<WaitingFor3D>(copyEntity, spawn);
+            return;
         }
 
         m_world.emplace_or_replace<RemoteComponent>(cEntity, acMessage.ServerId, formIdComponent->Id, acMessage.OwnershipEpoch).DeadAtOwner = acMessage.IsDead;
@@ -1606,7 +1750,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         // This player's own follower, owned by another player (the server hands her over during a loading screen).
         // Her gear here is the truth: nothing from the server or the other game is applied, and she is not moved away.
         // Moving her would make the two games pull her back and forth; the other game's outfit for her is not ours.
-        const bool cMyFollower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
+        const bool cMyFollower = pActor->IsPlayerFollower();
 
         ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, actorData, !cMyFollower, false);
         if (pActor->GetExtension()->IsRemotePlayer())
@@ -1621,14 +1765,13 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
             static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_nextFollowerClaim;
             const auto now = std::chrono::steady_clock::now();
             auto& next = s_nextFollowerClaim[pActor->formID];
-            const bool cShared = s_sharedFollowers.count(pActor->formID) != 0;
-            if (cHere && now >= next && !cShared)
+            if (cHere && now >= next)
             {
                 next = now + std::chrono::seconds(1);
                 spdlog::info("Follower {:X} (server id {:X}) came back as another player's; kept as she is here and asked for", pActor->formID, acMessage.ServerId);
                 RequestOwnership(pActor->formID, acMessage.ServerId, cEntity);
             }
-            else if (!cHere && !cShared)
+            else if (!cHere)
                 spdlog::info("Follower {:X} (server id {:X}) came back as another player's, not near this player; asked for once she is", pActor->formID,
                              acMessage.ServerId);
         }
@@ -1784,6 +1927,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                 pWaiting->SpawnRequest.IsDead = acMessage.IsDead;
                 pWaiting->SpawnRequest.IsWeaponDrawn = acMessage.IsWeaponDrawn;
                 pWaiting->SpawnRequest.OwnershipEpoch = acMessage.OwnershipEpoch;
+                pWaiting->SpawnRequest.FollowerOfPlayerId = acMessage.FollowerOfPlayerId;
             }
 
             return;
@@ -1904,10 +2048,22 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                 return;
             }
             s_ghosts[cActorId] = pCopy->formID;
+            if (acMessage.FollowerOfPlayerId && acMessage.FollowerOfPlayerId != m_transport.GetLocalPlayerId())
+                pCopy->GetExtension()->SetFollowerCopy(true);
             spdlog::info("Stand-in: reference {:X} is not loaded here; copy {:X} of the owner's {} ({:X}) stands in for it", cActorId, pCopy->formID, pOwnerBase->fullName.value.AsAscii(),
                          pOwnerBase->formID);
             pActor = pCopy;
             entity = m_world.create();
+        }
+
+        // Another player's follower is shown on a copy, whatever this game's own reference is like.
+        if (pActor && !entity && acMessage.FollowerOfPlayerId && acMessage.FollowerOfPlayerId != m_transport.GetLocalPlayerId() && !pActor->IsTemporary())
+        {
+            if (Actor* pCopy = FollowerCopy(pActor, BaseForCopy(m_world, acMessage), acMessage.ServerId, acMessage.FollowerOfPlayerId))
+            {
+                pActor = pCopy;
+                entity = m_world.create();
+            }
         }
 
         // A body here that is alive in its owner's game stays this game's body, not a living stand-in.
@@ -1928,6 +2084,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
         {
             // The reference itself takes the character now, so an old stand-in's record must not keep disabling it.
             s_ghosts.erase(cActorId);
+            StopHiding(pActor);
 
             const auto view = m_world.view<FormIdComponent>();
             const auto itor = std::find_if(std::begin(view), std::end(view), [cActorId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == cActorId; });
@@ -2175,7 +2332,11 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     {
         const uint32_t cBoundId = pFormIdComponent->Id;
         const auto ghost = std::find_if(s_ghosts.begin(), s_ghosts.end(), [cBoundId](const auto& acEntry) { return acEntry.first == cBoundId || acEntry.second == cBoundId; });
-        if (ghost != s_ghosts.end())
+        // A follower's body is the exception: it goes to whoever grabs it, on the copy here.
+        Actor* pBoundActor = Cast<Actor>(TESForm::GetById(cBoundId));
+        ActorExtension* pBoundExtension = pBoundActor ? pBoundActor->GetExtension() : nullptr;
+        const bool cFollowerBody = pBoundExtension && pBoundExtension->IsFollowerCopy() && pBoundActor->IsDead();
+        if (ghost != s_ghosts.end() && !cFollowerBody)
         {
             const auto* pCopy = Cast<Actor>(TESForm::GetById(ghost->second));
             const Actor* pLocal = Cast<Actor>(TESForm::GetById(ghost->first));
@@ -2228,7 +2389,7 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         m_world.emplace_or_replace<RemoteComponent>(cEntity, acMessage.ServerId, pFormIdComponent->Id, acMessage.OwnershipEpoch);
 
         // This player's own follower coming back: her gear here is the truth (see OnAssignCharacter).
-        const bool cMyFollower = pActor->IsPlayerTeammate() && !pActor->IsTemporary();
+        const bool cMyFollower = pActor->IsPlayerFollower();
         ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, acMessage.CurrentActorData, !cMyFollower, true);
         ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId);
 
@@ -2248,10 +2409,7 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
 #endif
         spdlog::info("Gained ownership of actor {:X} (form {:X}) at epoch {}", acMessage.ServerId, pActor ? pActor->formID : 0, acMessage.OwnershipEpoch);
         if (cMyFollower)
-        {
-            s_followerPasses[pActor->formID].GainedAt = std::chrono::steady_clock::now();
             SendInventoryDifference(pActor, acMessage.ServerId, acMessage.OwnershipEpoch, acMessage.CurrentActorData.InitialInventory);
-        }
 
         // Asked for after this player's killing blow (ClaimForKillingBlow): it dies here, with this player as the killer.
         if (const auto blow = m_killingBlows.find(acMessage.ServerId); blow != m_killingBlows.end())
@@ -2307,7 +2465,7 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         pRemoteComponent->DeadAtOwner = acMessage.CurrentActorData.IsDead;
 
     // This player's own follower given to somebody else (the server does that during a loading screen): her gear here is kept.
-    const bool cMyFollower = pActor && pActor->IsPlayerTeammate() && !pActor->IsTemporary();
+    const bool cMyFollower = pActor && pActor->IsPlayerFollower();
     ReconcileActorData(cEntity, pActor, acMessage.OwnershipEpoch, acMessage.CurrentActorData, pActor && pActor->GetNiNode() && !cMyFollower, false);
     if (pActor)
         ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId, &acMessage.CurrentActorData.InitialInventory);
@@ -2319,14 +2477,9 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     {
         const auto* pPlayer = PlayerCharacter::Get();
         const bool cHere = pActor->GetNiNode() && pPlayer && glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) < 2048.f;
-        auto& passes = s_followerPasses[pActor->formID];
-        passes.Quick = std::chrono::steady_clock::now() - passes.GainedAt < std::chrono::seconds(2) ? passes.Quick + 1 : 0;
-        if (passes.Quick >= 3)
-            s_sharedFollowers.insert(pActor->formID);
-        const bool cShared = s_sharedFollowers.count(pActor->formID) != 0;
         spdlog::info("Follower {:X} (server id {:X}) was given to player {:X}; {}", pActor->formID, acMessage.ServerId, acMessage.OwnerPlayerId,
-                     cShared ? "she is that player's follower too, so she stays there" : cHere ? "asked for back" : "not near this player, asked for once she is");
-        if (cHere && !cShared)
+                     cHere ? "asked for back" : "not near this player, asked for once she is");
+        if (cHere)
             RequestOwnership(pActor->formID, acMessage.ServerId, cEntity);
     }
 }
@@ -2340,8 +2493,9 @@ void CharacterService::RunFollowerReclaims() const noexcept
         return;
     s_next = cNow + std::chrono::seconds(1);
 
+    // Out of a party the server refuses it anyway, and it would only be asked again every few seconds.
     const auto* pPlayer = PlayerCharacter::Get();
-    if (!pPlayer)
+    if (!pPlayer || !m_world.GetPartyService().IsInParty())
         return;
 
     static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_asked;
@@ -2349,7 +2503,7 @@ void CharacterService::RunFollowerReclaims() const noexcept
     for (const auto cEntity : view)
     {
         Actor* pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id));
-        if (!pActor || pActor->IsTemporary() || !pActor->IsPlayerTeammate() || pActor->IsDead() || !pActor->GetNiNode() || s_sharedFollowers.count(pActor->formID))
+        if (!pActor || !pActor->IsPlayerFollower() || pActor->IsDead() || !pActor->GetNiNode())
             continue;
         if (glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) >= 2048.f)
             continue;
@@ -2363,8 +2517,117 @@ void CharacterService::RunFollowerReclaims() const noexcept
     }
 }
 
+void CharacterService::RunFollowerReports() const noexcept
+{
+    // Once a second. A change counts after two checks: a script can switch the flag off and on again, and each report rebuilds her copy for the others.
+    constexpr uint8_t cChecksToReport = 2;
+    static std::chrono::steady_clock::time_point s_next;
+    static uint64_t s_visit = 0;
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < s_next || !m_transport.IsConnected())
+        return;
+    s_next = cNow + std::chrono::seconds(1);
+    ++s_visit;
+
+    const auto report = [this](const entt::entity aEntity, const uint32_t aServerId)
+    {
+        const auto* pFormId = m_world.try_get<FormIdComponent>(aEntity);
+        Actor* pActor = pFormId ? Cast<Actor>(TESForm::GetById(pFormId->Id)) : nullptr;
+        const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+        // Only one loaded here and alive: a grant for one with no 3D is declined, and a body is nobody's follower.
+        if (!pExtension || pActor->IsTemporary() || pActor->formID == 0x14 || pExtension->IsRemotePlayer() || !pActor->GetNiNode() || pActor->IsDead())
+            return;
+
+        auto& state = s_followerReports[aServerId];
+        state.Visit = s_visit;
+        const bool cFollower = pActor->IsPlayerFollower();
+        if (cFollower == state.Told)
+        {
+            state.Differs = 0;
+            return;
+        }
+        if (++state.Differs < cChecksToReport)
+            return;
+
+        state.Told = cFollower;
+        state.Differs = 0;
+        RequestFollowerState request{};
+        request.ServerId = aServerId;
+        request.IsFollower = cFollower;
+        m_transport.Send(request);
+        spdlog::info("Follower: told the server that {:X} (server id {:X}) {} this player's follower", pActor->formID, aServerId, cFollower ? "is" : "is no longer");
+    };
+
+    const auto localView = m_world.view<LocalComponent>();
+    for (const auto cEntity : localView)
+        report(cEntity, localView.get<LocalComponent>(cEntity).Id);
+    const auto remoteView = m_world.view<RemoteComponent>();
+    for (const auto cEntity : remoteView)
+        report(cEntity, remoteView.get<RemoteComponent>(cEntity).Id);
+
+    for (auto it = s_followerReports.begin(); it != s_followerReports.end();)
+        it = it->second.Visit == s_visit ? std::next(it) : s_followerReports.erase(it);
+}
+
+void CharacterService::RunReleasedGhosts() const noexcept
+{
+    if (!s_pendingGhostEnables.empty() && !IsProcessExiting())
+    {
+        const auto cNow = std::chrono::steady_clock::now();
+        std::erase_if(s_pendingGhostEnables, [cNow](const PendingGhostEnable& acPending)
+        {
+            Actor* pActor = Cast<Actor>(TESForm::GetById(acPending.FormId));
+            ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+            if (!pExtension || pActor->IsDeleted())
+                return true;
+            // Hidden again meanwhile: that one wants the disable, and a save still has it enabled.
+            if (s_ghosts.find(acPending.FormId) != s_ghosts.end())
+            {
+                pExtension->SetHiddenHere(true);
+                return true;
+            }
+            // A levelled NPC being rebuilt is disabled on purpose, and the rebuild enables it itself.
+            if (pExtension->Reconciliation != ActorExtension::ReconciliationStage::None)
+                return true;
+            if (pActor->IsStillLoading() || !pActor->IsDisabled())
+                return cNow >= acPending.GiveUpAt;
+            pActor->EnableImpl();
+            spdlog::info("Ghost: reference {:X} enabled, its disable having landed after it was released", acPending.FormId);
+            return true;
+        });
+    }
+
+    if (s_releasedGhosts.empty())
+        return;
+
+    TiltedPhoques::Vector<uint32_t> released;
+    released.swap(s_releasedGhosts);
+
+    const auto view = m_world.view<FormIdComponent>();
+    for (const uint32_t cFormId : released)
+    {
+        const auto itor = std::find_if(view.begin(), view.end(), [view, cFormId](const entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == cFormId; });
+        if (itor != view.end())
+            ProcessNewEntity(*itor);
+    }
+}
+
 void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage) const noexcept
 {
+    // The follower that kept this player's own one hidden is gone, or may no longer be another player's.
+    // Announced again, it is hidden again if she still is.
+    if (const auto hidden = s_hiddenFollowers.find(acMessage.ServerId); hidden != s_hiddenFollowers.end())
+    {
+        const uint32_t cFormId = hidden->second;
+        s_hiddenFollowers.erase(hidden);
+        // Only while no copy of hers stands in: deleting that copy brings the reference back itself.
+        if (const auto ghost = s_ghosts.find(cFormId); ghost != s_ghosts.end() && ghost->second == 0)
+        {
+            s_ghosts.erase(ghost);
+            EnableGhost(cFormId);
+        }
+    }
+
     // A character gone from the server goes to every player, in range or not, so a record kept for one nobody has any more ends here.
     // One that only left this player's view is still on the server, and comes back as the same actor.
     if (const auto handed = s_handedAway.find(acMessage.ServerId); acMessage.Gone && handed != s_handedAway.end())
@@ -2414,11 +2677,21 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
             formId = cRemote.CachedRefId;
             spdlog::info("Removed before loading: server character {:X} is gone before its copy {:X} loaded; the copy goes too", acMessage.ServerId, formId);
         }
+        // Its copy is gone already, and with it what would have told which reference it hid.
+        else if (const auto* pWaiting = m_world.try_get<WaitingFor3D>(*itor); pWaiting && pWaiting->SpawnRequest.FormId != GameId{})
+        {
+            const uint32_t cRefId = m_world.GetModSystem().GetGameId(pWaiting->SpawnRequest.FormId);
+            if (const auto ghost = s_ghosts.find(cRefId); ghost != s_ghosts.end())
+            {
+                s_ghosts.erase(ghost);
+                EnableGhost(cRefId);
+            }
+        }
 
         if (formId)
         {
             Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
-            if (pActor && pActor->IsTemporary())
+            if ((pActor && pActor->IsTemporary()) || (!pActor && (formId & 0xFF000000) == 0xFF000000))
                 CharacterService::DeleteTempActor(formId);
             else if (pActor)
             {
@@ -2462,7 +2735,7 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
             const bool cJustNow = std::chrono::steady_clock::now() - cRefused->second < std::chrono::seconds(2);
             // This player's own follower stays a live actor here: an assignment would not move her, and she would stand frozen.
             const Actor* pReference = Cast<Actor>(TESForm::GetById(formId));
-            if (cJustNow && pReference && !pReference->IsPlayerTeammate() && m_world.all_of<FormIdComponent>(cEntity))
+            if (cJustNow && pReference && !pReference->IsPlayerFollower() && m_world.all_of<FormIdComponent>(cEntity))
                 ProcessNewEntity(cEntity); // the mark stays for its assignment
             else
                 s_teleportsRefused.erase(cRefused);
@@ -2484,10 +2757,6 @@ void CharacterService::OnNotifyRespawn(const NotifyRespawn& acMessage) const noe
     const auto cId = *entityIt;
 
     auto& formIdComponent = view.get<FormIdComponent>(cId);
-
-    // Gone from this player's view, so the two games may settle a shared follower again when she is back.
-    s_sharedFollowers.erase(formIdComponent.Id);
-    s_followerPasses.erase(formIdComponent.Id);
 
     CancelServerAssignment(*entityIt, formIdComponent.Id, Cast<Actor>(TESForm::GetById(formIdComponent.Id)));
 
@@ -2847,6 +3116,14 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     auto& modSystem = m_world.GetModSystem();
 
     const uint32_t cActorId = World::Get().GetModSystem().GetGameId(acMessage.FormId);
+
+    // A reference hidden behind a stand-in stays where this game's save has it; the stand-in follows the owner's reports.
+    if (s_ghosts.find(cActorId) != s_ghosts.end())
+    {
+        spdlog::debug("Teleport of {:X} not made: a stand-in shows it here", cActorId);
+        return;
+    }
+
     Actor* pActor = Cast<Actor>(TESForm::GetById(cActorId));
     if (!pActor)
     {
@@ -2945,9 +3222,10 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
     // One that was not loaded when the copy was made turns up here, enabled, once its cell loads, and is disabled now.
     if (s_ghosts.find(formIdComponent.Id) != s_ghosts.end())
     {
-        if (pActor && !pActor->IsDisabled() && !IsProcessExiting())
+        // Only a loaded one, as StandInForForeignCreature: this also runs for a reference just released, which may have no 3D yet.
+        if (pActor && !pActor->IsDisabled() && pActor->GetNiNode() && !pActor->IsDeleted() && !pActor->IsStillLoading() && !IsProcessExiting())
         {
-            pActor->Disable();
+            HideGhost(pActor);
             spdlog::info("Ghost: reference {:X} loaded after its stand-in; disabled", formIdComponent.Id);
         }
         return;
@@ -3116,6 +3394,7 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
     message.IsDragon = pActor->IsDragon();
     message.IsMount = pActor->IsMount();
     message.IsPlayerSummon = pActor->GetCommandingActor() && pActor->GetCommandingActor()->formID == 0x14;
+    message.IsFollower = !isPlayer && pActor->IsPlayerFollower() && !pActor->IsDead();
 
     if (const TESNPC* pPick = pActor->GetLeveledPick())
     {
@@ -3289,6 +3568,12 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
                 pActor->GetExtension()->SetRemote(false);
             }
         }
+        // Gone from the game already: what it stood in for is not left hidden, and the game may give its id to an actor of its own next.
+        else if (cTemporaryId)
+        {
+            s_ownCopies.erase(aFormId);
+            ReleaseGhostOf(aFormId);
+        }
 
         DeleteRemoteEntityComponents(aEntity);
 
@@ -3310,6 +3595,10 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
     if (m_world.all_of<LocalComponent>(aEntity))
     {
         auto& localComponent = m_world.get<LocalComponent>(aEntity);
+
+        // A follower's body taken over on the copy here: the reference it stood in for comes back with it.
+        if (cTemporaryId)
+            ReleaseGhostOf(aFormId);
 
         RequestOwnershipTransfer request{};
         request.ServerId = localComponent.Id;
@@ -3412,14 +3701,22 @@ Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const no
         if (!pOwnerBase && acMessage.BaseId != GameId{})
             pOwnerBase = Cast<TESNPC>(TESForm::GetById(m_world.GetModSystem().GetGameId(acMessage.BaseId)));
 
+        const bool cFollowerCopy = acMessage.FollowerOfPlayerId && acMessage.FollowerOfPlayerId != m_transport.GetLocalPlayerId();
+        // As the first copy of her was made: a pick with another name than her own base would rename her.
+        if (cFollowerCopy)
+            pOwnerBase = BaseForCopy(m_world, acMessage);
+
         if (pOwnerBase && cRefId != 0)
         {
             pActor = RememberOwnCopy(Actor::Create(pOwnerBase));
             if (pActor)
             {
                 s_ghosts[cRefId] = pActor->formID;
-                if (Actor* pLocal = Cast<Actor>(TESForm::GetById(cRefId)); pLocal && !pLocal->IsDisabled() && !IsProcessExiting())
-                    pLocal->Disable();
+                if (cFollowerCopy)
+                    pActor->GetExtension()->SetFollowerCopy(true);
+                // Only a loaded one, as StandInForForeignCreature: disabling one the game is disposing of crashes.
+                if (Actor* pLocal = Cast<Actor>(TESForm::GetById(cRefId)); pLocal && !pLocal->IsDisabled() && pLocal->GetNiNode() && !pLocal->IsDeleted() && !IsProcessExiting())
+                    HideGhost(pLocal);
                 spdlog::info("Stand-in: the copy for reference {:X} (server id {:X}) was gone; copy {:X} of the owner's {} ({:X}) stands in again, inside the loaded cells",
                              cRefId, m_world.get<RemoteComponent>(aEntity).Id, pActor->formID, pOwnerBase->fullName.value.AsAscii(), pOwnerBase->formID);
             }

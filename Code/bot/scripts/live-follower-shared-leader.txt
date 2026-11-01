@@ -1,0 +1,50 @@
+# A follower in both players' saves: only the party leader's exists, and the other player's comes back when the leader's goes.
+#
+#   python Tools\VR\live-check.py live-follower-shared-leader
+#
+# The bot leads the party and has Lydia too. The game's own Lydia is hidden, with her things kept, and a copy shows the leader's.
+# When the leader's player dismisses her, the game's player has her back as their follower.
+party lead
+log live follower shared leader
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+ownership accept
+stay
+
+log DO god on
+log -- Lydia next to the player, this game's own follower
+log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
+log DO papyrus DialogueFollowerScript SetFollower 750BA A2C94
+waitfor known ref:A2C94 40
+wait 6
+
+log -- the leader has her too
+claim ref:A2C94 follower
+waitfor ownedby ref:A2C94 me 20
+expect ownedby ref:A2C94 me
+wait 5
+log CHECK logged Follower: A2C94 \(server id \w+\) is player \w+'s; copy \w+ shows her
+log CHECK ref A2C94 disabled
+# The driver reads the checks as they are logged, so the bot waits before it changes what they read.
+wait 2
+
+log -- the leader's player dismisses theirs: this player's own comes back as their follower
+follower ref:A2C94 off
+wait 10
+log CHECK ref A2C94 enabled
+log CHECK logged Follower: told the server that A2C94 \(server id \w+\) is this player's follower
+waitfor ownedby ref:A2C94 other 20
+expect ownedby ref:A2C94 other
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

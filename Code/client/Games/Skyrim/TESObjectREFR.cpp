@@ -1137,6 +1137,17 @@ bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, u
         return false;
     }
 
+    // A living copy of another player's follower is not this player's to talk to, recruit or steal from: her own game runs her.
+    if (Actor* pTarget = apActivator == PlayerCharacter::Get() ? Cast<Actor>(apThis) : nullptr)
+    {
+        const ActorExtension* pTargetExtension = pTarget->GetExtension();
+        if (pTargetExtension && pTargetExtension->IsFollowerCopy() && !pTarget->IsDead())
+        {
+            spdlog::info("Follower: copy {:X} is another player's follower; activating her does nothing here", pTarget->formID);
+            return false;
+        }
+    }
+
     // Exclude books from activation since only reading them removes them from the cell
     // Note: Books are now unsynced 
     if (pActivator && apThis->baseForm->formType != FormType::Book)

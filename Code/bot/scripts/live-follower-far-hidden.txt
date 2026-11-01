@@ -1,0 +1,55 @@
+# A follower in both players' saves, with the leader's far from here: this player's own stays hidden, and comes back when the leader's is dismissed.
+#
+#   python Tools\VR\live-check.py live-follower-far-hidden
+#
+# Only the party leader's exists, so this player has no follower while connected, wherever the leader's is.
+# With hers far away no copy stands in, so nothing else would bring this player's own back.
+party lead
+log live follower far hidden
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+ownership accept
+stay
+
+log DO god on
+log -- Lydia next to the player, this game's own follower
+log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
+log DO papyrus DialogueFollowerScript SetFollower 750BA A2C94
+waitfor known ref:A2C94 40
+wait 6
+
+log -- the leader has her too, and a copy stands in
+claim ref:A2C94 follower
+waitfor ownedby ref:A2C94 me 20
+expect ownedby ref:A2C94 me
+wait 5
+log CHECK ref A2C94 disabled
+# The driver reads the checks as they are logged, so the bot waits before it changes what they read.
+wait 2
+
+log -- the leader walks hers far away: the copy goes, and this player's own stays hidden
+npcmove 0 0 0 cell 133C6
+wait 10
+log CHECK logged Follower: A2C94 \(server id \w+\) is player \w+'s, far from here; this game's own reference is hidden, as this player's follower too
+log CHECK ref A2C94 disabled
+wait 2
+
+log -- the leader's player dismisses theirs: this player's own comes back, as their follower
+follower ref:A2C94 off
+wait 12
+log CHECK ref A2C94 enabled
+waitfor ownedby ref:A2C94 other 20
+expect ownedby ref:A2C94 other
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

@@ -30,7 +30,7 @@ struct AssignCharacterRequest final : ClientMessage
     bool operator==(const AssignCharacterRequest& acRhs) const noexcept
     {
         return GetOpcode() == acRhs.GetOpcode() && Cookie == acRhs.Cookie && ReferenceId == acRhs.ReferenceId && FormId == acRhs.FormId && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId && Position == acRhs.Position && Rotation == acRhs.Rotation && ChangeFlags == acRhs.ChangeFlags &&
-               AppearanceBuffer == acRhs.AppearanceBuffer && FactionsContent == acRhs.FactionsContent && LatestAction == acRhs.LatestAction && FaceTints == acRhs.FaceTints && QuestContent == acRhs.QuestContent && IsDragon == acRhs.IsDragon && IsMount == acRhs.IsMount && IsPlayerSummon == acRhs.IsPlayerSummon && LeveledNpcPickId == acRhs.LeveledNpcPickId;
+               AppearanceBuffer == acRhs.AppearanceBuffer && FactionsContent == acRhs.FactionsContent && LatestAction == acRhs.LatestAction && FaceTints == acRhs.FaceTints && QuestContent == acRhs.QuestContent && IsDragon == acRhs.IsDragon && IsMount == acRhs.IsMount && IsPlayerSummon == acRhs.IsPlayerSummon && IsFollower == acRhs.IsFollower && LeveledNpcPickId == acRhs.LeveledNpcPickId;
     }
 
     uint32_t Cookie{};
@@ -50,5 +50,7 @@ struct AssignCharacterRequest final : ClientMessage
     bool IsDragon{};
     bool IsMount{};
     bool IsPlayerSummon{};
+    //! The actor is this player's follower, so the server knows before anyone else is sent it.
+    bool IsFollower{};
     ActorData CurrentActorData{};
 };

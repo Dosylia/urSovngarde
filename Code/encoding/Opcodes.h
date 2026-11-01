@@ -69,6 +69,7 @@ enum ClientOpcode : unsigned char
     kRequestSleep,
     kRequestReferenceEnable,
     kRequestWarState,
+    kRequestFollowerState,
     kClientOpcodeMax
 };
 

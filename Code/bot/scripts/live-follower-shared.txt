@@ -1,12 +1,10 @@
-# A follower in both players' saves ends up with one game; the two games do not pass her to and fro.
+# A follower in both players' saves stays with one game; the other game's claims are refused.
 #
 #   python Tools\VR\live-check.py live-follower-shared
-#   python Tools\VR\live-check.py --expect-fail live-follower-shared     on a build that always asks back: must be RED
 #
-# A game asks for its follower back the moment she is given to someone else, which is right for a hand-over at a loading screen.
-# With one follower in two saves both games do that, each claim is granted at once, and she changes hands as fast as messages go.
+# Each game asking for her as she went passed her to and fro as fast as messages go.
 # Here Lydia (A2C94, the follower in the test save) stands next to the player, and the bot plays the other save.
-# It asks for her every second. After three passes, each within 2 s of this game getting her, this game must leave her with the bot.
+# It asks for her every second. The game's player had her first and the bot does not lead the party, so she stays.
 log live follower shared
 waitfor connected 45
 collect ownership party
@@ -17,8 +15,9 @@ stay
 wait 5
 
 log DO god on
-log -- Lydia next to the player
+log -- Lydia next to the player, as the player's follower
 log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
+log DO papyrus DialogueFollowerScript SetFollower 750BA A2C94
 waitfor known ref:A2C94 40
 wait 6
 expect ownedby ref:A2C94 other
@@ -33,13 +32,12 @@ wait 1
 claim ref:A2C94 follower
 wait 1
 claim ref:A2C94 follower
-# Longer than a game's own retry for a follower near its player (5 s).
 wait 8
 
-log -- she stays with the bot
-expect ownedby ref:A2C94 me
-log CHECK logged Follower A2C94 \(server id \w+\) was given to player \w+; asked for back
-log CHECK logged Follower A2C94 \(server id \w+\) was given to player \w+; she is that player's follower too
+log -- she stays with the game
+expect ownedby ref:A2C94 other
+log CHECK absent Follower A2C94 \(server id \w+\) was given to player
+log CHECK ref A2C94 enabled
 
 wait 2
 log CHECK game alive

@@ -29,6 +29,7 @@
 #include <Messages/RequestOwnershipTransfer.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
+#include <Messages/RequestFollowerState.h>
 #include <Messages/MountRequest.h>
 #include <Messages/NotifyMount.h>
 #include <Messages/NewPackageRequest.h>
@@ -61,6 +62,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher)
     , m_transferOwnershipConnection(aDispatcher.sink<PacketEvent<RequestOwnershipTransfer>>().connect<&CharacterService::OnOwnershipTransferRequest>(this))
     , m_ownershipTransferEventConnection(aDispatcher.sink<OwnershipTransferEvent>().connect<&CharacterService::OnOwnershipTransferEvent>(this))
     , m_claimOwnershipConnection(aDispatcher.sink<PacketEvent<RequestOwnershipClaim>>().connect<&CharacterService::OnOwnershipClaimRequest>(this))
+    , m_followerStateConnection(aDispatcher.sink<PacketEvent<RequestFollowerState>>().connect<&CharacterService::OnFollowerStateRequest>(this))
     , m_removeCharacterConnection(aDispatcher.sink<CharacterRemoveEvent>().connect<&CharacterService::OnCharacterRemoveEvent>(this))
     , m_characterSpawnedConnection(aDispatcher.sink<CharacterSpawnedEvent>().connect<&CharacterService::OnCharacterSpawned>(this))
     , m_referenceMovementSnapshotConnection(aDispatcher.sink<PacketEvent<ClientReferencesMoveRequest>>().connect<&CharacterService::OnReferencesMoveRequest>(this))
@@ -76,6 +78,23 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher)
     , m_actionEventsConnection(aDispatcher.sink<PacketEvent<RequestActionEvents>>().connect<&CharacterService::OnActionEventsRequest>(this))
 {
 }
+
+namespace
+{
+// The player whose follower this is, while that player is connected; 0 otherwise.
+uint32_t ConnectedFollowerPlayer(World& aWorld, const OwnerComponent& acOwner) noexcept
+{
+    return acOwner.FollowerOfPlayerId && aWorld.GetPlayerManager().GetById(acOwner.FollowerOfPlayerId) ? acOwner.FollowerOfPlayerId : 0;
+}
+
+// Other games show a living follower on a copy, so nothing moves their own reference of her.
+bool IsLivingFollower(World& aWorld, const entt::entity aEntity) noexcept
+{
+    const auto* pOwner = aWorld.try_get<OwnerComponent>(aEntity);
+    const auto* pCharacter = aWorld.try_get<CharacterComponent>(aEntity);
+    return pOwner && pCharacter && !pCharacter->IsDead() && ConnectedFollowerPlayer(aWorld, *pOwner);
+}
+} // namespace
 
 void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, CharacterSpawnRequest* apSpawnRequest) noexcept
 {
@@ -97,6 +116,7 @@ void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, Charact
     if (pOwnerComponent)
     {
         apSpawnRequest->OwnershipEpoch = pOwnerComponent->OwnershipEpoch;
+        apSpawnRequest->FollowerOfPlayerId = ConnectedFollowerPlayer(aRegistry, *pOwnerComponent);
     }
 
     const auto* pFormIdComponent = aRegistry.try_get<FormIdComponent>(aEntity);
@@ -188,6 +208,13 @@ void CharacterService::HandOffAbandonedActors() const noexcept
 
         Player* pOwner = ownerComponent.GetOwner();
         if (!pOwner || playerCharacters.count(cId) || characterComponent.IsPlayerSummon() || characterComponent.IsDead())
+        {
+            s_outOfRangeSweeps.erase(cId);
+            continue;
+        }
+
+        // A follower stays with her player's game while it is connected: another game's AI has no reason to follow, and the others show her as a copy.
+        if (ConnectedFollowerPlayer(m_world, ownerComponent) == pOwner->GetId())
         {
             s_outOfRangeSweeps.erase(cId);
             continue;
@@ -387,8 +414,26 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
 
             auto& ownerComponent = view.get<OwnerComponent>(*itor);
             auto& characterComponent = view.get<CharacterComponent>(*itor);
+            // Told first: the answer says whose follower this is, and the player's own follower goes straight to them.
+            const uint32_t cFollowerBefore = ownerComponent.FollowerOfPlayerId;
+            if (message.IsFollower)
+            {
+                TakeFollower(acMessage.pPlayer, *itor);
+                // The answer below tells this game whose she is, so a follower the rules will not give it is settled first.
+                if (ConnectedFollowerPlayer(m_world, ownerComponent) == acMessage.pPlayer->GetId() && ownerComponent.GetOwner() != acMessage.pPlayer &&
+                    !CanClaimOwnership(acMessage.pPlayer, *itor, ownerComponent.OwnershipEpoch, OwnershipTransferReason::LeaderClaim, true))
+                    ownerComponent.FollowerOfPlayerId = cFollowerBefore;
+            }
+            // Her player's game no longer has her as a follower: an older save, or she was dismissed while she was not loaded.
+            if (!message.IsFollower && ownerComponent.FollowerOfPlayerId == acMessage.pPlayer->GetId())
+            {
+                ownerComponent.FollowerOfPlayerId = 0;
+                spdlog::info("Follower: actor {:X} is no longer player {:X}'s", World::ToInteger(*itor), acMessage.pPlayer->GetId());
+            }
+            const bool cOwnFollower = ConnectedFollowerPlayer(m_world, ownerComponent) == acMessage.pPlayer->GetId();
+
             const bool isOwner = ownerComponent.GetOwner() == acMessage.pPlayer;
-            const bool transferToLeader = !isOwner && CanClaimOwnership(acMessage.pPlayer, *itor, ownerComponent.OwnershipEpoch, OwnershipTransferReason::LeaderAssignment);
+            const bool transferToLeader = !isOwner && !cOwnFollower && CanClaimOwnership(acMessage.pPlayer, *itor, ownerComponent.OwnershipEpoch, OwnershipTransferReason::LeaderAssignment);
 
             if (!characterComponent.LeveledNpcPickId && message.LeveledNpcPickId != GameId{})
             {
@@ -412,6 +457,10 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
             // The assignment response establishes a remote component before the grant arrives.
             if (transferToLeader && !HoldUntilSettled(acMessage.pPlayer, *itor, ownerComponent.OwnershipEpoch, OwnershipTransferReason::LeaderAssignment))
                 TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
+
+            const bool cMoved = cOwnFollower && GiveFollowerToPlayer(acMessage.pPlayer, *itor, cFollowerBefore);
+            if (cMoved || ownerComponent.FollowerOfPlayerId != cFollowerBefore)
+                ResendToViewers(*itor);
 
             return;
         }
@@ -461,7 +510,7 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
     if (message.Reason == OwnershipReleaseReason::Relinquish && (message.WorldSpaceId || message.CellId))
     {
         const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(cEntity);
-        if (pFormIdComponent)
+        if (pFormIdComponent && !IsLivingFollower(m_world, cEntity))
         {
             NotifyActorTeleport notify{};
             notify.FormId = pFormIdComponent->Id;
@@ -533,20 +582,146 @@ void CharacterService::OnOwnershipClaimRequest(const PacketEvent<RequestOwnershi
         return;
     }
 
-    if (!CanClaimOwnership(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim, message.Follower))
-        return;
-
+    // A player's own follower goes by the follower rules, whatever the claim's epoch.
     if (message.Follower)
-        if (auto* pOwnerComponent = m_world.try_get<OwnerComponent>(cEntity))
-            pOwnerComponent->FollowerOfPlayerId = acMessage.pPlayer->GetId();
+    {
+        if (!m_world.view<OwnerComponent, CharacterComponent, CellIdComponent, FormIdComponent>().contains(cEntity))
+            return;
+        MakeFollowerOf(acMessage.pPlayer, cEntity, true);
+        return;
+    }
+
+    if (!CanClaimOwnership(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim))
+        return;
 
     // The leader's game claims each NPC it loads, so after its arrival the claim waits like an assignment.
-    // A follower and a dead body to drag go at once.
+    // A dead body to drag goes at once.
     const auto* pCharacter = m_world.try_get<CharacterComponent>(cEntity);
     const bool cLivingNpc = pCharacter && !pCharacter->IsDead();
-    if (!message.Follower && cLivingNpc && HoldUntilSettled(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim))
+    if (cLivingNpc && HoldUntilSettled(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim))
         return;
     TransferOwnership(acMessage.pPlayer, cEntity, OwnershipTransferReason::LeaderClaim);
+}
+
+void CharacterService::OnFollowerStateRequest(const PacketEvent<RequestFollowerState>& acMessage) const noexcept
+{
+    const auto& message = acMessage.Packet;
+    const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
+
+    // Only a reference of the game's own can be a follower: a temporary actor is not the same one in another game.
+    const auto view = m_world.view<OwnerComponent, CharacterComponent, CellIdComponent, FormIdComponent>();
+    if (!view.contains(cEntity))
+    {
+        spdlog::debug("Ignored follower state from player {:X} for missing actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
+    if (message.IsFollower)
+    {
+        MakeFollowerOf(acMessage.pPlayer, cEntity);
+        return;
+    }
+
+    auto& ownerComponent = view.get<OwnerComponent>(cEntity);
+    if (ownerComponent.FollowerOfPlayerId != acMessage.pPlayer->GetId())
+        return;
+
+    ownerComponent.FollowerOfPlayerId = 0;
+    spdlog::info("Follower: actor {:X} is no longer player {:X}'s", message.ServerId, acMessage.pPlayer->GetId());
+    ResendToViewers(cEntity);
+}
+
+void CharacterService::MakeFollowerOf(Player* apPlayer, const entt::entity aEntity, const bool aGrantAgain) const noexcept
+{
+    const auto& ownerComponent = m_world.get<OwnerComponent>(aEntity);
+    const uint32_t cBefore = ownerComponent.FollowerOfPlayerId;
+    TakeFollower(apPlayer, aEntity);
+    const bool cMoved = GiveFollowerToPlayer(apPlayer, aEntity, cBefore, aGrantAgain);
+    if (cMoved || ownerComponent.FollowerOfPlayerId != cBefore)
+        ResendToViewers(aEntity);
+}
+
+void CharacterService::TakeFollower(Player* apPlayer, const entt::entity aEntity) const noexcept
+{
+    auto& ownerComponent = m_world.get<OwnerComponent>(aEntity);
+    const uint32_t cPlayerId = apPlayer->GetId();
+    const uint32_t cCurrent = ConnectedFollowerPlayer(m_world, ownerComponent);
+    if (cCurrent == cPlayerId)
+        return;
+
+    // A body is nobody's follower: it goes to whoever grabs it.
+    if (m_world.get<CharacterComponent>(aEntity).IsDead())
+        return;
+
+    // Followers in two players' saves: only the party leader's exists, and the other stays hidden in its own game.
+    // A later change of leader moves nothing, since a follower only comes up again when her player's game reports her.
+    if (cCurrent)
+    {
+        auto& partyService = m_world.GetPartyService();
+        Player* pCurrent = m_world.GetPlayerManager().GetById(cCurrent);
+        const auto* pParty = partyService.GetPlayerParty(apPlayer);
+        if (!pParty || pParty != partyService.GetPlayerParty(pCurrent) || !partyService.IsPlayerLeader(apPlayer))
+        {
+            spdlog::info("Follower: actor {:X} stays player {:X}'s; player {:X} has her too, and hides theirs", World::ToInteger(aEntity), cCurrent, cPlayerId);
+            return;
+        }
+    }
+
+    ownerComponent.FollowerOfPlayerId = cPlayerId;
+    spdlog::info("Follower: actor {:X} is now player {:X}'s{}", World::ToInteger(aEntity), cPlayerId, cCurrent ? ", the party leader, who has her too" : "");
+}
+
+bool CharacterService::GiveFollowerToPlayer(Player* apPlayer, const entt::entity aEntity, const uint32_t aPreviousFollower, const bool aGrantAgain) const noexcept
+{
+    auto& ownerComponent = m_world.get<OwnerComponent>(aEntity);
+    if (ConnectedFollowerPlayer(m_world, ownerComponent) != apPlayer->GetId())
+        return false;
+
+    if (ownerComponent.GetOwner() == apPlayer)
+    {
+        if (aGrantAgain)
+        {
+            spdlog::info("Follower: actor {:X} granted again to player {:X}, whose game asked for her", World::ToInteger(aEntity), apPlayer->GetId());
+            ownerComponent.SetOwner(nullptr);
+            TransferOwnership(apPlayer, aEntity, OwnershipTransferReason::LeaderClaim);
+        }
+        return false;
+    }
+
+    // Refused by the rules for claims, as for a player in no party: the game that has her goes on running her.
+    // Her player's game asks again once she is near, which then goes through if the rules let it.
+    if (!CanClaimOwnership(apPlayer, aEntity, ownerComponent.OwnershipEpoch, OwnershipTransferReason::LeaderClaim, true))
+    {
+        ownerComponent.FollowerOfPlayerId = aPreviousFollower;
+        return false;
+    }
+
+    return TransferOwnership(apPlayer, aEntity, OwnershipTransferReason::LeaderClaim);
+}
+
+void CharacterService::ResendToViewers(const entt::entity aEntity) const noexcept
+{
+    const auto& ownerComponent = m_world.get<OwnerComponent>(aEntity);
+    const auto& characterComponent = m_world.get<CharacterComponent>(aEntity);
+    const auto& cellIdComponent = m_world.get<CellIdComponent>(aEntity);
+    const uint32_t cFollowerOf = ConnectedFollowerPlayer(m_world, ownerComponent);
+
+    NotifyRemoveCharacter removeMessage;
+    removeMessage.ServerId = World::ToInteger(aEntity);
+
+    CharacterSpawnRequest spawnMessage;
+    Serialize(m_world, aEntity, &spawnMessage);
+
+    // The removal goes to everybody: a copy can stay at the edge of a player's loaded area after she walked out of their range.
+    // The spawn goes to those in range, and the others are sent her when she comes into range.
+    for (Player* pPlayer : m_world.GetPlayerManager())
+    {
+        if (pPlayer == ownerComponent.GetOwner() || pPlayer->GetId() == cFollowerOf)
+            continue;
+        pPlayer->Send(removeMessage);
+        if (pPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()))
+            pPlayer->Send(spawnMessage);
+    }
 }
 
 void CharacterService::OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) const noexcept
@@ -731,7 +906,7 @@ void CharacterService::UpdateViewsAfterMove(const Player* apOwner, const entt::e
         {
             // A reference of the game's own goes through the door in that player's game too, first.
             // Left where its copy last stood, it stays there in their world, as it last moved (a follower left swimming in a lake).
-            const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(aEntity);
+            const auto* pFormIdComponent = IsLivingFollower(m_world, aEntity) ? nullptr : m_world.try_get<FormIdComponent>(aEntity);
             if (pFormIdComponent)
             {
                 const auto& cPosition = m_world.get<MovementComponent>(aEntity).Position;
@@ -982,6 +1157,13 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     characterComponent.SetMount(message.IsMount);
     characterComponent.SetPlayerSummon(message.IsPlayerSummon);
 
+    // Known before anyone else is sent the character, so no other game ever shows her on its own reference.
+    if (!isCustom && message.IsFollower && !message.CurrentActorData.IsDead)
+    {
+        m_world.get<OwnerComponent>(cEntity).FollowerOfPlayerId = acMessage.pPlayer->GetId();
+        spdlog::info("Follower: actor {:X} is now player {:X}'s", World::ToInteger(cEntity), acMessage.pPlayer->GetId());
+    }
+
     auto& inventoryComponent = m_world.emplace<InventoryComponent>(cEntity);
     inventoryComponent.Content = message.CurrentActorData.InitialInventory;
 
@@ -1026,7 +1208,10 @@ void CharacterService::PopulateAssignmentResponse(const entt::entity aEntity, As
     aResponse.ServerId = World::ToInteger(aEntity);
 
     if (const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(aEntity))
+    {
         aResponse.OwnershipEpoch = pOwnerComponent->OwnershipEpoch;
+        aResponse.FollowerOfPlayerId = ConnectedFollowerPlayer(m_world, *pOwnerComponent);
+    }
 
     if (const auto* pActorValuesComponent = m_world.try_get<ActorValuesComponent>(aEntity))
         aResponse.AllActorValues = pActorValuesComponent->CurrentActorValues;
@@ -1036,6 +1221,7 @@ void CharacterService::PopulateAssignmentResponse(const entt::entity aEntity, As
 
     if (const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(aEntity))
     {
+        aResponse.FactionsContent = pCharacterComponent->FactionsContent;
         aResponse.PlayerId = pCharacterComponent->PlayerId;
         aResponse.IsDead = pCharacterComponent->IsDead();
         aResponse.IsWeaponDrawn = pCharacterComponent->IsWeaponDrawn();
@@ -1134,9 +1320,9 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
     if (aReason != OwnershipTransferReason::LeaderClaim && !apPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()))
         return reject("the actor is out of range");
 
-    // A follower stays with its player's game: another player cannot claim it while that player is connected.
-    if (!aFollower && ownerComponent.FollowerOfPlayerId && ownerComponent.FollowerOfPlayerId != apPlayer->GetId() &&
-        m_world.GetPlayerManager().GetById(ownerComponent.FollowerOfPlayerId))
+    // A living follower stays with its player's game while that player is connected, whoever else has her in a save.
+    // Her body goes to whoever grabs it, as anybody's does.
+    if (const uint32_t cFollowerOf = ConnectedFollowerPlayer(m_world, ownerComponent); !characterComponent.IsDead() && cFollowerOf && cFollowerOf != apPlayer->GetId())
         return reject("it is another player's follower");
 
     // A flying dragon stays with its owner until it lands or dies; flight is not handed over and it would fall.
@@ -1236,6 +1422,25 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
     auto& ownerComponent = view.get<OwnerComponent>(*it);
     const auto& characterComponent = view.get<CharacterComponent>(*it);
     const auto& cellIdComponent = view.get<CellIdComponent>(*it);
+
+    // A living follower is never run by another game.
+    // Left behind, she stays her player's while somebody can see her: her copy stands there until her game takes her up again when she loads.
+    // With her player gone, or nobody near, she is removed, and each game has its own reference again.
+    const Player* pOwner = ownerComponent.GetOwner();
+    if (pOwner && !characterComponent.IsDead() && ConnectedFollowerPlayer(m_world, ownerComponent) == pOwner->GetId())
+    {
+        bool seen = false;
+        for (Player* pPlayer : m_world.GetPlayerManager())
+            seen = seen || (pPlayer != pOwner && pPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()));
+        if (aReason == OwnershipTransferReason::Relinquish && seen)
+        {
+            spdlog::info("Follower: actor {:X} left behind by player {:X}; stays theirs and stands where she is", World::ToInteger(aEntity), pOwner->GetId());
+            return;
+        }
+        spdlog::info("Follower: actor {:X} removed after {}: nobody else runs player {:X}'s follower", World::ToInteger(aEntity), pReasonName, pOwner->GetId());
+        m_world.GetDispatcher().trigger(CharacterRemoveEvent(World::ToInteger(aEntity)));
+        return;
+    }
 
     // Players whose game is sending come first; a silent one only when nobody else is in range.
     const auto now = std::chrono::steady_clock::now();

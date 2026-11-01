@@ -21,7 +21,7 @@ log -- Lydia beside the player, no longer its teammate
 log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
 log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
 waitfor known ref:A2C94 40
-wait 3
+wait 5
 
 log -- the bot takes her
 claim ref:A2C94 follower

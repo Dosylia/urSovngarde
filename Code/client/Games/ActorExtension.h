@@ -8,6 +8,8 @@ struct ActorExtension
     {
         kRemote = 1 << 0,
         kPlayer = 1 << 1,
+        kFollowerCopy = 1 << 2,
+        kHiddenHere = 1 << 3,
     };
 
     enum class ReconciliationStage
@@ -22,8 +24,14 @@ struct ActorExtension
     bool IsPlayer() const noexcept;
     bool IsRemotePlayer() const noexcept;
     bool IsLocalPlayer() const noexcept;
+    //! A temporary actor showing another player's follower.
+    bool IsFollowerCopy() const noexcept;
+    //! A reference of this game's own disabled while a copy stands in for it; a save still has it enabled.
+    bool IsHiddenHere() const noexcept;
     void SetRemote(bool aSet) noexcept;
     void SetPlayer(bool aSet) noexcept;
+    void SetFollowerCopy(bool aSet) noexcept;
+    void SetHiddenHere(bool aSet) noexcept;
 
     ActionEvent LatestAnimation{};
     size_t GraphDescriptorHash = 0;

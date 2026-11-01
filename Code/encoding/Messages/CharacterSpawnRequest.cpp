@@ -23,6 +23,7 @@ void CharacterSpawnRequest::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter)
     Serialization::WriteBool(aWriter, IsPlayerSummon);
     LeveledNpcPickId.Serialize(aWriter);
     Serialization::WriteBool(aWriter, IsDragon);
+    Serialization::WriteVarInt(aWriter, FollowerOfPlayerId);
 }
 
 void CharacterSpawnRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -61,4 +62,5 @@ void CharacterSpawnRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReade
     IsPlayerSummon = Serialization::ReadBool(aReader);
     LeveledNpcPickId.Deserialize(aReader);
     IsDragon = Serialization::ReadBool(aReader);
+    FollowerOfPlayerId = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
 }

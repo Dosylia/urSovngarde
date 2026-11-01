@@ -1,0 +1,27 @@
+# A story NPC a quest made a teammate is no follower: she stays on this game's own reference, for a quest of this player's that may need her.
+#
+#   python Tools\VR\live-check.py live-follower-teammate-only
+#
+# Quest scripts set the teammate flag alone. Taken for a follower, she would be hidden in the other player's game, where they could not talk to her.
+# Here Lydia gets the flag and not the follower faction, and the game must not report her as a follower.
+log live follower teammate only
+waitfor connected 45
+collect ownership party
+expect known me
+waitfor known other 40
+ownership accept
+wait 5
+
+log DO god on
+log DO papyrus ObjectReference MoveTo A2C94 14 f:150 f:0 f:0 b:false
+log DO papyrus Actor SetPlayerTeammate A2C94 b:true b:false
+waitfor known ref:A2C94 40
+wait 6
+log REQUIRE ref A2C94 near player 1500
+log CHECK absent Follower: told the server that A2C94 \(server id \w+\) is this player's follower
+log CHECK ref A2C94 enabled
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

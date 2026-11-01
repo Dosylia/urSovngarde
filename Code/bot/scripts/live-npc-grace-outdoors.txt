@@ -23,7 +23,7 @@ log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
 log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
 waitfor known ref:A2C94 40
 stay
-wait 3
+wait 5
 
 log -- the player travels seventeen cells north; the bot, still next to her, is given her
 log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false

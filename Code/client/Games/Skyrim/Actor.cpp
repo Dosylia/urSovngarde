@@ -204,6 +204,30 @@ void* s_gameSetPosition = nullptr;
 
 #ifdef SKYRIMVR
 constexpr size_t kSetPositionSlot = 0xAB;
+// TESForm::Save, which writes the form flags a load restores.
+constexpr size_t kSaveSlot = 0xE;
+
+using TCharacterSave = void(TESForm*, BGSSaveFormBuffer*);
+TCharacterSave* s_realCharacterSave = nullptr;
+
+// A hidden reference goes into the save as enabled, so a save made while connected keeps that reference for a game without the connection.
+// The flag is taken off for the write only: nothing loads or moves.
+void HookCharacterSave(TESForm* apThis, BGSSaveFormBuffer* apBuffer)
+{
+    auto* pActor = Cast<Actor>(apThis);
+    const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+    const bool cHidden = pExtension && pExtension->IsHiddenHere() && apThis->IsDisabled();
+    if (cHidden)
+        apThis->flags &= ~TESForm::DISABLED;
+
+    s_realCharacterSave(apThis, apBuffer);
+
+    if (cHidden)
+    {
+        apThis->flags |= TESForm::DISABLED;
+        spdlog::info("SaveGuard: reference {:X}, hidden here, written to the save as enabled", apThis->formID);
+    }
+}
 
 TiltedPhoques::Initializer s_gameSetPositionCapture(
     []()
@@ -213,7 +237,19 @@ TiltedPhoques::Initializer s_gameSetPositionCapture(
         {
             s_characterVtable = pVtable;
             s_gameSetPosition = pVtable[kSetPositionSlot];
+
+            // The slot and not the function: a plugin that detours the function then finds it as the game has it.
+            auto* const pSlot = const_cast<void**>(&pVtable[kSaveSlot]);
+            DWORD oldProtect = 0;
+            if (*pSlot && VirtualProtect(pSlot, sizeof(void*), PAGE_READWRITE, &oldProtect))
+            {
+                s_realCharacterSave = reinterpret_cast<TCharacterSave*>(*pSlot);
+                *pSlot = reinterpret_cast<void*>(&HookCharacterSave);
+                VirtualProtect(pSlot, sizeof(void*), oldProtect, &oldProtect);
+            }
         }
+        if (!s_realCharacterSave)
+            spdlog::error("SaveGuard: Character's vtable not found; another player's follower is shown on this game's own reference");
     });
 
 // Once: whether a plugin replaced Character::SetPosition, and which one.
@@ -751,6 +787,37 @@ Factions Actor::GetFactions() const noexcept
     return result;
 }
 
+bool Actor::IsPlayerFollower() const noexcept
+{
+    if (!IsPlayerTeammate() || IsTemporary())
+        return false;
+
+    constexpr uint32_t cCurrentFollowerFaction = 0x5C84E;
+
+    // A rank below zero is not a member: followers' own records list the faction at -1 until they are recruited.
+    if (const auto* pChanges = Cast<ExtraFactionChanges>(extraData.GetByType(ExtraDataType::Faction)))
+    {
+        for (auto i = 0u; i < pChanges->entries.length; ++i)
+        {
+            const auto& cEntry = pChanges->entries[i];
+            if (cEntry.faction && cEntry.faction->formID == cCurrentFollowerFaction)
+                return cEntry.rank >= 0;
+        }
+    }
+
+    if (const auto* pNpc = Cast<TESNPC>(baseForm))
+    {
+        const auto& cFactions = pNpc->actorData.factions;
+        for (auto i = 0u; i < cFactions.length; ++i)
+        {
+            if (cFactions[i].faction && cFactions[i].faction->formID == cCurrentFollowerFaction)
+                return cFactions[i].rank >= 0;
+        }
+    }
+
+    return false;
+}
+
 ActorValues Actor::GetEssentialActorValues() const noexcept
 {
     ActorValues actorValues;
@@ -1042,6 +1109,15 @@ bool Actor::IsDragon() const noexcept
     // The race keyword ActorTypeDragon is known right away.
     constexpr uint32_t cActorTypeDragon = 0x35D59;
     return RaceHasKeyword(race, cActorTypeDragon);
+}
+
+bool Actor::IsSaveGuarded() noexcept
+{
+#ifdef SKYRIMVR
+    return s_realCharacterSave != nullptr;
+#else
+    return false;
+#endif
 }
 
 bool Actor::IsPersonRace(const TESRace* apRace) noexcept

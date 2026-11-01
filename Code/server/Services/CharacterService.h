@@ -19,6 +19,7 @@ struct RequestOwnershipTransfer;
 struct CharacterRemoveEvent;
 struct CharacterExteriorCellChangeEvent;
 struct RequestOwnershipClaim;
+struct RequestFollowerState;
 struct OwnershipTransferEvent;
 struct MountRequest;
 struct NewPackageRequest;
@@ -64,6 +65,7 @@ protected:
     void OnOwnershipTransferRequest(const PacketEvent<RequestOwnershipTransfer>& acMessage) const noexcept;
     void OnOwnershipTransferEvent(const OwnershipTransferEvent& acEvent) const noexcept;
     void OnOwnershipClaimRequest(const PacketEvent<RequestOwnershipClaim>& acMessage) const noexcept;
+    void OnFollowerStateRequest(const PacketEvent<RequestFollowerState>& acMessage) const noexcept;
     void OnCharacterRemoveEvent(const CharacterRemoveEvent& acEvent) const noexcept;
     void OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) const noexcept;
     void OnReferencesMoveRequest(const PacketEvent<ClientReferencesMoveRequest>& acMessage) const noexcept;
@@ -86,6 +88,15 @@ protected:
     bool CanClaimOwnership(Player* apPlayer, entt::entity aEntity, uint32_t aExpectedOwnershipEpoch, OwnershipTransferReason aReason, bool aFollower = false) const noexcept;
     bool TransferOwnership(Player* apPlayer, entt::entity aEntity, OwnershipTransferReason aReason, bool aResetInvalidOwners = true) const noexcept;
     void TransferToNextOwner(entt::entity aEntity, OwnershipTransferReason aReason) const noexcept;
+    //! Makes the actor this player's follower if nobody else's stands in the way, and gives her to their game, then tells the others if anything changed.
+    //! With aGrantAgain a game that has her on the server is granted her once more: it asked because it declined the first grant, with her not yet loaded.
+    void MakeFollowerOf(Player* apPlayer, entt::entity aEntity, bool aGrantAgain = false) const noexcept;
+    void TakeFollower(Player* apPlayer, entt::entity aEntity) const noexcept;
+    //! Gives a follower to her player's game; true when she changed hands.
+    //! If the rules for claims refuse, she goes back to aPreviousFollower, as she stays with the game that has her.
+    bool GiveFollowerToPlayer(Player* apPlayer, entt::entity aEntity, uint32_t aPreviousFollower, bool aGrantAgain = false) const noexcept;
+    //! Sends the character afresh to everybody in range but its owner and its follower's player, who then show it as what it now is.
+    void ResendToViewers(entt::entity aEntity) const noexcept;
     //! Takes an actor off an owner who has gone silent or out of range and gives it to a player who can see it.
     void HandOffAbandonedActors() const noexcept;
     ActorData BuildActorData(const entt::entity acEntity) const noexcept;
@@ -119,6 +130,7 @@ private:
     entt::scoped_connection m_transferOwnershipConnection;
     entt::scoped_connection m_ownershipTransferEventConnection;
     entt::scoped_connection m_claimOwnershipConnection;
+    entt::scoped_connection m_followerStateConnection;
     entt::scoped_connection m_removeCharacterConnection;
     entt::scoped_connection m_characterSpawnedConnection;
     entt::scoped_connection m_referenceMovementSnapshotConnection;

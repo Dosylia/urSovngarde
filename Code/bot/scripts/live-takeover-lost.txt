@@ -4,22 +4,29 @@
 #
 # On c382599 it did not: she stood, her feet moving 9 units in 5 s, where an NPC gained mid-walk moved its by 46.
 # The game's own Lydia (A2C94, a reference of Skyrim.esm) follows the walking player by her AI, and the bot claims her mid-walk.
-# Her teammate flag goes just before the claim, so she goes as a plain NPC and is not asked back.
+# Her teammate flag goes before the claim, so she goes as a plain NPC to the bot, which leads the party.
 # The bot then has her stand, sending back what the game itself reported while she stood: real variables, at the real pace, and no VR pose.
 # A replay starts from the bot's own place, so the bot waits on the road where she will be at the claim: a real new owner has her where she is.
 # `replay` holds the bot's script until it ends, so what happens during it is queued for the driver first.
 # It is judged on her legs, read from the game. Run Tools\VR\takeover-probe.py beside it for her speed and position over time.
+party lead
 log live takeover lost
 waitfor connected 45
 expect known me
 waitfor known other 40
+wait 3
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
 ownership accept
 stay
-wait 5
 log DO god on
 
 log -- the game's Lydia, beside the player
 log DO papyrus ObjectReference MoveTo A2C94 14 f:120 f:0 f:-10 b:false
+log DO papyrus DialogueFollowerScript SetFollower 750BA A2C94
 waitfor known ref:A2C94 40
 wait 6
 log REQUIRE ref A2C94 near player 400
@@ -43,10 +50,11 @@ wait 3.5
 log REQUIRE moved went atleast 300
 log REQUIRE ref A2C94 feet moving 1
 log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
-wait 1.5
+# Her player's game reports the change after two checks a second apart.
+wait 3.5
 
 log -- the bot takes her mid-walk, and has her stand
-claim ref:A2C94 follower
+claim ref:A2C94
 wait 1
 log DO sleep 4
 log CHECK ref A2C94 feet still 5 15

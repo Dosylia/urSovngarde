@@ -33,7 +33,7 @@ struct CharacterSpawnRequest final : ServerMessage
                InventoryContent == acRhs.InventoryContent && FactionsContent == acRhs.FactionsContent &&
                ActionsToReplay == acRhs.ActionsToReplay && FaceTints == acRhs.FaceTints && PlayerId == acRhs.PlayerId &&
                OwnershipEpoch == acRhs.OwnershipEpoch && IsDead == acRhs.IsDead && IsPlayer == acRhs.IsPlayer && IsWeaponDrawn == acRhs.IsWeaponDrawn &&
-               IsPlayerSummon == acRhs.IsPlayerSummon && IsDragon == acRhs.IsDragon && LeveledNpcPickId == acRhs.LeveledNpcPickId && GetOpcode() == acRhs.GetOpcode();
+               IsPlayerSummon == acRhs.IsPlayerSummon && IsDragon == acRhs.IsDragon && LeveledNpcPickId == acRhs.LeveledNpcPickId && FollowerOfPlayerId == acRhs.FollowerOfPlayerId && GetOpcode() == acRhs.GetOpcode();
     }
 
     uint32_t ServerId{};
@@ -52,6 +52,8 @@ struct CharacterSpawnRequest final : ServerMessage
     ActorValues InitialActorValues{};
     uint32_t PlayerId{};
     uint32_t OwnershipEpoch{};
+    //! The player whose follower this is (0: nobody's).
+    uint32_t FollowerOfPlayerId{};
     bool IsDead{};
     bool IsPlayer{};
     bool IsWeaponDrawn{};

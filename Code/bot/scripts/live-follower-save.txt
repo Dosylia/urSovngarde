@@ -1,0 +1,66 @@
+# A save made while another player's follower hides this game's own reference keeps that reference enabled.
+#
+#   python Tools\VR\live-check.py live-follower-save
+#
+# Hiding is the game's disable, and a disable is saved with the reference: without the guard, she would be gone from that save for good.
+# Here the game saves with Lydia hidden, leaves the session, and loads that save: she must be there.
+# As a control the same is done with a plain disable, which must stay in the save; otherwise this test proves nothing.
+# Saves made here are put aside by headless.ps1, as any save a test game makes.
+log live follower save
+waitfor connected 45
+collect ownership party
+expect known me
+waitfor known other 40
+ownership accept
+wait 5
+
+log DO god on
+log -- Lydia beside the player, waiting, and no longer its teammate
+log DO papyrus ObjectReference MoveTo A2C94 14 f:150 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+waitfor known ref:A2C94 40
+# Her player's game reports the change after two checks a second apart.
+wait 5
+log -- she is the bot's player's follower now, and this game's own reference is hidden
+claim ref:A2C94 follower
+stay
+waitfor ownedby ref:A2C94 me 20
+expect ownedby ref:A2C94 me
+wait 5
+log REQUIRE ref A2C94 disabled
+
+log -- saved like this, and loaded while connected: she stays hidden, and the game goes on
+log DO console save STFollowerGuard
+wait 10
+log CHECK logged SaveGuard: reference A2C94, hidden here, written to the save as enabled
+log DO load save STFollowerGuard
+wait 60
+log CHECK game alive
+log CHECK ref A2C94 disabled
+
+log -- then loaded with no connection
+log DO f6
+wait 8
+log DO load save STFollowerGuard
+wait 60
+log CHECK ref A2C94 enabled
+
+log -- the control: a plain disable stays in a save
+log DO papyrus ObjectReference DisableNoWait A2C94 b:false
+wait 3
+log REQUIRE ref A2C94 disabled
+log DO console save STFollowerControl
+wait 10
+log DO papyrus ObjectReference EnableNoWait A2C94 b:false
+wait 3
+log DO load save STFollowerControl
+wait 60
+log CHECK ref A2C94 disabled
+log DO papyrus ObjectReference EnableNoWait A2C94 b:false
+wait 3
+log CHECK game alive
+log DO f6
+wait 5
+log done
+stop

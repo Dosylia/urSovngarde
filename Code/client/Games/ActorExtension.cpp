@@ -27,6 +27,16 @@ bool ActorExtension::IsLocalPlayer() const noexcept
     return IsLocal() && IsPlayer();
 }
 
+bool ActorExtension::IsFollowerCopy() const noexcept
+{
+    return onlineFlags & kFollowerCopy;
+}
+
+bool ActorExtension::IsHiddenHere() const noexcept
+{
+    return onlineFlags & kHiddenHere;
+}
+
 void ActorExtension::SetRemote(bool aSet) noexcept
 {
     if (aSet)
@@ -41,4 +51,20 @@ void ActorExtension::SetPlayer(bool aSet) noexcept
         onlineFlags |= kPlayer;
     else
         onlineFlags &= ~kPlayer;
+}
+
+void ActorExtension::SetFollowerCopy(bool aSet) noexcept
+{
+    if (aSet)
+        onlineFlags |= kFollowerCopy;
+    else
+        onlineFlags &= ~kFollowerCopy;
+}
+
+void ActorExtension::SetHiddenHere(bool aSet) noexcept
+{
+    if (aSet)
+        onlineFlags |= kHiddenHere;
+    else
+        onlineFlags &= ~kHiddenHere;
 }

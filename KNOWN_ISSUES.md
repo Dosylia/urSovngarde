@@ -199,8 +199,11 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
 - **Players with different modlists:** an NPC whose base form a game does not have cannot be shown there
   (`Failed to retrieve Actor X, it will not be spawned, possibly missing mod`, `Failed to retrieve NPC`). A reference a
   game lacks, with its base present, gets a copy of the owner's base in its place (`Stand-in:`).
-- **Shared follower** in both saves (Lydia): each game asks for her back as she goes, so after three quick passes
-  she stays with one game, and the other shows a copy that follows the player of that game. Dismiss her in one save.
+- **Followers** (`CharacterService`, client and server): a follower is the teammate flag plus `CurrentFollowerFaction`.
+  - Another player's is shown on a temporary copy, and this game's own reference is only disabled while loaded nearby (`s_ghosts`, `HideGhost`). The copy's writes are all it takes: nothing reaches the reference, and copies skip saves (`SetSkipSaveFlag`).
+  - A disable is saved with a reference, so `kHiddenHere` makes the save hook (Character's vtable, slot 0xE) write a hidden one as enabled: `SaveGuard:`. The rig's control in `live-follower-save` shows that a plain disable does stay in a save.
+  - The game's disable lands a little after it is asked for. A release in between would be undone by it, hence `s_pendingGhostEnables`; a hook on the disable to catch scripts was tried and taken out, as it took our own second disable for a script's and left her disabled in saves.
+  - In both saves only the party leader's exists. **Known limits:** a quest disabling a reference hidden here is undone when it comes back, and written to a save as enabled; a quest NPC with the follower faction is hidden for the other player too; a framework's follower without that faction stays an ordinary NPC; `kHiddenHere` is not cleared by a load.
 - **Intermittent crash in the script engine on a freed temporary form -- a game/modlist crash, not ours.**
   Fingerprint: top frame `SkyrimVR.exe+0x93CE17` (`SkyrimScript::HandlePolicy`, turning a script handle into an
   object), `RDI = 0x3D`, `R15 = SkyrimVM*`, an access violation *executing* a heap-like address -- very often exactly

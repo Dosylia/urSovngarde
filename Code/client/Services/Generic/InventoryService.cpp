@@ -167,7 +167,7 @@ namespace
 // Another player's game dresses her in its own save's outfit and sends that as a re-equip; it is ignored here.
 bool IsMyFollower(const Actor* apActor, const uint32_t aServerId, const char* apWhat) noexcept
 {
-    if (!apActor || !apActor->IsPlayerTeammate() || apActor->IsTemporary())
+    if (!apActor || !apActor->IsPlayerFollower())
         return false;
     static std::chrono::steady_clock::time_point s_nextNote{};
     const auto now = std::chrono::steady_clock::now();

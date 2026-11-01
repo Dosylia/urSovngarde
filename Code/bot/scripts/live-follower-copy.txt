@@ -1,0 +1,54 @@
+# Another player's follower is shown on a copy here, and this game's own reference is hidden, not moved.
+#
+#   python Tools\VR\live-check.py live-follower-copy
+#   python Tools\VR\live-check.py --expect-fail live-follower-copy     on a build without the copy: must be RED
+#
+# With her shown on this game's own reference, that reference was moved and rewritten, and stayed so in a save made after it.
+# Here the bot's player has Lydia as a follower beside the game's player, and walks her about.
+# Then the bot's player dismisses her, and this game's own reference shows her again as any other NPC.
+log live follower copy
+waitfor connected 45
+collect ownership party
+expect known me
+waitfor known other 40
+ownership accept
+wait 5
+
+log DO god on
+log -- Lydia beside the player, waiting, and no longer its teammate
+log DO papyrus ObjectReference MoveTo A2C94 14 f:150 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+waitfor known ref:A2C94 40
+# Her player's game reports the change after two checks a second apart.
+wait 5
+log DO mark home ref A2C94
+
+log -- she is the bot's player's follower now
+claim ref:A2C94 follower
+stay
+waitfor ownedby ref:A2C94 me 20
+expect ownedby ref:A2C94 me
+wait 5
+log CHECK logged Follower: A2C94 \(server id \w+\) is player \w+'s; copy \w+ shows her
+log CHECK ref A2C94 disabled
+# The driver reads the checks as they are logged, so the bot waits before it changes what they read.
+wait 2
+
+log -- the bot walks her about, near the player's start outside Mistwatch: this game's own reference does not follow
+npcmove 140800 -32668 -10485
+wait 4
+log CHECK moved home atmost 10
+log CHECK ref A2C94 disabled
+wait 2
+
+log -- the bot's player dismisses her: the copy goes, and the reference shows her as any other NPC
+follower ref:A2C94 off
+wait 6
+log CHECK logged Ghost: reference A2C94 is a normal local creature again
+log CHECK ref A2C94 enabled
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

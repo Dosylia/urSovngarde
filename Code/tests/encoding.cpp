@@ -417,6 +417,7 @@ TEST_CASE("Packets", "[encoding.packets]")
         sendMessage.Position.z = 125452.4f;
         sendMessage.Rotation.x = -1.87f;
         sendMessage.Rotation.y = 45.35f;
+        sendMessage.IsFollower = true;
 
         Buffer::Writer writer(&buff);
         sendMessage.Serialize(writer);

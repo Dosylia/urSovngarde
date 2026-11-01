@@ -212,6 +212,8 @@ struct Actor : TESObjectREFR
     [[nodiscard]] bool IsDragon() const noexcept;
     //! Whether a race is a person's, which all share the human skeletons and animation graph.
     [[nodiscard]] static bool IsPersonRace(const TESRace* apRace) noexcept;
+    //! Whether a save writes a reference hidden with a stand-in as enabled; without it, nothing of a player's follower is hidden.
+    [[nodiscard]] static bool IsSaveGuarded() noexcept;
     //! Whether the game's equip code can run on this actor: an AI process with its middle-high data, as actors loaded here have.
     [[nodiscard]] bool HasLoadedProcess() const noexcept;
     [[nodiscard]] bool IsWearingBodyPiece() const noexcept;
@@ -299,6 +301,9 @@ struct Actor : TESObjectREFR
     bool IsCommandedActor() const noexcept { return flags2 & ActorFlags::IS_COMMANDED_ACTOR; }
     //! This game's player's follower (Actor::boolBits kPlayerTeammate, bit 26; flags1 is boolBits).
     bool IsPlayerTeammate() const noexcept { return (flags1 & (1u << 26)) != 0; }
+    //! This player's follower: a teammate in the game's CurrentFollowerFaction, which is what the game's and the frameworks' follower quests give her.
+    //! Quest scripts set the teammate flag alone on story NPCs, who are not hidden from another player whose quest may need them.
+    [[nodiscard]] bool IsPlayerFollower() const noexcept;
 
 public:
     enum ChangeFlags : uint32_t

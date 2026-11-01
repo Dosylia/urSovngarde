@@ -27,7 +27,7 @@ log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
 log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
 log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
 waitfor known ref:A2C94 40
-wait 3
+wait 5
 
 log -- the player leaves for Riverwood's inn; the bot, still in the keep, is given her
 # Indoors to indoors: console travel out to Tamriel has hit Community Shaders' crash at a load (+0x1208c8) in the rig.

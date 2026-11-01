@@ -11,6 +11,9 @@
 #include <Messages/NotifyClash.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/RequestOwnershipClaim.h>
+#include <Messages/RequestFollowerState.h>
+#include <Messages/AssignCharacterResponse.h>
+#include <Messages/CharacterSpawnRequest.h>
 #include <Messages/NotifyHealthChangeBroadcast.h>
 
 using namespace TiltedPhoques;
@@ -102,4 +105,43 @@ TEST_CASE("a claim says whether it is for the claimant's own follower, or for a 
         back.DeserializeRaw(reader);
         REQUIRE(back == claim);
     }
+}
+
+TEST_CASE("a game says who became its player's follower, and the server says whose a character is", "[clash]")
+{
+    for (const bool cIsFollower : {false, true})
+    {
+        RequestFollowerState state{};
+        state.ServerId = 0x1A;
+        state.IsFollower = cIsFollower;
+        Buffer buffer(32);
+        Buffer::Writer writer(&buffer);
+        state.SerializeRaw(writer);
+        Buffer::Reader reader(&buffer);
+        RequestFollowerState back{};
+        back.DeserializeRaw(reader);
+        REQUIRE(back == state);
+    }
+
+    AssignCharacterResponse response{};
+    response.ServerId = 0x1A;
+    response.FollowerOfPlayerId = 3;
+    Buffer responseBuffer(512);
+    Buffer::Writer responseWriter(&responseBuffer);
+    response.SerializeRaw(responseWriter);
+    Buffer::Reader responseReader(&responseBuffer);
+    AssignCharacterResponse responseBack{};
+    responseBack.DeserializeRaw(responseReader);
+    REQUIRE(responseBack == response);
+
+    CharacterSpawnRequest spawn{};
+    spawn.ServerId = 0x1A;
+    spawn.FollowerOfPlayerId = 3;
+    Buffer spawnBuffer(512);
+    Buffer::Writer spawnWriter(&spawnBuffer);
+    spawn.SerializeRaw(spawnWriter);
+    Buffer::Reader spawnReader(&spawnBuffer);
+    CharacterSpawnRequest spawnBack{};
+    spawnBack.DeserializeRaw(spawnReader);
+    REQUIRE(spawnBack == spawn);
 }

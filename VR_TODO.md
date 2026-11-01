@@ -59,9 +59,8 @@ his scene never finishes. Use an alternate start, or connect after the intro.
 - **An Ice Wraith.** Both PCs need its behaviour folder, `SkyrimTogetherRebornBehaviors/IceWraith`. Fight one with both players
   near. Its copy moves as it does in its owner's game and does not slide.
   If not: `SlideDiag`, `Ghost: reference X was enabled again`.
-- **A follower out of an inn.** One player takes a follower out of an inn while the other stays inside. She is gone for the
-  player left inside. (Through a city gate she stays behind for the other player, as on v1.9.7.)
-  If not: `Assignment: X left this place with its owner`.
+- **A follower out of an inn.** One player takes a follower out of an inn while the other stays inside. Her copy goes with her for the player left inside, and that player's own reference is as it was.
+  If not: `Follower: <id> (server id <id>) is player <n>'s, far from here`, `Ghost: reference`.
 - **An NPC handed over mid-walk (needs the next build).** Stay in a town with people walking about, and let one of you go through a
   door and come back: that hands NPCs over. No NPC stands with one leg forward, rocking, on either screen, and none walks on the spot
   or slides. Say which screen if one does. If not: `Takeover: NPC X was moving as a copy here`, `TakeoverDiag:`, `SwimDiag: own NPC`.
@@ -89,8 +88,8 @@ If there is time:
 - **Map icons:** open the map, zoom in close and back out, and look for the other player's icon.
 - **The map, player 2 and together:** 60 closes online, no freeze. Read `Map menu: hide handled on thread N (the main thread), the map unpaused`
   at each close, and no `put on a list again` or `led back`.
-- **One follower in both saves:** she settles with one game. Read `she is that player's follower too, so she stays there`, once,
-  and no more `asked for back`.
+- **Followers.** Each player brings a different follower, and each sees both, following their own player. Then both have the same one: only the party leader's exists, the other player has none while connected, and theirs is back with their items after they leave the session.
+  Save and reload once in each case, connected and after leaving. Read `Follower:`, `Ghost: reference`, `SaveGuard:`, and that nobody's follower is missing after leaving. A granted sleep's OK button and a door with a follower are worth a look too.
 - **Look at the other player:** stand in front of them while they hold their hands out, palms up, then have them run past you with
   smooth locomotion. Hands and palms are as they hold them, the legs run, and the face looks like theirs. Only a headset can tell.
 
@@ -310,11 +309,15 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       (`ReferenceEnable:`, in play since 10-25). Not yet seen: a siege's camps, barricades and catapults for player 2. The hostile faction
       (CWSoldierPlayerEnemyFaction 74A4F) reaches NPCs the leader's game owns through the faction sync; NPCs player 2's game owns never get
       it (the bounty). To see: "Doors in a civil war quest".
-- [!] **Another player's follower left standing in your interior** (fixed in build f997b6a, not seen in play). `live-follower-left` red on d2fd00c,
-      green on 6f521cc; rig only. To see: "A follower out of an inn". The `Assignment:` lines of 2026-10-31 were the gate, not this case: see
-      "A follower left at a city gate", in open work.
-- [!] **A follower in both players' saves bounces between the two games** (build 4df623a; KNOWN_ISSUES "Shared follower"). Three quick passes leave
-      her with the other game. `live-follower-shared` red, then ok; rig only, no line of it in play yet. To see: "One follower in both saves".
+- [!] **Followers: each player's is known to the server, and shown to the others on a copy** (uncommitted build on 26f2792c, protocol 7b2006a6, not seen in play; every player needs it). Replaces a follower left in your interior, one follower bouncing between two saves, and most of a follower's effect on the other player's save.
+      A follower is the game's teammate flag plus `CurrentFollowerFaction`; the flag alone is a quest's and stays an ordinary NPC. A living one is run only by her player's game while they are connected. Other players show her on a temporary copy, and their own reference is not moved or rewritten, only disabled while loaded nearby, and written to a save as enabled.
+      In both saves, only the party leader's exists. The other player has no follower while connected, cannot dismiss her or recruit another, and gets theirs back with their items.
+      Rig on FUS: `live-follower-copy`, `-save`, `-teammate-only`, `-shared`, `-shared-leader`, `-far-hidden`, `live-follower`, `-left`, `-stays-in`, `live-gone-here`, `live-teleport-far`, `live-teleport-far-loaded`, `live-npc-grace-outdoors`, `live-copy-through-door` ok; see below for the rest. MGO: the game starts, loads and connects; `live-follower-copy` could not run there, as Lydia is disabled in that save (INVALID).
+      Open, from the rig:
+      - One crash loading a save while connected, in 5 runs of `live-follower-save` that got that far (`SkyrimVR.exe+0x93f0f9`, 2026-11-01 18:52, just after `FormGuard: script handle FFFFFF0011D6`). The handle is not the copy's and nothing had been deleted; it looks like KNOWN_ISSUES' script engine crash on a freed temporary form, but that is not proven. A sixth run ended 30 s after the load with status 0 and no crash block, cause unknown.
+      - `live-npc-grace`: the player's console `moveto` to her landed outside Helgen, so the rest of the script did not apply. She is an ordinary NPC there, on no follower path; not run on an older build, so whether it is new is unknown.
+      - `live-takeover-lost`: `ref A2C94 feet still 5 15` failed, a foot moving 79 units against the pelvis. She is an ordinary NPC there too. See "An NPC handed over mid-walk".
+      Known limits: a quest disabling a reference while it is hidden here is undone when it comes back, and is written to a save as enabled. A quest NPC with the follower faction is hidden for the other player too, whose own quest may need her. Followers from a framework without that faction stay ordinary NPCs. `kHiddenHere` is not cleared by a load.
 - [!] **An arrow takes one hit** (92ff338d, then f997b6a). The defender's replayed arrow decides, and the attacker's report is dropped while one
       may be in flight (`PvP: a hit of N from player P not taken: its projectile is replayed here, and that copy's hit decides`). No red run:
       the bot cannot launch a projectile. Not confirmed in play. To see: "PvP on, spells and arrows".
@@ -533,9 +536,8 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       10-30, 1195 on 10-31 (205 at 08:06, 1195 at 08:16). `ThreadOwners:` at 08:14 read DynDOLOD.DLL in 23 of 24. Player 1's game stays near 170 to 270,
       on v3.0.43. Cause found 2026-11-01: player 2's FUS profile has Alpha-43 installed (`DynDOLOD DLL NG and Scripts`) but switched off since at least 10-17, and still runs Alpha-32 (`DynDOLOD DLL NG`), as every crash log to 10-31 00:27 shows (`DynDOLOD.DLL v3.0.32`).
       Same session, 10-31 14:10 to 15:06: player 2 went from 221 to 3195 threads, player 1 stayed at 157 to 170. `ThreadOwners:` read DynDOLOD.DLL in 22 or 23 of 24 each time. Private memory is no sign of it: 14.4 to 20.9 GB for player 2, 20.4 to 23.0 GB for player 1. To do: player 2 swaps the two in Mod Organizer; to see: `Health: ... threads` stays under about 300 next session.
-- [ ] **A follower left at a city gate** One player takes a follower through a walled city's gate while the other stays outside: her teleport is
-      refused and she stays a live, unsynced NPC where she stands, as on v1.9.7. Moving her into the city's persistent cell (build 4df623a) was a
-      mistake and is taken out: on 2026-10-31 08:10 she stood stuck in Windhelm's gate. Nothing solves it yet.
+- [!] **A follower left at a city gate** (the rules above, not seen in play). She no longer stands on the other player's own reference: her copy goes when she leaves their range. Moving a reference into the city's persistent cell stays out, as it stood her stuck in Windhelm's gate on 2026-10-31.
+      To see: one player takes a follower through Windhelm's gate while the other stays outside. Nothing of her stays behind.
 - [ ] **A player seen twice at a load door, and gone late** (session 2026-10-31 08:10, player 1 through Windhelm's gate, seen by player 2). Not changed; the
       same removal shows on 10-30, so probably old. Player 2's log: `Door 55FCB: FF0012F7 activated it in another game ...; done here too`, 23 ms later
       `CopyGone: FF0012F7 removed as remote; the actor is still there, no 3D`, then a new copy FF000C25 892 units away (`CharacterSpawnRequest, server id: 1`),

@@ -6,23 +6,30 @@
 # When a game lets go of an actor it unloaded, the server tells every other player to move that actor to where it was
 # last seen (NotifyActorTeleport). A game that moved it there loaded that far exterior cell, and the game's streaming of
 # such cells crashed four times on the thread that promotes large references, 3 to 47 ms after bursts of these moves.
-# Here: Lydia (A2C94, the follower in the test save) is put next to the player and told to wait; the bot takes her as
-# its follower; the player travels far away; the bot lets her go as last seen in a third place, far from both.
+# Here: Lydia (A2C94, the follower in the test save) is put next to the player, told to wait, and is no longer the player's teammate.
+# The bot, which leads the party, takes her as a plain NPC; the player travels far away; the bot lets her go as last seen in a third place, far from both.
 # The game must leave her where she is: neither she nor that place is loaded here.
+party lead
 log live teleport far
 waitfor connected 45
 collect ownership party
 expect known me
 waitfor known other 40
+wait 3
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
 ownership accept
-wait 5
 
 log -- Lydia next to the player, waiting there
 log DO papyrus ObjectReference MoveTo A2C94 14 f:100 f:0 f:0 b:false
 log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
 waitfor known ref:A2C94 40
-wait 3
-claim ref:A2C94 follower
+wait 5
+claim ref:A2C94
 waitfor owned == 1 15
 expect owned == 1
 stay

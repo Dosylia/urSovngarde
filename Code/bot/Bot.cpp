@@ -29,6 +29,7 @@
 #include <Messages/NotifyVoiceData.h>
 #include <Messages/NotifyPlayerWhereabouts.h>
 #include <Messages/RequestOwnershipClaim.h>
+#include <Messages/RequestFollowerState.h>
 #include <Messages/RequestPlayerHealthUpdate.h>
 #include <Messages/MountRequest.h>
 #include <Messages/NotifyClash.h>
@@ -3176,6 +3177,23 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         SendMsg(request);
         spdlog::info("[script] claimed actor {:X} (reference {:X}) at epoch {}{}", request.ServerId, pFound->Ref.BaseId & 0x00FFFFFF, request.ExpectedOwnershipEpoch,
                      request.Follower ? " as our follower" : "");
+        return true;
+    }
+
+    // "follower ref:<hex> on|off": say this bot's player gained or lost that follower, as a game does when her flag changes.
+    if (name == "follower" && args.size() > 1 && args[0].rfind("ref:", 0) == 0)
+    {
+        const KnownActor* pFound = ActorOfRef(args[0]);
+        if (!pFound)
+        {
+            spdlog::error("[script] follower: no actor of reference {} known", args[0].substr(4));
+            return true;
+        }
+        RequestFollowerState request{};
+        request.ServerId = pFound->ServerId;
+        request.IsFollower = args[1] == "on";
+        SendMsg(request);
+        spdlog::info("[script] actor {:X} (reference {:X}) reported as {} our follower", request.ServerId, pFound->Ref.BaseId & 0x00FFFFFF, request.IsFollower ? "now" : "no longer");
         return true;
     }
 

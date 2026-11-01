@@ -125,6 +125,10 @@ private:
     void RestoreConformedWeapons(Actor* apActor) noexcept;
     // This player's followers owned by another player, asked for back once they are near this player.
     void RunFollowerReclaims() const noexcept;
+    // Tells the server who became, or stopped being, this player's follower.
+    void RunFollowerReports() const noexcept;
+    // Announces references that a stand-in stopped hiding, which discovery may not find again.
+    void RunReleasedGhosts() const noexcept;
     void ProcessLeveledConforms() noexcept;
 
     void RunLocalUpdates() const noexcept;
