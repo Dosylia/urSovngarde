@@ -8,6 +8,7 @@
 #include <Interface/Menus/SkillsMenu.h>
 #include <Interface/Menus/MapMenu.h>
 #include <Interface/UI.h>
+#include <PatchCheck.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
 
@@ -20,6 +21,11 @@ TP_THIS_FUNCTION(TVMDestructor, uintptr_t, void);
 static TVMUpdate* VMUpdate = nullptr;
 static TMainLoop* MainLoop = nullptr;
 static TVMDestructor* VMDestructor = nullptr;
+
+#ifdef SKYRIMVR
+// The main loop's call to Main::Update, the only one in the game.
+constexpr uintptr_t kMainUpdateCall = 0x5B6E8F;
+#endif
 
 int TP_MAKE_THISCALL(HookVMUpdate, GameVM, float a2)
 {
@@ -61,13 +67,21 @@ static TiltedPhoques::Initializer s_mainHooks(
         VMUpdate = cVMUpdate.Get();
         TP_HOOK(&VMUpdate, HookVMUpdate);
 
-        // VR needs Main::Update (VRAddressOverrides) for the unpaused Sleep/Wait OK and the party's control lock;
-        // without it a granted sleep's OK button does nothing.
+#ifdef SKYRIMVR
+        // VR needs Main::Update for the unpaused Sleep/Wait OK and the party's control lock; without it a granted sleep's OK button does nothing.
+        // Its call is swapped and the function left as it is: CBPC detours Main::Update, following a jump at its start and copying the bytes it finds there without relocating them.
+        // With the function detoured, CBPC's copy held our hook's first call, which then landed in the heap and crashed the game at the main menu.
+        auto* pMainUpdateCall = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) + kMainUpdateCall);
+        if (PatchCheck::IsCall(pMainUpdateCall))
+            TiltedPhoques::SwapCall(pMainUpdateCall, MainLoop, &HookMainLoop);
+        else
+            spdlog::error("Main loop: {} is not the call to Main::Update ({}), leaving it alone; a sleep's OK button does nothing", fmt::ptr(pMainUpdateCall),
+                          PatchCheck::Bytes(pMainUpdateCall, 5));
+#else
         POINTER_SKYRIMSE(TMainLoop, cMainLoop, 36564, 36564);
         MainLoop = cMainLoop.Get();
         TP_HOOK(&MainLoop, HookMainLoop);
 
-#ifndef SKYRIMVR
         // An empty placeholder, and the address does not exist on VR.
         POINTER_SKYRIMSE(TVMDestructor, cVMDestructor, 40412, 40412);
         VMDestructor = cVMDestructor.Get();

@@ -83,14 +83,18 @@ stronger evidence; the AE path was left untouched.
     plus an uncommitted destructor guard). That commit was never pushed anywhere: the submodule
     remote is upstream TiltedPhoques. So the repo's submodule pointer stays on upstream
     `55ee3f29`, and nothing goes in the submodule.
-  - VR does not try three hooks at all (behind `#ifndef SKYRIMVR` since 2026-10-18; before, it
-    skipped them at every start), none of which loses anything:
-    - `HookMainLoop` and `HookVMDestructor` (ids 36564 and 40412): empty placeholders.
+  - VR does not try two hooks at all (behind `#ifndef SKYRIMVR` since 2026-10-18; before, it
+    skipped them at every start), neither of which loses anything:
+    - `HookVMDestructor` (id 40412): an empty placeholder.
     - `HookRegisterPapyrusFunction` (id 104788): already installed from the VM's vtable
       instead (`BSScript.cpp`).
     So a `Hook X not installed` line on VR is always a real miss, and the rig's start-up health counts it.
 
     Without the check, any one of them crashes the game at start.
+  - `HookMainLoop` on VR swaps the main loop's call at `+0x5B6E8F` and never detours `Main::Update` (`+0x5BAB10`).
+    CBPC (`cbp.dll`) detours that function when the main menu opens: it follows `FF 25`, `E9` and `EB` jumps at the start, then copies the first bytes unrelocated.
+    A hook of ours on the function hands CBPC our own code to copy, and any relative call in those bytes then runs from the heap: an execute fault at a random address, with `hdtsmp64.dll+0x4395e` next on the stack.
+    The same applies to any function CBPC detours; `slot at rsp - rip` equal to a call's displacement in our hook is the sign.
 
 ## 3. Struct layouts and virtual tables
 

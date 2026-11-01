@@ -497,11 +497,14 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       The other four revives logged read 101.5 to 114.7, and the owner has seen nothing wrong with revives, so this is the log's word alone.
       Its owner's knock state 5 was copied onto a copy with no ragdoll (`keptMask` in AnimationSystem). `live-revive-copy` does not reproduce it.
       Each 5 s a copy with a VR pose logs `VRBodySync: actor X body -- reference z, 3D root z, head above the root, knock state`.
+- [!] **MGO crashed at the main menu from v1.9.6-23 on, fix waiting on a play session** (player 2's PC, profile `MGO testing`; rig and one real start of release v1.9.7).
+      Cause: `cbp.dll` (CBPC) detours `Main::Update` when the main menu opens, follows a jump at the function's start, and copies the bytes it finds there without relocating them. Since `0dfd9747` our hook sat on that function, so the copy held `HookMainLoop`'s first call, which landed in the heap. In 12 of 12 crashes the slot at `rsp` minus `rip` is that call's displacement.
+      Fix: `SkyrimVM64.cpp` swaps the main loop's only call to `Main::Update` (`+0x5B6E8F`) and leaves the function alone. Rig on v1.9.7-11-g83be966c-dirty.13cdf81: past the main menu, save loaded, connected, `live-load` 9 of 9; the live chain read from memory is `hdtsmp64.dll`, `HookMainLoop`, then `cbp.dll` on `Main::Update`.
+      Not run: the rest of the MGO scripts (doors, gameplay), which the rig was stopped before, and any FUS start with this build. In play, check on FUS and MGO that a save loads and that a granted sleep's OK button works.
 - [ ] **Player 2's game piles up threads, and they stand in DynDOLOD.DLL** Highest counts: 4959 on 2026-10-24, 2987 on 10-25, 998 on 10-28, 802 on
       10-30, 1195 on 10-31 (205 at 08:06, 1195 at 08:16). `ThreadOwners:` at 08:14 read DynDOLOD.DLL in 23 of 24. Player 1's game stays near 170 to 270,
-      on v3.0.43. Player 2 has since updated DynDOLOD DLL and the address library. Whether that came before the session of 10-31 is not
-      known: its log names no version, and player 2's last crash log before it (10-31 00:27) still lists DynDOLOD.DLL v3.0.32, so the update
-      may not be tested yet. To see: `Health: ... threads` and `ThreadOwners:` next session, and the DynDOLOD.DLL line in any crash log.
+      on v3.0.43. Cause found 2026-11-01: player 2's FUS profile has Alpha-43 installed (`DynDOLOD DLL NG and Scripts`) but switched off since at least 10-17, and still runs Alpha-32 (`DynDOLOD DLL NG`), as every crash log to 10-31 00:27 shows (`DynDOLOD.DLL v3.0.32`).
+      Same session, 10-31 14:10 to 15:06: player 2 went from 221 to 3195 threads, player 1 stayed at 157 to 170. `ThreadOwners:` read DynDOLOD.DLL in 22 or 23 of 24 each time. Private memory is no sign of it: 14.4 to 20.9 GB for player 2, 20.4 to 23.0 GB for player 1. To do: player 2 swaps the two in Mod Organizer; to see: `Health: ... threads` stays under about 300 next session.
 - [ ] **A follower left at a city gate** One player takes a follower through a walled city's gate while the other stays outside: her teleport is
       refused and she stays a live, unsynced NPC where she stands, as on v1.9.7. Moving her into the city's persistent cell (build 4df623a) was a
       mistake and is taken out: on 2026-10-31 08:10 she stood stuck in Windhelm's gate. Nothing solves it yet.
