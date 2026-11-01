@@ -341,6 +341,10 @@ BSTEventResult QuestService::OnEvent(const TESQuestStartStopEvent* apEvent, cons
     if (ScopedQuestOverride::IsOverriden())
         return BSTEventResult::kOk;
 
+    // It only failed to start here, for one when a required alias did not fill, and others may be running it.
+    if (apEvent->started && apEvent->failed)
+        return BSTEventResult::kOk;
+
     if (!m_world.Get().GetPartyService().IsInParty())
         return BSTEventResult::kOk;
 

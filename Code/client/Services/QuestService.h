@@ -19,9 +19,9 @@ struct TESQuest;
  * Every client runs the party's quests itself (scripts, scenes, dialogue), and only starts, stops and stages are
  * shared. Anything else a quest holds (aliases, script properties) only matches when the stage fragments produce it.
  *
- * Sending: TESQuestStartStopEvent and TESQuestStageEvent go out as RequestQuestUpdate, only in a party. Quests without
- * stages or in kNonSyncableQuestIds are never sent, and the server drops None/Miscellaneous ones unless
- * bEnableMiscQuestSync is set.
+ * Sending: TESQuestStartStopEvent and TESQuestStageEvent go out as RequestQuestUpdate, only in a party. Failed starts,
+ * quests without stages and those in kNonSyncableQuestIds are never sent, and the server drops None/Miscellaneous ones
+ * unless bEnableMiscQuestSync is set.
  *
  * Relaying: the server sends updates to the rest of the party as NotifyQuestUpdate. Members' scripts often reach the
  * same stage on their own, so it relays each once, from whoever reaches it first, until the quest next starts or stops.

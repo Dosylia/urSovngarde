@@ -431,6 +431,15 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       In play, check: no `Ghost: reference` line for people, and both players read the same name at Nilheim.
 - [!] **The bridge east of Nilheim differs in player 1's save** (11-01 13:06). Not a sync bug. See KNOWN_ISSUES "A save can give a reference its vanilla base at a plugin's position".
       Repaired on player 1's install with a one-line swap file. Rig on save 68: the right bridge, deck at z 10120. Not seen in play. In play, check: both players walk the same bridge there.
+- [!] **A party member's waypoint could crash the other players** (from upstream cc4a108a). Fixed in build v1.9.7-14-g9f8803db-dirty.142d7a0, not seen in play.
+      The game's `SetWaypoint` takes a world space or a cell and reads its form type with no null check (`+0x6C75B7`). Our receiver turned a cell, or a form this game lacks, into a null.
+      Rig: `live-waypoint-cell` crashed 090ea03 at `+0x6C75B7` on a form the game lacks, and is ok on 142d7a0 with a form it lacks and an interior cell. That red run did not show the interior cell, as the bot may not yet have been in the party.
+- [!] **A nearby player with a shout from a mod you lack could crash you in combat** (from upstream 43bfd173). Fixed in build 142d7a0, not seen in play. No rig test: it takes a player whose list holds a shout the other game lacks.
+      Spell list entries that do not resolve are removed after a copy loads, and each logs `Failed to resolve form`. Upstream's crash was on SE; VR's combat code was not read.
+- [!] **A quest that fails to start here ended it for the party** (from upstream 83d8080f). Fixed in build 142d7a0, not seen in play. `live-quest-hold` ok, so normal starts still go out; no test makes a start fail.
+- [!] **A death at the Dimhollow Crypt dragon wall put the player in the locked entrance** (from upstream 3e68a605). Respawn override added in build 142d7a0, not tested.
+- [!] **DynDOLOD's references were switched in the other player's game** Each player generates a different `DynDOLOD.esp`, so the same id can name another object. They stay each game's own, in build 142d7a0, not seen in play.
+      Rig: the game's start sent 67 such switches at 14:15 on 090ea03, and none on 142d7a0. `live-ref-enable-leader` ok.
 - [ ] **Findings from reading the game's code** (2026-10-31, checked against the game's instructions and public layouts). None of this ran on a real game, so every effect on play is inferred.
       Check each against our code before acting: two claims did not hold when that was done.
       - Check first: `BSAnimationGraphManager` has `lock` at 0xA0 and the graph index at 0xB0, AE offsets; a public VR layout gives 0x98 and 0xA8. If so, the client takes the wrong lock each time it touches a copy's graph.
@@ -508,7 +517,7 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Cause: `cbp.dll` (CBPC) detours `Main::Update` when the main menu opens, follows a jump at the function's start, and copies the bytes it finds there without relocating them. Since `0dfd9747` our hook sat on that function, so the copy held `HookMainLoop`'s first call, which landed in the heap. In 12 of 12 crashes the slot at `rsp` minus `rip` is that call's displacement.
       Fix: `SkyrimVM64.cpp` swaps the main loop's only call to `Main::Update` (`+0x5B6E8F`) and leaves the function alone. Rig on v1.9.7-11-g83be966c-dirty.13cdf81: past the main menu, save loaded, connected, `live-load` 9 of 9; the live chain read from memory is `hdtsmp64.dll`, `HookMainLoop`, then `cbp.dll` on `Main::Update`.
       Not run: the rest of the MGO scripts (doors, gameplay), which the rig was stopped before, and any FUS start with this build. In play, check on FUS and MGO that a save loads and that a granted sleep's OK button works.
-      Build v1.9.7-12-g629aaced-dirty.090ea03, client and server, deployed to FUS and MGO on 2026-11-01. Unit tests pass, and the rig ran on it on FUS only. Its protocol changed, so both players and the server need it together.
+      Build v1.9.7-14-g9f8803db-dirty.142d7a0, client and server, deployed to FUS and MGO on 2026-11-01. Unit tests pass, and the rig ran on it on FUS only. Its protocol changed, so both players and the server need it together.
 - [ ] **Player 2's game piles up threads, and they stand in DynDOLOD.DLL** Highest counts: 4959 on 2026-10-24, 2987 on 10-25, 998 on 10-28, 802 on
       10-30, 1195 on 10-31 (205 at 08:06, 1195 at 08:16). `ThreadOwners:` at 08:14 read DynDOLOD.DLL in 23 of 24. Player 1's game stays near 170 to 270,
       on v3.0.43. Cause found 2026-11-01: player 2's FUS profile has Alpha-43 installed (`DynDOLOD DLL NG and Scripts`) but switched off since at least 10-17, and still runs Alpha-32 (`DynDOLOD DLL NG`), as every crash log to 10-31 00:27 shows (`DynDOLOD.DLL v3.0.32`).

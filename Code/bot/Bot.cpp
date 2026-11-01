@@ -49,6 +49,7 @@
 #include <Messages/NotifyPlayerJoined.h>
 #include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifyRemoveCharacter.h>
+#include <Messages/RequestSetWaypoint.h>
 #include <Messages/NotifyRespawn.h>
 #include <Messages/PlayerRespawnRequest.h>
 #include <Messages/PlayerDownedRequest.h>
@@ -3371,6 +3372,23 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // "release <server id|ref:<hex>|any> [at <x> <y> <z>]": with "at", the actor was last seen at that place in Skyrim's
     // worldspace, as a game says when it lets go of an actor it unloaded; the server then tells the other players to
     // move it there (NotifyActorTeleport).
+    // "waypoint <hex form>": this player sets a waypoint on that world space or cell, which the server relays to the party.
+    if (name == "waypoint" && !args.empty())
+    {
+        uint32_t formId = 0;
+        if (!ParseHex(args[0], formId))
+        {
+            spdlog::error("[script] waypoint needs a hex form id, e.g. 'waypoint 133C6'");
+            return true;
+        }
+
+        RequestSetWaypoint request{};
+        request.Position = ToNet(m_position);
+        request.WorldSpaceFormID = Skyrim(formId);
+        SendMsg(request);
+        return true;
+    }
+
     if (name == "release")
     {
         KnownActor* pActor = nullptr;

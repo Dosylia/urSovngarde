@@ -10,6 +10,8 @@
 #include <Messages/RequestRemoveWaypoint.h>
 
 #include <PlayerCharacter.h>
+#include <Forms/TESObjectCELL.h>
+#include <Forms/TESWorldSpace.h>
 
 MapService::MapService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
     : m_world(aWorld), m_dispatcher(aDispatcher), m_transport(aTransport)
@@ -33,7 +35,8 @@ void MapService::OnSetWaypoint(const SetWaypointEvent& acMessage) noexcept
     request.Position = acMessage.Position;
 
     ModSystem& modSystem = m_world.Get().GetModSystem();
-    modSystem.GetServerModId(acMessage.WorldSpaceFormID, request.WorldSpaceFormID);
+    if (!modSystem.GetServerModId(acMessage.WorldSpaceFormID, request.WorldSpaceFormID))
+        return;
 
     m_transport.Send(request);
 }
@@ -56,9 +59,16 @@ void MapService::OnNotifySetWaypoint(const NotifySetWaypoint& acMessage) noexcep
 
     ModSystem& modSystem = m_world.Get().GetModSystem();
     const uint32_t cWorldSpaceID = modSystem.GetGameId(acMessage.WorldSpaceFormID);
-    TESWorldSpace* pWorldSpace = Cast<TESWorldSpace>(TESForm::GetById(cWorldSpaceID));
 
-    PlayerCharacter::Get()->SetWaypoint(&pos, pWorldSpace);
+    // The game takes a world space, or a cell on an interior map, and reads its form type with no null check.
+    TESForm* pLocation = TESForm::GetById(cWorldSpaceID);
+    if (!Cast<TESWorldSpace>(pLocation) && !Cast<TESObjectCELL>(pLocation))
+    {
+        spdlog::warn("{}: no world space or cell {:X} here for the waypoint; skipped", __FUNCTION__, cWorldSpaceID);
+        return;
+    }
+
+    PlayerCharacter::Get()->SetWaypoint(&pos, reinterpret_cast<TESWorldSpace*>(pLocation));
 }
 
 void MapService::OnNotifyRemoveWaypoint(const NotifyRemoveWaypoint& acMessage) noexcept

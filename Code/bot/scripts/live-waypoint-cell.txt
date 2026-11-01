@@ -1,0 +1,30 @@
+# A party member's waypoint on an interior map does not crash this game.
+#
+#   python Tools\VR\live-check.py live-waypoint-cell
+#   python Tools\VR\live-check.py --expect-fail live-waypoint-cell     on a build without the fix: must be RED
+#
+# The game's SetWaypoint takes a world space or a cell, and reads its form type with no null check.
+# A cell must reach it as a cell: as a null, it crashes every other member of the party.
+# Here the bot sets one on a form this game does not have, then one on an interior cell that is not loaded here.
+# The server relays a waypoint only inside a party, so the first waypoint also shows the bot is in one.
+# A run counts only when (REQUIRE): that first waypoint reached the game.
+log live waypoint cell
+waitfor connected 45
+collect party
+expect known me
+waitfor known other 40
+wait 15
+
+log -- the bot sets a waypoint on a form this game does not have
+waypoint 123456
+wait 3
+log REQUIRE logged no world space or cell
+log CHECK game alive
+
+log -- the bot sets a waypoint on an interior cell
+waypoint 133C6
+wait 6
+log CHECK game alive
+wait 2
+log done
+stop

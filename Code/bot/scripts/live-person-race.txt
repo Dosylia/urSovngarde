@@ -3,8 +3,8 @@
 #   python Tools\VR\live-check.py live-person-race
 #
 # Nilheim's bandits are named Guard by their own base, which takes only its looks from a levelled list.
-# An Orc pick here against a Nord pick at the owner used to count as another kind of creature.
-# A stand-in of the bare pick, named Bandit Marauder, then replaced the reference, and the two players saw different names.
+# An Orc pick here against a Nord pick at the owner must not count as another kind of creature.
+# A stand-in of the bare pick, named Bandit Marauder, would replace the reference, and the two players would see different names.
 # Here the bot claims Nilheim's 72A8D as a Nord while the player is away, and the test save has it as an Orc.
 # A run counts only when (REQUIRE): the game's own roll differed, so that it had something to conform.
 log live person race
