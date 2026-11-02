@@ -160,12 +160,20 @@ namespace
 {
 // A copy revived on its owner's word can be dead again within 100 ms, with no kill and its health full.
 // The word comes only once, so each revival is checked a second later and repeated until it lasts.
+// Every copy's revival is watched (Actor::Respawn), whichever way the word reached it.
 struct CopyRevival
 {
     std::chrono::steady_clock::time_point CheckAt{};
     uint32_t TriesLeft{};
 };
 TiltedPhoques::Map<uint32_t, CopyRevival> s_copyRevivals;
+
+bool IsAliveAtOwner(const uint32_t aFormId) noexcept
+{
+    auto view = World::Get().view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [&view, aFormId](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
+    return it != view.end() && !view.get<RemoteComponent>(*it).DeadAtOwner;
+}
 
 void RunCopyRevivals() noexcept
 {
@@ -180,7 +188,7 @@ void RunCopyRevivals() noexcept
 
         Actor* pActor = Cast<Actor>(TESForm::GetById(it->first));
         const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
-        if (!pExtension || !pExtension->IsRemote() || !pActor->IsDead() || it->second.TriesLeft == 0)
+        if (!pExtension || !pExtension->IsRemote() || !pActor->IsDead() || it->second.TriesLeft == 0 || !IsAliveAtOwner(pActor->formID))
         {
             it = s_copyRevivals.erase(it);
             continue;
@@ -194,6 +202,13 @@ void RunCopyRevivals() noexcept
     }
 }
 } // namespace
+
+void ActorValueService::WatchCopyRevival(const uint32_t aFormId) noexcept
+{
+    constexpr uint32_t cTries = 5;
+
+    s_copyRevivals.try_emplace(aFormId, CopyRevival{std::chrono::steady_clock::now() + 1s, cTries});
+}
 
 void ActorValueService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
@@ -868,6 +883,7 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
     // The copy is killed or brought back once it has its 3D, from its spawn request (CharacterService::RunRemoteUpdates).
     if (auto* pWaiting = m_world.try_get<WaitingFor3D>(*it))
     {
+        pWaiting->RevivedByOwner = pWaiting->SpawnRequest.IsDead && !acMessage.IsDead;
         pWaiting->SpawnRequest.IsDead = acMessage.IsDead;
         spdlog::info("Death sync: server id {:X} is {} at its owner while its copy waits to be made here; it will be made so", acMessage.Id,
                      acMessage.IsDead ? "dead" : "alive");
@@ -897,10 +913,6 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
     if (pActor->IsDead() != acMessage.IsDead)
     {
         acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
-        if (acMessage.IsDead)
-            s_copyRevivals.erase(pActor->formID);
-        else
-            s_copyRevivals[pActor->formID] = CopyRevival{std::chrono::steady_clock::now() + 1s, 5};
         spdlog::info("Death sync: remote actor {:X} set {} by its owner (now dead: {})", pActor->formID, acMessage.IsDead ? "dead" : "alive", pActor->IsDead());
     }
     else

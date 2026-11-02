@@ -24,6 +24,7 @@
 #include <Events/HitEvent.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
+#include <Services/ActorValueService.h>
 #include <Services/CalendarService.h>
 #endif
 #include <Events/RemoveSpellEvent.h>
@@ -1208,6 +1209,8 @@ void Actor::Respawn() noexcept
     TP_THIS_FUNCTION(TResurrect, void, Actor, bool aResetInventory, bool aAttach3D);
     POINTER_SKYRIMSE(TResurrect, s_resurrect, 0, 36331);
     TiltedPhoques::ThisCall(s_resurrect, this, false, true);
+    if (const ActorExtension* pExtension = GetExtension(); pExtension && pExtension->IsRemote())
+        ActorValueService::WatchCopyRevival(formID);
     return;
 #endif
     Resurrect(false);

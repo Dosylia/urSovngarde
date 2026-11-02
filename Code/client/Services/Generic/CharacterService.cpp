@@ -561,6 +561,17 @@ TESNPC* BaseForCopy(World& aWorld, const CharacterSpawnRequest& acMessage) noexc
     return pPick ? pPick : pBase;
 }
 
+// Bodies asked to be revived while switched off, by form id.
+// A disabled actor has no 3D and the game's revival does not take, so each waits for its switch on.
+TiltedPhoques::Vector<uint32_t> s_revivalsOnSwitchOn;
+
+// A body whose 3D stands has no death left to play, so it goes straight into its ragdoll.
+void LayDownBody(Actor* apActor) noexcept
+{
+    BSFixedString ragdoll("RagdollInstant");
+    apActor->SendAnimationEvent(&ragdoll);
+}
+
 // An NPC dead in this game that its owner's game has alive: a death that game never saw, kept by its save.
 // It is one killed behind a stand-in, or in a cell the other game did not have, or after its last save.
 // Stood up here, it is a dead soldier walking again, a different one in each game.
@@ -1148,6 +1159,12 @@ void CharacterService::ClaimForKillingBlow(const uint32_t aFormId) noexcept
     spdlog::info("KillingBlow: {:X} (server id {:X}) is protected, so its owner's game cannot let this player kill it; asked for it, to kill it here", aFormId, cServerId);
 }
 
+// A revive does not take on an actor switched off, or one still without its 3D.
+static bool CanTakeRevival(Actor* apActor) noexcept
+{
+    return !apActor->IsDisabled() && apActor->GetNiNode() && !apActor->IsStillLoading();
+}
+
 void CharacterService::ReviveActor(const uint32_t aFormId) noexcept
 {
     constexpr auto cReviveWithin = std::chrono::seconds(3);
@@ -1155,6 +1172,13 @@ void CharacterService::ReviveActor(const uint32_t aFormId) noexcept
     Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
     if (!pActor || !pActor->IsDead())
         return;
+
+    if (!CanTakeRevival(pActor))
+    {
+        if (std::find(s_revivalsOnSwitchOn.begin(), s_revivalsOnSwitchOn.end(), aFormId) == s_revivalsOnSwitchOn.end())
+            s_revivalsOnSwitchOn.push_back(aFormId);
+        return;
+    }
 
     // Revived here directly: this game's own actor, whose word reaches every game, or a body dead only here.
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
@@ -1172,8 +1196,26 @@ void CharacterService::ReviveActor(const uint32_t aFormId) noexcept
     spdlog::info("Revive: {:X} (server id {:X}) is another game's, and only its owner's word reaches every game; asked for it, to revive it here", aFormId, cServerId);
 }
 
+void CharacterService::RunRevivalsOnSwitchOn() noexcept
+{
+    std::erase_if(s_revivalsOnSwitchOn, [this](const uint32_t aFormId)
+    {
+        Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+        if (!pActor || !pActor->IsDead())
+            return true;
+        if (!CanTakeRevival(pActor))
+            return false;
+
+        spdlog::info("Revive: {:X} is switched on, and revived as it asked to be", aFormId);
+        ReviveActor(aFormId);
+        return true;
+    });
+}
+
 void CharacterService::OnGameLoaded() noexcept
 {
+    s_revivalsOnSwitchOn.clear();
+
     const auto forget = [](const uint32_t aFormId)
     {
         Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
@@ -1382,6 +1424,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     }
     RunWaitingCopies();
     RunNotAnnounced();
+    RunRevivalsOnSwitchOn();
     RunGhostChecks();
     SpawnReveal::Tick();
     RunFollowerReclaims();
@@ -1541,6 +1584,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     s_ownCopies.clear();
     s_handedAway.clear();
     s_pendingLines.clear();
+    s_revivalsOnSwitchOn.clear();
 
     m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>();
 
@@ -4534,9 +4578,8 @@ void CharacterService::LayDownStandingBodies() noexcept
             continue;
 
         ++standing.Tries;
-        BSFixedString ragdoll("RagdollInstant");
         const auto* pNpc = Cast<TESNPC>(pActor->baseForm);
-        pActor->SendAnimationEvent(&ragdoll);
+        LayDownBody(pActor);
         spdlog::info("BodyStand: dead {:X} ({}) stands, its pelvis {:.0f} over its feet, with no ragdoll; laid down (try {})", pActor->formID,
                      pNpc ? pNpc->fullName.value.AsAscii() : "?", height, standing.Tries);
     }
@@ -4648,11 +4691,19 @@ void CharacterService::RunRemoteUpdates() noexcept
             spdlog::info("Player copy {:X} came with its weapon {}", pActor->formID, waitingFor3D.SpawnRequest.IsWeaponDrawn ? "drawn" : "sheathed");
 
         // A body here that is alive at its owner stays a body (IsDeadAgainstOwner); its owner was sent the killing blow at the spawn.
-        if (pActor->IsDead() != waitingFor3D.SpawnRequest.IsDead && !IsDeadAgainstOwner(pActor, waitingFor3D.SpawnRequest.IsDead))
+        // One its owner revived while it waited is no such body: the owner knows of that death.
+        const bool cStaysBody = !waitingFor3D.RevivedByOwner && IsDeadAgainstOwner(pActor, waitingFor3D.SpawnRequest.IsDead);
+        if (pActor->IsDead() != waitingFor3D.SpawnRequest.IsDead && !cStaysBody)
         {
             if (waitingFor3D.SpawnRequest.IsDead)
                 spdlog::info("Character {:X} ({:X}) came dead; killed now that it has its 3D", waitingFor3D.SpawnRequest.ServerId, pActor->formID);
             waitingFor3D.SpawnRequest.IsDead ? pActor->Kill() : pActor->Respawn();
+        }
+        // Dead here already, so nothing above plays a death, and the 3D it just got stands.
+        else if (pActor->IsDead())
+        {
+            spdlog::info("Character {:X} ({:X}) came back as a body; laid down now that it has its 3D", waitingFor3D.SpawnRequest.ServerId, pActor->formID);
+            LayDownBody(pActor);
         }
 
         if (pActor->IsVampireLord())

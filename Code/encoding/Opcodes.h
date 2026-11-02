@@ -70,6 +70,7 @@ enum ClientOpcode : unsigned char
     kRequestReferenceEnable,
     kRequestWarState,
     kRequestFollowerState,
+    kRequestPartyPlugin,
     kClientOpcodeMax
 };
 
@@ -142,5 +143,6 @@ enum ServerOpcode : unsigned char
     kNotifySleep,
     kNotifyReferenceEnable,
     kNotifyWarState,
+    kNotifyPartyPlugin,
     kServerOpcodeMax
 };

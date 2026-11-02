@@ -66,6 +66,8 @@ struct CharacterService
     void ReviveActor(uint32_t aFormId) noexcept;
     // An actor switched back on soon after it left the server: discovery still knows it and will not find it again.
     void AnnounceAgain(uint32_t aFormId) noexcept;
+    // Revives the bodies that asked to while switched off, once they are on and have their 3D.
+    void RunRevivalsOnSwitchOn() noexcept;
     // A loaded game has each reference as its save has it, so what is disabled now is not this game's hiding.
     // One still enabled is hidden again by the ghost checks, and enabling one the save disabled would be wrong.
     void OnGameLoaded() noexcept;

@@ -557,6 +557,43 @@ TEST_CASE("Packets", "[encoding.packets]")
         }
     }
 
+    SECTION("RequestPartyPlugin and NotifyPartyPlugin")
+    {
+        {
+            RequestPartyPlugin sendMessage;
+            sendMessage.PluginFile = "Some Plugin.esp";
+
+            uint8_t storage[1 << 12];
+            Buffer buffer(storage, sizeof(storage));
+            Buffer::Writer writer(&buffer);
+            sendMessage.Serialize(writer);
+
+            Buffer::Reader reader(&buffer);
+            const ClientMessageFactory factory;
+            auto pMessage = factory.Extract(reader);
+
+            REQUIRE(pMessage);
+            REQUIRE(*CastUnique<RequestPartyPlugin>(std::move(pMessage)) == sendMessage);
+        }
+        {
+            NotifyPartyPlugin sendMessage;
+            sendMessage.PluginFile = "Some Plugin.esp";
+            sendMessage.PlayerWithout = "player 2";
+
+            uint8_t storage[1 << 12];
+            Buffer buffer(storage, sizeof(storage));
+            Buffer::Writer writer(&buffer);
+            sendMessage.Serialize(writer);
+
+            Buffer::Reader reader(&buffer);
+            const ServerMessageFactory factory;
+            auto pMessage = factory.Extract(reader);
+
+            REQUIRE(pMessage);
+            REQUIRE(*CastUnique<NotifyPartyPlugin>(std::move(pMessage)) == sendMessage);
+        }
+    }
+
     SECTION("RequestReferenceEnable and NotifyReferenceEnable")
     {
         const ReferenceEnableState camp{GameId(0, 0x8680C), true};

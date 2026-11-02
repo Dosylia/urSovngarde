@@ -14,4 +14,6 @@ struct WaitingFor3D
     }
 
     CharacterSpawnRequest SpawnRequest{};
+    // Its owner said it was dead and then alive while it waited.
+    bool RevivedByOwner{};
 };

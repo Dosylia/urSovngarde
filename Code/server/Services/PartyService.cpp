@@ -9,6 +9,8 @@
 #include <Messages/NotifyPlayerList.h>
 #include <Messages/NotifyPartyInfo.h>
 #include <Messages/NotifyPartyInvite.h>
+#include <Messages/NotifyPartyPlugin.h>
+#include <Messages/RequestPartyPlugin.h>
 #include <Messages/PartyInviteRequest.h>
 #include <Messages/PartyAcceptInviteRequest.h>
 #include <Messages/PartyLeaveRequest.h>
@@ -37,6 +39,7 @@ PartyService::PartyService(World& aWorld, entt::dispatcher& aDispatcher) noexcep
     , m_partyCreateConnection(aDispatcher.sink<PacketEvent<PartyCreateRequest>>().connect<&PartyService::OnPartyCreate>(this))
     , m_partyChangeLeaderConnection(aDispatcher.sink<PacketEvent<PartyChangeLeaderRequest>>().connect<&PartyService::OnPartyChangeLeader>(this))
     , m_partyKickConnection(aDispatcher.sink<PacketEvent<PartyKickRequest>>().connect<&PartyService::OnPartyKick>(this))
+    , m_partyPluginConnection(aDispatcher.sink<PacketEvent<RequestPartyPlugin>>().connect<&PartyService::OnPartyPlugin>(this))
 {
 }
 
@@ -177,6 +180,33 @@ void PartyService::OnPartyChangeLeader(const PacketEvent<PartyChangeLeaderReques
             }
         }
     }
+}
+
+void PartyService::OnPartyPlugin(const PacketEvent<RequestPartyPlugin>& acPacket) noexcept
+{
+    const String& cPluginFile = acPacket.Packet.PluginFile;
+    const auto cSameFile = [&cPluginFile](const String& acFile)
+    {
+        return acFile.size() == cPluginFile.size() &&
+               std::equal(acFile.begin(), acFile.end(), cPluginFile.begin(), [](const char aLeft, const char aRight) { return std::tolower(static_cast<uint8_t>(aLeft)) == std::tolower(static_cast<uint8_t>(aRight)); });
+    };
+
+    NotifyPartyPlugin notify{};
+    notify.PluginFile = cPluginFile;
+    // A player's list is known from their login, before they can be in a party.
+    if (const Party* pParty = GetPlayerParty(acPacket.pPlayer))
+    {
+        for (const Player* pMember : pParty->Members)
+        {
+            const auto& cMods = pMember->GetMods();
+            if (std::none_of(cMods.begin(), cMods.end(), cSameFile))
+            {
+                notify.PlayerWithout = pMember->GetUsername();
+                break;
+            }
+        }
+    }
+    acPacket.pPlayer->Send(notify);
 }
 
 void PartyService::OnPartyKick(const PacketEvent<PartyKickRequest>& acPacket) noexcept

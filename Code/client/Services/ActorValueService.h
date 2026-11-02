@@ -41,6 +41,9 @@ public:
 
     TP_NOCOPYMOVE(ActorValueService);
 
+    // Repeats a copy's revival until it lasts.
+    static void WatchCopyRevival(uint32_t aFormId) noexcept;
+
 private:
     enum ValueType : uint8_t
     {
