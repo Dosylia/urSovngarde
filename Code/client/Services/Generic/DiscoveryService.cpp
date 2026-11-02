@@ -404,6 +404,8 @@ BSTEventResult DiscoveryService::OnEvent(const TESLoadGameEvent*, const EventDis
 {
     spdlog::info("Finished loading, triggering visit cell");
 
+    m_world.GetCharacterService().OnGameLoaded();
+
 #ifndef SKYRIMVR
     // A VR install always has more plugins (SKSE VR, the address library, ESL support).
     // This warning would fire on every load there, shown as a "connection failed" notification.

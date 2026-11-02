@@ -112,6 +112,7 @@ TiltedPhoques::Map<uint32_t, uint32_t> s_hiddenFollowers;
 TiltedPhoques::Vector<uint32_t> s_releasedGhosts;
 
 // Released while the game's disable was still on its way: enabled once it has landed, or it would stay disabled, and in a save too.
+// It stays marked as hidden until then, so a save made in between writes it as enabled.
 struct PendingGhostEnable
 {
     uint32_t FormId{};
@@ -125,11 +126,13 @@ void StopHiding(Actor* apGhost) noexcept
     auto* pExtension = apGhost->GetExtension();
     if (!pExtension || !pExtension->IsHiddenHere())
         return;
-    pExtension->SetHiddenHere(false);
     if (apGhost->IsDisabled())
+    {
+        pExtension->SetHiddenHere(false);
         apGhost->EnableImpl();
+    }
     else
-        s_pendingGhostEnables.push_back({apGhost->formID, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
+        s_pendingGhostEnables.push_back({apGhost->formID, std::chrono::steady_clock::now() + std::chrono::seconds(60)});
 }
 
 // Hides a ghost in this game only: the save guard (Actor.cpp) writes it to a save as enabled.
@@ -1167,6 +1170,22 @@ void CharacterService::ReviveActor(const uint32_t aFormId) noexcept
         return;
     m_revivals[cServerId] = std::chrono::steady_clock::now() + cReviveWithin;
     spdlog::info("Revive: {:X} (server id {:X}) is another game's, and only its owner's word reaches every game; asked for it, to revive it here", aFormId, cServerId);
+}
+
+void CharacterService::OnGameLoaded() noexcept
+{
+    const auto forget = [](const uint32_t aFormId)
+    {
+        Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+        if (ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr)
+            pExtension->SetHiddenHere(false);
+    };
+
+    for (const auto& [ghost, copy] : s_ghosts)
+        forget(ghost);
+    for (const PendingGhostEnable& acPending : s_pendingGhostEnables)
+        forget(acPending.FormId);
+    s_pendingGhostEnables.clear();
 }
 
 void CharacterService::AnnounceAgain(const uint32_t aFormId) noexcept
@@ -2588,9 +2607,18 @@ void CharacterService::RunReleasedGhosts() const noexcept
             }
             // A levelled NPC being rebuilt is disabled on purpose, and the rebuild enables it itself.
             if (pExtension->Reconciliation != ActorExtension::ReconciliationStage::None)
+            {
+                pExtension->SetHiddenHere(false);
                 return true;
+            }
             if (pActor->IsStillLoading() || !pActor->IsDisabled())
-                return cNow >= acPending.GiveUpAt;
+            {
+                if (cNow < acPending.GiveUpAt)
+                    return false;
+                pExtension->SetHiddenHere(false);
+                return true;
+            }
+            pExtension->SetHiddenHere(false);
             pActor->EnableImpl();
             spdlog::info("Ghost: reference {:X} enabled, its disable having landed after it was released", acPending.FormId);
             return true;

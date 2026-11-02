@@ -35,8 +35,7 @@ void AddCall(std::function<void()> aCall) noexcept
 }
 } // namespace
 
-// Not on the world's task queue: draining it holds its lock, and enabling an actor queues an event on it.
-// The lock is not held here either, so a plugin the game calls back during one of these can make another.
+// No lock is held while they run, so a plugin the game calls back during one of these can make another.
 void RunPluginCalls() noexcept
 {
     TiltedPhoques::Vector<std::function<void()>> calls;

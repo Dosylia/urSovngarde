@@ -66,6 +66,9 @@ struct CharacterService
     void ReviveActor(uint32_t aFormId) noexcept;
     // An actor switched back on soon after it left the server: discovery still knows it and will not find it again.
     void AnnounceAgain(uint32_t aFormId) noexcept;
+    // A loaded game has each reference as its save has it, so what is disabled now is not this game's hiding.
+    // One still enabled is hidden again by the ghost checks, and enabling one the save disabled would be wrong.
+    void OnGameLoaded() noexcept;
     // Brings the server's copy of an actor's inventory in line with this game's, one entry at a time.
     void SendInventoryDifference(Actor* apActor, uint32_t aServerId, uint32_t aOwnershipEpoch, const Inventory& acServerInventory) const noexcept;
 

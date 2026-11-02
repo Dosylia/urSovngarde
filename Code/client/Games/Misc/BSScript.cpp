@@ -59,25 +59,43 @@ void TP_MAKE_THISCALL(HookRegisterPapyrusFunction, BSScript::IVirtualMachine, Na
 
 #ifdef SKYRIMVR
 TP_THIS_FUNCTION(THandleIsType, bool, BSScript::IObjectHandlePolicy, uint32_t aType, uint64_t aHandle);
+TP_THIS_FUNCTION(THandleCall, uint64_t, BSScript::IObjectHandlePolicy, uint64_t aHandle);
+TP_THIS_FUNCTION(THandleToString, void, BSScript::IObjectHandlePolicy, uint64_t aHandle, void* apString);
 static THandleIsType* RealHandleIsType = nullptr;
+static THandleToString* RealHandleToString = nullptr;
+static THandleCall* RealIsHandleObjectAvailable = nullptr;
+static THandleCall* RealHandleSlot6 = nullptr;
+static THandleCall* RealHandleSlot7 = nullptr;
 
-// The game asks a form whether it is a reference through the form's vtable, at SkyrimVR.exe+0x93CE11.
-// A stale lookup (Engine Fixes' form cache) gives it a freed form or reused memory, and that call jumps into nothing.
-// So a form handle whose lookup is stale is answered as no such form.
+// The game reaches a form through a script handle and calls through the form's vtable: SkyrimVR.exe+0x93CE11, +0x93F0F9, +0x93DB7E.
+// A stale lookup gives it a freed form or reused memory, and that call jumps into nothing.
+// So a handle whose form the lookup has stale reaches the game as the invalid handle, which each of these functions answers safely.
+// The low 32 bits name the form in a form's own handle, and in an alias's or an active effect's.
+static uint64_t WithoutStaleForm(BSScript::IObjectHandlePolicy* apPolicy, const uint64_t aHandle) noexcept
+{
+    if (!IsStaleFormId(static_cast<uint32_t>(aHandle)))
+        return aHandle;
+
+    static std::atomic<uint32_t> s_stale{0};
+    const uint32_t cCount = ++s_stale;
+    if (cCount <= 20 || cCount % 500 == 0)
+        spdlog::warn("FormGuard: script handle {:X} names a form the lookup has stale; answered as no such form ({} so far)", aHandle, cCount);
+    return apPolicy->GetInvalidHandle();
+}
+
 bool TP_MAKE_THISCALL(HookHandleIsType, BSScript::IObjectHandlePolicy, uint32_t aType, uint64_t aHandle)
 {
-    // A form's handle holds 0xFFFF above the form id; aliases and active effects have other values there.
-    constexpr uint64_t cFormHandleTag = 0xFFFF;
-    if ((aHandle >> 32) == cFormHandleTag && IsStaleFormId(static_cast<uint32_t>(aHandle)))
-    {
-        static std::atomic<uint32_t> s_stale{0};
-        const uint32_t cCount = ++s_stale;
-        if (cCount <= 20 || cCount % 500 == 0)
-            spdlog::warn("FormGuard: script handle {:X} names a form the lookup has stale; answered as no such form ({} so far)", aHandle, cCount);
-        return false;
-    }
+    return TiltedPhoques::ThisCall(RealHandleIsType, apThis, aType, WithoutStaleForm(apThis, aHandle));
+}
 
-    return TiltedPhoques::ThisCall(RealHandleIsType, apThis, aType, aHandle);
+void TP_MAKE_THISCALL(HookHandleToString, BSScript::IObjectHandlePolicy, uint64_t aHandle, void* apString)
+{
+    TiltedPhoques::ThisCall(RealHandleToString, apThis, WithoutStaleForm(apThis, aHandle), apString);
+}
+
+template <THandleCall** cppReal> uint64_t TP_MAKE_THISCALL(HookHandleCall, BSScript::IObjectHandlePolicy, uint64_t aHandle)
+{
+    return TiltedPhoques::ThisCall(*cppReal, apThis, WithoutStaleForm(apThis, aHandle));
 }
 #endif
 
@@ -93,11 +111,21 @@ void TP_MAKE_THISCALL(HookBindEverythingToScript, BSScript::IVirtualMachine*)
         RealRegisterPapyrusFunction = static_cast<TRegisterPapyrusFunction*>(ppVTable[0x18]);
         TP_HOOK_IMMEDIATE(&RealRegisterPapyrusFunction, HookRegisterPapyrusFunction);
 
-        // HandleIsType is slot 1 of the handle policy (CommonLibVR, SkyrimScript::HandlePolicy).
+        // Every slot of SkyrimScript::HandlePolicy that looks a form up (its VR vtable, 0x141755C68).
+        // GetObjectForHandle needs no hook of its own: it asks HandleIsType first.
         if (auto* pPolicy = (*apThis)->GetObjectHandlePolicy())
         {
-            RealHandleIsType = static_cast<THandleIsType*>((*reinterpret_cast<void***>(pPolicy))[1]);
+            auto** ppPolicy = *reinterpret_cast<void***>(pPolicy);
+            RealHandleIsType = static_cast<THandleIsType*>(ppPolicy[1]);
+            RealIsHandleObjectAvailable = static_cast<THandleCall*>(ppPolicy[2]);
+            RealHandleSlot6 = static_cast<THandleCall*>(ppPolicy[6]);
+            RealHandleSlot7 = static_cast<THandleCall*>(ppPolicy[7]);
+            RealHandleToString = static_cast<THandleToString*>(ppPolicy[11]);
             TP_HOOK_IMMEDIATE(&RealHandleIsType, HookHandleIsType);
+            TP_HOOK_IMMEDIATE(&RealIsHandleObjectAvailable, HookHandleCall<&RealIsHandleObjectAvailable>);
+            TP_HOOK_IMMEDIATE(&RealHandleSlot6, HookHandleCall<&RealHandleSlot6>);
+            TP_HOOK_IMMEDIATE(&RealHandleSlot7, HookHandleCall<&RealHandleSlot7>);
+            TP_HOOK_IMMEDIATE(&RealHandleToString, HookHandleToString);
         }
         s_registerHookInstalled = true;
     }

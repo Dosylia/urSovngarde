@@ -147,7 +147,7 @@ struct BSScript
         virtual ~IObjectHandlePolicy();
         virtual bool HandleIsType(uint32_t aType, uint64_t aHandle);
         virtual bool IsHandleObjectAvailable(uint64_t aHandle);
-        virtual void sub_03();
+        virtual uint64_t GetInvalidHandle();
         virtual void sub_04();
         virtual void sub_05();
         virtual void sub_06();
