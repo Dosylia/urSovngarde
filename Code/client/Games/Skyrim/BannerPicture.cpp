@@ -671,17 +671,27 @@ Picture DeathCard(const std::wstring& acTitle, const std::wstring& acSubtitle, c
     const float cShift = cHasSubtitle ? 0.f : 45.f;
     constexpr float cCenter = kWidth * 0.5f;
 
-    constexpr float cTitleHeight = 230.f;
     // The title's letters are spread apart; its words stay closer than that would put them.
     constexpr float cTitleWordGap = 0.6f;
-    const float cTitleWidth = Measure(FindFont(kTitleFont), acTitle, cTitleHeight, cTitleHeight * 0.08f, cTitleWordGap);
-    const float cRuleHalf = std::clamp(cTitleWidth * 0.5f + 140.f, 480.f, 900.f);
+    // A title too long for the rules is written smaller until it fits.
+    constexpr float cTitleRoom = 1760.f;
+    const Font* pTitleFont = FindFont(kTitleFont);
+    float titleHeight = 230.f;
+    float titleWidth = 0.f;
+    for (int i = 0; i < 8; ++i)
+    {
+        titleWidth = Measure(pTitleFont, acTitle, titleHeight, titleHeight * 0.08f, cTitleWordGap);
+        if (titleWidth <= cTitleRoom)
+            break;
+        titleHeight *= cTitleRoom / titleWidth;
+    }
+    const float cRuleHalf = std::clamp(titleWidth * 0.5f + 140.f, 480.f, 900.f);
 
     Emblem(canvas, cCenter, 82.f + cShift, 235);
     // The top rule leaves the emblem room.
     Rule(canvas, cCenter - cRuleHalf, cCenter - 52.f, 138.f + cShift, 2.5f, 215);
     Rule(canvas, cCenter + 52.f, cCenter + cRuleHalf, 138.f + cShift, 2.5f, 215);
-    Write(canvas, FindFont(kTitleFont), acTitle, cTitleHeight, cCenter, 272.f + cShift, cTitleHeight * 0.08f, 255, false, cTitleWordGap);
+    Write(canvas, pTitleFont, acTitle, titleHeight, cCenter, 272.f + cShift, titleHeight * 0.08f, 255, false, cTitleWordGap);
     Rule(canvas, cCenter - cRuleHalf, cCenter + cRuleHalf, 404.f + cShift, 2.5f, 215);
 
     if (cHasSubtitle)

@@ -4,12 +4,14 @@
 
 #include <World.h>
 #include <Games/ActorExtension.h>
+#include <Games/Skyrim/VRBanner.h>
 #include <Services/CharacterService.h>
 #include <Services/ObjectService.h>
 
 #include <Messages/RequestPartyPlugin.h>
 #include <Services/TransportService.h>
 
+#include <algorithm>
 #include <chrono>
 #include <map>
 #include <mutex>
@@ -136,6 +138,22 @@ __declspec(dllexport) int32_t urSovngarde_FindPartyMemberWithoutPlugin(const cha
             World::Get().GetTransport().Send(request);
         });
     return -1;
+}
+
+// Shows the card of the death screen in this game only, on its next frame, connected or not.
+// acpSubtitle may be null or empty for none, aRgb is 0xRRGGBB, and aHoldSeconds counts the time between the fades.
+// A new card or banner replaces the one showing.
+// True when it was taken; a card needs a title.
+__declspec(dllexport) bool urSovngarde_ShowCard(const char* acpTitle, const char* acpSubtitle, uint32_t aRgb, float aHoldSeconds) noexcept
+{
+    constexpr float cLongestHold = 60.f;
+
+    if (!acpTitle || !*acpTitle)
+        return false;
+
+    AddCall([cTitle = std::string(acpTitle), cSubtitle = std::string(acpSubtitle ? acpSubtitle : ""), aRgb, cHold = std::clamp(aHoldSeconds, 0.f, cLongestHold)]
+            { VRBanner::ShowDeath(cTitle, cSubtitle, aRgb, cHold); });
+    return true;
 }
 
 // Switches a placed actor off or on in every game of the party, for players who join later too.

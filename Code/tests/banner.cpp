@@ -57,6 +57,14 @@ TEST_CASE("the death card draws its title, and its subtitle only when there is o
     REQUIRE(Drawn(cWith, 0, 639) > Drawn(cWithout, 0, 639) + 1000);
 }
 
+TEST_CASE("a title too long for the card is written smaller, never cut off at its ends", "[banner]")
+{
+    const auto cLong = BannerPicture::DeathCard(L"THE TOURNAMENT OF THE NORTH HAS BEGUN", L"", 0xD4AF37);
+    REQUIRE(Drawn(cLong, 0, cLong.Height - 1) > 10000);
+    REQUIRE(DrawnColumns(cLong, 0, 40) == 0);
+    REQUIRE(DrawnColumns(cLong, cLong.Width - 41, cLong.Width - 1) == 0);
+}
+
 // Hidden: draws the pictures in the game's own fonts, to look at them outside the headset.
 //   set STR_GAME_DATA=F:\SteamLibrary\steamapps\common\SkyrimVR\Data
 //   TPTests.exe "[.banner-preview]"
@@ -70,6 +78,7 @@ TEST_CASE("the banners, drawn to pictures", "[.banner-preview]")
     REQUIRE(BannerPicture::WritePng("banner-death.png", BannerPicture::DeathCard(L"YOU DIED", L"LYDIA WAS SLAIN BY BANDIT CHIEF USING IRON WAR AXE", 0xA31919)));
     REQUIRE(BannerPicture::WritePng("banner-death-short.png", BannerPicture::DeathCard(L"YOU DIED", L"LYDIA FELL FROM A HIGH PLACE", 0xA31919)));
     REQUIRE(BannerPicture::WritePng("banner-death-none.png", BannerPicture::DeathCard(L"YOU DIED", L"", 0xA31919)));
+    REQUIRE(BannerPicture::WritePng("banner-card-long.png", BannerPicture::DeathCard(L"THE TOURNEY HAS BEGUN", L"YOU RIDE FOR THE NORTH", 0xD4AF37)));
     REQUIRE(BannerPicture::WritePng("banner-place.png", BannerPicture::Line(L"Throat of the World", 0xD4AF37, 84)));
     REQUIRE(BannerPicture::WritePng("banner-revive.png", BannerPicture::Line(L"Seen the strong is reviving you", 0xD4AF37, 72)));
 }

@@ -13,7 +13,7 @@ namespace VRBanner
 //! @param aHoldSeconds How long it stays fully shown, between the fades.
 void Show(const std::string& acText, uint32_t aRgb, int aTextHeight, float aHoldSeconds) noexcept;
 
-//! The death card: the title in large letters between thin rules under an emblem, and a smaller line below it.
+//! The death card, which other plugins can show too: the title in large letters between thin rules under an emblem, and a smaller line below it.
 //! @param acSubtitle UTF-8; empty for none.
 void ShowDeath(const std::string& acTitle, const std::string& acSubtitle, uint32_t aRgb, float aHoldSeconds) noexcept;
 
