@@ -456,6 +456,11 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Switch off, alive and dead: off in both games in 0.3 s, stayed off 45 s. Back on in 0.4 s, one soldier, 1 unit apart. The first on froze the leader's game, as draining the task queue held its lock: calls now run outside it.
       Revive of a body the member owns: alive in both, but 310 units apart 6 s later, and health 98 against 106. Not read further.
       A game that rejoins after a switch: not proven, the one run used a soldier already dead and off.
+      `urSovngarde_ShowMeter` and `HideMeter`: a bar near the top of the view in an overlay of its own, the attackers' colour filling from the left, for a plugin's capture bar.
+      `urSovngarde_SetPartyValue` (the leader only) and `GetPartyValue`: one number per key, kept by the server for the party and sent to its members, players who join later included. A protocol change.
+      Build v1.9.7-21-g7e8251ef-dirty.572b143, a protocol change, client and server on FUS and MGO, not seen in a headset. Unit tests for the meter's picture and both messages pass; red not run, the calls did not exist before.
+      Rig, two real games: the meter shown, changed in place and hidden in the first game, a fill that is not a number refused. The leader's value read by the member, then its change. A value set while the member was dropped reached it through the join.
+      A meter not shown again for 10 s fades out. A fill update takes 0.07 ms to draw; a new label takes about 2.4 ms. The second game's meter cannot show on the rig (one SteamVR for both).
 - [!] **A follower with no server id after a hand-over, so the other player loses her** (10-31 14:43, and 11-01 12:42: Lydia fighting for player 2 alone). Fixed in build v1.9.7-12-g629aaced-dirty.090ea03, protocol change, not seen in play.
       Cause, both times: her owner's game dropped her (`Transferring ownership of local actor`), nobody was in range of her last place, so the server removed her (`Removing actor ... no eligible owner remains`). The other game still ran her, with no server id: `server id not found for form id A2C94`.
       Fix: `NotifyRemoveCharacter` says when the server no longer has a character (`Gone`), and a game where that reference stands announces it again and runs it.

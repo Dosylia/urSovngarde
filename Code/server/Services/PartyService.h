@@ -18,6 +18,7 @@ struct PartyKickRequest;
  * @brief Manages every party in the server.
  */
 struct RequestPartyPlugin;
+struct RequestPartyValue;
 
 struct PartyService
 {
@@ -30,6 +31,8 @@ struct PartyService
         Map<GameId, Map<uint16_t, std::chrono::steady_clock::time_point>> QuestStages{};
         // References the leader's scripts switched on (true) or off, the latest state of each (ObjectService::OnReferenceEnableRequest)
         Map<GameId, bool> ReferenceEnabled{};
+        // Numbers the leader's plugins set for the party, the latest of each key (RequestPartyValue)
+        Map<String, float> PluginValues{};
     };
 
     PartyService(World& aWorld, entt::dispatcher& aDispatcher) noexcept;
@@ -53,6 +56,7 @@ protected:
     void OnPartyChangeLeader(const PacketEvent<PartyChangeLeaderRequest>& acPacket) noexcept;
     void OnPartyKick(const PacketEvent<PartyKickRequest>& acPacket) noexcept;
     void OnPartyPlugin(const PacketEvent<RequestPartyPlugin>& acPacket) noexcept;
+    void OnPartyValue(const PacketEvent<RequestPartyValue>& acPacket) noexcept;
     void RemovePlayerFromParty(Player* apPlayer) noexcept;
 
     void BroadcastPlayerList(Player* apPlayer = nullptr) const noexcept;
@@ -75,6 +79,7 @@ private:
     entt::scoped_connection m_partyChangeLeaderConnection;
     entt::scoped_connection m_partyKickConnection;
     entt::scoped_connection m_partyPluginConnection;
+    entt::scoped_connection m_partyValueConnection;
 
     void SendPartyJoinedEvent(Party& aParty, Player* aPlayer) noexcept;
     void CreateParty(Player* apLeader) noexcept;

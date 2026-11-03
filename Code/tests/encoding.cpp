@@ -594,6 +594,44 @@ TEST_CASE("Packets", "[encoding.packets]")
         }
     }
 
+    SECTION("RequestPartyValue and NotifyPartyValue")
+    {
+        {
+            RequestPartyValue sendMessage;
+            sendMessage.Key = "courtyard";
+            sendMessage.Value = 0.625f;
+
+            uint8_t storage[1 << 12];
+            Buffer buffer(storage, sizeof(storage));
+            Buffer::Writer writer(&buffer);
+            sendMessage.Serialize(writer);
+
+            Buffer::Reader reader(&buffer);
+            const ClientMessageFactory factory;
+            auto pMessage = factory.Extract(reader);
+
+            REQUIRE(pMessage);
+            REQUIRE(*CastUnique<RequestPartyValue>(std::move(pMessage)) == sendMessage);
+        }
+        {
+            NotifyPartyValue sendMessage;
+            sendMessage.Key = "courtyard";
+            sendMessage.Value = -3.5f;
+
+            uint8_t storage[1 << 12];
+            Buffer buffer(storage, sizeof(storage));
+            Buffer::Writer writer(&buffer);
+            sendMessage.Serialize(writer);
+
+            Buffer::Reader reader(&buffer);
+            const ServerMessageFactory factory;
+            auto pMessage = factory.Extract(reader);
+
+            REQUIRE(pMessage);
+            REQUIRE(*CastUnique<NotifyPartyValue>(std::move(pMessage)) == sendMessage);
+        }
+    }
+
     SECTION("RequestReferenceEnable and NotifyReferenceEnable")
     {
         const ReferenceEnableState camp{GameId(0, 0x8680C), true};

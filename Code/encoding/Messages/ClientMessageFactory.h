@@ -45,6 +45,7 @@
 #include <Messages/RequestWarState.h>
 #include <Messages/RequestFollowerState.h>
 #include <Messages/RequestPartyPlugin.h>
+#include <Messages/RequestPartyValue.h>
 #include <Messages/RequestObjectInventoryChanges.h>
 #include <Messages/SpellCastRequest.h>
 #include <Messages/InterruptCastRequest.h>
@@ -87,7 +88,7 @@ struct ClientMessageFactory
             PartyChangeLeaderRequest, PartyKickRequest, RequestActorValueChanges, RequestActorMaxValueChanges, EnterExteriorCellRequest, RequestHealthChangeBroadcast, ActivateRequest, LockChangeRequest, AssignObjectsRequest, RequestDeathStateChange, ShiftGridCellRequest,
             RequestOwnershipTransfer, RequestOwnershipClaim, RequestObjectInventoryChanges, SpellCastRequest, ProjectileLaunchRequest, InterruptCastRequest, AddTargetRequest, ScriptAnimationRequest, DrawWeaponRequest, MountRequest, NewPackageRequest, RequestRespawn, SyncExperienceRequest,
             RequestEquipmentChanges, SendChatMessageRequest, TeleportCommandRequest, PlayerRespawnRequest, DialogueRequest, SubtitleRequest, PlayerDialogueRequest, PlayerLevelRequest, TeleportRequest, RequestPlayerHealthUpdate, RequestWeatherChange, RequestCurrentWeather, RequestSetWaypoint,
-            RequestRemoveWaypoint, RemoveSpellRequest, SetTimeCommandRequest, RequestDroppedItemAdd, RequestDroppedItemRemove, RequestDroppedItemMove, RequestWorldObjectMove, ClashRequest, PlayerPlaceRequest, VoiceDataRequest, VoiceStateRequest, ArrowNockedRequest, PlayerDownedRequest, ReviveRequest, SafePointRequest, RequestActionEvents, RequestSleep, RequestReferenceEnable, RequestWarState, RequestFollowerState, RequestPartyPlugin>;
+            RequestRemoveWaypoint, RemoveSpellRequest, SetTimeCommandRequest, RequestDroppedItemAdd, RequestDroppedItemRemove, RequestDroppedItemMove, RequestWorldObjectMove, ClashRequest, PlayerPlaceRequest, VoiceDataRequest, VoiceStateRequest, ArrowNockedRequest, PlayerDownedRequest, ReviveRequest, SafePointRequest, RequestActionEvents, RequestSleep, RequestReferenceEnable, RequestWarState, RequestFollowerState, RequestPartyPlugin, RequestPartyValue>;
 
         return s_visitor(std::forward<T>(func));
     }

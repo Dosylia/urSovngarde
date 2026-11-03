@@ -28,6 +28,13 @@ Picture Line(const std::wstring& acText, uint32_t aRgb, int aTextHeight) noexcep
 //! An empty subtitle leaves its line and the last rule out.
 Picture DeathCard(const std::wstring& acTitle, const std::wstring& acSubtitle, uint32_t aRgb) noexcept;
 
+//! The meter (1152 x 200) with its bar still empty: a label in spaced capitals over a frame.
+//! It changes only with the label, so it is drawn once for each; an empty label leaves its line blank.
+Picture MeterFace(const std::wstring& acLabel) noexcept;
+
+//! Fills a meter's bar, in place: the attackers' colour aFill (0 to 1) of it from the left, the defenders' colour the rest.
+void FillMeter(Picture& aMeter, float aFill, uint32_t aAttackRgb, uint32_t aDefendRgb) noexcept;
+
 //! Which of the fonts the pictures use could be read, for the log.
 std::string FontReport() noexcept;
 

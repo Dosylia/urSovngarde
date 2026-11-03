@@ -24,9 +24,20 @@ namespace
 constexpr int kWidth = 2048;
 constexpr int kLineHeight = 384;
 constexpr int kCardHeight = 640;
+// The meter has the same pixels to the metre as the card.
+constexpr int kMeterWidth = 1152;
+constexpr int kMeterHeight = 200;
 // How dark the band behind a picture is at its middle.
 constexpr float kLineBand = 0.55f;
 constexpr float kCardBand = 0.72f;
+constexpr float kMeterBand = 0.6f;
+// The meter's bar, its frame included, and how much of the game shows through it.
+constexpr float kMeterLeft = 104.f;
+constexpr float kMeterRight = kMeterWidth - kMeterLeft;
+constexpr float kMeterTop = 100.f;
+constexpr float kMeterBottom = 148.f;
+constexpr float kMeterFrame = 3.f;
+constexpr float kMeterBarAlpha = 0.85f;
 // Letters and lines are filled at twice the size and averaged down, for smooth edges.
 constexpr int kSupersample = 2;
 
@@ -547,6 +558,21 @@ void Rule(const Canvas& acCanvas, const float aLeft, const float aRight, const f
     }
 }
 
+// Spaced capitals in the subtitle font, made smaller (then tighter) until the line fits in aRoom.
+void WriteSpaced(const Canvas& acCanvas, const std::wstring& acText, float aHeight, const float aRoom, const float aCenterX, const float aCenterY, const uint8_t aShade) noexcept
+{
+    const Font* pFont = FindFont(kSubtitleFont);
+    float spacing = aHeight * 0.32f;
+    while (Measure(pFont, acText, aHeight, spacing) > aRoom && aHeight > 32.f)
+    {
+        aHeight -= 2.f;
+        spacing = aHeight * 0.32f;
+    }
+    while (Measure(pFont, acText, aHeight, spacing) > aRoom && spacing > 0.f)
+        spacing = std::max(0.f, spacing - 1.f);
+    Write(acCanvas, pFont, acText, aHeight, aCenterX, aCenterY, spacing, aShade, false);
+}
+
 // The emblem over the title: a ring around a diamond, with a short stroke and a bead above.
 void Emblem(const Canvas& acCanvas, const float aX, const float aY, const uint8_t aShade) noexcept
 {
@@ -696,23 +722,69 @@ Picture DeathCard(const std::wstring& acTitle, const std::wstring& acSubtitle, c
 
     if (cHasSubtitle)
     {
-        // Spaced capitals, made smaller (then tighter) until the line fits between the rules' ends.
-        const Font* pFont = FindFont(kSubtitleFont);
-        const float cRoom = cRuleHalf * 2.f - 40.f;
-        float height = 56.f;
-        float spacing = height * 0.32f;
-        while (Measure(pFont, acSubtitle, height, spacing) > cRoom && height > 32.f)
-        {
-            height -= 2.f;
-            spacing = height * 0.32f;
-        }
-        while (Measure(pFont, acSubtitle, height, spacing) > cRoom && spacing > 0.f)
-            spacing = std::max(0.f, spacing - 1.f);
-        Write(canvas, pFont, acSubtitle, height, cCenter, 462.f, spacing, 235, false);
+        // It fits between the rules' ends.
+        WriteSpaced(canvas, acSubtitle, 56.f, cRuleHalf * 2.f - 40.f, cCenter, 462.f, 235);
         Rule(canvas, cCenter - cRuleHalf * 0.8f, cCenter + cRuleHalf * 0.8f, 520.f, 2.f, 190);
     }
 
     return Colour(Cover(canvas, kWidth, kCardHeight), kWidth, kCardHeight, aRgb, kCardBand);
+}
+
+Picture MeterFace(const std::wstring& acLabel) noexcept
+{
+    Canvas canvas(kMeterWidth * kSupersample, kMeterHeight * kSupersample);
+    if (!canvas.IsValid())
+        return {};
+
+    // The label and the frame are written in one colour that suits either side.
+    constexpr uint32_t cInk = 0xE9E1CB;
+    if (!acLabel.empty())
+        WriteSpaced(canvas, acLabel, 44.f, kMeterRight - kMeterLeft, kMeterWidth * 0.5f, 58.f, 235);
+
+    // The frame is the space between two rectangles, with a small diamond outside each end.
+    Ink ink(canvas.Dc(), 215, 0);
+    SetPolyFillMode(canvas.Dc(), ALTERNATE);
+    const POINT cRings[] = {At(kMeterLeft, kMeterTop),
+                            At(kMeterRight, kMeterTop),
+                            At(kMeterRight, kMeterBottom),
+                            At(kMeterLeft, kMeterBottom),
+                            At(kMeterLeft + kMeterFrame, kMeterTop + kMeterFrame),
+                            At(kMeterRight - kMeterFrame, kMeterTop + kMeterFrame),
+                            At(kMeterRight - kMeterFrame, kMeterBottom - kMeterFrame),
+                            At(kMeterLeft + kMeterFrame, kMeterBottom - kMeterFrame)};
+    const INT cCounts[] = {4, 4};
+    PolyPolygon(canvas.Dc(), cRings, cCounts, 2);
+    constexpr float cDiamond = 9.f;
+    constexpr float cMiddle = (kMeterTop + kMeterBottom) * 0.5f;
+    for (const float cX : {kMeterLeft - 18.f, kMeterRight + 18.f})
+    {
+        const POINT cTip[] = {At(cX - cDiamond, cMiddle), At(cX, cMiddle - cDiamond), At(cX + cDiamond, cMiddle), At(cX, cMiddle + cDiamond)};
+        Polygon(canvas.Dc(), cTip, 4);
+    }
+    return Colour(Cover(canvas, kMeterWidth, kMeterHeight), kMeterWidth, kMeterHeight, cInk, kMeterBand);
+}
+
+void FillMeter(Picture& aMeter, const float aFill, const uint32_t aAttackRgb, const uint32_t aDefendRgb) noexcept
+{
+    if (aMeter.Rgba.size() != static_cast<size_t>(kMeterWidth) * kMeterHeight * 4)
+        return;
+
+    // Every pixel inside the frame is written, so a fill replaces the one before it.
+    const float cSplit = kMeterLeft + kMeterFrame + std::clamp(aFill, 0.f, 1.f) * (kMeterRight - kMeterLeft - 2.f * kMeterFrame);
+    const auto cChannel = [](const uint32_t aRgb, const int aShift) { return static_cast<float>((aRgb >> aShift) & 0xFF); };
+    for (int y = static_cast<int>(kMeterTop + kMeterFrame); y < static_cast<int>(kMeterBottom - kMeterFrame); ++y)
+        for (int x = static_cast<int>(kMeterLeft + kMeterFrame); x < static_cast<int>(kMeterRight - kMeterFrame); ++x)
+        {
+            // The pixel where the two sides meet is shared.
+            const float cAttack = std::clamp(cSplit - static_cast<float>(x), 0.f, 1.f);
+            const size_t cAt = (static_cast<size_t>(y) * kMeterWidth + x) * 4;
+            for (int c = 0; c < 3; ++c)
+            {
+                const int cShift = 16 - 8 * c;
+                aMeter.Rgba[cAt + c] = static_cast<uint8_t>(cChannel(aAttackRgb, cShift) * cAttack + cChannel(aDefendRgb, cShift) * (1.f - cAttack));
+            }
+            aMeter.Rgba[cAt + 3] = static_cast<uint8_t>(kMeterBarAlpha * 255.f);
+        }
 }
 
 std::string FontReport() noexcept

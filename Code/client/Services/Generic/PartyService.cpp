@@ -16,6 +16,7 @@
 #include <Messages/PartyLeaveRequest.h>
 #include <Messages/NotifyPartyJoined.h>
 #include <Messages/NotifyPartyPlugin.h>
+#include <Messages/NotifyPartyValue.h>
 #include <PluginCalls.h>
 #include <Messages/NotifyPartyLeft.h>
 #include <Messages/PartyCreateRequest.h>
@@ -48,6 +49,7 @@ PartyService::PartyService(World& aWorld, entt::dispatcher& aDispatcher, Transpo
     m_partyJoinedConnection = aDispatcher.sink<NotifyPartyJoined>().connect<&PartyService::OnPartyJoined>(this);
     m_partyLeftConnection = aDispatcher.sink<NotifyPartyLeft>().connect<&PartyService::OnPartyLeft>(this);
     m_partyPluginConnection = aDispatcher.sink<NotifyPartyPlugin>().connect<&PartyService::OnPartyPlugin>(this);
+    m_partyValueConnection = aDispatcher.sink<NotifyPartyValue>().connect<&PartyService::OnPartyValue>(this);
 }
 
 void PartyService::CreateParty() const noexcept
@@ -151,10 +153,17 @@ void PartyService::OnPartyPlugin(const NotifyPartyPlugin& acMessage) noexcept
     StorePartyPluginAnswer(acMessage.PluginFile, acMessage.PlayerWithout);
 }
 
+void PartyService::OnPartyValue(const NotifyPartyValue& acMessage) noexcept
+{
+    StorePartyValue(acMessage.Key, acMessage.Value);
+}
+
 void PartyService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
 {
     ForgetPartyPluginAnswers();
+    // After the party is gone, so a plugin's set made meanwhile finds this game no longer leading.
     DestroyParty();
+    ForgetPartyValues();
     m_invitations.clear();
     m_nextUpdate = 0;
 }
@@ -216,6 +225,8 @@ void PartyService::OnPartyJoined(const NotifyPartyJoined& acPartyJoined) noexcep
     spdlog::debug("[PartyService]: Joined party. LeaderId: {}, IsLeader: {}", acPartyJoined.LeaderPlayerId, acPartyJoined.IsLeader);
 
     ForgetPartyPluginAnswers();
+    // The new party's values follow this message.
+    ForgetPartyValues();
     m_inParty = true;
     m_isLeader = acPartyJoined.IsLeader;
     m_leaderPlayerId = acPartyJoined.LeaderPlayerId;
@@ -230,6 +241,7 @@ void PartyService::OnPartyLeft(const NotifyPartyLeft& acPartyLeft) noexcept
 
     ForgetPartyPluginAnswers();
     DestroyParty();
+    ForgetPartyValues();
 
     m_world.GetDispatcher().trigger(PartyLeftEvent());
 }

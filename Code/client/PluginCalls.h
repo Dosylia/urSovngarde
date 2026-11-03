@@ -8,3 +8,9 @@ void StorePartyPluginAnswer(const String& acPluginFile, const String& acPlayerWi
 
 // The party changed, so what the server said about it no longer holds.
 void ForgetPartyPluginAnswers() noexcept;
+
+// A number the party's leader set for the party.
+void StorePartyValue(const String& acKey, float aValue) noexcept;
+
+// This game left its party, or joined another, so the leader's numbers no longer hold.
+void ForgetPartyValues() noexcept;

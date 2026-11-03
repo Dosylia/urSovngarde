@@ -11,6 +11,8 @@
 #include <Messages/NotifyPartyInvite.h>
 #include <Messages/NotifyPartyPlugin.h>
 #include <Messages/RequestPartyPlugin.h>
+#include <Messages/NotifyPartyValue.h>
+#include <Messages/RequestPartyValue.h>
 #include <Messages/PartyInviteRequest.h>
 #include <Messages/PartyAcceptInviteRequest.h>
 #include <Messages/PartyLeaveRequest.h>
@@ -23,6 +25,9 @@
 #include <Messages/NotifyPlayerJoined.h>
 
 #include <Setting.h>
+
+#include <cmath>
+
 namespace
 {
 Console::Setting bAutoPartyCreate{"Gameplay:bAutoPartyCreate", "Create a party for the first player to join, so players are grouped without a party menu (VR has none)", true};
@@ -40,6 +45,7 @@ PartyService::PartyService(World& aWorld, entt::dispatcher& aDispatcher) noexcep
     , m_partyChangeLeaderConnection(aDispatcher.sink<PacketEvent<PartyChangeLeaderRequest>>().connect<&PartyService::OnPartyChangeLeader>(this))
     , m_partyKickConnection(aDispatcher.sink<PacketEvent<PartyKickRequest>>().connect<&PartyService::OnPartyKick>(this))
     , m_partyPluginConnection(aDispatcher.sink<PacketEvent<RequestPartyPlugin>>().connect<&PartyService::OnPartyPlugin>(this))
+    , m_partyValueConnection(aDispatcher.sink<PacketEvent<RequestPartyValue>>().connect<&PartyService::OnPartyValue>(this))
 {
 }
 
@@ -207,6 +213,32 @@ void PartyService::OnPartyPlugin(const PacketEvent<RequestPartyPlugin>& acPacket
         }
     }
     acPacket.pPlayer->Send(notify);
+}
+
+void PartyService::OnPartyValue(const PacketEvent<RequestPartyValue>& acPacket) noexcept
+{
+    const auto& cMessage = acPacket.Packet;
+    Party* pParty = GetPlayerParty(acPacket.pPlayer);
+    if (!pParty || pParty->LeaderPlayerId != acPacket.pPlayer->GetId())
+        return;
+    if (cMessage.Key.empty() || cMessage.Key.size() > RequestPartyValue::kLongestKey || !std::isfinite(cMessage.Value))
+        return;
+    if (!pParty->PluginValues.contains(cMessage.Key) && pParty->PluginValues.size() >= RequestPartyValue::kMostKeys)
+    {
+        spdlog::warn("PartyValue: '{}' refused, the party already holds {} keys", cMessage.Key.c_str(), pParty->PluginValues.size());
+        return;
+    }
+    if (pParty->PluginValues.try_emplace(cMessage.Key, cMessage.Value).second)
+        spdlog::info("PartyValue: leader {} set '{}' to {}", acPacket.pPlayer->GetId(), cMessage.Key.c_str(), cMessage.Value);
+    else
+        pParty->PluginValues[cMessage.Key] = cMessage.Value;
+
+    NotifyPartyValue notify{};
+    notify.Key = cMessage.Key;
+    notify.Value = cMessage.Value;
+    for (Player* pMember : pParty->Members)
+        if (pMember != acPacket.pPlayer)
+            pMember->Send(notify);
 }
 
 void PartyService::OnPartyKick(const PacketEvent<PartyKickRequest>& acPacket) noexcept
@@ -506,5 +538,18 @@ void PartyService::SendPartyJoinedEvent(Party& aParty, Player* aPlayer) noexcept
         if (!states.Changes.empty())
             aPlayer->Send(states);
         spdlog::info("ReferenceEnable: {} reference(s) the leader switched sent to joining player {}", aParty.ReferenceEnabled.size(), aPlayer->GetId());
+    }
+
+    // And the numbers the leader's plugins set for the party.
+    if (!joinedMessage.IsLeader && !aParty.PluginValues.empty())
+    {
+        for (const auto& [cKey, cValue] : aParty.PluginValues)
+        {
+            NotifyPartyValue value{};
+            value.Key = cKey;
+            value.Value = cValue;
+            aPlayer->Send(value);
+        }
+        spdlog::info("PartyValue: {} value(s) sent to joining player {}", aParty.PluginValues.size(), aPlayer->GetId());
     }
 }

@@ -9,10 +9,13 @@
 #include <Services/ObjectService.h>
 
 #include <Messages/RequestPartyPlugin.h>
+#include <Messages/RequestPartyValue.h>
 #include <Services/TransportService.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <string>
@@ -35,6 +38,9 @@ struct PartyPluginAnswer
 };
 std::mutex s_answersLock;
 std::map<std::string, PartyPluginAnswer> s_partyPluginAnswers;
+
+std::mutex s_valuesLock;
+std::map<std::string, float> s_partyValues;
 
 bool IsConnected() noexcept
 {
@@ -77,6 +83,21 @@ void ForgetPartyPluginAnswers() noexcept
 {
     std::scoped_lock lock(s_answersLock);
     s_partyPluginAnswers.clear();
+}
+
+void StorePartyValue(const String& acKey, const float aValue) noexcept
+{
+    std::scoped_lock lock(s_valuesLock);
+    if (s_partyValues.try_emplace(acKey.c_str(), aValue).second)
+        spdlog::info("PartyValue: '{}' from the leader, {}", acKey.c_str(), aValue);
+    else
+        s_partyValues[acKey.c_str()] = aValue;
+}
+
+void ForgetPartyValues() noexcept
+{
+    std::scoped_lock lock(s_valuesLock);
+    s_partyValues.clear();
 }
 
 extern "C"
@@ -153,6 +174,73 @@ __declspec(dllexport) bool urSovngarde_ShowCard(const char* acpTitle, const char
 
     AddCall([cTitle = std::string(acpTitle), cSubtitle = std::string(acpSubtitle ? acpSubtitle : ""), aRgb, cHold = std::clamp(aHoldSeconds, 0.f, cLongestHold)]
             { VRBanner::ShowDeath(cTitle, cSubtitle, aRgb, cHold); });
+    return true;
+}
+
+// Shows a bar near the top of the view in this game only, from its next frame until urSovngarde_HideMeter, connected or not.
+// One not shown again for 10 s fades out, so a plugin keeps calling while it should stay.
+// aFill runs from 0 to 1: the attackers' colour fills that much of the bar from the left, and the defenders' colour the rest.
+// acpLabel may be null or empty for none, and the colours are 0xRRGGBB.
+// Called again, it changes in place; a card shows beside it, never in its place.
+// True when it was taken; a fill must be a number.
+__declspec(dllexport) bool urSovngarde_ShowMeter(const char* acpLabel, float aFill, uint32_t aAttackRgb, uint32_t aDefendRgb) noexcept
+{
+    if (std::isnan(aFill))
+        return false;
+
+    AddCall([cLabel = std::string(acpLabel ? acpLabel : ""), cFill = std::clamp(aFill, 0.f, 1.f), aAttackRgb, aDefendRgb]
+            { VRBanner::ShowMeter(cLabel, cFill, aAttackRgb, aDefendRgb); });
+    return true;
+}
+
+__declspec(dllexport) void urSovngarde_HideMeter() noexcept
+{
+    AddCall([] { VRBanner::HideMeter(); });
+}
+
+// Sets a number every game of the party reads with urSovngarde_GetPartyValue, for players who join later too; the newest of a key wins.
+// Only the party's leader can set one; a game that plays alone cannot, and keeps its number itself.
+// A key holds at most 63 bytes and a party at most 32 keys.
+// True when it was taken; a value must be finite.
+__declspec(dllexport) bool urSovngarde_SetPartyValue(const char* acpKey, float aValue) noexcept
+{
+    if (!acpKey || !*acpKey || std::strlen(acpKey) > RequestPartyValue::kLongestKey || !std::isfinite(aValue))
+        return false;
+
+    // Sent while the lock is held, so two threads setting one key send in the order they stored.
+    // The leader is checked under it too: a game leaving its party forgets the values after it stops leading.
+    std::scoped_lock lock(s_valuesLock);
+    if (!IsPartyLeader())
+        return false;
+    const auto cIt = s_partyValues.find(acpKey);
+    if (cIt == s_partyValues.end() && s_partyValues.size() >= RequestPartyValue::kMostKeys)
+        return false;
+    if (cIt != s_partyValues.end() && cIt->second == aValue)
+        return true;
+    s_partyValues[acpKey] = aValue;
+    AddCall(
+        [cKey = String(acpKey), aValue]
+        {
+            RequestPartyValue request{};
+            request.Key = cKey;
+            request.Value = aValue;
+            World::Get().GetTransport().Send(request);
+        });
+    return true;
+}
+
+// The number the party's leader set under that key, in any game of the party, the leader's own included.
+// False when none has been set, which is always the case in a game that plays alone.
+__declspec(dllexport) bool urSovngarde_GetPartyValue(const char* acpKey, float* apValue) noexcept
+{
+    if (!acpKey || !apValue)
+        return false;
+
+    std::scoped_lock lock(s_valuesLock);
+    const auto cIt = s_partyValues.find(acpKey);
+    if (cIt == s_partyValues.end())
+        return false;
+    *apValue = cIt->second;
     return true;
 }
 
