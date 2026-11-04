@@ -565,6 +565,42 @@ TESNPC* BaseForCopy(World& aWorld, const CharacterSpawnRequest& acMessage) noexc
 // A disabled actor has no 3D and the game's revival does not take, so each waits for its switch on.
 TiltedPhoques::Vector<uint32_t> s_revivalsOnSwitchOn;
 
+// Actors whose life follows their owner's whatever this game's save says: ones the leader's game switched on here, or whose owner revived them.
+// A plugin uses the same soldier battle after battle, so a body left from an earlier one is no death this game saw first.
+std::unordered_set<uint32_t> s_lifeFollowsOwner;
+
+// When the leader's game last switched each actor on here.
+// For a moment after, the actor is that game's to announce: its plugin or quest placed it, and this game's actor becomes its copy there.
+TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_leaderSwitchedOnAt;
+constexpr auto cWaitForLeader = 5s;
+
+// True while the leader's game may still announce an actor it switched on here; logs the wait's end when nothing came.
+// A body here whose life follows its owner's waits for as long as it takes: announced from here, this game's save would make it the party's body.
+bool WaitsForLeader(const Actor* apActor, const bool aIsLeader) noexcept
+{
+    const auto cIt = s_leaderSwitchedOnAt.find(apActor->formID);
+    if (cIt == s_leaderSwitchedOnAt.end())
+        return false;
+    if (aIsLeader)
+    {
+        s_leaderSwitchedOnAt.erase(cIt);
+        return false;
+    }
+    constexpr auto cForever = std::chrono::steady_clock::time_point::max();
+    if (cIt->second == cForever || std::chrono::steady_clock::now() - cIt->second < cWaitForLeader)
+        return true;
+    const auto cSeconds = std::chrono::duration_cast<std::chrono::seconds>(cWaitForLeader).count();
+    if (apActor->IsDead() && s_lifeFollowsOwner.contains(apActor->formID))
+    {
+        spdlog::info("Actor {:X} is a body here, and the leader's game sent no character within {} s of its switch on; left for that game to announce", apActor->formID, cSeconds);
+        s_leaderSwitchedOnAt[apActor->formID] = cForever;
+        return true;
+    }
+    spdlog::info("Actor {:X}: no character from the leader's game within {} s of its switch on; announced here", apActor->formID, cSeconds);
+    s_leaderSwitchedOnAt.erase(cIt);
+    return false;
+}
+
 // A body whose 3D stands has no death left to play, so it goes straight into its ragdoll.
 void LayDownBody(Actor* apActor) noexcept
 {
@@ -576,11 +612,14 @@ void LayDownBody(Actor* apActor) noexcept
 // It is one killed behind a stand-in, or in a cell the other game did not have, or after its last save.
 // Stood up here, it is a dead soldier walking again, a different one in each game.
 // So a generic one stays dead here, as it lies; a unique one follows its owner, since a quest may have brought it back.
+// So does one in s_lifeFollowsOwner.
 bool IsDeadAgainstOwner(Actor* apActor, bool aDeadAtOwner) noexcept
 {
     if (aDeadAtOwner || !apActor || !apActor->IsDead())
         return false;
     if (apActor->GetExtension() && apActor->GetExtension()->IsPlayer())
+        return false;
+    if (s_lifeFollowsOwner.contains(apActor->formID))
         return false;
     const auto* pBase = Cast<TESNPC>(apActor->baseForm);
     return pBase && !pBase->actorData.IsUnique();
@@ -1230,6 +1269,20 @@ void CharacterService::OnGameLoaded() noexcept
     s_pendingGhostEnables.clear();
 }
 
+void CharacterService::FollowOwnersLife(const uint32_t aFormId) noexcept
+{
+    s_lifeFollowsOwner.insert(aFormId);
+}
+
+void CharacterService::LeaderSwitchedOn(const uint32_t aFormId) noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto entry = s_leaderSwitchedOnAt.begin(); entry != s_leaderSwitchedOnAt.end();)
+        entry = cNow - entry->second > 1min ? s_leaderSwitchedOnAt.erase(entry) : std::next(entry);
+    s_leaderSwitchedOnAt[aFormId] = cNow;
+    AnnounceAgain(aFormId);
+}
+
 void CharacterService::AnnounceAgain(const uint32_t aFormId) noexcept
 {
     auto view = m_world.view<FormIdComponent>();
@@ -1301,13 +1354,15 @@ void CharacterService::RunNotAnnounced() const noexcept
         if (!pActor)
             continue;
 
-        if (!pActor->parentCell)
+        const bool cWaitedForLeader = s_leaderSwitchedOnAt.contains(pActor->formID);
+        if (WaitsForLeader(pActor, m_world.GetPartyService().IsLeader()) || !pActor->parentCell)
         {
             s_notAnnounced.push_back(cEntity);
             continue;
         }
 
-        spdlog::info("Actor {:X} has a cell now; announced to the server", pActor->formID);
+        if (!cWaitedForLeader)
+            spdlog::info("Actor {:X} has a cell now; announced to the server", pActor->formID);
         ProcessNewEntity(cEntity);
     }
 }
@@ -1535,6 +1590,9 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
 
     s_followerReports.clear();
+    // A party joined later switches its actors on again, which marks them again.
+    s_lifeFollowsOwner.clear();
+    s_leaderSwitchedOnAt.clear();
 
     auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
     for (auto entity : remoteView)
@@ -2164,6 +2222,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
         spdlog::error("Actor object {:X} could not be created.", acMessage.ServerId);
         return;
     }
+
+    // Its character came, so the wait for the leader's game is over.
+    s_leaderSwitchedOnAt.erase(pActor->formID);
 
     // The base name lets two players' logs be compared: a leveled creature can resolve to a different animal on each side.
     const auto* pSpawnedBase = Cast<TESNPC>(pActor->baseForm);
@@ -3359,6 +3420,17 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
     TESNPC* pNpc = Cast<TESNPC>(pActor->baseForm);
     if (!pNpc)
         return;
+
+    // Switched on here by the leader's game a moment ago: that game announces it, and this one's actor becomes its copy.
+    // Announced from here first, it stood where this game had it, not where the leader's plugin put it, and was this game's.
+    if (WaitsForLeader(pActor, m_world.GetPartyService().IsLeader()))
+    {
+        if (std::find(s_notAnnounced.begin(), s_notAnnounced.end(), aEntity) == s_notAnnounced.end())
+            s_notAnnounced.push_back(aEntity);
+        spdlog::info("Actor {:X} was switched on by the leader's game; waiting up to {} s for its character before announcing it here", pActor->formID,
+                     std::chrono::duration_cast<std::chrono::seconds>(cWaitForLeader).count());
+        return;
+    }
 
     AssignCharacterRequest message{};
 

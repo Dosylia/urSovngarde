@@ -754,6 +754,9 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
         ++s_enableLeftAlone;
         return true;
     }
+    // An actor the leader's game switched on follows its owner's life here, whether this game switches it now, later, or has it on already.
+    if (aEnabled && IsSwitchableActor(pRef))
+        m_world.GetCharacterService().FollowOwnersLife(aFormId);
     if (aEnabled == !pRef->IsDisabled())
     {
         ++s_enableAlreadySo;
@@ -775,7 +778,7 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
     else
         pRef->Disable();
     if (cActor && aEnabled)
-        m_world.GetCharacterService().AnnounceAgain(aFormId);
+        m_world.GetCharacterService().LeaderSwitchedOn(aFormId);
 
     // An actor's disable is only queued, so it has not landed yet.
     if (aEnabled == !pRef->IsDisabled() || cActor)

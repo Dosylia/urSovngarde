@@ -66,6 +66,10 @@ struct CharacterService
     void ReviveActor(uint32_t aFormId) noexcept;
     // An actor switched back on soon after it left the server: discovery still knows it and will not find it again.
     void AnnounceAgain(uint32_t aFormId) noexcept;
+    // Its life follows its owner's from now on, even where this game's save has it dead.
+    void FollowOwnersLife(uint32_t aFormId) noexcept;
+    // The leader's game switched this actor on here: that game announces it, and this one waits a few seconds for it.
+    void LeaderSwitchedOn(uint32_t aFormId) noexcept;
     // Revives the bodies that asked to while switched off, once they are on and have their 3D.
     void RunRevivalsOnSwitchOn() noexcept;
     // A loaded game has each reference as its save has it, so what is disabled now is not this game's hiding.
