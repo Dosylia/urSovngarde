@@ -700,20 +700,38 @@ static TiltedPhoques::Initializer s_renderPassWatch(
         spdlog::info("RenderPassWatch: BSBatchRenderer's register functions watched (they were {} and {})", Where(s_realRegister[0]), Where(s_realRegister[1]));
     });
 
-static TiltedPhoques::Initializer s_drawListCheck(
-    []()
+// Installed late, not with the other hooks: Community Shaders' VR shadow batch checks this function's first bytes
+// when SKSE loads it, and stops with an error when another hook is there already.
+// Called from every client update; it installs the first time the map is open. The loop only comes after a map close,
+// and by then every plugin has loaded, so another plugin's hook (a jump at the start) comes first and this one goes on top.
+void InstallDrawListCheck() noexcept
+{
+    static bool s_tried = false;
+    if (s_tried || !MapMenuShown())
+        return;
+    s_tried = true;
+
+    const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    auto* pDraw = reinterpret_cast<uint8_t*>(exe + kDrawList);
+    const bool cOwn = PatchCheck::Is(pDraw, {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10});
+    // Another plugin's hook: a relative jump (E9) or an indirect one (FF 25), which MinHook carries into its trampoline.
+    const bool cHooked = PatchCheck::Is(pDraw, {0xE9}) || PatchCheck::Is(pDraw, {0xFF, 0x25});
+    if (!cOwn && !cHooked)
     {
-        const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-        const auto* pDraw = reinterpret_cast<const uint8_t*>(exe + kDrawList);
-        if (!PatchCheck::Is(pDraw, {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10}))
-        {
-            spdlog::error("RenderPassWatch: the list draw at {} is not the expected code ({}); lists are not checked for loops", fmt::ptr(pDraw), PatchCheck::Bytes(pDraw, 10));
-            return;
-        }
-        s_realDrawList = reinterpret_cast<TDrawList*>(exe + kDrawList);
-        TP_HOOK(&s_realDrawList, HookDrawList);
-        spdlog::info("RenderPassWatch: each list is checked for a loop before it is drawn");
-    });
+        spdlog::error("RenderPassWatch: the list draw at {} is not the expected code ({}); lists are not checked for loops", fmt::ptr(pDraw), PatchCheck::Bytes(pDraw, 10));
+        return;
+    }
+    const std::string cOtherHook = cHooked ? fmt::format(" (on top of another plugin's hook: {})", PatchCheck::Bytes(pDraw, 6)) : std::string();
+    s_realDrawList = reinterpret_cast<TDrawList*>(pDraw);
+    TP_HOOK_IMMEDIATE(&s_realDrawList, HookDrawList);
+    if (reinterpret_cast<uint8_t*>(s_realDrawList) == pDraw)
+    {
+        s_realDrawList = nullptr;
+        spdlog::error("RenderPassWatch: the list draw at {} could not be hooked ({}); lists are not checked for loops", fmt::ptr(pDraw), PatchCheck::Bytes(pDraw, 10));
+        return;
+    }
+    spdlog::info("RenderPassWatch: each list is checked for a loop before it is drawn{}", cOtherHook);
+}
 
 static TiltedPhoques::Initializer s_accumulatorTrace(
     []()
