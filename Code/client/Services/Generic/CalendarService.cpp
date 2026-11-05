@@ -21,6 +21,8 @@
 #include <Services/PartyService.h>
 #include <Services/TransportService.h>
 
+#include <cmath>
+
 using GameClockFrame::kTransitionSpeed;
 
 namespace
@@ -121,6 +123,13 @@ void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
     if (m_watchedSleeper)
         StopWatching(0.f);
 
+    if (m_hourMove)
+    {
+        m_hourMove.reset();
+        s_hourAnswer = HourAnswer::kLost;
+        spdlog::info("Hour: a plugin's move of the hour was lost with the connection");
+    }
+
     // signal a time transition
     m_fadeTimer = 0.f;
     ToggleGameClock(true);
@@ -145,6 +154,15 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
     switch (acMessage.SleepEvent)
     {
     case Event::kGranted:
+        // Asked for by a plugin, with no menu: the hours are known, so the wait ends as it is granted.
+        if (m_hourMove)
+        {
+            const float cHour = *m_hourMove;
+            m_hourMove.reset();
+            FinishHourMove(cHour);
+            return;
+        }
+
         if (m_sleepState != SleepState::kAsking || !IsSleepMenuOpen()
 #ifdef SKYRIMVR
             || m_sleepMenuGeneration != SleepWaitMenuGeneration()
@@ -198,12 +216,6 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
     case Event::kRefusedBusy:
     case Event::kRefusedCombat:
     {
-        if (m_sleepState == SleepState::kAsking)
-            m_sleepState = SleepState::kRefused;
-#ifdef SKYRIMVR
-        ResolveDeferredSleepWait(false);
-#endif
-
         String reason;
         if (acMessage.SleepEvent == Event::kRefusedDisabled)
             reason = "sleeping does not pass time on this server";
@@ -215,6 +227,26 @@ void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
             reason = PlayerName(acMessage.PlayerId) + " is already sleeping";
         else
             reason = PlayerName(acMessage.PlayerId) + " is in combat";
+
+        // A plugin's move: the plugin tells its player, and no menu waits for this answer.
+        if (m_hourMove)
+        {
+            m_hourMove.reset();
+            m_sleepState = SleepState::kIdle;
+            s_hourAnswer = acMessage.SleepEvent == Event::kRefusedDisabled  ? HourAnswer::kSleepOff
+                           : acMessage.SleepEvent == Event::kRefusedPublic  ? HourAnswer::kPublic
+                           : acMessage.SleepEvent == Event::kRefusedCombat  ? HourAnswer::kCombat
+                           : acMessage.SleepEvent == Event::kRefusedBusy    ? HourAnswer::kBusy
+                                                                            : HourAnswer::kNoParty;
+            spdlog::info("Hour: a plugin's move of the hour was refused, {}", reason);
+            return;
+        }
+
+        if (m_sleepState == SleepState::kAsking)
+            m_sleepState = SleepState::kRefused;
+#ifdef SKYRIMVR
+        ResolveDeferredSleepWait(false);
+#endif
 
         spdlog::info("Sleep: refused, {}", reason);
         Utils::ShowHudMessage(String("urSovngarde: no time will pass, ") + reason);
@@ -335,7 +367,8 @@ void CalendarService::UpdateSleep(double aDelta) noexcept
         return;
     case SleepState::kAsking:
 #ifndef SKYRIMVR
-        if (!cMenuOpen)
+        // A plugin's move asks with no menu open.
+        if (!cMenuOpen && !m_hourMove)
         {
             RequestSleep cancel{};
             cancel.SleepStep = RequestSleep::Step::kCancel;
@@ -429,6 +462,73 @@ void CalendarService::FinishSleep() noexcept
     done.SleepStep = cHours >= kMinSleepHours ? RequestSleep::Step::kFinish : RequestSleep::Step::kCancel;
     done.HoursSlept = cHours;
     m_transport.Send(done);
+}
+
+void CalendarService::MoveToHour(const float aHour) noexcept
+{
+    if (!m_transport.IsConnected())
+    {
+        s_hourAnswer = HourAnswer::kLost;
+        return;
+    }
+    // One wait at a time here, the player's own or another plugin's move.
+    if (m_sleepState != SleepState::kIdle || m_watchedSleeper || m_hourMove)
+    {
+        s_hourAnswer = HourAnswer::kBusy;
+        spdlog::info("Hour: a plugin's move to {} not asked, a sleep or wait is under way here", FormatHour(std::fmod(aHour, 24.f)));
+        return;
+    }
+    // The server checks the rest of the party; the game's own wait refuses this player in combat.
+    if (const PlayerCharacter* pPlayer = PlayerCharacter::Get(); pPlayer && pPlayer->IsInCombat())
+    {
+        s_hourAnswer = HourAnswer::kCombat;
+        spdlog::info("Hour: a plugin's move to {} not asked, this player is in combat", FormatHour(std::fmod(aHour, 24.f)));
+        return;
+    }
+
+    // The same grant as a wait: the server's rules for passing time hold, and only one player passes it at a time.
+    m_hourMove = aHour;
+#ifdef SKYRIMVR
+    m_sleepMenuGeneration = SleepWaitMenuGeneration();
+#endif
+    RequestSleep ask{};
+    ask.SleepStep = RequestSleep::Step::kAsk;
+    m_transport.Send(ask);
+    m_sleepState = SleepState::kAsking;
+    spdlog::info("Hour: a plugin asked to move the hour to {}; asking the server", FormatHour(std::fmod(aHour, 24.f)));
+}
+
+void CalendarService::FinishHourMove(const float aHour) noexcept
+{
+    // Counted at the grant: the clock ran on while the server answered.
+    // An hour asked for that the clock passed meanwhile, by up to six game minutes, is reached, not a day away.
+    constexpr float cJustPassed = 0.1f;
+    const float cHours = std::fmod(aHour - m_onlineTime.m_timeModel.Time + 48.f, 24.f);
+    const bool cMoves = cHours >= kMinSleepHours && cHours <= 24.f - cJustPassed;
+    // Idle at once: this game moves its own clock here, and the server's resync, which it may not send before this player is in the world, is taken in any state.
+    m_sleepState = SleepState::kIdle;
+    s_hourAnswer = HourAnswer::kMoved;
+
+    RequestSleep done{};
+    done.SleepStep = cMoves ? RequestSleep::Step::kFinish : RequestSleep::Step::kCancel;
+    done.HoursSlept = cHours;
+    m_transport.Send(done);
+    if (!cMoves)
+    {
+        spdlog::info("Hour: already {}, as a plugin asked; nothing moved", FormatHour(m_onlineTime.m_timeModel.Time));
+        return;
+    }
+
+    // The server gives every other game these hours, then its clock; this game moves its own, as a sleeper's game does.
+    // Published now, as at a sleep's end, so the resync that follows keeps the new day.
+    m_onlineTime.AdvanceHours(cHours);
+    m_fadeTimer = kTransitionSpeed;
+    if (s_gameClockLocked)
+    {
+        TimeData::Get()->GameDaysPassed->f += cHours / 24.f;
+        WriteGameClock(m_onlineTime.m_timeModel);
+    }
+    spdlog::info("Hour: moved forward {:.2f} h to {} for every game, as a plugin asked", cHours, FormatHour(m_onlineTime.m_timeModel.Time));
 }
 
 void CalendarService::ReportCombat(double aDelta) noexcept

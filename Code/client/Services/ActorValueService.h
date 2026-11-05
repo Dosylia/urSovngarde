@@ -44,6 +44,10 @@ public:
     // Repeats a copy's revival until it lasts.
     static void WatchCopyRevival(uint32_t aFormId) noexcept;
 
+    // While this game applies another player's blow to an actor it runs, that player's copy here; 0 otherwise.
+    // Only on the thread applying it, inside the game's own handling of that health change, which names no attacker.
+    static uint32_t BlowAttacker() noexcept;
+
 private:
     enum ValueType : uint8_t
     {
@@ -85,7 +89,7 @@ private:
      * @brief Receives health value changes and applies them locally.
      */
     void OnHealthChangeBroadcast(const NotifyHealthChangeBroadcast& acMessage) noexcept;
-    void ApplyHealthChange(const NotifyHealthChangeBroadcast& acMessage) const noexcept;
+    void ApplyHealthChange(const NotifyHealthChangeBroadcast& acMessage) noexcept;
     //! The defender's rule: this player's clashes, and the other players' hits held until they are seen here.
     void OnClash(const ClashEvent& acEvent) noexcept;
     void RunHeldHits() noexcept;
@@ -137,4 +141,6 @@ private:
     Vector<NotifyHealthChangeBroadcast> m_heldHits;
     //! This player's clashes: the other player's copy and when, on the server's clock.
     Vector<std::pair<uint32_t, uint64_t>> m_clashes;
+    //! Actors this game runs that a blow sent or taken as a change reached since the last broadcast.
+    Set<uint32_t> m_healthResends;
 };

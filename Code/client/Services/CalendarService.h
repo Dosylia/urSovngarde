@@ -25,6 +25,30 @@ public:
     // The game queued its Fader Menu, which a sleep does before the clock moves. Any thread.
     static void OnFaderQueued() noexcept { s_faderQueued = true; }
 
+    // How a plugin's move of the shared hour went; the values are a promise to plugins (urSovngarde_GetPartyHourAnswer).
+    enum class HourAnswer : int32_t
+    {
+        kWaiting = -1,
+        kNotAsked = 0,
+        kMoved = 1,
+        kSleepOff = 2,
+        kPublic = 3,
+        kCombat = 4,
+        kBusy = 5,
+        kNoParty = 6,
+        kLost = 7,
+    };
+    static HourAnswer GetHourAnswer() noexcept { return s_hourAnswer.load(); }
+    // False while an earlier move waits for its answer, so each answer belongs to the move that asked. Any thread.
+    static bool StartHourAsk() noexcept
+    {
+        HourAnswer answer = s_hourAnswer.load();
+        return answer != HourAnswer::kWaiting && s_hourAnswer.compare_exchange_strong(answer, HourAnswer::kWaiting);
+    }
+
+    // A plugin's move of the shared clock forward to the next aHour, granted by the server as a wait. Main thread.
+    void MoveToHour(float aHour) noexcept;
+
 private:
     void OnTimeUpdate(const ServerTimeSettings&) noexcept;
     void HandleUpdate(const UpdateEvent&) noexcept;
@@ -44,6 +68,7 @@ private:
     void CommitSleepTime(uint32_t aSleeperId, float aHours) noexcept;
     void ReportCombat(double aDelta) noexcept;
     String PlayerName(uint32_t aPlayerId) const noexcept;
+    void FinishHourMove(float aHour) noexcept;
 
     entt::scoped_connection m_timeUpdateConnection;
     entt::scoped_connection m_updateConnection;
@@ -82,6 +107,10 @@ private:
 
     bool m_reportedCombat = false;
     double m_combatCheckTimer = 0.0;
+
+    // The hour a plugin's move asked for, until the server answers; no sleep menu is open for it.
+    std::optional<float> m_hourMove;
+    static inline std::atomic<HourAnswer> s_hourAnswer{HourAnswer::kNotAsked};
 
     DateTime m_onlineTime;
     DateTime m_offlineTime;

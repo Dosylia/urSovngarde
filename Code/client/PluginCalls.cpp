@@ -5,6 +5,8 @@
 #include <World.h>
 #include <Games/ActorExtension.h>
 #include <Games/Skyrim/VRBanner.h>
+#include <Services/ActorValueService.h>
+#include <Services/CalendarService.h>
 #include <Services/CharacterService.h>
 #include <Services/ObjectService.h>
 
@@ -120,6 +122,14 @@ __declspec(dllexport) bool urSovngarde_IsOwnedHere(uint32_t aFormId) noexcept
     Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
     const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
     return pExtension && !pExtension->IsRemote();
+}
+
+// Who struck, when the game's health damage call names no attacker: another player's blow, landed in that player's game, is applied here as a change.
+// It answers the form id of that player's copy in this game, only from within that call, on its thread, and for an actor this game runs.
+// 0 anywhere else, for a blow of this game's own, and when that player has no copy here.
+__declspec(dllexport) uint32_t urSovngarde_GetBlowAttacker() noexcept
+{
+    return ActorValueService::BlowAttacker();
 }
 
 // Whether every player of this game's party has a plugin, by its file name.
@@ -242,6 +252,40 @@ __declspec(dllexport) bool urSovngarde_GetPartyValue(const char* acpKey, float* 
         return false;
     *apValue = cIt->second;
     return true;
+}
+
+// Moves the shared clock forward to the next time it is aHour, from 0 to 24, in every game on the server that is in the world, as a wait does.
+// Days pass as in a wait, and the clock never goes back; at that hour already, or up to six game minutes past it, nothing moves.
+// The server must let a wait pass time: Gameplay:bEnableSleep on a private server, with nobody of the party in combat, this player included.
+// Only the party's leader can ask, or a player in no party; a game that plays alone sets its own hour.
+// True when it was asked; false too while an earlier ask waits for its answer.
+// urSovngarde_GetPartyHourAnswer then says how it went.
+__declspec(dllexport) bool urSovngarde_SetPartyHour(float aHour) noexcept
+{
+    if (!std::isfinite(aHour) || aHour < 0.f || aHour > 24.f || !IsConnected())
+        return false;
+    if (World::Get().GetPartyService().IsInParty() && !IsPartyLeader())
+        return false;
+    if (!CalendarService::StartHourAsk())
+        return false;
+
+    AddCall([aHour] { World::Get().ctx().at<CalendarService>().MoveToHour(aHour); });
+    return true;
+}
+
+// How the last urSovngarde_SetPartyHour went:
+// -1 waiting for the server, so call again on a later frame;
+// 0 nothing asked yet;
+// 1 moved, or it was that hour already;
+// 2 refused, this server does not let a wait pass time (Gameplay:bEnableSleep);
+// 3 refused, a public server;
+// 4 refused, a party member is in combat;
+// 5 refused, a player on the server is sleeping or waiting, or this game is;
+// 6 refused, this player is in no party and others are online;
+// 7 lost: the connection went before the server answered.
+__declspec(dllexport) int32_t urSovngarde_GetPartyHourAnswer() noexcept
+{
+    return static_cast<int32_t>(CalendarService::GetHourAnswer());
 }
 
 // Switches a placed actor off or on in every game of the party, for players who join later too.

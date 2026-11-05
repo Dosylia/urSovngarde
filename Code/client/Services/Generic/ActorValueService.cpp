@@ -100,6 +100,14 @@ static uint32_t PlayerCopyFormId(uint32_t aPlayerId) noexcept
     return 0;
 }
 
+// Set only while ApplyHealthChange hands another player's blow to the game.
+static thread_local uint32_t t_blowAttacker = 0;
+
+uint32_t ActorValueService::BlowAttacker() noexcept
+{
+    return t_blowAttacker;
+}
+
 void ActorValueService::CreateActorValuesComponent(const entt::entity aEntity, Actor* apActor) noexcept
 {
     auto& actorValuesComponent = m_world.emplace_or_replace<ActorValuesComponent>(aEntity);
@@ -133,6 +141,7 @@ void ActorValueService::OnDisconnected(const DisconnectedEvent& acEvent) noexcep
     m_world.clear<ActorValuesComponent>();
     m_heldHits.clear();
     m_clashes.clear();
+    m_healthResends.clear();
 }
 
 void ActorValueService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
@@ -235,6 +244,7 @@ void ActorValueService::BroadcastActorValues() noexcept
         s_nextRefresh = refreshNow + 3s;
 
     auto view = m_world.view<FormIdComponent, LocalComponent, ActorValuesComponent>();
+    Set<uint32_t> stillToResend;
 
     for (auto entity : view)
     {
@@ -289,6 +299,24 @@ void ActorValueService::BroadcastActorValues() noexcept
             }
         }
 
+        // The server took a blow's change, and something here may have given the health back since.
+        // Unchanged, it would not be sent, and the server would stay lower: its number is what a hand-off and a joining player take.
+        // The copies take it only when it is 25 or more away from theirs, as any value.
+        // A small change still waiting to go out would land after it and take the server lower again, so it waits for the next broadcast.
+        if (m_healthResends.contains(formIdComponent.Id) && (m_smallHealthChanges.contains(localComponent.Id) || m_smallSpellChanges.contains(localComponent.Id)))
+            stillToResend.insert(formIdComponent.Id);
+        else if (m_healthResends.contains(formIdComponent.Id) && !requestValueChanges.Values.contains(ActorValueInfo::kHealth))
+        {
+            const float cHealth = pActor->GetActorValue(ActorValueInfo::kHealth);
+            requestValueChanges.Values[ActorValueInfo::kHealth] = cHealth;
+            static std::chrono::steady_clock::time_point s_nextSaid{};
+            if (refreshNow >= s_nextSaid)
+            {
+                s_nextSaid = refreshNow + 10s;
+                spdlog::info("Health of {:X} sent unchanged at {:.0f}: a blow on it went to the other games as a change", pActor->formID, cHealth);
+            }
+        }
+
         if (requestValueChanges.Values.size() > 0)
         {
             m_transport.Send(requestValueChanges);
@@ -299,6 +327,7 @@ void ActorValueService::BroadcastActorValues() noexcept
             m_transport.Send(requestMaxValueChanges);
         }
     }
+    m_healthResends = std::move(stillToResend);
 }
 
 void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcept
@@ -345,6 +374,9 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
     }
 
     uint32_t serverId = serverIdRes.value();
+
+    if (acEvent.DeltaHealth < 0.f && m_world.all_of<LocalComponent>(*hitteeIt))
+        m_healthResends.insert(acEvent.HitteeId);
 
     if (acEvent.DeltaHealth > -1.0f && acEvent.DeltaHealth < 1.0f)
     {
@@ -571,7 +603,7 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
     ApplyHealthChange(acMessage);
 }
 
-void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acMessage) const noexcept
+void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acMessage) noexcept
 {
     Actor* pActor = Utils::GetByServerId<Actor>(acMessage.Id);
     if (!pActor)
@@ -598,7 +630,15 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
         newHealth = kNpcCopyHealthFloor;
     }
 
+    // Another player's blow on an actor this game runs: the game's handling of it below names no attacker, so a plugin there can ask (BlowAttacker).
+    // Only here: on a copy, the sender can be the game that runs it, reporting a blow of its own NPC.
+    const ActorExtension* pHitExtension = pActor->GetExtension();
+    const bool cBlowHere = acMessage.DeltaHealth < 0.f && pHitExtension && !pHitExtension->IsRemote();
+    if (cBlowHere)
+        m_healthResends.insert(pActor->formID);
+    t_blowAttacker = cBlowHere && acMessage.AttackerPlayerId ? PlayerCopyFormId(acMessage.AttackerPlayerId) : 0;
     pActor->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, newHealth);
+    t_blowAttacker = 0;
 
     // Another player's blow on this player: the death card may name them.
     if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId && pActor == PlayerCharacter::Get())
