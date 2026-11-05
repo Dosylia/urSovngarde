@@ -495,6 +495,11 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   through four loading screens (exterior, inn, Dragonsreach, Whiterun) clean. Not yet played.
   Seen hit it on 2026-10-06 (19:41 and 19:43, twice out of two loads): his crash logger put 100997 at 0x1354D20, a
   plain newer library, which came with his Engine Fixes 7.10; Emma's file has it at 0x90D400.
+- **CSX 3.19.2 and later check the first bytes of the list draw (VR 0x141349270)** when SKSE loads them, and stop the
+  game with "Incompatible VR shadow batch hook" if another hook is there. The map freeze guard hooks that function, so it
+  goes in only the first time the map is open, after every plugin has loaded, and sits on top of CSX's own hook
+  (`RenderPassWatch: each list is checked for a loop before it is drawn (on top of another plugin's hook: ...)`).
+  That is the only one of our hooks on the functions CSX checks. FUS still runs csx3.18, which has no such check.
 - **The clean-up on connect deleted the game's own temporary actors (fixed 2026-10-06).** On connect
   the client deleted every actor with an `FF` id, not only its own copies from an earlier connection. Emma's crash at
   19:38:42 on 2026-10-06: FF0011DD "Aspiring Mage" (a Skyrim.esm base, made by the game while her save loaded, 6 s

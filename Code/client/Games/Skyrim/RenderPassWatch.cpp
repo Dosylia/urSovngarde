@@ -5,6 +5,7 @@
 #include <Interface/Menus/MapMenu.h>
 #include <PatchCheck.h>
 
+#include <cstring>
 #include <intrin.h>
 
 // Every pass the game draws is put on a list by BSBatchRenderer's two register functions (its vtable slots 1 and 2).
@@ -700,10 +701,10 @@ static TiltedPhoques::Initializer s_renderPassWatch(
         spdlog::info("RenderPassWatch: BSBatchRenderer's register functions watched (they were {} and {})", Where(s_realRegister[0]), Where(s_realRegister[1]));
     });
 
-// Installed late, not with the other hooks: Community Shaders' VR shadow batch checks this function's first bytes
-// when SKSE loads it, and stops with an error when another hook is there already.
-// Called from every client update; it installs the first time the map is open. The loop only comes after a map close,
-// and by then every plugin has loaded, so another plugin's hook (a jump at the start) comes first and this one goes on top.
+// Community Shaders' VR shadow batch checks this function's first bytes when SKSE loads it, and stops the game if they changed.
+// So this hook goes in late, from the client's update, the first time the map is open.
+// The loop it cuts only follows a map close, so nothing is lost by waiting.
+// Another plugin's hook there, a jump at the start, is kept, and this one goes on top of it.
 void InstallDrawListCheck() noexcept
 {
     static bool s_tried = false;
@@ -722,9 +723,12 @@ void InstallDrawListCheck() noexcept
         return;
     }
     const std::string cOtherHook = cHooked ? fmt::format(" (on top of another plugin's hook: {})", PatchCheck::Bytes(pDraw, 6)) : std::string();
+    // MinHook writes a 5-byte jump at the start, so the hook is live only if those bytes changed.
+    uint8_t firstBytes[5]{};
+    std::memcpy(firstBytes, pDraw, sizeof(firstBytes));
     s_realDrawList = reinterpret_cast<TDrawList*>(pDraw);
     TP_HOOK_IMMEDIATE(&s_realDrawList, HookDrawList);
-    if (reinterpret_cast<uint8_t*>(s_realDrawList) == pDraw)
+    if (reinterpret_cast<uint8_t*>(s_realDrawList) == pDraw || std::memcmp(firstBytes, pDraw, sizeof(firstBytes)) == 0)
     {
         s_realDrawList = nullptr;
         spdlog::error("RenderPassWatch: the list draw at {} could not be hooked ({}); lists are not checked for loops", fmt::ptr(pDraw), PatchCheck::Bytes(pDraw, 10));

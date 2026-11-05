@@ -336,6 +336,14 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       A real fast travel from the map cannot run in the rig. To see: "Fast travel from the map".
 - [!] **The map freeze, player 2 and together** (cause and fix in KNOWN_ISSUES, "Freeze after closing the unpaused map"). Seen fixed by player 1,
       30 closes online on 2026-10-30. To see: "The map, player 2 and together".
+      Since build 82f3689 (with ec6f79e9) the loop guard on the list draw goes in at the first map open, not at start, so CSX 3.19.2 and later can
+      start; a hook that never went live is now logged as one. No rig run yet. To see: `RenderPassWatch: each list is checked for a loop before it is drawn`
+      after the first map open, and no freeze at a close.
+- [!] **Crash when another game's voice line reached a copy with no AI process** (`AIProcess::GetLipAnim`, VR 0x659B00, from
+      `OnNotifyDialogue`; a second player at a siege battle's start, 2026-11-05 18:09, v1.9.8). The game's speak call reads the speaker's
+      process unchecked, and a soldier switched on a second before had none yet. A sent line now waits for the process, up to the
+      3 s retry. Build 82f3689, no rig test: the rig cannot make a copy speak in the moment it has no process.
+      To see: no crash at a battle's start, and `waiting for its AI process` lines now and then.
 - [!] **Fingers not synced on MGO's skeleton** (since build f997b6a the check takes up to three hops). 536 flattened bones, and `no usable flattened
       bone array` up to 2026-10-23; no MGO session since. FUS has no such skeleton, so no rig run. To see on MGO: no such line, and fingers
       move on the copy.
@@ -344,6 +352,14 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Manager and Mod Organizer starts.
       One did outlive its game on 2026-10-31: a `TPProcess.exe --type=gpu-process` started at 10:36 by the 43-second rig session on 8ad48b5 was still alive at 16:20, its
       parent gone, 2 MB. The crash at 15:05 that day left none. How that one survived is not known, so a GPU helper may not be covered by the fix.
+      Two more on 2026-11-05, both started the second their game ended: a renderer at 00:56:11, at a rig game's crash, and a
+      `gpu-process` at 13:15:52, the same second the rig quit its game. Their parents were gone, and they held `TPProcess.exe`,
+      so the launcher's update to v1.9.8 stopped until its "Stop TPProcess.exe" button ended them.
+      Lead, not confirmed: a helper started as the game ends may never reach `WinMain`, where it starts watching the game.
+      One possible reason is Mod Organizer's file system creating each child suspended, to inject into it, and resuming it after.
+      The 2 MB of the 10-31 one fits a process that never started.
+      Next time one is left, read its threads (`Win32_Thread`, `ThreadWaitReason` 5 is suspended) and its `--pid=` switch before ending it.
+      A fix that covers every case is a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for the helpers: the system ends them when the game dies.
 - [!] **Freeze 2026-10-25 14:51: the autosave entering the Palace of the Kings never finished** (fixed on a98ad845 + the ExtraDataList lock change).
       A race microseconds wide, so no rig test makes it fail. To see: no freeze after a load with the other player's marker near. Not seen
       again in the 349 loading screens of 10-25 to 10-31, which is no proof.
@@ -728,7 +744,18 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       mount package, which it accepts, but the copy never gets on: copies run no AI of their own. Tried in the rig and
       reverted: `Actor::PutActorOnMountQuick` (vtable 0xAE on VR) returns false; letting the copy's AI run with its
       position free for 10 s left it beside the horse. Next if taken up: build the rider/mount `ExtraInteraction` on
-      the copy, then `PutActorOnMountQuick` (real reverse work on VR); or ask cmpayc's fork whether it has mounts.
+      the copy, then `PutActorOnMountQuick` (real reverse work on VR).
+      Checked 2026-11-05: cmpayc's fork has upstream's mount code unchanged, the same as ours; nothing to borrow.
+      The siege mod's cavalry needs it, and ships switched off until then (NPC riders the host seats with
+      `InitiateMountPackage`). What it takes besides seating the copy:
+      - A mount asked before rider and horse have server ids is dropped without a log line (`OnMountEvent`); hold it until both exist.
+      - `NotifyMount` goes once, to the players in range: the server keeps no rider-to-horse state, so a game that loads the
+        pair later, or joins, sees the rider on foot. The pair belongs in the actor's spawn data (protocol change).
+      - No dismount message or hook exists (a knockdown's get-up, `Dismount`, the horse's death).
+      - Hand-offs move each actor alone (`TransferToNextOwner`, the out-of-range sweep): with three players a rider and its
+        horse can split. A mounted pair should move together.
+      - A seated copy must not be placed at the owner's reported position, or interpolation fights the saddle.
+      - Mounted combat on a copy has never been tested.
 - [ ] **NPCs pulled back when a player joins** (2026-10-14): NPCs that walked away in the host's game, then were removed
       by the server for want of an owner, come back where the joiner's save has them. A fix that remembered the last
       released place was tried and removed the same evening: some release positions are bad ((0, 0, 0) for an unloaded

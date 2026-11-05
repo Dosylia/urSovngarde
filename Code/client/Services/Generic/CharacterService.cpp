@@ -272,6 +272,11 @@ TiltedPhoques::Map<uint32_t, PendingLine> s_pendingLines;
 
 bool StartLine(Actor* apActor, const char* acpFile) noexcept
 {
+    // The game's speak call reads the speaker's AI process for its lip sync without checking it.
+    // An actor switched on or rebuilt a moment ago can have none yet, so its line waits.
+    if (!apActor->currentProcess)
+        return false;
+
     constexpr uint32_t cNoSound = 0xFFFFFFFF;
     uint32_t soundHandle[3]{};
     apActor->SpeakSound(acpFile, soundHandle);
@@ -3195,7 +3200,8 @@ void CharacterService::OnNotifyDialogue(const NotifyDialogue& acMessage) noexcep
     // How it was played, so that a line the player did not hear can be told apart from one never started.
     const UI* pUI = UI::Get();
     spdlog::info("Dialogue: {:X} (server id {:X}) says {}; {} ({:.0f} units from the player, 3D {}, pause counter {})", pActor->formID, acMessage.ServerId,
-                 acMessage.SoundFilename.c_str(), cStarted ? "started here" : cWaits ? "waiting for its lip file" : "not started, too far away", cDistance, pActor->GetNiNode() ? "yes" : "no", pUI ? pUI->numPausesGame : 0);
+                 acMessage.SoundFilename.c_str(), cStarted ? "started here" : !cWaits ? "not started, too far away" : pActor->currentProcess ? "waiting for its lip file" : "waiting for its AI process",
+                 cDistance, pActor->GetNiNode() ? "yes" : "no", pUI ? pUI->numPausesGame : 0);
 }
 
 void CharacterService::OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept
