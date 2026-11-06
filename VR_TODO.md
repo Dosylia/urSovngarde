@@ -27,6 +27,18 @@ to do, what you should see, and what to read in the log if you don't. "It looked
 Before you start: don't play the vanilla Helgen intro together. Player 2 stays tied, because Ralof is a copy in that game and
 his scene never finishes. Use an alternate start, or connect after the intro.
 
+- **NPC presence report, step 1 (a protocol change: every player and the server need the same new build).** Nothing to do in play: fight NPCs as usual, ideally three or four players at a bandit camp.
+  Each game tells the server every 2 s which NPCs it has loaded, as its own, a copy or a stand-in; nothing about ownership changes yet. Afterwards read the server log:
+  `Presence: removing actor X after ... while another game still has it loaded` is a drop that step 2 (server only: never remove an NPC a game still has, hand it only to a game that has it) would have prevented;
+  every 30 s `Presence: N characters on the server, ... removed in the last 30 s, M of them while another game still had them loaded` gives the share, and the per-player lines count
+  `it runs that the server gives to another game` and `it shows as a copy that the server gives to it`, two games disagreeing about the same NPC; `N of these two kinds already so at the last census` are the ones that lasted 30 s or more, the rest are hand-overs still in flight (a report can be 2 s old). Both logs are TEMPORARY and go once step 2 is decided.
+  The 2026-11-05 four-player session had 242 removals at Halted Stream Camp and 222 at Silent Moons Camp, many within a second of a hand-over; how many were still seen elsewhere is what this measures.
+  Where it stands (2026-11-06): built on top of 2200fbc6 (protocol `c5173cc4`), the message round trip is a unit test, the bot suite passes, not yet in a release, not yet seen in play.
+  Rig, 2026-11-06, two real games (`two-games-bugs.py`, FUS testing profile, one save): the reports arrive and agree with the server (0 to 3 characters loaded in no game).
+  Removals while the other game still had the NPC: brawl 4 of 35, Windhelm and reconnects 7 of 131, `walk-away` (new: the owner leaves four cells, the other stays) 0 of 71, where the staying game kept all 7 placed NPCs and took them over.
+  No disagreement lasted to the next census. Four games with different mod lists, levelled stand-ins and a leader change, as on 2026-11-05, are not something the rig reproduces, so step 2 waits for a real session's numbers.
+- **Party of three or four: enemy damage (client only).** Enemies now deal 120% to a player when two, three or four of the party are within 50 m; it was 135% for three and 150% for four, which with the
+  server's difficulty took players from full to down in about 2 s on 2026-11-05. Their health bonus is unchanged. Say whether fights still feel fair. The line `Balance: now N of the party within 50 m` shows the numbers.
 - **Dead bodies, at connect and after (needs eed5ad8 on both games).** The first player plays alone a little, then the second connects near an old fight. Bodies lie down in both games, and stay down when you walk away and back.
   An older save may still hold bodies that stand: they should drop within a few seconds of you coming near. If one stands: its form id, and `BodyStand:` in the log. The dead creatures of "Dead on one side" are not all covered, see below.
 - **A dragon fight with both players near (needs 8f303ba on both games).** The game must not stop. A `NonFinite:` line in either log is the guard catching what froze the game on 10-31, and it names

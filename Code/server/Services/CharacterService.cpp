@@ -45,6 +45,7 @@
 #include <Messages/NotifyActorTeleport.h>
 #include <Messages/RequestActionEvents.h>
 #include <Messages/NotifyActionEvents.h>
+#include <Messages/RequestActorPresence.h>
 #include <MovementPacker.h>
 
 #include <Setting.h>
@@ -76,6 +77,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher)
     , m_dialogueConnection(aDispatcher.sink<PacketEvent<DialogueRequest>>().connect<&CharacterService::OnDialogueRequest>(this))
     , m_subtitleConnection(aDispatcher.sink<PacketEvent<SubtitleRequest>>().connect<&CharacterService::OnSubtitleRequest>(this))
     , m_actionEventsConnection(aDispatcher.sink<PacketEvent<RequestActionEvents>>().connect<&CharacterService::OnActionEventsRequest>(this))
+    , m_actorPresenceConnection(aDispatcher.sink<PacketEvent<RequestActorPresence>>().connect<&CharacterService::OnActorPresenceRequest>(this))
 {
 }
 
@@ -264,6 +266,158 @@ void CharacterService::OnUpdate(const UpdateEvent&) const noexcept
     ProcessFactionsChanges();
     HandOffAbandonedActors();
     ProcessPendingLeaderAssignments();
+    LogPresenceCensus();
+}
+
+void CharacterService::OnActorPresenceRequest(const PacketEvent<RequestActorPresence>& acMessage) const noexcept
+{
+    // Only this game's own entry is touched, so a report never speaks for another game.
+    const auto cNow = std::chrono::steady_clock::now();
+    const uint32_t cPlayerId = acMessage.pPlayer->GetId();
+    for (const ActorPresence& acActor : acMessage.Packet.Actors)
+    {
+        const auto cEntity = static_cast<entt::entity>(acActor.ServerId);
+        if (!m_world.valid(cEntity) || !m_world.all_of<CharacterComponent>(cEntity))
+            continue;
+
+        auto& seenBy = m_world.get_or_emplace<PresenceComponent>(cEntity).SeenBy;
+        auto it = std::find_if(seenBy.begin(), seenBy.end(), [cPlayerId](const PresenceComponent::Seen& acSeen) { return acSeen.PlayerId == cPlayerId; });
+        if (it == seenBy.end())
+            it = seenBy.insert(seenBy.end(), PresenceComponent::Seen{cPlayerId});
+        it->Kind = acActor.Kind;
+        it->Dead = acActor.Dead;
+        it->At = cNow;
+        // A player who reconnects comes back under a new id, so old entries would pile up on a character that lives for hours.
+        std::erase_if(seenBy, [cNow](const PresenceComponent::Seen& acSeen) { return cNow - acSeen.At > std::chrono::minutes(1); });
+    }
+}
+
+namespace
+{
+// TEMPORARY: removals since the last census, and those made while another game still had the character loaded.
+uint32_t s_removals = 0;
+uint32_t s_removalsWhileSeen = 0;
+
+const char* PresenceKindName(const ActorPresenceKind aKind) noexcept
+{
+    switch (aKind)
+    {
+    case ActorPresenceKind::Own: return "its own";
+    case ActorPresenceKind::Copy: return "a copy";
+    case ActorPresenceKind::StandIn: return "a stand-in";
+    }
+    return "unknown";
+}
+} // namespace
+
+void CharacterService::LogRemovalWhileSeen(const entt::entity aEntity, const char* acpReason) const noexcept
+{
+    ++s_removals;
+    const auto* pPresence = m_world.try_get<PresenceComponent>(aEntity);
+    if (!pPresence)
+        return;
+
+    // The owner that let it go is left out: its last report can still be fresh.
+    const auto* pOwner = m_world.try_get<OwnerComponent>(aEntity);
+    const uint32_t cOwnerId = pOwner && pOwner->GetOwner() ? pOwner->GetOwner()->GetId() : 0;
+    const auto cNow = std::chrono::steady_clock::now();
+    std::string seen;
+    for (const PresenceComponent::Seen& acSeen : pPresence->SeenBy)
+    {
+        const Player* pPlayer = m_world.GetPlayerManager().GetById(acSeen.PlayerId);
+        if (!pPlayer || acSeen.PlayerId == cOwnerId || cNow - acSeen.At > PresenceComponent::kFresh)
+            continue;
+        seen += fmt::format("{}player {} '{}' as {}{}, {} ms ago", seen.empty() ? "" : "; ", acSeen.PlayerId, pPlayer->GetUsername().c_str(), PresenceKindName(acSeen.Kind),
+                            acSeen.Dead ? " (dead)" : "", std::chrono::duration_cast<std::chrono::milliseconds>(cNow - acSeen.At).count());
+    }
+    if (seen.empty())
+        return;
+
+    ++s_removalsWhileSeen;
+    spdlog::info("Presence: removing actor {:X} after {} while another game still has it loaded: {}", World::ToInteger(aEntity), acpReason, seen);
+}
+
+void CharacterService::LogPresenceCensus() const noexcept
+{
+    static std::chrono::steady_clock::time_point s_next{};
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < s_next)
+        return;
+    s_next = cNow + std::chrono::seconds(30);
+    if (m_world.GetPlayerManager().Count() == 0)
+        return;
+
+    struct Counts
+    {
+        uint32_t Own{};
+        uint32_t Copies{};
+        uint32_t StandIns{};
+        uint32_t Dead{};
+        uint32_t OwnHereOwnedElsewhere{};
+        uint32_t CopyHereOwnedHere{};
+        uint32_t Lasting{};
+    };
+    TiltedPhoques::Map<uint32_t, Counts> counts;
+    uint32_t characters = 0;
+    uint32_t loadedNowhere = 0;
+
+    // A report can be 2 s older than a hand-over, so a disagreement counts as lasting only when the previous census saw it too.
+    static TiltedPhoques::Set<uint64_t> s_disagreed;
+    TiltedPhoques::Set<uint64_t> disagreed;
+
+    const auto view = m_world.view<OwnerComponent, CharacterComponent>();
+    for (const auto cEntity : view)
+    {
+        if (view.get<CharacterComponent>(cEntity).IsPlayer())
+            continue;
+        ++characters;
+
+        const Player* pOwner = view.get<OwnerComponent>(cEntity).GetOwner();
+        bool loaded = false;
+        if (const auto* pPresence = m_world.try_get<PresenceComponent>(cEntity))
+        {
+            for (const PresenceComponent::Seen& acSeen : pPresence->SeenBy)
+            {
+                if (cNow - acSeen.At > PresenceComponent::kFresh || !m_world.GetPlayerManager().GetById(acSeen.PlayerId))
+                    continue;
+                loaded = true;
+                Counts& count = counts[acSeen.PlayerId];
+                const bool cServerGivesItThem = pOwner && pOwner->GetId() == acSeen.PlayerId;
+                switch (acSeen.Kind)
+                {
+                case ActorPresenceKind::Own: ++count.Own; break;
+                case ActorPresenceKind::Copy: ++count.Copies; break;
+                case ActorPresenceKind::StandIn: ++count.StandIns; break;
+                }
+                count.Dead += acSeen.Dead;
+                const bool cOwnHereOwnedElsewhere = acSeen.Kind == ActorPresenceKind::Own && !cServerGivesItThem;
+                const bool cCopyHereOwnedHere = acSeen.Kind != ActorPresenceKind::Own && cServerGivesItThem;
+                count.OwnHereOwnedElsewhere += cOwnHereOwnedElsewhere;
+                count.CopyHereOwnedHere += cCopyHereOwnedHere;
+                if (cOwnHereOwnedElsewhere || cCopyHereOwnedHere)
+                {
+                    const uint64_t cKey = (static_cast<uint64_t>(World::ToInteger(cEntity)) << 32) | acSeen.PlayerId;
+                    disagreed.insert(cKey);
+                    count.Lasting += s_disagreed.contains(cKey);
+                }
+            }
+        }
+        loadedNowhere += !loaded;
+    }
+
+    for (const Player* pPlayer : m_world.GetPlayerManager())
+    {
+        const Counts& acCount = counts[pPlayer->GetId()];
+        spdlog::info("Presence: player {} '{}' has {} characters loaded: {} its own, {} copies, {} stand-ins, {} of them dead; {} it runs that the server gives to another game, {} "
+                     "it shows as a copy that the server gives to it, {} of these two kinds already so at the last census",
+                     pPlayer->GetId(), pPlayer->GetUsername().c_str(), acCount.Own + acCount.Copies + acCount.StandIns, acCount.Own, acCount.Copies, acCount.StandIns, acCount.Dead,
+                     acCount.OwnHereOwnedElsewhere, acCount.CopyHereOwnedHere, acCount.Lasting);
+    }
+    s_disagreed = std::move(disagreed);
+    spdlog::info("Presence: {} characters on the server, {} of them loaded in no game; {} removed in the last 30 s, {} of them while another game still had them loaded", characters,
+                 loadedNowhere, s_removals, s_removalsWhileSeen);
+    s_removals = 0;
+    s_removalsWhileSeen = 0;
 }
 
 bool CharacterService::HoldUntilSettled(Player* apLeader, const entt::entity aEntity, const uint32_t aOwnershipEpoch, const OwnershipTransferReason aReason) const noexcept
@@ -1479,6 +1633,7 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
     }
 
     spdlog::info("Removing actor {:X} after {} because no eligible owner remains", World::ToInteger(aEntity), pReasonName);
+    LogRemovalWhileSeen(aEntity, pReasonName);
     m_world.GetDispatcher().trigger(CharacterRemoveEvent(World::ToInteger(aEntity)));
 }
 

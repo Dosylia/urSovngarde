@@ -632,6 +632,27 @@ TEST_CASE("Packets", "[encoding.packets]")
         }
     }
 
+    SECTION("RequestActorPresence")
+    {
+        RequestActorPresence sendMessage;
+        sendMessage.Actors = {{0x900121, ActorPresenceKind::Own, false}, {0x1038B1, ActorPresenceKind::Copy, true}, {0x300090, ActorPresenceKind::StandIn, false}};
+
+        uint8_t storage[1 << 12];
+        Buffer buffer(storage, sizeof(storage));
+        Buffer::Writer writer(&buffer);
+        sendMessage.Serialize(writer);
+
+        Buffer::Reader reader(&buffer);
+        const ClientMessageFactory factory;
+        auto pMessage = factory.Extract(reader);
+
+        REQUIRE(pMessage);
+        const auto pRecv = CastUnique<RequestActorPresence>(std::move(pMessage));
+        REQUIRE(*pRecv == sendMessage);
+        REQUIRE(pRecv->Actors[2].Kind == ActorPresenceKind::StandIn);
+        REQUIRE(pRecv->Actors[1].Dead);
+    }
+
     SECTION("RequestReferenceEnable and NotifyReferenceEnable")
     {
         const ReferenceEnableState camp{GameId(0, 0x8680C), true};

@@ -32,6 +32,7 @@ struct SubtitleRequest;
 struct Player;
 struct CellIdComponent;
 struct RequestActionEvents;
+struct RequestActorPresence;
 struct ReferenceUpdate;
 struct AnimationComponent;
 
@@ -70,6 +71,8 @@ protected:
     void OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) const noexcept;
     void OnReferencesMoveRequest(const PacketEvent<ClientReferencesMoveRequest>& acMessage) const noexcept;
     void OnActionEventsRequest(const PacketEvent<RequestActionEvents>& acMessage) const noexcept;
+    //! Keeps which characters a game has loaded, from its report every 2 s.
+    void OnActorPresenceRequest(const PacketEvent<RequestActorPresence>& acMessage) const noexcept;
     //! The actions a script does not cancel, made the actor's current one and kept for players who come into range later.
     Vector<ActionEvent> KeepActions(entt::entity aEntity, AnimationComponent& aAnimationComponent, const Vector<ActionEvent>& acActions) const noexcept;
     void OnFactionsChanges(const PacketEvent<RequestFactionsChanges>& acMessage) const noexcept;
@@ -99,6 +102,10 @@ protected:
     void ResendToViewers(entt::entity aEntity) const noexcept;
     //! Takes an actor off an owner who has gone silent or out of range and gives it to a player who can see it.
     void HandOffAbandonedActors() const noexcept;
+    //! TEMPORARY: logs a removal made while another connected game still reports the character loaded.
+    void LogRemovalWhileSeen(entt::entity aEntity, const char* acpReason) const noexcept;
+    //! TEMPORARY: every 30 s, per player, what its game reports loaded and where that disagrees with the server's owner.
+    void LogPresenceCensus() const noexcept;
     ActorData BuildActorData(const entt::entity acEntity) const noexcept;
 
     void ProcessFactionsChanges() const noexcept;
@@ -144,4 +151,5 @@ private:
     entt::scoped_connection m_dialogueConnection;
     entt::scoped_connection m_subtitleConnection;
     entt::scoped_connection m_actionEventsConnection;
+    entt::scoped_connection m_actorPresenceConnection;
 };

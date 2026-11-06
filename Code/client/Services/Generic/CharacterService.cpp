@@ -69,6 +69,7 @@
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
 #include <Messages/RequestFollowerState.h>
+#include <Messages/RequestActorPresence.h>
 #include <Messages/MountRequest.h>
 #include <Messages/NotifyMount.h>
 #include <Messages/NewPackageRequest.h>
@@ -1489,6 +1490,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     SpawnReveal::Tick();
     RunFollowerReclaims();
     RunFollowerReports();
+    RunPresenceReports();
     RunReleasedGhosts();
     RunGainedMoving();
     RunPendingLines();
@@ -2696,6 +2698,49 @@ void CharacterService::RunFollowerReports() const noexcept
 
     for (auto it = s_followerReports.begin(); it != s_followerReports.end();)
         it = it->second.Visit == s_visit ? std::next(it) : s_followerReports.erase(it);
+}
+
+void CharacterService::RunPresenceReports() const noexcept
+{
+    // The whole list each time, so a lost or late report is put right by the next one.
+    // Only once the server has accepted this player: it kicks a connection that sends anything before.
+    static std::chrono::steady_clock::time_point s_next;
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < s_next || !m_transport.IsOnline())
+        return;
+    s_next = cNow + std::chrono::seconds(2);
+
+    TiltedPhoques::Set<uint32_t> standIns;
+    for (const auto& [ghost, copy] : s_ghosts)
+        if (copy)
+            standIns.insert(copy);
+
+    RequestActorPresence request{};
+    const auto add = [this, &request, &standIns](const entt::entity aEntity, const uint32_t aServerId, const bool aOwn)
+    {
+        const auto* pFormId = m_world.try_get<FormIdComponent>(aEntity);
+        Actor* pActor = pFormId ? Cast<Actor>(TESForm::GetById(pFormId->Id)) : nullptr;
+        const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+        // Only what is drawn here: a disabled copy waiting to be freed, or one without 3D, is not seen.
+        if (!pExtension || pExtension->IsPlayer() || pActor->IsDisabled() || !pActor->GetNiNode())
+            return;
+
+        ActorPresence presence{};
+        presence.ServerId = aServerId;
+        presence.Kind = aOwn ? ActorPresenceKind::Own : standIns.contains(pActor->formID) ? ActorPresenceKind::StandIn : ActorPresenceKind::Copy;
+        presence.Dead = pActor->IsDead();
+        request.Actors.push_back(presence);
+    };
+
+    const auto localView = m_world.view<LocalComponent>();
+    for (const auto cEntity : localView)
+        add(cEntity, localView.get<LocalComponent>(cEntity).Id, true);
+    const auto remoteView = m_world.view<RemoteComponent>();
+    for (const auto cEntity : remoteView)
+        add(cEntity, remoteView.get<RemoteComponent>(cEntity).Id, false);
+
+    if (!request.Actors.empty())
+        m_transport.Send(request);
 }
 
 void CharacterService::RunReleasedGhosts() const noexcept

@@ -136,6 +136,8 @@ private:
     void RunFollowerReclaims() const noexcept;
     // Tells the server who became, or stopped being, this player's follower.
     void RunFollowerReports() const noexcept;
+    // Tells the server every 2 s which characters this game has loaded, and as what.
+    void RunPresenceReports() const noexcept;
     // Announces references that a stand-in stopped hiding, which discovery may not find again.
     void RunReleasedGhosts() const noexcept;
     void ProcessLeveledConforms() noexcept;

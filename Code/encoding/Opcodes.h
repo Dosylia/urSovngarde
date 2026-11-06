@@ -72,6 +72,7 @@ enum ClientOpcode : unsigned char
     kRequestFollowerState,
     kRequestPartyPlugin,
     kRequestPartyValue,
+    kRequestActorPresence,
     kClientOpcodeMax
 };
 
