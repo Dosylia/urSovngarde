@@ -124,6 +124,15 @@ __declspec(dllexport) bool urSovngarde_IsOwnedHere(uint32_t aFormId) noexcept
     return pExtension && !pExtension->IsRemote();
 }
 
+// True when that actor shows another player in this game, false for every other actor, an NPC copy included.
+// A copy from that player's earlier connection, switched off until it is freed, answers false.
+__declspec(dllexport) bool urSovngarde_IsPlayerCopy(uint32_t aFormId) noexcept
+{
+    Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+    return pExtension && pExtension->IsRemotePlayer() && !pActor->IsDisabled() && !pActor->IsDeleted();
+}
+
 // Who struck, when the game's health damage call names no attacker: another player's blow, landed in that player's game, is applied here as a change.
 // It answers the form id of that player's copy in this game, only from within that call, on its thread, and for an actor this game runs.
 // 0 anywhere else, for a blow of this game's own, and when that player has no copy here.

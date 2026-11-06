@@ -8,7 +8,9 @@
 enum class OwnershipReleaseReason : uint8_t
 {
     Relinquish,
-    DeclineGrant
+    DeclineGrant,
+    // The owner's game deleted a temporary actor, so no other game takes it on.
+    Deleted
 };
 
 struct RequestOwnershipTransfer final : ClientMessage

@@ -493,7 +493,8 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
         return;
     }
 
-    if (message.Reason != OwnershipReleaseReason::Relinquish && message.Reason != OwnershipReleaseReason::DeclineGrant)
+    if (message.Reason != OwnershipReleaseReason::Relinquish && message.Reason != OwnershipReleaseReason::DeclineGrant &&
+        message.Reason != OwnershipReleaseReason::Deleted)
     {
         spdlog::warn("Ignored ownership release with invalid reason from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
         return;
@@ -507,7 +508,18 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
         return;
     }
 
-    if (message.Reason == OwnershipReleaseReason::Relinquish && (message.WorldSpaceId || message.CellId))
+    // A temporary actor its owner's game deleted leaves every game, as no other game could take it on.
+    // A placed one is only let go, since every game has its own reference.
+    if (message.Reason == OwnershipReleaseReason::Deleted && !m_world.all_of<FormIdComponent>(cEntity))
+    {
+        spdlog::info("Removing actor {:X}: player {:X}'s game, which ran it, deleted it", message.ServerId, acMessage.pPlayer->GetId());
+        m_world.GetDispatcher().trigger(CharacterRemoveEvent(message.ServerId));
+        return;
+    }
+
+    // A placed actor deleted in its owner's game is let go as any other.
+    const bool cLetGo = message.Reason != OwnershipReleaseReason::DeclineGrant;
+    if (cLetGo && (message.WorldSpaceId || message.CellId))
     {
         const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(cEntity);
         if (pFormIdComponent && !IsLivingFollower(m_world, cEntity))
@@ -531,7 +543,7 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
     }
 
     // A normal release starts a fresh search; a declined grant keeps the failed candidates so ownership cannot bounce.
-    if (message.Reason == OwnershipReleaseReason::Relinquish)
+    if (cLetGo)
         ownerComponent.InvalidOwners.clear();
 
     ownerComponent.InvalidOwners.push_back(acMessage.pPlayer);

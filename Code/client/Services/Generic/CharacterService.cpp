@@ -3755,6 +3755,14 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
         request.OwnershipEpoch = localComponent.OwnershipEpoch;
         request.Reason = OwnershipReleaseReason::Relinquish;
 
+        // A temporary actor marked deleted while its cell is still loaded was deleted on purpose, as by a script.
+        // Handed to another player it would live on there, so it is released as deleted instead.
+        // One already freed is let go as before: the game also frees those of a cell left by a door or a teleport, for a player still there to take on.
+        const TESObjectCELL* pCell = apActor ? apActor->GetParentCellEx() : nullptr;
+        const bool cDeletedHere = cTemporaryId && apActor && apActor->IsDeleted() && pCell && pCell->IsAttached() && !IsProcessExiting();
+        if (cDeletedHere)
+            request.Reason = OwnershipReleaseReason::Deleted;
+
         if (Actor* pActor = apActor)
         {
             if (!pActor->IsTemporary())
@@ -3777,16 +3785,19 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
             }
         }
 
-        spdlog::info(
-            "Transferring ownership of local actor, server id: {:X}, epoch: {}, worldspace: {:X}, cell: {:X}, position: "
-            "({}, {}, {})",
-            request.ServerId, request.OwnershipEpoch, request.WorldSpaceId.BaseId, request.CellId.BaseId, request.Position.x, request.Position.y, request.Position.z);
+        if (cDeletedHere)
+            spdlog::info("Deleted: local actor {:X}, server id {:X}, was deleted here; released as deleted", aFormId, request.ServerId);
+        else
+            spdlog::info(
+                "Transferring ownership of local actor, server id: {:X}, epoch: {}, worldspace: {:X}, cell: {:X}, position: "
+                "({}, {}, {})",
+                request.ServerId, request.OwnershipEpoch, request.WorldSpaceId.BaseId, request.CellId.BaseId, request.Position.x, request.Position.y, request.Position.z);
 
         m_transport.Send(request);
 
         // One of this game's own temporary actors, given up because its cell unloaded (see s_handedAway).
         // If another player is there, the server gives it to them under this same server id.
-        if (cTemporaryId && cGameMade && !IsProcessExiting())
+        if (cTemporaryId && cGameMade && !cDeletedHere && !IsProcessExiting())
         {
             const Actor* pOwn = Cast<Actor>(TESForm::GetById(aFormId));
             s_handedAway[request.ServerId] = HandedAway{aFormId, pOwn && pOwn->baseForm ? pOwn->baseForm->formID : 0};
