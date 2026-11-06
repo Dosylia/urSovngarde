@@ -71,7 +71,8 @@ float CalculateRealDamage(Actor* apHittee, float aDamage, bool aKillMove, bool a
 
 // Skyrim's fights are made for one player: the first entry is a player alone, and a party of more than four counts as four.
 constexpr float cPartyEnemyHealth[] = {1.f, 1.5f, 1.9f, 2.25f};
-constexpr float cPartyEnemyDamage[] = {1.f, 1.2f, 1.35f, 1.5f};
+// Damage stays at two players' level for bigger parties, so a single hit does not take a player down.
+constexpr float cPartyEnemyDamage[] = {1.f, 1.2f, 1.2f, 1.2f};
 
 float PartyEnemyHealth(const uint32_t aPlayersNearby) noexcept
 {
