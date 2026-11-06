@@ -877,7 +877,38 @@ def t_brawl(r, n):
     time.sleep(5)
 
 
-TESTS = {'spells-baseline': t_spells_baseline, 'spells': t_spells, 'respawn': t_respawn, 'corpse': t_corpse, 'drops': t_drops, 'reconnect-body': t_reconnect_body, 'door': t_door, 'npc-animation': t_npc_animation, 'brawl': t_brawl}
+def t_walk_away(r, n):
+    """2026-11-05 bandit camps: the game that runs placed NPCs leaves their range while the other player stays with them; does the staying game keep them and take them over?
+    The server's `Presence: removing actor` lines say whether it dropped any the staying game still had loaded."""
+    for g in (r.a, r.b):
+        g.tough()
+        g.set_ai(False)
+    r.both_at(WINDHELM, gap=200)
+    for leaver, stayer in ((r.a, r.b), (r.b, r.a)):
+        time.sleep(10)
+        v = stayer.view()
+        near = {x['form']: x for x in v['actors'] if x['has3d'] and not x['form'].startswith('0xFF') and x['name'] != v['name'] and math.dist(x['pos'], v['at']) < 3000}
+        offset = stayer.log_size()
+        n.append('%s %s leaves four cells east; %s stays with %d placed NPCs: %s' % (time.strftime('%H:%M:%S'), leaver.label, stayer.label, len(near), ', '.join(sorted(x['name'] for x in near.values())[:10])))
+        leaver.p.console('cow Tamriel 37 6')
+        for elapsed in (15, 30, 45):
+            time.sleep(15)
+            now = {x['form']: x for x in stayer.view()['actors']}
+            kept = [f for f in near if f in now and now[f]['has3d']]
+            gained = len(stayer.lines_since(offset, 'Gained ownership of actor'))
+            n.append('    +%ds: %s still draws %d of %d; it took over %d actors so far' % (elapsed, stayer.label, len(kept), len(near), gained))
+        n.append('%s %s comes back' % (time.strftime('%H:%M:%S'), leaver.label))
+        r.both_at(WINDHELM, gap=200)
+        time.sleep(10)
+        va = {x['form']: x for x in r.a.view()['actors']}
+        vb = {x['form']: x for x in r.b.view()['actors']}
+        apart = [(near[f]['name'], math.dist(va[f]['pos'], vb[f]['pos'])) for f in near if f in va and f in vb and va[f]['has3d'] and vb[f]['has3d']]
+        missing = [near[f]['name'] for f in near if not (f in va and va[f]['has3d'] and f in vb and vb[f]['has3d'])]
+        n.append('    back: %d of %d in both games, %d of them over 200 units apart (%s); not drawn in one game: %s' % (
+            len(apart), len(near), sum(1 for _, d in apart if d > 200), ', '.join('%s %.0f' % x for x in apart if x[1] > 200)[:300], ', '.join(missing)[:300]))
+
+
+TESTS = {'walk-away': t_walk_away, 'spells-baseline': t_spells_baseline, 'spells': t_spells, 'respawn': t_respawn, 'corpse': t_corpse, 'drops': t_drops, 'reconnect-body': t_reconnect_body, 'door': t_door, 'npc-animation': t_npc_animation, 'brawl': t_brawl}
 
 
 def game_ids():
