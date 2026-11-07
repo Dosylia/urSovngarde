@@ -534,6 +534,63 @@ ExtraContainerChanges::Data* TESObjectREFR::GetContainerChanges() const noexcept
     return TiltedPhoques::ThisCall(s_getContainerChangs, this);
 }
 
+// The game's RemoveAllItems takes an item's extra data lists one by one and, while two or more are left, starts again from the first.
+// A removal does nothing once the item's count is used up, so an item whose lists hold more than its count loops it forever.
+// Counts are read as the game reads them: the base container's count made positive plus the change, and a list's ExtraCount or 1.
+bool TESObjectREFR::MatchCountsToExtraData() noexcept
+{
+    ExtraContainerChanges::Data* pChanges = GetContainerChanges();
+    if (!pChanges || !pChanges->entries)
+        return true;
+
+    const TESContainer* pBaseContainer = GetContainer();
+    bool removable = true;
+    for (ExtraContainerChanges::Entry* pEntry : *pChanges->entries)
+    {
+        if (!pEntry || !pEntry->form || !pEntry->dataList)
+            continue;
+
+        int32_t inLists = 0;
+        for (ExtraDataList* pList : *pEntry->dataList)
+        {
+            // A list without extra data is dropped by the game, not removed.
+            if (!pList || !pList->data)
+                continue;
+
+            const auto* pCount = Cast<ExtraCount>(pList->GetByType(ExtraDataType::Count));
+            const int32_t cListCount = pCount ? pCount->count : 1;
+            if (cListCount <= 0)
+            {
+                spdlog::error("RemoveAllItems: {:X} holds item {:X} with extra data counting {}; its items are not removed, as the game would never finish", formID,
+                              pEntry->form->formID, cListCount);
+                removable = false;
+                continue;
+            }
+            inLists += cListCount;
+        }
+
+        int32_t inBase = 0;
+        if (pBaseContainer)
+        {
+            for (uint32_t i = 0; i < pBaseContainer->count; ++i)
+            {
+                const TESContainer::Entry* pBaseEntry = pBaseContainer->entries[i];
+                if (pBaseEntry && pBaseEntry->form == pEntry->form)
+                    inBase += static_cast<int32_t>(pBaseEntry->count);
+            }
+        }
+
+        const int32_t cCount = std::abs(inBase) + pEntry->count;
+        if (inLists > cCount)
+        {
+            spdlog::info("RemoveAllItems: {:X} holds {} of item {:X} in extra data but counts {}; counted {} so that removing them ends", formID, inLists,
+                         pEntry->form->formID, cCount, inLists);
+            pEntry->count += inLists - cCount;
+        }
+    }
+    return removable;
+}
+
 void TESObjectREFR::RemoveAllItems() noexcept
 {
     using ObjectReference = TESObjectREFR;
@@ -541,6 +598,9 @@ void TESObjectREFR::RemoveAllItems() noexcept
     PAPYRUS_FUNCTION(void, ObjectReference, RemoveAllItems, TESObjectREFR*, bool, bool);
 
     ScopedEquipOverride equipOverride;
+
+    if (!MatchCountsToExtraData())
+        return;
 
     s_pRemoveAllItems(this, nullptr, false, true);
 }
