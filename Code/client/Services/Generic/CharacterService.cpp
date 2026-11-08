@@ -1036,12 +1036,17 @@ void CharacterService::ReconcileActorData(
         pWaitingFor3D->SpawnRequest.InitialActorValues = acActorData.InitialActorValues;
         pWaitingFor3D->SpawnRequest.InventoryContent = acActorData.InitialInventory;
         pWaitingFor3D->SpawnRequest.IsDead = acActorData.IsDead;
+        pWaitingFor3D->SpawnRequest.RevivedSinceDeath = acActorData.RevivedSinceDeath;
         pWaitingFor3D->SpawnRequest.IsWeaponDrawn = acActorData.IsWeaponDrawn;
         pWaitingFor3D->SpawnRequest.OwnershipEpoch = aOwnershipEpoch;
     }
 
     if (!apActor)
         return;
+
+    // The server's mark, kept for an announcement from here (BuildActorData).
+    if (ActorExtension* pExtension = apActor->GetExtension())
+        pExtension->RevivedSinceDeath = acActorData.RevivedSinceDeath;
 
     apActor->SetActorValues(acActorData.IsDead && !apActor->IsDead() ? ValuesUntilKilled(acActorData.InitialActorValues) : acActorData.InitialActorValues);
 
@@ -1989,6 +1994,10 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
             // The server's word on whether the owner's actor is dead; the copy itself is only changed below, when stale.
             remoteComponent.DeadAtOwner = acMessage.IsDead;
+            // Its mark too, kept for an announcement from here (BuildActorData).
+            if (pFormIdComponent)
+                if (Actor* pActor = Cast<Actor>(TESForm::GetById(pFormIdComponent->Id)); pActor && pActor->GetExtension())
+                    pActor->GetExtension()->RevivedSinceDeath = acMessage.RevivedSinceDeath;
 
             // Position, cell and death state normally arrive through the movement and death paths, and are left alone.
             // The server withholds updates for characters outside the loaded grid, and re-sends the spawn on return.
@@ -2063,6 +2072,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                 pWaiting->SpawnRequest.FactionsContent = acMessage.FactionsContent;
                 pWaiting->SpawnRequest.InitialActorValues = acMessage.InitialActorValues;
                 pWaiting->SpawnRequest.IsDead = acMessage.IsDead;
+                pWaiting->SpawnRequest.RevivedSinceDeath = acMessage.RevivedSinceDeath;
                 pWaiting->SpawnRequest.IsWeaponDrawn = acMessage.IsWeaponDrawn;
                 pWaiting->SpawnRequest.OwnershipEpoch = acMessage.OwnershipEpoch;
                 pWaiting->SpawnRequest.FollowerOfPlayerId = acMessage.FollowerOfPlayerId;
@@ -2296,6 +2306,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
     auto& newRemote = m_world.emplace_or_replace<RemoteComponent>(*entity, acMessage.ServerId, pActor->formID, acMessage.OwnershipEpoch);
     newRemote.DeadAtOwner = acMessage.IsDead;
+    // Kept now too: a reference handed back to this game before its 3D comes keeps the mark.
+    if (ActorExtension* pExtension = pActor->GetExtension())
+        pExtension->RevivedSinceDeath = acMessage.RevivedSinceDeath;
     if (s_ownCopies.find(pActor->formID) != s_ownCopies.end() && pActor->baseForm)
         newRemote.CachedBaseId = pActor->baseForm->formID;
     ClaimCopyId(*entity, pActor->formID);
@@ -2543,8 +2556,6 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         auto& localComponent = m_world.emplace_or_replace<LocalComponent>(cEntity, acMessage.ServerId, acMessage.OwnershipEpoch);
         localComponent.IsDead = acMessage.CurrentActorData.IsDead;
         localComponent.IsWeaponDrawn = acMessage.CurrentActorData.IsWeaponDrawn;
-        // The server's mark, kept for an announcement from here (BuildActorData).
-        pActor->GetExtension()->RevivedSinceDeath = acMessage.CurrentActorData.RevivedSinceDeath;
 
         // LocalComponent is installed only after canonical reconciliation is complete.
         pActor->GetExtension()->SetRemote(false);
@@ -4854,6 +4865,9 @@ void CharacterService::RunRemoteUpdates() noexcept
         // A body here that is alive at its owner stays a body (IsDeadAgainstOwner); its owner was sent the killing blow at the spawn.
         // One its owner revived since its last death, before or while it waited, is no such body: the owner knows of that death.
         const bool cStaysBody = IsDeadAgainstOwner(pActor, waitingFor3D.SpawnRequest.IsDead, waitingFor3D.SpawnRequest.RevivedSinceDeath);
+        // The server's mark, kept for an announcement from here (BuildActorData).
+        if (ActorExtension* pExtension = pActor->GetExtension())
+            pExtension->RevivedSinceDeath = waitingFor3D.SpawnRequest.RevivedSinceDeath;
         if (pActor->IsDead() != waitingFor3D.SpawnRequest.IsDead && !cStaysBody)
         {
             if (waitingFor3D.SpawnRequest.IsDead)

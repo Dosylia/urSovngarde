@@ -438,7 +438,22 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Open work
 
-- [!] **Soldiers revived before a player joins are killed by that player's save** (siege at Fort Sungard, 2026-11-08 12:04). Fixed in build v1.9.8-13-g4d4c33ad-dirty.9137376, not seen in play.
+- [ ] **Crashes in character creation, connected, with no other player nearby** (2026-11-08 19:46:49 and 20:01:00, two new games at Helgen, the RaceSex Menu open for 17 s and 35 s; 20:05:00, Realm of Lorkhan, connected by the auto-connect 3 s after the menu opened, crash 8 s later). Cause unknown.
+      Three of three were connected; player 2's character creation with the mod but not connected went fine. That points at something that runs only while connected, but no such code is found yet.
+      Each time a part of the player's head read a pointer from freed memory, after a race or sex change. 20:05 is the same crash as 19:46 (`FemaleHeadHighElf`).
+      Not connected (20:09, server stopped), the menu stayed open 14 minutes with no crash. The same game then crashed while saving, still not connected (20:15:52): the script engine's save read a garbage pointer from its own data (`SkyrimVR.exe+0xc6dbb0` under `+0x12ac40c`, `mov r8, [rdx]`).
+      All four crashes were on v1.9.8-16-geed70ddc and in brand-new games, so the build and the new game are not told apart yet. The builds before it that day had no crash of this kind, but they only loaded existing saves.
+      Not reproduced on the rig: console race and sex changes, Papyrus face, tint and weight changes (over 1100 steps, connected, also connecting mid-way), on a finished and on a new character; the rig cannot drive the VR menu itself.
+      All three character creation crashes are one fault: a head part's shader property (`[geometry+0x168]`) freed while the part still held it.
+      Diagnostic `HeadPartWatch` (TEMPORARY): logs a head part holding a freed property, and the stack of the release that destroyed one while a part held it. Deployed v1.9.8-16-geed70ddc-dirty.1fcdc77, FUS and MGO, client and server.
+      Seen in play once on it (22:00, the owner): a new game in Realm of Lorkhan, connected 4 s after the menu opened as at 20:05, 2 min 46 s in the menu, 29 head rebuilds, a save after; no crash and no `HeadPartWatch:` fault line.
+      So it does not happen every time; what differed from the three crashes is not known (that build, a freshly started server, nobody else on it).
+      To see: a `HeadPartWatch: shader property ... was destroyed while` or `... holds no shader property now` line in any log, with the stack under it.
+      19:46: the menu updated the head (`MaleHeadImperial` under its `BSFaceGenNiNode`) and read its shader property's fade node as garbage (`SkyrimVR.exe+0x3e95d0`, `mov eax, [rcx+0x10C]`).
+      20:01: 4 s after the race change (`Animation graph project of actor 14 changed`), the shadow scene's update wrote through a garbage pointer from the brows (`FemaleBrowsHuman06`; `SkyrimVR.exe+0x1354c40`, `mov dword ptr [rcx+0x18], 0`).
+      No code of ours is on either stack. Our only code touching a head's shader property tints other players' copies, and there was none; the VR body code writes only to copies' skeletons. The menu paused the game as it does without the mod.
+      To tell: character creation on the same PC without connecting (the server stopped until it is done; the game retries and joins within a minute of it starting again). A crash there too is not the mod's; none there makes it ours.
+- [!] **Soldiers revived before a player joins are killed by that player's save** (siege at Fort Sungard, 2026-11-08 12:04). Fixed in 870f1af0, built and deployed v1.9.8-16-geed70ddc (FUS and MGO, client and server), not seen in play.
       The host's game revived the fort's soldiers at 12:03:26 (`Death sync: local actor 526EB is now alive, telling the server`). Player 2 joined at 12:04:02 with them dead in its save:
       `DeathWins: 526F2 (server id 1A) is dead here but alive in its owner's game`, and the host's game took `player 2's blow of 100000` (`health broadcast killed actor 526F2`). Player 2 saw them all dead and stripped as it spawned.
       Fix (a protocol change, `6b296bbe`: every player and the server need this build): the owner's revive report marks the character on the server, a death clears the mark, and an announcement from a game that saw the revive carries it.
@@ -446,6 +461,7 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       `s_lifeFollowsOwner` keeps only the leader's switch-on case. A kill player 2 made where the owner did not see it, after the owner's revive, is lost: the body stands up again, as at the owner.
       Rig: `live-dead-revived-joins` RED on the build before (body kept dead, killing blow sent), ok after; `live-dead-stays-dead` ok after. TPTests 114 pass (a round trip of the mark).
       To see: soldiers alive at the host stay alive for a player who joins mid-siege.
+      Follow-up in the tree, not built: a copy still waiting for its 3D now takes the mark from newer server state as it takes the death state, and every copy keeps the mark from its spawn or assignment, so announcing it again from that game keeps the mark (`CharacterService.cpp`, client only).
 - [ ] **An NPC announced again every 4 to 5 s when the game it is handed to declines it** (2026-11-08 14:46:09 to :25, rabbits 107D04 and 107D15; 12:04 to 12:06, Stormcloak Archer 8C00A316, 18 times). Not fixed.
       The owner's player walked out of range, so the server handed the NPC to player 2. Player 2's game declined (`Hand-off of ... declined: a copy of ours stands in`), the server removed the character, and the owner's game, which still had it loaded, announced it again (`is gone from the server while ... stands here; announced again`).
       Each round, player 2's copy is deleted and made again. Which side should break the loop is open.
