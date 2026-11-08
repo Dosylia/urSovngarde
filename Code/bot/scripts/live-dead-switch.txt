@@ -1,0 +1,40 @@
+# A dead NPC of a master file stays on when the party leader's plugin switches it off.
+#
+#   headless.ps1 up -Save <a save with Lydia beside the player> -StartCell ''
+#   python Tools\VR\live-check.py live-dead-switch
+#   python Tools\VR\live-check.py --expect-fail live-dead-switch     on a build without the change: must be RED
+#
+# The game's body clean-up empties a dead follower into its coffin, and emptying a switched-off body crashes the game.
+# Here: the bot leads, this game is a member, Lydia (A2C94) is killed here, then the bot switches her off.
+# She must stay on.
+# The crash itself is not run: it would fail the script's own call, which makes a run INVALID, not RED.
+party lead
+log live dead switch
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+# "info] " is in the bot's own log line, not in its echo of this check.
+log REQUIRE bot logged info\] Leading the party
+
+log -- Lydia dies here
+log DO papyrus Actor KillEssential A2C94 14
+wait 10
+log REQUIRE logged Death sync: local actor A2C94 is now dead
+
+log -- the leader's plugin switches her off
+refenable A2C94 off
+wait 5
+# Both builds write a line for her when the switch arrives: switched off here, or left on here.
+log REQUIRE logged ReferenceEnable: (dead )?A2C94 \(base A2C8E
+log CHECK ref A2C94 enabled
+log CHECK logged ReferenceEnable: dead A2C94 \(base A2C8E\) left on here
+log CHECK game alive

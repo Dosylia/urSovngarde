@@ -706,6 +706,23 @@ bool IsSwitchableActor(TESObjectREFR* apRef) noexcept
     return apRef && apRef->formID < 0xFF000000 && apRef != PlayerCharacter::Get() && Cast<Actor>(apRef);
 }
 
+// A dead actor whose reference a master file holds (the game's own people, the DLCs', the patches') stays on.
+// The game's body clean-up empties such a body later, and emptying a switched-off body crashes the game.
+// Plugins keep the actors they place in plugins of their own, or spawn them, so their dead still go.
+bool IsDeadMasterFileActor(TESObjectREFR* apRef) noexcept
+{
+    const Actor* pActor = Cast<Actor>(apRef);
+    if (!pActor || !pActor->IsDead())
+        return false;
+    for (const Mod* pMod : ModManager::Get()->mods)
+    {
+        // Bit 0 of a file's header flags marks a master file.
+        if (IsReferenceOf(pMod, apRef->formID))
+            return (pMod->flags & 1) != 0;
+    }
+    return false;
+}
+
 // The game owns an actor while it loads or disposes of one, and disabling it then crashes.
 // A rebuild of the actor would also undo the switch, so the switch waits for all of these.
 bool IsSettledActor(TESObjectREFR* apRef) noexcept
@@ -763,6 +780,12 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
         return true;
     }
     const bool cActor = IsSwitchableActor(pRef);
+    if (cActor && !aEnabled && IsDeadMasterFileActor(pRef))
+    {
+        spdlog::info("ReferenceEnable: dead {:X} (base {:X}) left on here, as the game's body clean-up may still empty it", pRef->formID, pRef->baseForm->formID);
+        ++s_enableLeftAlone;
+        return true;
+    }
     if (cActor && !IsSettledActor(pRef))
         return false;
 
@@ -792,6 +815,13 @@ void ObjectService::SwitchActor(uint32_t aFormId, bool aEnabled) noexcept
 {
     if (!m_transport.IsConnected() || !m_world.GetPartyService().IsLeader())
         return;
+
+    // Every game leaves such a body on, so the server is not told either: it would stop syncing the body.
+    if (!aEnabled && IsDeadMasterFileActor(Cast<TESObjectREFR>(TESForm::GetById(aFormId))))
+    {
+        spdlog::info("ReferenceEnable: dead {:X} not switched off for the party, as the game's body clean-up may still empty it", aFormId);
+        return;
+    }
 
     ReferenceEnableState state{};
     state.Enabled = aEnabled;

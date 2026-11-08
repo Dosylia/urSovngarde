@@ -555,13 +555,16 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Cause found by a rig A/B and the siege session's bisect: its glide thread (since 11-06 20:08) queued a task 20 times a second at all times; empty tasks did the same. This client plays no part.
       Fixed in the siege plugin (8eb27e9, deployed to FUS 15:19): the first `Health:` after a load on the owner's save is 8.7 GB, against 18.4 before, as on 11-05.
       To see in play: the colours right at load, `Health:` at the first load near 20 GB, no `FreezeWatchdog:` there. Seen needs the new siege DLL too.
-- [ ] **A crash moving a dead follower's items to the dead-body cleanup coffin** (11-07 19:53, the owner's game, once).
-      The game's cleanup script moved dead Lydia's items to its coffin (F6891); the game read freed memory while stacking her Whiterun Ceremonial Cloak (Sentinel.esp 43000B6E).
-      From the dump: the cloak's first extra data list had already been freed, still linked; its other list carries an outfit mark (outfit 43000C11), and the freed one lay next to it.
-      This client changes no outfit, and Lydia stayed the owner's own NPC all session; the log shows no item set on her by this client. Not shown to be ours, not cleared either.
-      Rig, the owner's 19:32 autosave, all her items moved to that coffin: no crash without this client, none with it, connected (2026-11-08). With it, 5 kinds of item were back on her right after; without it, none.
-      She holds 13 of that cloak, 1 worn: 1 in the 09-13 save, 13 in every save from 11-01 to 11-07. How they came is not known.
-      To see: another crash in a cleanup move, or the cloak count growing; a dump then shows whose list was freed.
+- [ ] **A crash moving a dead follower's items to the dead-body cleanup coffin** (the owner's game, 11-07 19:53 and 11-08 12:14, each at the second siege battle).
+      Both times Lydia died, and 9 to 12 s later `ReferenceEnable: A2C94 ... switched off here, as the leader's game has it`: a plugin in the leader's game switched her off with `urSovngarde_SwitchActor`, which is meant for placed actors.
+      The party-hour jump then made the game's cleanup script empty the switched-off body into its coffin (reference 172B6, base F6891), and the game crashed on a freed extra-data list in the coffin's entry.
+      Rig, the owner's 11-07 19:32 autosave (2026-11-08): kill Lydia, `Disable`, `RemoveAllItems` into 172B6 crashes with the play stack, with this client loaded and with the plain game; the same move without `Disable` works.
+      So the crash is the game's own; the switch-off of a dead follower sets it up. A body without duplicate items was not tried: she holds 13 Sentinel cloaks and 6 Sentinel boots, how they came is not known.
+      An earlier rig A/B passed F6891, the base, as the destination, which deletes the items instead of moving them; its "no crash" says nothing. With this client connected 5 kinds of item were back on her after it.
+      The siege's call was its "set the fort's own people aside" step: its follower test is the game's teammate flag, which the game clears at death. The siege now skips the dead (deployed 2026-11-08 12:55, not seen in play).
+      Guard here too (uncommitted, built v1.9.8-11-g4f4002ca-dirty.03a7b50, FUS and MGO): a leader's switch-off leaves on a dead actor whose reference a master file holds, logging `ReferenceEnable: dead X (base Y) left on here`; the leader's game does not send it either (`not switched off for the party`). A plugin's own placed or spawned dead still go, as the siege needs.
+      Rig `live-dead-switch`: RED on the build before (Lydia switched off), GREEN on 03a7b50 (left on); her body then emptied into the coffin without a crash. Not seen in play.
+      To see: no crash at a second battle after a follower died; no `ReferenceEnable: ... switched off` line for a follower.
 - [ ] **The siege's battle page keeps the battle going** (`urSS_Battle`, the siege plugin's page with the soldiers left and End battle as a 3 s hold).
       Opened unpaused by its plugin it took no laser clicks on the two-game rig (11-04); it opens pausing, as the setup page does, which takes them.
       Now on the unpaused menu list (VR only, connected only): the pause is cleared as it opens, and while it is open the player's controls and melee swings are held. Alone, it pauses.
