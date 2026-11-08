@@ -148,6 +148,12 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
 
     auto& characterComponent = characterView.get<CharacterComponent>(*it);
     characterComponent.SetDead(message.IsDead);
+    // Its owner's game reports a life only when it saw the character come back from a death, so that is its revive.
+    // A game joining later then follows the owner's life instead of keeping a body from its save (and killing it at the owner).
+    characterComponent.SetRevivedSinceDeath(!message.IsDead);
+    if (!message.IsDead)
+        spdlog::info("Death sync: character {:X} was revived in its owner's game (player {}); a game joining later follows that", message.Id,
+                     acMessage.pPlayer ? acMessage.pPlayer->GetId() : 0);
     spdlog::debug("Updating death state {:x}:{}", message.Id, message.IsDead);
 
     NotifyDeathStateChange notify;

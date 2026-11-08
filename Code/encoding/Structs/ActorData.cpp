@@ -9,6 +9,7 @@ void ActorData::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
     InitialInventory.Serialize(aWriter);
     Serialization::WriteBool(aWriter, IsDead);
     Serialization::WriteBool(aWriter, IsWeaponDrawn);
+    Serialization::WriteBool(aWriter, RevivedSinceDeath);
 }
 
 void ActorData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -17,4 +18,5 @@ void ActorData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
     InitialInventory.Deserialize(aReader);
     IsDead = Serialization::ReadBool(aReader);
     IsWeaponDrawn = Serialization::ReadBool(aReader);
+    RevivedSinceDeath = Serialization::ReadBool(aReader);
 }

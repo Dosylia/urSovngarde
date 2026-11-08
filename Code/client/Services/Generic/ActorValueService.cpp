@@ -464,6 +464,9 @@ void ActorValueService::RunDeathStateUpdates() noexcept
         if (isDead != localComponent.IsDead)
         {
             localComponent.IsDead = isDead;
+            // A life after a death here is this game's revive: the server marks it from this report, and an announcement from here carries it (BuildActorData).
+            if (ActorExtension* pExtension = pActor->GetExtension())
+                pExtension->RevivedSinceDeath = !isDead;
             spdlog::info("Death sync: local actor {:X} is now {}, telling the server", pActor->formID, isDead ? "dead" : "alive");
 
             RequestDeathStateChange requestChange;
@@ -917,19 +920,15 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         return;
     }
 
-    // Revived by its owner: from now on a body here from before is no reason to keep it dead.
-    // Only a placed reference: a temporary copy's id is given to another actor once it is gone.
-    auto& remote = view.get<RemoteComponent>(*it);
-    if (remote.DeadAtOwner && !acMessage.IsDead && remote.CachedRefId && remote.CachedRefId < 0xFF000000)
-        m_world.GetCharacterService().FollowOwnersLife(remote.CachedRefId);
-
     // Kept even when the copy is already in that state here: the corpse placement waits for this word.
+    auto& remote = view.get<RemoteComponent>(*it);
     remote.DeadAtOwner = acMessage.IsDead;
 
+    // A life sent here is its owner's revive, which the server now marks (RevivedSinceDeath); a death clears that.
     // The copy is killed or brought back once it has its 3D, from its spawn request (CharacterService::RunRemoteUpdates).
     if (auto* pWaiting = m_world.try_get<WaitingFor3D>(*it))
     {
-        pWaiting->RevivedByOwner = pWaiting->SpawnRequest.IsDead && !acMessage.IsDead;
+        pWaiting->SpawnRequest.RevivedSinceDeath = !acMessage.IsDead;
         pWaiting->SpawnRequest.IsDead = acMessage.IsDead;
         spdlog::info("Death sync: server id {:X} is {} at its owner while its copy waits to be made here; it will be made so", acMessage.Id,
                      acMessage.IsDead ? "dead" : "alive");
@@ -955,6 +954,9 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
     // Players should never be killed
     if (pExtension->IsPlayer())
         return;
+
+    // Kept here too, so that the mark goes with the character if this game announces it again.
+    pExtension->RevivedSinceDeath = !acMessage.IsDead;
 
     if (pActor->IsDead() != acMessage.IsDead)
     {

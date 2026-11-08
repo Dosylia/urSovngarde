@@ -747,6 +747,56 @@ TEST_CASE("Packets", "[encoding.packets]")
             REQUIRE(pRecv->Gone == cGone);
         }
     }
+
+    SECTION("A character revived since its last death")
+    {
+        for (const bool cRevived : {false, true})
+        {
+            AssignCharacterRequest announce;
+            announce.Cookie = 7;
+            announce.CurrentActorData.RevivedSinceDeath = cRevived;
+            Buffer announceBuffer(1000);
+            Buffer::Writer announceWriter(&announceBuffer);
+            announce.Serialize(announceWriter);
+            Buffer::Reader announceReader(&announceBuffer);
+            auto pAnnounce = ClientMessageFactory{}.Extract(announceReader);
+            REQUIRE(pAnnounce);
+            const auto pAnnounced = CastUnique<AssignCharacterRequest>(std::move(pAnnounce));
+            REQUIRE(*pAnnounced == announce);
+            REQUIRE(pAnnounced->CurrentActorData.RevivedSinceDeath == cRevived);
+
+            CharacterSpawnRequest spawn;
+            spawn.ServerId = 0x1A;
+            spawn.FollowerOfPlayerId = 3;
+            spawn.RevivedSinceDeath = cRevived;
+            Buffer spawnBuffer(1000);
+            Buffer::Writer spawnWriter(&spawnBuffer);
+            spawn.Serialize(spawnWriter);
+            Buffer::Reader spawnReader(&spawnBuffer);
+            auto pSpawn = ServerMessageFactory{}.Extract(spawnReader);
+            REQUIRE(pSpawn);
+            const auto pSpawned = CastUnique<CharacterSpawnRequest>(std::move(pSpawn));
+            REQUIRE(*pSpawned == spawn);
+            REQUIRE(pSpawned->RevivedSinceDeath == cRevived);
+            REQUIRE(pSpawned->FollowerOfPlayerId == 3);
+
+            AssignCharacterResponse answer;
+            answer.Cookie = 9;
+            answer.ServerId = 0x100014;
+            answer.RevivedSinceDeath = cRevived;
+            answer.LeveledNpcPickId.BaseId = 0x770B1;
+            Buffer answerBuffer(1000);
+            Buffer::Writer answerWriter(&answerBuffer);
+            answer.Serialize(answerWriter);
+            Buffer::Reader answerReader(&answerBuffer);
+            auto pAnswer = ServerMessageFactory{}.Extract(answerReader);
+            REQUIRE(pAnswer);
+            const auto pAnswered = CastUnique<AssignCharacterResponse>(std::move(pAnswer));
+            REQUIRE(*pAnswered == answer);
+            REQUIRE(pAnswered->RevivedSinceDeath == cRevived);
+            REQUIRE(pAnswered->LeveledNpcPickId.BaseId == 0x770B1);
+        }
+    }
 }
 
 TEST_CASE("Damaged messages are dropped", "[encoding.damaged]")

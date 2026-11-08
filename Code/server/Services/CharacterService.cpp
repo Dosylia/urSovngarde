@@ -108,6 +108,7 @@ void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, Charact
     apSpawnRequest->FaceTints = characterComponent.FaceTints;
     apSpawnRequest->FactionsContent = characterComponent.FactionsContent;
     apSpawnRequest->IsDead = characterComponent.IsDead();
+    apSpawnRequest->RevivedSinceDeath = characterComponent.IsRevivedSinceDeath();
     apSpawnRequest->IsPlayer = characterComponent.IsPlayer();
     apSpawnRequest->IsWeaponDrawn = characterComponent.IsWeaponDrawn();
     apSpawnRequest->IsPlayerSummon = characterComponent.IsPlayerSummon();
@@ -1317,6 +1318,8 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     characterComponent.FaceTints = message.FaceTints;
     characterComponent.FactionsContent = message.FactionsContent;
     characterComponent.SetDead(message.CurrentActorData.IsDead);
+    // Announced by a game that saw it come back from a death (ActorValueService::OnDeathStateChange): announced again, it keeps that.
+    characterComponent.SetRevivedSinceDeath(!message.CurrentActorData.IsDead && message.CurrentActorData.RevivedSinceDeath);
     characterComponent.SetPlayer(isPlayer);
     characterComponent.SetWeaponDrawn(message.CurrentActorData.IsWeaponDrawn);
     characterComponent.SetDragon(message.IsDragon);
@@ -1390,6 +1393,7 @@ void CharacterService::PopulateAssignmentResponse(const entt::entity aEntity, As
         aResponse.FactionsContent = pCharacterComponent->FactionsContent;
         aResponse.PlayerId = pCharacterComponent->PlayerId;
         aResponse.IsDead = pCharacterComponent->IsDead();
+        aResponse.RevivedSinceDeath = pCharacterComponent->IsRevivedSinceDeath();
         aResponse.IsWeaponDrawn = pCharacterComponent->IsWeaponDrawn();
         aResponse.LeveledNpcPickId = pCharacterComponent->LeveledNpcPickId.Id;
 
@@ -1659,6 +1663,7 @@ ActorData CharacterService::BuildActorData(const entt::entity acEntity) const no
     {
         actorData.IsDead = pCharacterComponent->IsDead();
         actorData.IsWeaponDrawn = pCharacterComponent->IsWeaponDrawn();
+        actorData.RevivedSinceDeath = pCharacterComponent->IsRevivedSinceDeath();
     }
 
     return actorData;

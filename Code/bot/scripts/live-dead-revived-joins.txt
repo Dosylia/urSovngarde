@@ -1,0 +1,44 @@
+# An NPC dead in this game's save that its owner's game revived stands up here when this game joins, and its owner gets no killing blow.
+#
+#   python Tools\VR\live-check.py live-dead-revived-joins
+#   python Tools\VR\live-check.py --expect-fail live-dead-revived-joins     on a build without the fix: must be RED
+#
+# In play a siege revived its soldiers in the host's game before player 2 joined, and player 2's save had them dead from an earlier siege.
+# Player 2's game kept them dead and sent the host killing blows, so every soldier died in both games.
+# The server now marks a character its owner's game revived since its last death, and a game joining later follows the owner.
+# The bandit 45A3F outside Mistwatch is dead in the test save. Offline (F6), the bot, leading, registers the bandit dead and revives it.
+# Back online, this game's body meets the owner's revived bandit: it must stand up, and the bot must get no killing blow.
+# live-dead-stays-dead covers the same bandit never revived, which stays a body.
+# A run counts only when (REQUIRE) the bandit was dead here before the game went back online, and the bot did lead.
+party lead
+log live dead revived joins
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+stay
+log REQUIRE ref 45A3F dead
+
+log -- offline (F6); the bot registers the bandit dead, then revives it, as a siege brings its soldiers back
+log DO f6
+wait 8
+npc 45A3F dead
+waitfor owned == 1 20
+wait 2
+npclife alive 100
+wait 2
+
+log -- back online, as a member: this game's body meets the bot's revived bandit
+log DO f6
+wait 15
+waitfor known other 60
+wait 10
+# "info] " is in the bot's own log line, not in its echo of this check.
+log REQUIRE bot logged info\] Leading the party
+log CHECK ref 45A3F alive
+log CHECK absent DeathWins: 45A3F
+log CHECK bot absent Health change of our [0-9A-F]+ by player \d+: -100000
+log CHECK game alive
+wait 2
+log done
+stop

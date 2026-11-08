@@ -17,7 +17,9 @@ struct CharacterComponent
         kIsWeaponDrawn = 1 << 3,
         kIsDragon = 1 << 4,
         kIsMount = 1 << 5,
-        kIsPlayerSummon = 1 << 6
+        kIsPlayerSummon = 1 << 6,
+        //! Its owner's game revived it since its last death: from that game's own report, cleared by the next death.
+        kRevivedSinceDeath = 1 << 7
     };
 
     [[nodiscard]] bool IsDirtyFactions() const { return Flags & kIsDirtyFactions; }
@@ -27,6 +29,7 @@ struct CharacterComponent
     [[nodiscard]] bool IsDragon() const { return Flags & kIsDragon; }
     [[nodiscard]] bool IsMount() const { return Flags & kIsMount; }
     [[nodiscard]] bool IsPlayerSummon() const { return Flags & kIsPlayerSummon; }
+    [[nodiscard]] bool IsRevivedSinceDeath() const { return Flags & kRevivedSinceDeath; }
 
     void SetDirtyFactions(bool aSet)
     {
@@ -76,6 +79,13 @@ struct CharacterComponent
             Flags |= kIsPlayerSummon;
         else
             Flags &= ~kIsPlayerSummon;
+    }
+    void SetRevivedSinceDeath(bool aSet)
+    {
+        if (aSet)
+            Flags |= kRevivedSinceDeath;
+        else
+            Flags &= ~kRevivedSinceDeath;
     }
 
     uint32_t ChangeFlags{0};

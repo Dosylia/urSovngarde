@@ -38,6 +38,10 @@ struct ActorExtension
     // The behavior project GraphDescriptorHash was taken from; the hash is taken again when it changes.
     uint64_t GraphDescriptorProjectKey = 0;
 
+    //! Its owner's game, this one or another, revived it since its last death, as this game last heard.
+    //! An announcement from here carries it (CharacterService::BuildActorData).
+    bool RevivedSinceDeath = false;
+
     // TODO: atomic? bool instead? maybe simplify to `IsReenabling()` ?
     // Protects discovery while rebuilding a leveled NPC.
     ReconciliationStage Reconciliation{ReconciliationStage::None};

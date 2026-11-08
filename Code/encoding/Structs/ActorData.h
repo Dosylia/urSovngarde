@@ -12,11 +12,13 @@ struct ActorData
     {
         return InitialActorValues == acRhs.InitialActorValues &&
                InitialInventory == acRhs.InitialInventory && IsDead == acRhs.IsDead &&
-               IsWeaponDrawn == acRhs.IsWeaponDrawn;
+               IsWeaponDrawn == acRhs.IsWeaponDrawn && RevivedSinceDeath == acRhs.RevivedSinceDeath;
     }
 
     ActorValues InitialActorValues{};
     Inventory InitialInventory{};
     bool IsDead{};
     bool IsWeaponDrawn{};
+    //! Its owner's game revived it since its last death, so a body of it in another game's save is no death to keep.
+    bool RevivedSinceDeath{};
 };

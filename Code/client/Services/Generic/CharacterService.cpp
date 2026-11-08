@@ -571,8 +571,9 @@ TESNPC* BaseForCopy(World& aWorld, const CharacterSpawnRequest& acMessage) noexc
 // A disabled actor has no 3D and the game's revival does not take, so each waits for its switch on.
 TiltedPhoques::Vector<uint32_t> s_revivalsOnSwitchOn;
 
-// Actors whose life follows their owner's whatever this game's save says: ones the leader's game switched on here, or whose owner revived them.
+// Actors whose life follows their owner's whatever this game's save says: ones the leader's game switched on here.
 // A plugin uses the same soldier battle after battle, so a body left from an earlier one is no death this game saw first.
+// One its owner revived is marked by the server instead (RevivedSinceDeath), so that a game joining later knows it too.
 std::unordered_set<uint32_t> s_lifeFollowsOwner;
 
 // When the leader's game last switched each actor on here.
@@ -618,13 +619,20 @@ void LayDownBody(Actor* apActor) noexcept
 // It is one killed behind a stand-in, or in a cell the other game did not have, or after its last save.
 // Stood up here, it is a dead soldier walking again, a different one in each game.
 // So a generic one stays dead here, as it lies; a unique one follows its owner, since a quest may have brought it back.
-// So does one in s_lifeFollowsOwner.
-bool IsDeadAgainstOwner(Actor* apActor, bool aDeadAtOwner) noexcept
+// So does one in s_lifeFollowsOwner, and one its owner's game revived since its last death (aRevivedAtOwner, the server's mark).
+// That revive is a death the owner did see: a siege brings its soldiers back, and a body from an earlier siege is no reason to kill them.
+// A kill made here where the owner did not see it, after that revive, is lost: the body stands up again, as it does at the owner.
+bool IsDeadAgainstOwner(Actor* apActor, bool aDeadAtOwner, bool aRevivedAtOwner) noexcept
 {
     if (aDeadAtOwner || !apActor || !apActor->IsDead())
         return false;
     if (apActor->GetExtension() && apActor->GetExtension()->IsPlayer())
         return false;
+    if (aRevivedAtOwner)
+    {
+        spdlog::info("Death sync: {:X} is dead here, but its owner's game revived it since its last death; it follows its owner", apActor->formID);
+        return false;
+    }
     if (s_lifeFollowsOwner.contains(apActor->formID))
         return false;
     const auto* pBase = Cast<TESNPC>(apActor->baseForm);
@@ -1071,7 +1079,7 @@ void CharacterService::ReconcileActorData(
         // An owner keeps its local death, and the death sync reports it.
         else if (aIsLocalOwner)
             spdlog::warn("Keeping actor {:X} dead although the server has it alive", apActor->formID);
-        else if (IsDeadAgainstOwner(apActor, false))
+        else if (IsDeadAgainstOwner(apActor, false, acActorData.RevivedSinceDeath))
         {
             const auto* pRemote = m_world.try_get<RemoteComponent>(aEntity);
             SendKillingBlowToOwner(m_transport, apActor, pRemote ? pRemote->Id : 0);
@@ -1748,6 +1756,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
     actorData.InitialInventory = acMessage.CurrentInventory;
     actorData.IsDead = acMessage.IsDead;
     actorData.IsWeaponDrawn = acMessage.IsWeaponDrawn;
+    actorData.RevivedSinceDeath = acMessage.RevivedSinceDeath;
 
     if (acMessage.Owner)
     {
@@ -1824,7 +1833,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
             baseOnly.LeveledNpcPickId = acMessage.LeveledNpcPickId;
             pCopy = FollowerCopy(pActor, BaseForCopy(m_world, baseOnly), acMessage.ServerId, acMessage.FollowerOfPlayerId);
         }
-        else if (match.Foreign && match.pOwnerBase && !IsDeadAgainstOwner(pActor, acMessage.IsDead))
+        else if (match.Foreign && match.pOwnerBase && !IsDeadAgainstOwner(pActor, acMessage.IsDead, acMessage.RevivedSinceDeath))
             pCopy = StandInForForeignCreature(pActor, match.pOwnerBase);
         if (pCopy)
         {
@@ -1842,6 +1851,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
             spawn.ActionsToReplay = acMessage.ActionsToReplay;
             spawn.PlayerId = acMessage.PlayerId;
             spawn.IsDead = acMessage.IsDead;
+            spawn.RevivedSinceDeath = acMessage.RevivedSinceDeath;
             spawn.IsWeaponDrawn = acMessage.IsWeaponDrawn;
             spawn.FollowerOfPlayerId = acMessage.FollowerOfPlayerId;
 
@@ -2019,7 +2029,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
                         // A death is broadcast to all, but a copy with a stale epoch drops it (ownership transfers are range-filtered).
                         // The spawn is then the only place that still carries the death.
-                        if (IsDeadAgainstOwner(pActor, acMessage.IsDead))
+                        if (IsDeadAgainstOwner(pActor, acMessage.IsDead, acMessage.RevivedSinceDeath))
                             SendKillingBlowToOwner(m_transport, pActor, acMessage.ServerId);
                         else if (pActor->IsDead() != acMessage.IsDead)
                         {
@@ -2195,7 +2205,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
         }
 
         // A body here that is alive in its owner's game stays this game's body, not a living stand-in.
-        deadHere = IsDeadAgainstOwner(pActor, acMessage.IsDead);
+        deadHere = IsDeadAgainstOwner(pActor, acMessage.IsDead, acMessage.RevivedSinceDeath);
 
         // Another kind of creature than the owner's: a copy of the owner's stands in, the local one becomes a ghost.
         // The local reference keeps its own entity (a bare FormIdComponent that ProcessNewEntity skips).
@@ -2533,6 +2543,8 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         auto& localComponent = m_world.emplace_or_replace<LocalComponent>(cEntity, acMessage.ServerId, acMessage.OwnershipEpoch);
         localComponent.IsDead = acMessage.CurrentActorData.IsDead;
         localComponent.IsWeaponDrawn = acMessage.CurrentActorData.IsWeaponDrawn;
+        // The server's mark, kept for an announcement from here (BuildActorData).
+        pActor->GetExtension()->RevivedSinceDeath = acMessage.CurrentActorData.RevivedSinceDeath;
 
         // LocalComponent is installed only after canonical reconciliation is complete.
         pActor->GetExtension()->SetRemote(false);
@@ -3981,6 +3993,8 @@ ActorData CharacterService::BuildActorData(Actor* apActor) const noexcept
     actorData.InitialInventory = apActor->GetActorInventory();
     actorData.IsDead = apActor->IsDead();
     actorData.IsWeaponDrawn = apActor->actorState.IsWeaponFullyDrawn();
+    // A revive this game saw or was told of goes with the character, so a body of it in a game joining later does not kill it (IsDeadAgainstOwner).
+    actorData.RevivedSinceDeath = !actorData.IsDead && apActor->GetExtension() && apActor->GetExtension()->RevivedSinceDeath;
 
     return actorData;
 }
@@ -4195,6 +4209,16 @@ void CharacterService::ProcessLeveledConforms() noexcept
 
             // Recompute the graph descriptor after changing picks; stale variable indices can cause out-of-bounds writes.
             pActor->GetExtension()->GraphDescriptorHash = 0;
+
+            // A copy of ours is known by its base too (see ClaimCopyId), and the rebuild gave it a new one.
+            // Left on the old base, the copy counted as gone: a second copy was made and this one was announced as this game's own actor.
+            auto remoteView = m_world.view<RemoteComponent>();
+            for (const auto cEntity : remoteView)
+            {
+                auto& remoteComponent = remoteView.get<RemoteComponent>(cEntity);
+                if (remoteComponent.CachedRefId == pActor->formID && remoteComponent.CachedBaseId != 0)
+                    remoteComponent.CachedBaseId = pActor->baseForm->formID;
+            }
 
             // Enable can return before the rebuilt 3D is available to discovery.
             stage = ReconciliationStage::WaitingFor3D;
@@ -4828,8 +4852,8 @@ void CharacterService::RunRemoteUpdates() noexcept
             spdlog::info("Player copy {:X} came with its weapon {}", pActor->formID, waitingFor3D.SpawnRequest.IsWeaponDrawn ? "drawn" : "sheathed");
 
         // A body here that is alive at its owner stays a body (IsDeadAgainstOwner); its owner was sent the killing blow at the spawn.
-        // One its owner revived while it waited is no such body: the owner knows of that death.
-        const bool cStaysBody = !waitingFor3D.RevivedByOwner && IsDeadAgainstOwner(pActor, waitingFor3D.SpawnRequest.IsDead);
+        // One its owner revived since its last death, before or while it waited, is no such body: the owner knows of that death.
+        const bool cStaysBody = IsDeadAgainstOwner(pActor, waitingFor3D.SpawnRequest.IsDead, waitingFor3D.SpawnRequest.RevivedSinceDeath);
         if (pActor->IsDead() != waitingFor3D.SpawnRequest.IsDead && !cStaysBody)
         {
             if (waitingFor3D.SpawnRequest.IsDead)

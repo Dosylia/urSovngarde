@@ -1,0 +1,33 @@
+# A copy rebuilt as its owner's levelled pick stays the one copy of that character.
+#
+#   python Tools\VR\live-check.py live-levelled-copy-rebuild
+#   python Tools\VR\live-check.py --expect-fail live-levelled-copy-rebuild     on a build without the fix: must be RED
+#
+# A copy this game makes is known by its base too, and rebuilding it for the owner's pick gives it a new base.
+# In play the rebuilt copy then counted as gone: a second copy was made, and the first was announced as this game's own NPC.
+# Both players saw two necromancer adepts where the owner had one.
+# Here the bot runs the necromancer reference D86A8, from a cell far from the rig's spot, with the levelled base 713DD picked as an adept (551C2), as the owner's game did.
+# It is not loaded here, so a copy of the owner's base stands in for it, rolled here, and is rebuilt as the owner's pick.
+# A copy of a temporary NPC is made from the pick at once and never rebuilt, so it would not show this.
+# A run counts only when (REQUIRE): the copy stood in for the reference, and this game rolled another pick for it, so that it had something to rebuild.
+log live levelled copy rebuild
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+log DO logmark
+
+log -- this bot runs the necromancer reference D86A8, picked as an adept
+npc D86A8 base 713DD pick 551C2
+waitfor owned == 1 20
+wait 10
+log REQUIRE logged Stand-in: reference D86A8 is not loaded here
+log REQUIRE logged Queued leveled NPC reconciliation for actor FF[0-9A-F]+, .* owner's pick: 551C2
+log CHECK logged Completed leveled NPC reconciliation for actor FF[0-9A-F]+, .* pick: 551C2
+log CHECK absent Copy \w+ of server character \w+ is gone; its id now names another actor
+log CHECK game alive
+wait 2
+log done
+stop

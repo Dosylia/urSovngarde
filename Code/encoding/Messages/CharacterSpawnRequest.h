@@ -33,7 +33,8 @@ struct CharacterSpawnRequest final : ServerMessage
                InventoryContent == acRhs.InventoryContent && FactionsContent == acRhs.FactionsContent &&
                ActionsToReplay == acRhs.ActionsToReplay && FaceTints == acRhs.FaceTints && PlayerId == acRhs.PlayerId &&
                OwnershipEpoch == acRhs.OwnershipEpoch && IsDead == acRhs.IsDead && IsPlayer == acRhs.IsPlayer && IsWeaponDrawn == acRhs.IsWeaponDrawn &&
-               IsPlayerSummon == acRhs.IsPlayerSummon && IsDragon == acRhs.IsDragon && LeveledNpcPickId == acRhs.LeveledNpcPickId && FollowerOfPlayerId == acRhs.FollowerOfPlayerId && GetOpcode() == acRhs.GetOpcode();
+               IsPlayerSummon == acRhs.IsPlayerSummon && IsDragon == acRhs.IsDragon && LeveledNpcPickId == acRhs.LeveledNpcPickId && FollowerOfPlayerId == acRhs.FollowerOfPlayerId &&
+               RevivedSinceDeath == acRhs.RevivedSinceDeath && GetOpcode() == acRhs.GetOpcode();
     }
 
     uint32_t ServerId{};
@@ -60,4 +61,6 @@ struct CharacterSpawnRequest final : ServerMessage
     bool IsPlayerSummon{};
     // Dragons are kept at the wide range on the server; the client's own range check needs to know too.
     bool IsDragon{};
+    //! Its owner's game revived it since its last death (ActorData::RevivedSinceDeath).
+    bool RevivedSinceDeath{};
 };
