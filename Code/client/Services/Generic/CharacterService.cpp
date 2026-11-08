@@ -2328,6 +2328,9 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
         point.Variables = movement.Variables;
         point.Direction = movement.Direction;
         point.VRPoseData = update.UpdatedVRPose;
+#ifdef SKYRIMVR
+        VRBodySync::NoteReceivedPose(view.get<RemoteComponent>(*itor).CachedRefId, update.UpdatedVRPose);
+#endif
 
         InterpolationSystem::AddPoint(interpolationComponent, point, m_transport.GetMessageReceiveTime());
     }

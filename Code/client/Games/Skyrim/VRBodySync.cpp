@@ -3434,12 +3434,48 @@ void OnFrameEnd() noexcept
     PerfCounterScope perfScope(PerfCounter::kVRPoseApply);
     const auto now = std::chrono::steady_clock::now();
 
+    // TEMPORARY, see WatchPoseSteps: for each remote player's copy, the frame ends it was posed at, and why not at the others.
+    // Logged every 10 s for a copy posed at some frame ends and not at others.
+    struct FrameEndCount
+    {
+        uint32_t Frames = 0;
+        uint32_t Posed = 0;
+        uint32_t NoBody = 0;
+        uint32_t Down = 0;
+        uint32_t Skeleton = 0;
+        uint32_t OutOfView = 0;
+        uint32_t Unusable = 0;
+        std::chrono::steady_clock::time_point NextLog{};
+    };
+    static std::unordered_map<uint32_t, FrameEndCount> s_frameEndCounts;
+
     for (const auto& [formId, pose] : poses)
     {
         Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
+        FrameEndCount* pCount = nullptr;
+        if (pActor && pActor->GetExtension() && pActor->GetExtension()->IsRemotePlayer())
+        {
+            pCount = &s_frameEndCounts[formId];
+            if (pCount->NextLog == std::chrono::steady_clock::time_point{})
+                pCount->NextLog = now + std::chrono::seconds(10);
+            else if (now >= pCount->NextLog)
+            {
+                if (pCount->Posed && pCount->Posed < pCount->Frames)
+                    spdlog::info("PoseFlipDiag: copy {:X} posed at {} of {} frame ends in 10 s; not posed: no 3D {}, dead or down {}, skeleton not matched {}, out of view {}, "
+                                 "a bone the renderer cannot use {}",
+                                 formId, pCount->Posed, pCount->Frames, pCount->NoBody, pCount->Down, pCount->Skeleton, pCount->OutOfView, pCount->Unusable);
+                *pCount = FrameEndCount{};
+                pCount->NextLog = now + std::chrono::seconds(10);
+            }
+            ++pCount->Frames;
+        }
         void* pRoot = pActor ? pActor->GetNiNode() : nullptr;
         if (!pRoot)
+        {
+            if (pCount)
+                ++pCount->NoBody;
             continue;
+        }
 
         // A dead or downed player copy belongs to its ragdoll: posing it fights the death animation and stands it in the air.
         // A dead NPC's owner sends bones only while moving it (dragged, thrown, shoved), so those bones are applied.
@@ -3459,6 +3495,8 @@ void OnFrameEnd() noexcept
 
         if (pActor->actorState.IsDeadOrDying() || pActor->actorState.IsBleedingOut())
         {
+            if (pCount)
+                ++pCount->Down;
             const ActorExtension* pExtension = pActor->GetExtension();
             if (!pExtension || pExtension->IsRemotePlayer() || pExtension->IsLocalPlayer())
                 continue;
@@ -3519,9 +3557,15 @@ void OnFrameEnd() noexcept
         if (cGone || cRestructured)
         {
             if (cGone && rig.pRoot == pRoot && now < rig.RetryAt)
+            {
+                if (pCount)
+                    ++pCount->Skeleton;
                 continue;
+            }
             if (!ResolveRig(pRoot, rig, cGone))
             {
+                if (pCount)
+                    ++pCount->Skeleton;
                 rig.RetryAt = now + std::chrono::seconds(1);
                 whyNotPosed("its skeleton could not be matched to the bones being sent");
                 continue;
@@ -3540,6 +3584,8 @@ void OnFrameEnd() noexcept
             // Taking it out and back in each time the copy leaves view would be churn for nothing.
             UpdateWeaponBodies(formId, pActor, rig);
             whyNotPosed("out of view");
+            if (pCount)
+                ++pCount->OutOfView;
             continue;
         }
 
@@ -3558,6 +3604,8 @@ void OnFrameEnd() noexcept
                              formId, spine.scale, glm::length(ToGlm(spine.rotate)[0]));
             }
             whyNotPosed("a bone the renderer cannot use");
+            if (pCount)
+                ++pCount->Unusable;
             continue;
         }
 
@@ -3615,6 +3663,8 @@ void OnFrameEnd() noexcept
 
         const std::array<BladeExtent, 2> bladeExtents = MeasureCopyBlades(rig);
         PoseActor(rig, pose, worldOffset);
+        if (pCount)
+            ++pCount->Posed;
         ReachHands(rig, pose);
         PlaceWeapons(rig, pose);
         LogPhysicsOnce(formId, rig);
@@ -4942,6 +4992,152 @@ bool CopySpellAim(const uint32_t aFormId, float& aZAngle, float& aXAngle) noexce
     return true;
 }
 
+// TEMPORARY diagnostic for a player copy seen flipping between two poses several times a second; remove once understood.
+// A pose that steps far from the one before and comes back within three poses is a body read in another state, not a movement.
+// Watched where poses are read (the local player) and where they arrive (each remote player), so one log tells which side flips.
+// The frame-end counts in OnFrameEnd belong to it.
+namespace
+{
+constexpr std::array<const char*, VRPose::kUpperBoneCount> kUpperBoneNames{"spine1", "spine2", "neck",       "head",        "left clavicle",  "left upper arm",
+                                                                             "left forearm", "left hand", "right clavicle", "right upper arm", "right forearm", "right hand"};
+
+// A body's upper-body bone rotations and the hips' horizontal place, in one frame of reference, to tell how far it moved between two reads.
+struct PoseReading
+{
+    glm::vec2 Hips{};
+    bool HasHips = false;
+    std::array<glm::quat, VRPose::kUpperBoneCount> Bones{};
+};
+
+struct PoseStepWatch
+{
+    PoseReading Last{};
+    bool HasLast = false;
+    // The reading before the last big step, while the stream may still come back to it.
+    PoseReading Before{};
+    uint32_t SinceStep = 0;
+    bool Watching = false;
+    void* pLastRoot = nullptr;
+    uint32_t Poses = 0;
+    uint32_t Steps = 0;
+    uint32_t Returns = 0;
+    uint32_t RootChanges = 0;
+    float WorstHips = 0.f;
+    float WorstBone = 0.f;
+    uint32_t WorstBoneIndex = 0;
+    std::chrono::steady_clock::time_point NextLog{};
+};
+
+std::mutex s_poseWatchLock;
+std::unordered_map<uint32_t, PoseStepWatch> s_poseWatches;
+
+PoseReading ReadingOf(const VRPose& acPose) noexcept
+{
+    PoseReading reading;
+    reading.HasHips = acPose.HasHips;
+    reading.Hips = glm::vec2{acPose.HipOffset[0], acPose.HipOffset[1]};
+    for (uint32_t i = 0; i < VRPose::kUpperBoneCount; ++i)
+        reading.Bones[i] = static_cast<glm::quat>(acPose.Bones[i]);
+    return reading;
+}
+
+// The horizontal distance between the two hips, and the largest turn of one bone between them.
+void StepBetween(const PoseReading& acFrom, const PoseReading& acTo, float& aHips, float& aBone, uint32_t& aBoneIndex) noexcept
+{
+    aHips = acFrom.HasHips && acTo.HasHips ? glm::distance(acFrom.Hips, acTo.Hips) : 0.f;
+    aBone = 0.f;
+    aBoneIndex = 0;
+    for (uint32_t i = 0; i < VRPose::kUpperBoneCount; ++i)
+    {
+        const float cDegrees = DegreesBetween(acFrom.Bones[i], acTo.Bones[i]);
+        if (cDegrees > aBone)
+        {
+            aBone = cDegrees;
+            aBoneIndex = i;
+        }
+    }
+}
+
+constexpr float cStepHips = 20.f;
+constexpr float cStepBone = 45.f;
+
+// One pose read or received; logs at most once per period, and only when the stream stepped far or the body read changed.
+void WatchPoseSteps(const uint32_t aKey, const PoseReading& acReading, void* apRoot, const char* acpWho, const std::chrono::seconds aPeriod) noexcept
+{
+    constexpr float cBackHips = 10.f;
+    constexpr float cBackBone = 20.f;
+    constexpr uint32_t cBackWithin = 3;
+
+    std::scoped_lock lock(s_poseWatchLock);
+    PoseStepWatch& watch = s_poseWatches[aKey];
+    const auto cNow = std::chrono::steady_clock::now();
+    if (watch.NextLog == std::chrono::steady_clock::time_point{})
+        watch.NextLog = cNow + aPeriod;
+
+    const PoseReading& cReading = acReading;
+    ++watch.Poses;
+    if (apRoot && watch.pLastRoot && apRoot != watch.pLastRoot)
+        ++watch.RootChanges;
+    if (apRoot)
+        watch.pLastRoot = apRoot;
+
+    if (watch.HasLast)
+    {
+        float hips = 0.f;
+        float bone = 0.f;
+        uint32_t boneIndex = 0;
+        StepBetween(watch.Last, cReading, hips, bone, boneIndex);
+        if (hips > cStepHips || bone > cStepBone)
+        {
+            ++watch.Steps;
+            if (hips > watch.WorstHips)
+                watch.WorstHips = hips;
+            if (bone > watch.WorstBone)
+            {
+                watch.WorstBone = bone;
+                watch.WorstBoneIndex = boneIndex;
+            }
+            if (!watch.Watching)
+            {
+                watch.Watching = true;
+                watch.Before = watch.Last;
+                watch.SinceStep = 0;
+            }
+        }
+        else if (watch.Watching)
+        {
+            ++watch.SinceStep;
+            StepBetween(watch.Before, cReading, hips, bone, boneIndex);
+            if (hips < cBackHips && bone < cBackBone)
+            {
+                ++watch.Returns;
+                watch.Watching = false;
+            }
+            else if (watch.SinceStep >= cBackWithin)
+                watch.Watching = false;
+        }
+    }
+    watch.Last = cReading;
+    watch.HasLast = true;
+
+    if (cNow < watch.NextLog)
+        return;
+    watch.NextLog = cNow + aPeriod;
+    if (watch.Steps || watch.RootChanges)
+        spdlog::info("PoseFlipDiag: {} {:X}: {} poses in {} s, {} steps of over {:.0f} units at the hips or {:.0f} degrees at a bone, {} came back within {} poses to where they were "
+                     "before; largest hips step {:.0f} units, largest bone step {:.0f} degrees ({}); body read changed {} times",
+                     acpWho, aKey, watch.Poses, aPeriod.count(), watch.Steps, cStepHips, cStepBone, watch.Returns, cBackWithin, watch.WorstHips, watch.WorstBone,
+                     kUpperBoneNames[watch.WorstBoneIndex], watch.RootChanges);
+    watch.Poses = 0;
+    watch.Steps = 0;
+    watch.Returns = 0;
+    watch.RootChanges = 0;
+    watch.WorstHips = 0.f;
+    watch.WorstBone = 0.f;
+    watch.WorstBoneIndex = 0;
+}
+} // namespace
+
 bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHeading) noexcept
 {
     aOutPose.HasData = false;
@@ -5193,6 +5389,8 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
     }
 
     aOutPose.HasData = true;
+    // TEMPORARY, see WatchPoseSteps.
+    WatchPoseSteps(apPlayer->formID, ReadingOf(aOutPose), pRoot, "local player", std::chrono::seconds(30));
     s_lastLocalRoot = pRoot;
     s_lastLocalPose = aOutPose;
     s_lastLocalPose.HasWeapons = false;
@@ -5486,6 +5684,17 @@ bool CaptureBodyPose(Actor* apActor, VRPose& aOutPose) noexcept
 
     aOutPose.HasData = true;
     return true;
+}
+
+void NoteReceivedPose(const uint32_t aFormId, const VRPose& acPose) noexcept
+{
+    if (!acPose.HasData || acPose.NoBones)
+        return;
+    Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
+    if (!pExtension || !pExtension->IsRemotePlayer())
+        return;
+    WatchPoseSteps(aFormId, ReadingOf(acPose), nullptr, "copy", std::chrono::seconds(10));
 }
 
 void SetRemotePose(Actor* apActor, const VRPose& acPose) noexcept
