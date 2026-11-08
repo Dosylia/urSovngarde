@@ -157,14 +157,17 @@ void DroppedItemService::OnMove(const PacketEvent<RequestDroppedItemMove>& acMes
     }
 }
 
-// A placed world object moved by a player's hand: relayed to everyone in range, and remembered once it stops.
+// A placed world object moved by a player's hand: relayed to everyone in range, and remembered for anyone who comes near later.
 void DroppedItemService::OnObjectMove(const PacketEvent<RequestWorldObjectMove>& acMessage) noexcept
 {
     const auto& message = acMessage.Packet;
     const uint64_t cKey = (static_cast<uint64_t>(message.ObjectId.ModId) << 32) | message.ObjectId.BaseId;
 
-    if (message.AtRest || message.Taken)
-        m_objects[cKey] = ObjectPlace{message.ObjectId, message.CellId, message.WorldSpaceId, message.Position, message.Rotation, message.Taken};
+    // Every move is remembered, so a resend never puts the object back where it was before.
+    ObjectPlace& place = m_objects[cKey];
+    place = ObjectPlace{message.ObjectId, message.CellId, message.WorldSpaceId, message.Position, message.Rotation, message.Taken};
+    if (!message.AtRest && !message.Taken)
+        place.MovedAt = std::chrono::steady_clock::now();
 
     NotifyWorldObjectMove notify{};
     notify.ObjectId = message.ObjectId;
@@ -210,8 +213,14 @@ void DroppedItemService::SendInRange(Player* apPlayer, const CellIdComponent& ac
             SendItem(apPlayer, item);
     }
 
+    // A resend is a put-down: sent while the object moves, it stopped a rolling cart where it was and its mover's game put it back there.
+    // Its moves reach everyone in range anyway, so it is resent only once it rests, or once its moves have stopped coming.
+    constexpr auto cMoveGap = std::chrono::seconds(3);
+    const auto cNow = std::chrono::steady_clock::now();
     for (const auto& [key, place] : m_objects)
     {
+        if (place.MovedAt != std::chrono::steady_clock::time_point{} && cNow - place.MovedAt < cMoveGap)
+            continue;
         const CellIdComponent cell{place.CellId, place.WorldSpaceId, GridCellCoords::CalculateGridCellCoords(place.Position)};
         if (!acViewer.IsInRange(cell, false))
             continue;

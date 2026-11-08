@@ -1,0 +1,40 @@
+# Comes in where the other bot puts an object down, then enters the cell again three times while the object rolls.
+# Each entry makes the server send what it remembers; while the object rolls it must send nothing, as the roll's own moves arrive.
+# Once the object rests, an entry gets its place again.
+
+log objectroll watcher
+waitfor connected 45
+collect spawn
+record objectroll watcher
+
+waitfor known other 40
+wait 2
+cell 2B4A1
+
+waitfor objectmoves 92D04 >= 1 30
+log the plate is down; waiting for the roll
+waitfor objectmoves 92D04 >= 3 20
+
+log entering the cell again three times while it rolls
+cell 2B4A1
+wait 2
+cell 2B4A1
+wait 2
+cell 2B4A1
+
+log waiting for it to come to rest
+waitfor objectmoves 92D04 >= 18 20
+wait 3
+# One put-down, sixteen steps and one rest: no place sent again while it rolled.
+expect objectmoves 92D04 == 18
+
+log entering once more now that it rests: its place is sent again
+cell 2B4A1
+wait 2
+expect objectmoves 92D04 == 19
+expect connected
+
+record off
+report bot-objectroll-watcher.txt
+log done
+stop

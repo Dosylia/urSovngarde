@@ -1,0 +1,70 @@
+# Rolls a world object it put down, the way a pushed cart rolls downhill, while the other bot enters the cell again meanwhile.
+#
+#   powershell -ExecutionPolicy Bypass -File Tools\VR\run-bot-tests.ps1 -Pair objectroll
+#
+# The server sends a player what it remembers of an object each time that player changes cell.
+# Sent while the object rolled, its last resting place stopped it and put it back up the hill in its mover's game.
+# Its own interior, so it can share a run with the other pairs.
+
+log objectroll actor
+waitfor connected 45
+collect spawn
+record objectroll actor
+
+waitfor players >= 1 30
+expect known me
+waitfor known other 40
+
+log going inside
+wait 2
+cell 2B4A1
+waitfor samecell other 40
+wait 3
+
+log putting the plate down
+moveobject 92D04 0 0 0 rest
+wait 3
+
+log rolling it away: a step every half second for 8 s, then at rest
+moveobject 92D04 100 0 0 held
+wait 0.5
+moveobject 92D04 200 0 0 held
+wait 0.5
+moveobject 92D04 300 0 0 held
+wait 0.5
+moveobject 92D04 400 0 0 held
+wait 0.5
+moveobject 92D04 500 0 0 held
+wait 0.5
+moveobject 92D04 600 0 0 held
+wait 0.5
+moveobject 92D04 700 0 0 held
+wait 0.5
+moveobject 92D04 800 0 0 held
+wait 0.5
+moveobject 92D04 900 0 0 held
+wait 0.5
+moveobject 92D04 1000 0 0 held
+wait 0.5
+moveobject 92D04 1100 0 0 held
+wait 0.5
+moveobject 92D04 1200 0 0 held
+wait 0.5
+moveobject 92D04 1300 0 0 held
+wait 0.5
+moveobject 92D04 1400 0 0 held
+wait 0.5
+moveobject 92D04 1500 0 0 held
+wait 0.5
+moveobject 92D04 1600 0 0 held
+wait 0.5
+moveobject 92D04 1600 0 0 rest
+
+log waiting for the other bot's last checks
+wait 15
+expect connected
+
+record off
+report bot-objectroll-actor.txt
+log done
+stop

@@ -60,7 +60,7 @@ private:
     void Load() noexcept;
     void Save() const noexcept;
 
-    //! Where a placed world object was last left, or that a player took it, for anyone who comes near later.
+    //! Where a placed world object was last seen, or that a player took it, for anyone who comes near later.
     //! Kept in memory only.
     struct ObjectPlace
     {
@@ -70,6 +70,8 @@ private:
         Vector3_NetQuantize Position{};
         glm::vec3 Rotation{};
         bool Taken{};
+        //! When it was last moved, while it has not come to rest since; empty once it rests.
+        std::chrono::steady_clock::time_point MovedAt{};
     };
 
     World& m_world;
