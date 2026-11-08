@@ -118,7 +118,7 @@ void ConsiderForWeaponTouch(Actor* apActor) noexcept;
 void EndWeaponTouch() noexcept;
 
 //! TEMPORARY: a pose as it arrives for a remote player's copy, for the PoseFlipDiag line (a copy flipping between two poses).
-void NoteReceivedPose(uint32_t aFormId, const VRPose& acPose) noexcept;
+void NoteReceivedPose(uint32_t aFormId, uint64_t aTick, const VRPose& acPose) noexcept;
 //! A pose without data clears the actor's pose.
 void SetRemotePose(Actor* apActor, const VRPose& acPose) noexcept;
 void ClearRemotePose(uint32_t aFormId) noexcept;

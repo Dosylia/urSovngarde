@@ -5018,10 +5018,12 @@ struct PoseStepWatch
     uint32_t SinceStep = 0;
     bool Watching = false;
     void* pLastRoot = nullptr;
+    uint64_t LastTick = 0;
     uint32_t Poses = 0;
     uint32_t Steps = 0;
     uint32_t Returns = 0;
     uint32_t RootChanges = 0;
+    uint32_t Late = 0;
     float WorstHips = 0.f;
     float WorstBone = 0.f;
     uint32_t WorstBoneIndex = 0;
@@ -5041,7 +5043,8 @@ PoseReading ReadingOf(const VRPose& acPose) noexcept
     return reading;
 }
 
-// The horizontal distance between the two hips, and the largest turn of one bone between them.
+// The horizontal distance between the two hips, and the largest turn of one bone other than the hands between them.
+// The hands are left out because a wrist can flick that fast in a swing.
 void StepBetween(const PoseReading& acFrom, const PoseReading& acTo, float& aHips, float& aBone, uint32_t& aBoneIndex) noexcept
 {
     aHips = acFrom.HasHips && acTo.HasHips ? glm::distance(acFrom.Hips, acTo.Hips) : 0.f;
@@ -5049,6 +5052,8 @@ void StepBetween(const PoseReading& acFrom, const PoseReading& acTo, float& aHip
     aBoneIndex = 0;
     for (uint32_t i = 0; i < VRPose::kUpperBoneCount; ++i)
     {
+        if (i == VRPose::kLeftHand || i == VRPose::kRightHand)
+            continue;
         const float cDegrees = DegreesBetween(acFrom.Bones[i], acTo.Bones[i]);
         if (cDegrees > aBone)
         {
@@ -5062,7 +5067,8 @@ constexpr float cStepHips = 20.f;
 constexpr float cStepBone = 45.f;
 
 // One pose read or received; logs at most once per period, and only when the stream stepped far or the body read changed.
-void WatchPoseSteps(const uint32_t aKey, const PoseReading& acReading, void* apRoot, const char* acpWho, const std::chrono::seconds aPeriod) noexcept
+// aTick is the sender's tick of a received pose, 0 for a pose read here.
+void WatchPoseSteps(const uint32_t aKey, const uint64_t aTick, const PoseReading& acReading, void* apRoot, const char* acpWho, const std::chrono::seconds aPeriod) noexcept
 {
     constexpr float cBackHips = 10.f;
     constexpr float cBackBone = 20.f;
@@ -5073,6 +5079,20 @@ void WatchPoseSteps(const uint32_t aKey, const PoseReading& acReading, void* apR
     const auto cNow = std::chrono::steady_clock::now();
     if (watch.NextLog == std::chrono::steady_clock::time_point{})
         watch.NextLog = cNow + aPeriod;
+
+    // Movement arrives unreliably, so a pose can come after a newer one, or twice.
+    // Taken in arrival order it would look like a step away and back, so it is only counted.
+    // A step back of more than a second is a clock resync and is taken, as the server does.
+    if (aTick)
+    {
+        constexpr uint64_t cReorderWindowMs = 1000;
+        if (aTick <= watch.LastTick && watch.LastTick - aTick < cReorderWindowMs)
+        {
+            ++watch.Late;
+            return;
+        }
+        watch.LastTick = aTick;
+    }
 
     const PoseReading& cReading = acReading;
     ++watch.Poses;
@@ -5125,13 +5145,14 @@ void WatchPoseSteps(const uint32_t aKey, const PoseReading& acReading, void* apR
     watch.NextLog = cNow + aPeriod;
     if (watch.Steps || watch.RootChanges)
         spdlog::info("PoseFlipDiag: {} {:X}: {} poses in {} s, {} steps of over {:.0f} units at the hips or {:.0f} degrees at a bone, {} came back within {} poses to where they were "
-                     "before; largest hips step {:.0f} units, largest bone step {:.0f} degrees ({}); body read changed {} times",
+                     "before; largest hips step {:.0f} units, largest bone step {:.0f} degrees ({}); body read changed {} times; {} came late or twice and were left out",
                      acpWho, aKey, watch.Poses, aPeriod.count(), watch.Steps, cStepHips, cStepBone, watch.Returns, cBackWithin, watch.WorstHips, watch.WorstBone,
-                     kUpperBoneNames[watch.WorstBoneIndex], watch.RootChanges);
+                     kUpperBoneNames[watch.WorstBoneIndex], watch.RootChanges, watch.Late);
     watch.Poses = 0;
     watch.Steps = 0;
     watch.Returns = 0;
     watch.RootChanges = 0;
+    watch.Late = 0;
     watch.WorstHips = 0.f;
     watch.WorstBone = 0.f;
     watch.WorstBoneIndex = 0;
@@ -5390,7 +5411,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
 
     aOutPose.HasData = true;
     // TEMPORARY, see WatchPoseSteps.
-    WatchPoseSteps(apPlayer->formID, ReadingOf(aOutPose), pRoot, "local player", std::chrono::seconds(30));
+    WatchPoseSteps(apPlayer->formID, 0, ReadingOf(aOutPose), pRoot, "local player", std::chrono::seconds(30));
     s_lastLocalRoot = pRoot;
     s_lastLocalPose = aOutPose;
     s_lastLocalPose.HasWeapons = false;
@@ -5686,7 +5707,7 @@ bool CaptureBodyPose(Actor* apActor, VRPose& aOutPose) noexcept
     return true;
 }
 
-void NoteReceivedPose(const uint32_t aFormId, const VRPose& acPose) noexcept
+void NoteReceivedPose(const uint32_t aFormId, const uint64_t aTick, const VRPose& acPose) noexcept
 {
     if (!acPose.HasData || acPose.NoBones)
         return;
@@ -5694,13 +5715,41 @@ void NoteReceivedPose(const uint32_t aFormId, const VRPose& acPose) noexcept
     const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
     if (!pExtension || !pExtension->IsRemotePlayer())
         return;
-    WatchPoseSteps(aFormId, ReadingOf(acPose), nullptr, "copy", std::chrono::seconds(10));
+    WatchPoseSteps(aFormId, aTick, ReadingOf(acPose), nullptr, "copy", std::chrono::seconds(10));
 }
 
 void SetRemotePose(Actor* apActor, const VRPose& acPose) noexcept
 {
     if (!apActor)
         return;
+
+    // TEMPORARY, see WatchPoseSteps: the updates at which a remote player's copy had no pose, so its arms followed the animation.
+    // Logged every 10 s for a copy that had a pose at some updates and not at others.
+    if (apActor->GetExtension()->IsRemotePlayer() && !apActor->actorState.IsDeadOrDying())
+    {
+        struct PoseUpdateCount
+        {
+            uint32_t Updates = 0;
+            uint32_t Missing = 0;
+            std::chrono::steady_clock::time_point NextLog{};
+        };
+        static std::unordered_map<uint32_t, PoseUpdateCount> s_poseUpdateCounts;
+        PoseUpdateCount& count = s_poseUpdateCounts[apActor->formID];
+        const auto cNow = std::chrono::steady_clock::now();
+        if (count.NextLog == std::chrono::steady_clock::time_point{})
+            count.NextLog = cNow + std::chrono::seconds(10);
+        else if (cNow >= count.NextLog)
+        {
+            if (count.Missing && count.Missing < count.Updates)
+                spdlog::info("PoseFlipDiag: copy {:X} had no pose at {} of {} updates in 10 s, its arms followed the animation there", apActor->formID, count.Missing,
+                             count.Updates);
+            count = PoseUpdateCount{};
+            count.NextLog = cNow + std::chrono::seconds(10);
+        }
+        ++count.Updates;
+        if (!acPose.HasData)
+            ++count.Missing;
+    }
 
     if (!acPose.HasData)
     {
