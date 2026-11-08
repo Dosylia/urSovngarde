@@ -565,6 +565,17 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Guard here too (uncommitted, built v1.9.8-11-g4f4002ca-dirty.03a7b50, FUS and MGO): a leader's switch-off leaves on a dead actor whose reference a master file holds, logging `ReferenceEnable: dead X (base Y) left on here`; the leader's game does not send it either (`not switched off for the party`). A plugin's own placed or spawned dead still go, as the siege needs.
       Rig `live-dead-switch`: RED on the build before (Lydia switched off), GREEN on 03a7b50 (left on); her body then emptied into the coffin without a crash. Not seen in play.
       To see: no crash at a second battle after a follower died; no `ReferenceEnable: ... switched off` line for a follower.
+- [ ] **A crash when a revived soldier's copy equips arrows** (player 2's game, 2026-11-08 14:29:45, first battle at Sungard, a Stormcloak reinforcement wave; both on 03a7b50).
+      The copy FE09F8A8 came back as a body in that game and had its items set to its owner's; 70 ms later its owner revived it, and 3 s later its arrow equip crashed the game.
+      The crash is in Enchantment Art Extender VR's equip handler (1.0.2.1, also in the owner's profile): on every equip of a living actor it reads the right hand's entry in the actor's AI process (+0x260) and that entry's extra data, and that extra data was freed.
+      How that hand came to name freed extra data is not known. The copy had been switched on 106 ms before its items were set, and it was dead then; the arrows' extra data held 40 against a count of 26.
+      Rig, the owner's 11-07 19:32 autosave, three ways (`live-dead-copy-hands`): Lydia dead in this game, made the bot's copy, her items set to the bot's (none; a worn bow and arrows; the same right after she was switched on), revived, then an arrow equip.
+      Each time the game kept her hands right: it emptied them as her items went, filled them from the items set, and no hand named extra data her items did not hold. No crash, on 03a7b50 either.
+      So the cause is open, and what is built is a guard at the place of the crash, not a fix of a reproduced fault.
+      Guard (uncommitted, v1.9.8-12-gded04eaf-dirty.2d7425e, client and server on FUS and MGO, client only in effect, same protocol): a hand whose extra data is not its own item's (freed, or since given to another item) lets go of it.
+      It is checked around each removal this client makes, before a revival, and before each equip or hand item from a copy's owner; the plugin reads a hand with no extra data safely. Each time it acts it logs `HandWatch: X (dead: ...) pointed its right hand (item) at extra data ...; it lets go of it`.
+      Rig: `live-dead-copy-hands` passes (game alive, no `HandWatch:` line); it is a path check, not RED/GREEN, as the fault did not come.
+      To see: no crash when soldiers come back in a later wave. A `HandWatch:` line is the first sighting of such a hand, and says at which step it was found.
 - [ ] **The siege's battle page keeps the battle going** (`urSS_Battle`, the siege plugin's page with the soldiers left and End battle as a 3 s hold).
       Opened unpaused by its plugin it took no laser clicks on the two-game rig (11-04); it opens pausing, as the setup page does, which takes them.
       Now on the unpaused menu list (VR only, connected only): the pause is cleared as it opens, and while it is open the player's controls and melee swings are held. Alone, it pauses.

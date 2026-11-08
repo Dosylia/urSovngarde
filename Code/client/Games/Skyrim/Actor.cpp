@@ -1203,6 +1203,7 @@ bool Actor::PlayIdle(TESIdleForm* apIdle) noexcept
 
 void Actor::Respawn() noexcept
 {
+    LetHandsGoOfStrayExtraData("its item does not hold, before its revival");
 #ifdef SKYRIMVR
     // Resurrect(resetInventory, attach3D) = SE 36331, by address like KillImpl above.
     // No Reset here: it unloads the actor, and a copy announced again that way comes back dead.

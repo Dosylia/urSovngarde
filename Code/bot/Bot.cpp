@@ -1834,16 +1834,58 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
         uint32_t slot = kSlotRight;
         bool spell = false;
+        bool npc = false;
         for (size_t i = 1; i < args.size(); ++i)
         {
             if (args[i] == "left")
                 slot = kSlotLeft;
             else if (args[i] == "both")
                 slot = kSlotBoth;
+            else if (args[i] == "noslot")
+                slot = 0;
             else if (args[i] == "spell")
                 spell = true;
+            else if (args[i] == "npc")
+                npc = true;
         }
-        SendEquip(baseId, slot, name == "unequip", spell);
+        if (!npc)
+        {
+            SendEquip(baseId, slot, name == "unequip", spell);
+            return true;
+        }
+
+        // "equip <base> [noslot] npc": the NPC this bot owns equips it, as its owner's game reports it; "noslot" sends no slot, as for arrows.
+        const KnownActor* pNpc = nullptr;
+        for (const auto& actor : m_actors)
+            if (actor.OwnedByUs && !actor.IsPlayer && actor.ServerId != m_serverId)
+                pNpc = &actor;
+        if (!pNpc)
+        {
+            spdlog::warn("[script] {} npc: this bot owns no NPC", name);
+            return true;
+        }
+        RequestEquipmentChanges request{};
+        request.ServerId = pNpc->ServerId;
+        request.OwnershipEpoch = pNpc->OwnershipEpoch;
+        request.ItemId = Skyrim(baseId);
+        request.EquipSlotId = slot ? Skyrim(slot) : GameId{};
+        request.Count = 1;
+        request.Unequip = name == "unequip";
+        request.IsSpell = spell;
+        // The server takes the worn flags of the whole inventory from each change, so everything the NPC wears goes along.
+        std::erase(m_npcWorn, baseId);
+        if (name == "equip")
+            m_npcWorn.push_back(baseId);
+        for (const uint32_t cWorn : m_npcWorn)
+        {
+            Inventory::Entry entry{};
+            entry.BaseId = Skyrim(cWorn);
+            entry.Count = 1;
+            entry.ExtraWorn = true;
+            request.CurrentInventory.Entries.push_back(entry);
+        }
+        SendMsg(request);
+        spdlog::info("[script] NPC {:X} {} {:X}{}", pNpc->ServerId, name == "equip" ? "equips" : "unequips", baseId, slot ? "" : " (no slot)");
         return true;
     }
 
@@ -3311,6 +3353,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.IsPlayerSummon = !args.empty() && args.back() == "summon";
         request.ReferenceId = temporary ? GameId(std::numeric_limits<uint32_t>::max(), 0xFF000000u | (cookie & 0x00FFFFFFu)) : GameId(m_skyrimModId, baseId);
         m_npcReference = request.ReferenceId;
+        m_npcWorn.clear();
         m_npcCookies[cookie] = request.ReferenceId;
         request.FormId = captured ? m_captureBase : GameId(m_skyrimModId, baseId);
         request.CellId = m_cell;

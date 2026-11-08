@@ -339,6 +339,7 @@ private:
     void UpdateSpeech(Clock::time_point aNow) noexcept;
     bool m_keepLeadership{false}; //!< "party lead": keep the party's leadership when the server gives it
     GameId m_npcReference{}; //!< the reference the last "npc" registered
+    std::vector<uint32_t> m_npcWorn; //!< what "equip ... npc" has its NPC wear, sent whole with each change
     bool m_npcFlying{}; //!< "npcfly": its movement updates say it is flying
     uint64_t m_lastClashTick{}; //!< when the last of them was seen, on the server's clock
     uint64_t m_firstClashTick{}; //!< and the first

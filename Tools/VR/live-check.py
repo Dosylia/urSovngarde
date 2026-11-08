@@ -76,6 +76,7 @@ a float as f:<value>, a bool as b:true or b:false, a string as s:<text>).
 
 `log CHECK copy|npc mounted|unmounted` asks whether the copy rides (IsOnMount). `log CHECK copy|npc equipped|unequipped <hex>` asks the game whether its copy has that item equipped (not for the left hand: the
 game's IsEquipped does not count it); `lefthand|righthand <hex>` asks which weapon is in that hand; `has <hex>` whether it owns one.
+`log CHECK ref <hex> count <item hex> <n>` asks whether a reference of the game's own holds exactly that many of the item.
 `log CHECK distinct <most> <regular expression with one group>` passes when the client has logged at least one and
 at most that many different values of the group since the script began.
 `log CHECK absent <regular expression>` passes when the client has written no such line since the script began.
@@ -974,6 +975,11 @@ class Run:
                 disabled = papyrus('ObjectReference', 'IsDisabled', words[1])
                 ok = isinstance(disabled, bool) and disabled is (words[2] == 'disabled')
                 detail = 'reference %s, IsDisabled %s' % (words[1], disabled)
+            elif who == 'ref' and words[2] == 'count' and len(words) > 4:
+                # "ref <hex> count <item hex> <n>": a reference of the game's own holds exactly that many of the item.
+                n = papyrus('ObjectReference', 'GetItemCount', words[1], [{'form': '0x' + words[3]}])
+                ok = isinstance(n, int) and n == int(words[4])
+                detail = 'reference %s, GetItemCount(%s) %s, wanted %s' % (words[1], words[3], n, words[4])
             elif who == 'ref' and words[2] in ('locked', 'unlocked'):
                 # "ref <hex> locked|unlocked": a door or container of the game's own is locked, or not.
                 locked = papyrus('ObjectReference', 'IsLocked', words[1])

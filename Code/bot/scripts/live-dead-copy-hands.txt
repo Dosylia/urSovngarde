@@ -1,0 +1,91 @@
+# A dead copy's items set, its revival and an equip from its owner, with its hands checked at each step: nothing breaks, and a right hand is left alone.
+#
+#   headless.ps1 up -Save <a save with Lydia beside the player> -StartCell ''
+#   python Tools\VR\live-check.py live-dead-copy-hands
+#
+# The play crash this follows (a hand naming extra data that was freed) did not come on the rig, so this is no RED/GREEN test of its guard.
+# Enchantment Art Extender reads the right hand's entry in the AI process, and its extra data, on every equip of a living actor.
+# Here, as a battle's archer: Lydia (A2C94) holds a hunting bow (13985) and wears steel arrows (1397F).
+# Offline, she dies in this game and is switched off and on, and the bot registers her dead, wearing a bow and arrows of its own.
+# Back online, her body becomes the bot's copy and its items are set to the bot's; the bot then revives her and she equips the arrows again.
+# A run counts only when (REQUIRE) her body was given the bot's items while dead here, and the bot did lead.
+party lead
+log live dead copy hands
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+stay
+
+log -- Lydia beside the player, waiting, no longer its teammate, a bow in her hands and arrows worn
+log DO papyrus ObjectReference MoveTo A2C94 14 f:150 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+log DO papyrus ObjectReference AddItem A2C94 13985 n:1 b:true
+log DO papyrus ObjectReference AddItem A2C94 1397F n:40 b:true
+log DO papyrus Actor EquipItem A2C94 13985 b:false b:true
+log DO papyrus Actor EquipItem A2C94 1397F b:false b:true
+wait 3
+log DO papyrus Actor GetEquippedWeapon A2C94 b:false
+
+log -- offline (F6): she dies here and is switched off and on, as a battle's soldiers are between waves
+log DO f6
+wait 8
+log DO papyrus Actor KillEssential A2C94 14
+wait 5
+log REQUIRE ref A2C94 dead
+log DO papyrus ObjectReference Disable A2C94 b:false
+wait 3
+log DO papyrus ObjectReference Enable A2C94 b:false
+wait 5
+
+log -- meanwhile the bot registers her dead, with a bow and 26 arrows of its own, both worn
+npc A2C94 base A2C8E dead
+waitfor owned == 1 20
+wait 2
+additem 13985 1 npc
+additem 1397F 26 npc
+equip 13985 npc
+equip 1397F noslot npc
+wait 2
+
+log -- back online, as a member: her body becomes the bot's copy, and its items are set to the bot's while dead
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+log REQUIRE ref A2C94 dead
+log REQUIRE ref A2C94 count 1397F 26
+
+log -- switched off here; offline while the bot gives her 5 more arrows; back online and switched on: her items are set as her 3D comes, as a soldier's at a new wave
+log DO papyrus ObjectReference Disable A2C94 b:false
+wait 3
+log DO f6
+wait 8
+additem 1397F 5 npc
+wait 2
+log DO f6
+wait 15
+waitfor known other 60
+wait 3
+log DO papyrus ObjectReference Enable A2C94 b:false
+wait 6
+log REQUIRE ref A2C94 dead
+log REQUIRE ref A2C94 count 1397F 31
+# The driver reads the checks as they are logged, so the bot waits before it changes what they read.
+wait 3
+
+log -- the bot revives her, and she equips the arrows again
+npclife alive 100
+wait 4
+log REQUIRE logged Death sync: remote actor A2C94 set alive by its owner
+equip 1397F noslot npc
+wait 5
+log REQUIRE logged Equipment sync: remote actor A2C94 equips 0:1397F
+log CHECK game alive
+# A hand of hers that is right is never let go of.
+log CHECK absent HandWatch: A2C94
+wait 2
+log done
+stop
