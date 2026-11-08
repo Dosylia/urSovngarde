@@ -187,9 +187,8 @@ struct TESObjectREFR : TESForm
     uint32_t GetAnimationVariableInt(BSFixedString* apVariableName) noexcept;
 
     void RemoveAllItems() noexcept;
-    //! Gives each item at least the count its extra data lists hold, so that the game's RemoveAllItems ends.
-    //! False when a list holds no item as the game counts it: RemoveAllItems would then never end.
-    bool MatchCountsToExtraData() noexcept;
+    //! Gives each item at least the count its extra data lists hold, a list counting 0 or less a count of 1, so that removing them ends.
+    void MatchCountsToExtraData() noexcept;
     Vector<uint32_t> RemoveNonQuestItems(Inventory& aCurrentInventory) noexcept;
     void Delete() const noexcept;
     void Disable() const noexcept;

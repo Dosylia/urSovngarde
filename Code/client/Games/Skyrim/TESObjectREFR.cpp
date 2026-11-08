@@ -534,17 +534,62 @@ ExtraContainerChanges::Data* TESObjectREFR::GetContainerChanges() const noexcept
     return TiltedPhoques::ThisCall(s_getContainerChangs, this);
 }
 
-// The game's RemoveAllItems takes an item's extra data lists one by one and, while two or more are left, starts again from the first.
-// A removal does nothing once the item's count is used up, so an item whose lists hold more than its count loops it forever.
-// Counts are read as the game reads them: the base container's count made positive plus the change, and a list's ExtraCount or 1.
-bool TESObjectREFR::MatchCountsToExtraData() noexcept
+namespace
+{
+// The base container's count of an item, made positive as the game reads it.
+int32_t BaseCount(const TESContainer* apBase, const TESForm* apItem) noexcept
+{
+    int32_t count = 0;
+    if (apBase)
+    {
+        for (uint32_t i = 0; i < apBase->count; ++i)
+        {
+            const TESContainer::Entry* pBaseEntry = apBase->entries[i];
+            if (pBaseEntry && pBaseEntry->form == apItem)
+                count += static_cast<int32_t>(pBaseEntry->count);
+        }
+    }
+    return std::abs(count);
+}
+
+// A list's count as the game reads it: its ExtraCount, or 1.
+int32_t ListCount(const ExtraDataList* apList) noexcept
+{
+    const auto* pCount = Cast<ExtraCount>(apList->GetByType(ExtraDataType::Count));
+    return pCount ? pCount->count : 1;
+}
+
+// The first change entry of an item, the one the game's RemoveItem works on.
+const ExtraContainerChanges::Entry* FindEntry(const ExtraContainerChanges::Data* apChanges, const TESForm* apItem) noexcept
+{
+    if (!apChanges || !apChanges->entries)
+        return nullptr;
+    for (const ExtraContainerChanges::Entry* pEntry : *apChanges->entries)
+        if (pEntry && pEntry->form == apItem)
+            return pEntry;
+    return nullptr;
+}
+
+bool HoldsList(const ExtraContainerChanges::Entry* apEntry, const ExtraDataList* apList) noexcept
+{
+    if (!apEntry || !apEntry->dataList)
+        return false;
+    for (const ExtraDataList* pList : *apEntry->dataList)
+        if (pList == apList)
+            return true;
+    return false;
+}
+} // namespace
+
+// The game removes an item's extra data lists one at a time, and a removal does nothing once the item's count is used up.
+// So each item gets at least the count its lists hold, and a list counting 0 or less, which holds no item as the game counts it, is set to 1.
+void TESObjectREFR::MatchCountsToExtraData() noexcept
 {
     ExtraContainerChanges::Data* pChanges = GetContainerChanges();
     if (!pChanges || !pChanges->entries)
-        return true;
+        return;
 
     const TESContainer* pBaseContainer = GetContainer();
-    bool removable = true;
     for (ExtraContainerChanges::Entry* pEntry : *pChanges->entries)
     {
         if (!pEntry || !pEntry->form || !pEntry->dataList)
@@ -557,30 +602,16 @@ bool TESObjectREFR::MatchCountsToExtraData() noexcept
             if (!pList || !pList->data)
                 continue;
 
-            const auto* pCount = Cast<ExtraCount>(pList->GetByType(ExtraDataType::Count));
-            const int32_t cListCount = pCount ? pCount->count : 1;
-            if (cListCount <= 0)
+            if (auto* pCount = Cast<ExtraCount>(pList->GetByType(ExtraDataType::Count)); pCount && pCount->count <= 0)
             {
-                spdlog::error("RemoveAllItems: {:X} holds item {:X} with extra data counting {}; its items are not removed, as the game would never finish", formID,
-                              pEntry->form->formID, cListCount);
-                removable = false;
-                continue;
+                spdlog::warn("RemoveAllItems: {:X} holds item {:X} with extra data counting {}; counted 1 so that it can be removed", formID, pEntry->form->formID,
+                             pCount->count);
+                pCount->count = 1;
             }
-            inLists += cListCount;
+            inLists += ListCount(pList);
         }
 
-        int32_t inBase = 0;
-        if (pBaseContainer)
-        {
-            for (uint32_t i = 0; i < pBaseContainer->count; ++i)
-            {
-                const TESContainer::Entry* pBaseEntry = pBaseContainer->entries[i];
-                if (pBaseEntry && pBaseEntry->form == pEntry->form)
-                    inBase += static_cast<int32_t>(pBaseEntry->count);
-            }
-        }
-
-        const int32_t cCount = std::abs(inBase) + pEntry->count;
+        const int32_t cCount = BaseCount(pBaseContainer, pEntry->form) + pEntry->count;
         if (inLists > cCount)
         {
             spdlog::info("RemoveAllItems: {:X} holds {} of item {:X} in extra data but counts {}; counted {} so that removing them ends", formID, inLists,
@@ -588,21 +619,134 @@ bool TESObjectREFR::MatchCountsToExtraData() noexcept
             pEntry->count += inLists - cCount;
         }
     }
-    return removable;
 }
 
+// Not the game's RemoveAllItems: after each removal it goes back to an item's first list, and loops forever when a removal leaves that list in place.
+// Here every removal must take its list away or lower the item's count; a list or an item that does neither is left, logged, and the rest still go.
+// The changes are read again after each removal, as unequipping can merge or free an item's other lists.
 void TESObjectREFR::RemoveAllItems() noexcept
 {
-    using ObjectReference = TESObjectREFR;
-
-    PAPYRUS_FUNCTION(void, ObjectReference, RemoveAllItems, TESObjectREFR*, bool, bool);
-
     ScopedEquipOverride equipOverride;
+    ScopedInventoryOverride inventoryOverride;
 
-    if (!MatchCountsToExtraData())
-        return;
+    MatchCountsToExtraData();
 
-    s_pRemoveAllItems(this, nullptr, false, true);
+    const TESContainer* pBaseContainer = GetContainer();
+    Vector<const TESForm*> stuckItems;
+    Vector<const ExtraDataList*> stuckLists;
+    const auto isStuckItem = [&stuckItems](const TESForm* apItem) { return std::find(stuckItems.begin(), stuckItems.end(), apItem) != stuckItems.end(); };
+    const auto isStuckList = [&stuckLists](const ExtraDataList* apList) { return std::find(stuckLists.begin(), stuckLists.end(), apList) != stuckLists.end(); };
+
+    // One removal per list and per item, with room for lists an unequip splits off.
+    size_t budget = 16;
+    if (const ExtraContainerChanges::Data* pChanges = GetContainerChanges(); pChanges && pChanges->entries)
+    {
+        for (const ExtraContainerChanges::Entry* pEntry : *pChanges->entries)
+        {
+            budget += 2;
+            if (pEntry && pEntry->dataList)
+                for (const ExtraDataList* pList : *pEntry->dataList)
+                    budget += pList ? 2 : 0;
+        }
+    }
+    if (pBaseContainer)
+        budget += pBaseContainer->count;
+
+    while (true)
+    {
+        TESBoundObject* pItem = nullptr;
+        ExtraDataList* pList = nullptr;
+        int32_t count = 0;
+        int32_t countBefore = 0;
+
+        // Levelled lists given to a copy as items are among the changes, and go as the items do.
+        const ExtraContainerChanges::Data* pChanges = GetContainerChanges();
+        if (pChanges && pChanges->entries)
+        {
+            for (const ExtraContainerChanges::Entry* pEntry : *pChanges->entries)
+            {
+                TESBoundObject* pCandidate = pEntry ? Cast<TESBoundObject>(pEntry->form) : nullptr;
+                if (!pCandidate || isStuckItem(pCandidate) || FindEntry(pChanges, pCandidate) != pEntry)
+                    continue;
+
+                const int32_t cTotal = BaseCount(pBaseContainer, pCandidate) + pEntry->count;
+                int32_t loose = cTotal;
+                ExtraDataList* pFirstList = nullptr;
+                int32_t firstListCount = 0;
+                if (pEntry->dataList)
+                {
+                    for (ExtraDataList* pCandidateList : *pEntry->dataList)
+                    {
+                        if (!pCandidateList || !pCandidateList->data)
+                            continue;
+                        loose -= ListCount(pCandidateList);
+                        if (!pFirstList && !isStuckList(pCandidateList))
+                        {
+                            pFirstList = pCandidateList;
+                            firstListCount = std::max(ListCount(pCandidateList), 1);
+                        }
+                    }
+                }
+                if (pFirstList || loose > 0)
+                {
+                    pItem = pCandidate;
+                    pList = pFirstList;
+                    count = pFirstList ? firstListCount : loose;
+                    countBefore = cTotal;
+                    break;
+                }
+            }
+        }
+
+        // Items of the base container this reference never changed.
+        // A levelled list there is no item: the game rolls it when the reference is made.
+        if (!pItem && pBaseContainer)
+        {
+            for (uint32_t i = 0; i < pBaseContainer->count; ++i)
+            {
+                const TESContainer::Entry* pBaseEntry = pBaseContainer->entries[i];
+                TESForm* pForm = pBaseEntry ? pBaseEntry->form : nullptr;
+                if (!pForm || pForm->formType == FormType::LeveledItem)
+                    continue;
+                TESBoundObject* pCandidate = Cast<TESBoundObject>(pForm);
+                if (!pCandidate || isStuckItem(pCandidate) || FindEntry(pChanges, pCandidate))
+                    continue;
+                if (const int32_t cCount = BaseCount(pBaseContainer, pCandidate); cCount > 0)
+                {
+                    pItem = pCandidate;
+                    count = cCount;
+                    countBefore = cCount;
+                    break;
+                }
+            }
+        }
+
+        if (!pItem)
+            return;
+
+        if (budget == 0)
+        {
+            spdlog::warn("RemoveAllItems: {:X} still held items after its removals ran out; what is left stays", formID);
+            return;
+        }
+        --budget;
+
+        RemoveItem(pItem, count, ITEM_REMOVE_REASON::kRemove, pList, nullptr);
+
+        // Progress: the list is gone, or the item's count went down.
+        const ExtraContainerChanges::Entry* pAfter = FindEntry(GetContainerChanges(), pItem);
+        const int32_t cCountAfter = BaseCount(pBaseContainer, pItem) + (pAfter ? pAfter->count : 0);
+        const bool cListGone = pList && !HoldsList(pAfter, pList);
+        if (!cListGone && cCountAfter >= countBefore)
+        {
+            spdlog::warn("RemoveAllItems: {:X} kept item {:X} (count {}) after removing {} {}; it stays, the other items still go", formID, pItem->formID, cCountAfter, count,
+                         pList ? "with one of its lists" : "loose");
+            if (pList)
+                stuckLists.push_back(pList);
+            else
+                stuckItems.push_back(pItem);
+        }
+    }
 }
 
 TESContainer* TESObjectREFR::GetContainer() const noexcept
@@ -1024,6 +1168,10 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
         spdlog::warn("{}: Object to add not found, {:X}:{:X}.", __FUNCTION__, arEntry.BaseId.ModId, arEntry.BaseId.BaseId);
         return;
     }
+
+    // An inventory carries its base container's levelled lists, which are no items: added, they would stay as lists in this one.
+    if (pObject->formType == FormType::LeveledItem)
+        return;
 
     ExtraDataList* pExtraDataList = GetExtraDataFromItem(arEntry);
 

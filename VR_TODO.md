@@ -34,11 +34,23 @@ his scene never finishes. Use an alternate start, or connect after the intro.
   `it runs that the server gives to another game` and `it shows as a copy that the server gives to it`, two games disagreeing about the same NPC; `N of these two kinds already so at the last census` are the ones that lasted 30 s or more, the rest are hand-overs still in flight (a report can be 2 s old). Both logs are TEMPORARY and go once step 2 is decided.
   The 2026-11-05 four-player session had 242 removals at Halted Stream Camp and 222 at Silent Moons Camp, many within a second of a hand-over; how many were still seen elsewhere is what this measures.
   Where it stands (2026-11-06): built on top of 2200fbc6 (protocol `c5173cc4`), the message round trip is a unit test, the bot suite passes, not yet in a release, not yet seen in play.
+  Build v1.9.8-7-ge2835e3d (2026-11-07), client and server, FUS and MGO; TPTests 114 pass. Not yet seen in play; every player needs this client.
   Rig, 2026-11-06, two real games (`two-games-bugs.py`, FUS testing profile, one save): the reports arrive and agree with the server (0 to 3 characters loaded in no game).
   Removals while the other game still had the NPC: brawl 4 of 35, Windhelm and reconnects 7 of 131, `walk-away` (new: the owner leaves four cells, the other stays) 0 of 71, where the staying game kept all 7 placed NPCs and took them over.
   No disagreement lasted to the next census. Four games with different mod lists, levelled stand-ins and a leader change, as on 2026-11-05, are not something the rig reproduces, so step 2 waits for a real session's numbers.
 - **Party of three or four: enemy damage (client only).** Enemies now deal 120% to a player when two, three or four of the party are within 50 m; it was 135% for three and 150% for four, which with the
   server's difficulty took players from full to down in about 2 s on 2026-11-05. Their health bonus is unchanged. Say whether fights still feel fair. The line `Balance: now N of the party within 50 m` shows the numbers.
+- **A copy's or a chest's items set without the game freezing (client only, uncommitted on 65b14ee7).** Nothing to do in play: siege battles, loot, trade and open chests as usual.
+  In the 11-07 play the game's remove-everything call looped forever in player 2's game, on the copy of the siege's Stormcloak Archer FE09F882 as it spawned (at 15:51 and 19:48).
+  The stuck thread, named with the build's symbols: `CharacterService::RunRemoteUpdates` → `Actor::SetActorInventory` → `TESObjectREFR::SetInventory` → the game's `InventoryChanges::RemoveAllItems` → `RemoveItem`, over and over, memory 38 to 71 GB.
+  65b14ee7's count check caught about 25 other archers that session, not that one. The owner's game also held 15 chests whose items' extra data counted -1 to -5, which it then skipped, so their items were added again at each reapply.
+  Now the game's call is gone: each list and each item is removed once per pass, by its own pointer, and one that does not go is logged and left; a list counting 0 or less is set to 1 first.
+  Levelled lists an inventory carries with its items are no longer added to a copy or a chest; copies had held them as items (count 2 after two sets on the first try of this fix).
+  Build v1.9.8-8-g65b14ee7-dirty.973eea0 (also the battle page's `urSS_Battle`), client on FUS and MGO, server unchanged (same protocol); TPTests 114 pass.
+  Rig, two real games, a Sungard battle of 50 a side, twice: no freeze, no `kept item` line, about 115 copies' items set; 138 of 163 soldiers held the same item kinds in both games, against 97 of 167 on the first try.
+  The freeze itself did not come on the rig, on the old build either (a fresh battle; in play it came at a second battle), so the fix is checked by its own bound, not by a reproduced freeze.
+  Two copies still held 7 more item kinds than their owners (their own gear and the owner's); cause not known.
+  To see: no freeze in a battle with player 2 near. In the log: `RemoveAllItems: X kept item Y` names an item a removal left; `counted 1 so that it can be removed` is a broken list mended.
 - **Dead bodies, at connect and after (needs eed5ad8 on both games).** The first player plays alone a little, then the second connects near an old fight. Bodies lie down in both games, and stay down when you walk away and back.
   An older save may still hold bodies that stand: they should drop within a few seconds of you coming near. If one stands: its form id, and `BodyStand:` in the log. The dead creatures of "Dead on one side" are not all covered, see below.
 - **A dragon fight with both players near (needs 8f303ba on both games).** The game must not stop. A `NonFinite:` line in either log is the guard catching what froze the game on 10-31, and it names
@@ -512,7 +524,7 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Left as it is: in the flat build only, a menu opened and closed within a round trip leaves a stale grant that a plugin's ask then takes.
       `urSovngarde_IsPlayerCopy`: true only for another player's live copy here; a copy left from that player's earlier connection, switched off until freed, answers false.
       The siege mod's own test (any temporary actor not owned here) also took that old copy and other games' humanoid NPC copies for players.
-      Build v1.9.8-3-ge54d2693-dirty.e2e5284. Not run on the rig: the two-game rig cannot start its second game (below), and one game shows no player copy but the bot's.
+      Build v1.9.8-3-ge54d2693-dirty.e2e5284. Rig, two real games on v1.9.8-4-g2200fbc6 (`two-games-switch.py sides`): true for the second player's copy, false for an NPC and for the game's own player.
 - [!] **A temporary actor its game deleted lived on in another game** (the siege's dragon, 11-06 17:55: deleted by the leader's plugin, given to player 2's game by the server, then back as a copy).
       The client let any local temporary actor go as if its cell had unloaded. Now one marked deleted while its cell is loaded is released as `Deleted`, and the server removes it from every game; a placed actor is still only let go.
       One the game has already freed is still handed on: the game also frees the temporary actors of a cell left by a door or a teleport, before the client notices, and a player still there should keep them.
@@ -520,17 +532,48 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Not rig-tested: an actor nothing holds is freed the moment it is marked (Papyrus `Delete` and the console's `markfordelete` alike), so the rig cannot make the held, marked state the dragon was in.
       An interim build that took a freed actor as deleted was green in the rig, and was withdrawn after review for the door case.
       To see: a siege battle's end leaves no dragon in player 2's game, the leader's log has `Deleted: local actor ... released as deleted`, and the next battle has one dragon.
+- [ ] **PLANCK crashes at the main menu since v1.9.8, for players on a Quest 3 or 3S through Steam Link** (hub `planck-right-hand-at-load`; two machines, 11-05 and 11-06).
+      `activeragdoll.dll+0x24D04` reads through a null pointer next to the player's `RightWandNode`, called from HIGGS's hook of the player's update in the AI job, 0.3 to 1 s after the main menu's scene loads (the "VR Playroom", player "Prisoner").
+      Same PCs and headsets on v1.9.7: 7 of 8 and 4 of 5 starts got into the game; on v1.9.8, 2 of 12 and 3 of 15. A Quest 3 through Steam Link on v1.9.6 and v1.9.7 never hit it (26 starts).
+      Not found in v1.9.7..v1.9.8: nothing new touches hands, HIGGS or PLANCK at the main menu, and the client logs the same lines in the same order on both. The moved `Main::Update` hook (CBPC fix) is the only change there that runs every frame; HIGGS does not hook that call.
+      Both crashing machines run PLANCK 0.8.2: the crashing read sits at +0x24D04 only in 0.8.2 (0.8.1 has it at +0x24C04, the Lifetime-and-Collision fix DLL at +0x25224).
+      The read is the same in all three: the first-person right hand from the player's node table, unchecked.
+      Machines seen on 0.8.1 or the fix DLL never crashed there. Both crashing machines start straight into the VR Playroom: a start-up console command, no Main Menu.
+      Rig, v1.9.8-4 with PLANCK 0.8.2, started into that room the same way (`headless.ps1 up -NoConnect -MainMenuCommand 'cow VRPlayroom 29 -5'`): "Prisoner" spawned, no fault.
+      So the missing piece is Steam Link with a Quest 3 or 3S; the rig's controllers are virtual and there from the start.
+      Next: a Steam Link start on a Quest, straight into the playroom with PLANCK 0.8.2, on v1.9.8 and then on v1.9.7.
+- [!] **8 GB more at every load, freezes and wrong colours: the siege plugin queued SKSE tasks 20 times a second through loads** (both players, 11-07; KNOWN_ISSUES has the details).
+      Seen: textures in the wrong colours at load, loads up to 5 min 40 s, slow play, and freezes at the first load when the game passed the PC's 31 GB of RAM.
+      Cause found by a rig A/B and the siege session's bisect: its glide thread (since 11-06 20:08) queued a task 20 times a second at all times; empty tasks did the same. This client plays no part.
+      Fixed in the siege plugin (8eb27e9, deployed to FUS 15:19): the first `Health:` after a load on the owner's save is 8.7 GB, against 18.4 before, as on 11-05.
+      To see in play: the colours right at load, `Health:` at the first load near 20 GB, no `FreezeWatchdog:` there. Seen needs the new siege DLL too.
+- [ ] **A crash moving a dead follower's items to the dead-body cleanup coffin** (11-07 19:53, the owner's game, once).
+      The game's cleanup script moved dead Lydia's items to its coffin (F6891); the game read freed memory while stacking her Whiterun Ceremonial Cloak (Sentinel.esp 43000B6E).
+      From the dump: the cloak's first extra data list had already been freed, still linked; its other list carries an outfit mark (outfit 43000C11), and the freed one lay next to it.
+      This client changes no outfit, and Lydia stayed the owner's own NPC all session; the log shows no item set on her by this client. Not shown to be ours, not cleared either.
+      Rig, the owner's 19:32 autosave, all her items moved to that coffin: no crash without this client, none with it, connected (2026-11-08). With it, 5 kinds of item were back on her right after; without it, none.
+      She holds 13 of that cloak, 1 worn: 1 in the 09-13 save, 13 in every save from 11-01 to 11-07. How they came is not known.
+      To see: another crash in a cleanup move, or the cloak count growing; a dump then shows whose list was freed.
+- [ ] **The siege's battle page keeps the battle going** (`urSS_Battle`, the siege plugin's page with the soldiers left and End battle as a 3 s hold).
+      Opened unpaused by its plugin it took no laser clicks on the two-game rig (11-04); it opens pausing, as the setup page does, which takes them.
+      Now on the unpaused menu list (VR only, connected only): the pause is cleared as it opens, and while it is open the player's controls and melee swings are held. Alone, it pauses.
+      Build v1.9.8-8-g65b14ee7-dirty.da89bed (client, FUS and MGO), TPTests 114 pass; the siege session tests it on the two-game rig. Not yet seen in play.
+      To see: in a battle with the page open, the fight goes on, the laser clicks the page, and a swing while pointing does not hit. In the log: `Menu opened while connected: urSS_Battle (runs unpaused)`.
 - [ ] **An essential NPC copy stays down after its owner's NPC got up** (Lydia, player 2's game, 11-06 18:00-18:15).
       In the owner's game the battle kept dropping her into bleedout at -30 health. That health was copied onto her copy, and player 2's game put the copy into its own bleedout (life state 8, get-up queued, knock state 5).
       Copies run no AI, so the copy never gets up by itself. When the owner's Lydia got up, `bleedOutStop` was refused on the copy as an action and as a graph event. She lay or slid from 18:03.
       From 18:11 the copy counted as dead or dying, so `moveStart` and `TurnRight` were refused too and she stood still. Not fixed. The fallback (`IdleForceDefaultState`) runs for player copies only.
       Direction: an essential copy should not enter the game's own bleedout from a copied health, or should be taken out of it when its owner's life state is alive. `Tools/VR/bleedout-slide.py` holds an essential NPC in bleedout, a start for a red test.
-- [ ] **The two-game rig's second game closes itself at start** (11-05 09:09 and 11-06 18:53, twice in a row). It exits 2 ms after SKSE VR loads (`Exit: the game is closing normally (exit)`), before VR starts, with nothing logged.
-      It worked on 11-05 at 02:00. The only mod changed since is the siege mod's DLL, but the exit comes before SKSE loads any plugin.
-      Both games start with the same environment, so a lead is Steam refusing a second instance of the app after an update; first try `SteamAppId`/`SteamGameId` 611670 for the second launch in `two-games-anchor.py`.
-      Both games also write the same SKSE log files, so the first game's plugin logs are cut when the second starts.
+- [x] **The two-game rig's second game closed itself at start** (11-05 09:09, 11-06 18:53): the `two-games.on` marker was missing, so the game's own check found the first game's window (`FindWindowA` in its start, VR 0x5B5969) and quit.
+      Not a fault: the marker had been removed after the last run, as the guide says. The `setup` step now creates it when missing.
+      With it, the second game starts, but its first load can stall: at 11-06 20:27 for over 15 min with no CPU (taken down), at 21:08 for 3 min before it went on; at 21:27 not at all.
+      Both games write the same SKSE log files, so the first game's plugin logs are cut when the second starts.
 - [ ] **A siege side does not show on player 2's copy in the leader's game** (11-06 17:51 and 17:56). The copy took its owner's factions 2 and 5 s before the leader's check (20 factions, the side one in them by the 19 and 20 counts), yet `IsInFaction` read no side.
-      Not explained; the test is the two-game rig's `sides` phase, once the rig starts its second game.
+      Rig, two real games on v1.9.8-4-g2200fbc6 (`two-games-switch.py sides`, 11-06 21:12): the second player joined, left and joined `urSS_SideImperial`, and the copy followed each time within 3 to 4 s at rank 0, -2, 0.
+      So the faction travels; the play warnings stay unexplained. If they come back, log the copy's rank for each side at the leader's check.
+- [ ] **A crash in the game's own AI job in big siege battles** (`SkyrimVR.exe+0x743D74`, a job thread, `Job_Non_render_safe_AI` through ActorKnowledge; 11-05 18:27 and 11-06 21:16, the leader's game).
+      A function that removes entries from a list of shared pointers was given a garbage index (0xFB69C82C), as when the list changes under it. No frame of ours on the stack.
+      The 11-06 one came in the rig, two games on one PC at 2 fps (frames of 469 ms on average). Not known whether our copies play a part; a full dump from a crash in real play would show whose list it was.
 - [!] **A follower with no server id after a hand-over, so the other player loses her** (10-31 14:43, and 11-01 12:42: Lydia fighting for player 2 alone). Fixed in build v1.9.7-12-g629aaced-dirty.090ea03, protocol change, not seen in play.
       Cause, both times: her owner's game dropped her (`Transferring ownership of local actor`), nobody was in range of her last place, so the server removed her (`Removing actor ... no eligible owner remains`). The other game still ran her, with no server id: `server id not found for form id A2C94`.
       Fix: `NotifyRemoveCharacter` says when the server no longer has a character (`Gone`), and a game where that reference stands announces it again and runs it.

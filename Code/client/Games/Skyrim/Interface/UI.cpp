@@ -112,6 +112,9 @@ static constexpr const char* kAllowList[] = {
 #ifdef SKYRIMVR
     // Unpaused in VR only. Menus/MapMenu.cpp fixes what that breaks: fog, fade and laser pointer.
     "MapMenu",
+    // The siege plugin's battle page, so a battle goes on while a player reads it.
+    // While it is open the hooks below hold the player's controls and melee swings, as for the other menus here.
+    "urSS_Battle",
 #endif
     //"MapMenu", // MapMenu is disabled till we find a proper fix for first person.
     //"Journal Menu", // Journal menu, aka pause menu, is disabled until we find a fix for manual save crashing while unpaused.

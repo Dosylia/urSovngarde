@@ -22,6 +22,7 @@ param(
     [Parameter(Position = 0)][ValidateSet('up', 'down', 'status')][string]$Action = 'status',
     [string]$Save = '',                 # a save name; empty loads the fixed rig save below, or the most recent one if it is gone
     [switch]$NoConnect,                 # no server and no waiting for a connection: the game alone, mod loaded
+    [string]$MainMenuCommand = '',      # a console command run at the main menu instead of loading a save (e.g. 'cow VRPlayroom 29 -5'); use with -NoConnect
     [string]$ServerAddress = '',        # address:port of a test server elsewhere: this one is joined and no local server starts
     [string]$ServerPassword = '',       # that server's password; it goes only into the connect file, which "down" puts back
     [switch]$Twin,                      # the game starts through two-games-anchor.py, which can start a second one (two-games.py)
@@ -490,7 +491,17 @@ try {
     }
     else { Start-Process -FilePath $mo2 -ArgumentList "`"moshortcut://:$mo2Shortcut`"" }
     Wait-Until { Get-Health } 180 'DevBench to answer (the game to start)'
+
     Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } $MenuTimeout 'the main menu' -NeedsGame
+
+    # A player's start-up command, as some setups run one at the main menu: the game is left where it takes it, not connected.
+    if ($MainMenuCommand) {
+        try { Invoke-Tool 'console' @{ action = 'exec'; command = $MainMenuCommand } | Out-Null } catch { Write-Host "The command gave no answer yet: $($_.Exception.Message)" }
+        Start-Sleep -Seconds 30
+        Write-Host "Up after '$MainMenuCommand' at the main menu; no save loaded, not connected." -ForegroundColor Green
+        Show-Status
+        return
+    }
 
     if ($Save) { Invoke-Tool 'game' @{ action = 'load'; name = $Save } | Out-Null }
     else { Invoke-Tool 'game' @{ action = 'loadLast' } | Out-Null }

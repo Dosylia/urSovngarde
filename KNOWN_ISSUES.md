@@ -585,3 +585,19 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
   bytes free, Skyrim's saves failed from 11:56 ("The save/load operation failed", empty `.ess.tmp` files; the last whole
   save is the 11:43 autosave) and MO2 could not write its ini ("File is write protected"). Seen ran the same build. Any
   next try is measured in the rig first: the size of `cef_debug.log` after ten minutes, and the menus drawn.
+- Not every such log is this crash: when the game dies of something else, its browser dies with it and writes the same
+  `libcef.dll+7A52582` log 0 to 2 s later (hub report 20261106-232915-a3766d3b: five, each right after a PLANCK or Crash
+  Logger fault). Only one with no other crash just before it counts here.
+
+## A plugin queuing SKSE tasks 20 times a second costs 8 GB at every load (freezes, wrong colours)
+
+- 2026-11-07 on FUS, both players: textures in the wrong colours at load (rocks flat blue, ground red, trunks glowing white),
+  long loads (5 min 40 s once), slow play, and three freezes at the first load (10:19, 13:19, 13:34).
+  - Each freeze came when `Health:` read 28 to 32 GB private, on a PC with 31 GB of RAM, and Windows paged the game out.
+  - The stuck thread was a game job thread running the queued task, waiting inside the Windows heap.
+- Cause: the siege plugin's "glide" thread queued an SKSE task 20 times a second at all times, loads included (since 11-06).
+  Empty tasks gave the same spike. Fixed in the siege plugin: nothing is queued outside a battle or during a load.
+- Rig, the owner's save, the first `Health:` line after the load: 18.4 GB private and 13.4 GB working set with the old
+  plugin, 8.7 to 10.1 GB with the fix or without the plugin, as on 11-05. This client made no difference.
+- The colours never showed on the rig; whether they went with the fix is for the headset to say.
+- Any plugin, and this client: never queue SKSE tasks on a timer that runs through loads.
