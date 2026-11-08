@@ -1,0 +1,101 @@
+# A creature knocked down and carried by its owner's player is seen carried, and lies where it was put down.
+#
+#   python Tools\VR\live-check.py live-copy-carried
+#   python Tools\VR\live-check.py --expect-fail live-copy-carried     on a build without the fix: must be RED
+#
+# In play one player picked up a living rabbit and carried it around; the other saw it lie where it first fell.
+# A dead body is sent with its bones while its owner moves it, and now so is a living one knocked into its ragdoll.
+# First this game watches: the player knocks the bot's bear over here, and the bot carries it off as its owner (a position-only body pose, as a game sends for a creature), then sends it plain again.
+# The copy must be drawn where the bot has it, and its ragdoll put there once the carry ends.
+# Then this game owns: the player knocks over a rabbit of its own, and its flight must go out as a moving body.
+# A run counts only when (REQUIRE): the bear's copy lay in its own ragdoll here, so it was down when it was carried.
+log live copy carried
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+log DO god on
+
+log -- a bear of this bot's, alive, in front of the player
+infront 200
+wait 3
+npc temp 23A8A
+waitfor owned == 1 20
+wait 8
+log DO look at npc 500 hold 30000
+wait 1
+log DO logmark
+
+# Two plain moves first: a copy is followed only once two of its owner's updates have come.
+npcmove 0 0 0
+wait 0.5
+npcmove 0 0 0
+wait 1
+log -- the player knocks it over here
+log DO papyrus ObjectReference PushActorAway 14 npc f:4
+wait 2
+
+log -- its owner carries it off: twenty steps of 15 units, five a second, then lets it lie
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+wait 0.2
+npcmove 0 15 0 posed
+# The owner's game goes on sending the body with no pose once it lies still.
+wait 0.5
+npcmove 0 0 0
+wait 0.5
+npcmove 0 0 0
+wait 6
+log REQUIRE logged KnockDown: NPC copy \w+ lies in its own ragdoll
+log CHECK logged VRBodySync: posing body \w+ from its owner's bones
+log CHECK logged VRBodySync: body \w+ has no humanoid skeleton; moved its whole tree
+log CHECK logged CorpseDiag: \w+'s ragdoll lay \d+ units from where its owner's corpse is; moved there
+
+log -- a rabbit of this game's own, knocked over by the player
+log DO place 6DC9D
+wait 6
+log DO papyrus ObjectReference PushActorAway 14 placed f:8
+wait 3
+log CHECK logged VRBodySync: body \w+ is being moved here and has no humanoid skeleton; sending where it is
+log DO god off
+log CHECK game alive
+wait 2
+log done
+stop

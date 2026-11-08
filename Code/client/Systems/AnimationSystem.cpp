@@ -328,8 +328,10 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
 
     movement.Position = apActor->position;
     // A dead body lies where its ragdoll is, and dragging or throwing it leaves its reference where it died.
+    // A living NPC knocked into its ragdoll is carried the same way, as a player picks up a rabbit.
     // The others put their copy where this says (VRBodySync::PlaceCorpse), so the 3D root's world position is sent instead.
-    if (apActor != PlayerCharacter::Get() && apActor->actorState.IsDead())
+    const bool cKnockedNpc = apActor != PlayerCharacter::Get() && apActor->actorState.IsInKnockRagdoll();
+    if (apActor != PlayerCharacter::Get() && (apActor->actorState.IsDead() || cKnockedNpc))
     {
         const NiNode* pRoot = apActor->GetNiNode();
         if (pRoot)
@@ -339,7 +341,8 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
             movement.Position = glm::vec3(world.translate.x, world.translate.y, world.translate.z);
         }
 #ifdef SKYRIMVR
-        NoteBodyJump(apActor, static_cast<glm::vec3>(movement.Position), pRoot != nullptr);
+        if (apActor->actorState.IsDead())
+            NoteBodyJump(apActor, static_cast<glm::vec3>(movement.Position), pRoot != nullptr);
 #endif
     }
 
@@ -425,9 +428,9 @@ void AnimationSystem::SerializeMovement(World& aWorld, Actor* apActor, Reference
         }
         aUpdate.UpdatedVRPose = pose;
     }
-    else if (apActor->actorState.IsDead())
+    else if (apActor->actorState.IsDead() || cKnockedNpc)
     {
-        // A body this machine owns, within reach of this player: its bones let the others see it dragged, thrown or shoved.
+        // A body this machine owns, dead or knocked down, within reach of this player: its bones let the others see it carried, dragged, thrown or shoved.
         // It is only sent while the body is moving (CaptureBodyPose returns false otherwise), and far bodies are never read.
         // Measured from where the body lies (movement.Position above), not where it died: a body dragged far away is still in reach.
         constexpr float cReachSquared = 600.f * 600.f;

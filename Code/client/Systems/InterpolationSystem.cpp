@@ -590,9 +590,25 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     if (apActor->actorState.IsDying() || apActor->actorState.IsBleedingOut())
         return;
 
+    const ActorExtension* pExtension = apActor->GetExtension();
+
+    // Another player's copy never goes down here, and its AI does not run here to finish a fall (HookActorProcess).
+    // A knock that a hit here leaves on it stays for good, and no sword hit lands on it here after that.
+    // So it stands again at once, as its owner's game decides whether that player goes down.
+    if (pExtension && pExtension->IsRemotePlayer() && apActor->actorState.IsKnockedDown() && !apActor->actorState.IsDead())
+    {
+        static std::chrono::steady_clock::time_point s_nextSaid{};
+        if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextSaid)
+        {
+            s_nextSaid = cNow + 10s;
+            spdlog::info("KnockDown: player copy {:X} was knocked here (knock state {}); stood up again, as a copy never goes down", apActor->formID,
+                         (apActor->actorState.flags1 >> 25) & 0x7);
+        }
+        apActor->actorState.flags1 &= ~0xE000000u;
+    }
+
     // An NPC copy thrown to the floor lies in its own ragdoll until it gets up here (its knock state is its own).
     // Moved meanwhile, the body would glide along the floor behind its owner (live-copy-knockdown).
-    const ActorExtension* pExtension = apActor->GetExtension();
     const bool cKnockedNpc = !apActor->actorState.IsDead() && apActor->actorState.IsKnockedDown() && pExtension && !pExtension->IsRemotePlayer();
     {
         // KNOCK_STATE_ENUM 5: the ragdoll has come to rest and the get-up is queued.
@@ -645,7 +661,14 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         }
     }
     if (cKnockedNpc)
+    {
+#ifdef SKYRIMVR
+        // Carried over there, as a player picks up a rabbit, it is drawn from its owner's bones; once they stop, its ragdoll goes where the owner left it.
+        // PlaceCorpse moves a living body only then, so a copy's own fall is left where it lies.
+        VRBodySync::PlaceCorpse(apActor, position);
+#endif
         return;
+    }
 
     if (apActor->actorState.IsDead())
     {

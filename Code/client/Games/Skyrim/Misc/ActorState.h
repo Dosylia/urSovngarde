@@ -33,6 +33,13 @@ struct ActorState : IMovementState
     //! KNOCK_STATE_ENUM, bits 25-27 of flags1 (CommonLibVR ActorState1).
     //! Anything but normal (0) is a body thrown down, lying in its ragdoll, or getting up.
     bool IsKnockedDown() const noexcept { return (flags1 & 0xE000000) != 0; }
+    //! A living body thrown down and lying in its ragdoll, which a hand can carry like a corpse.
+    //! Not normal (0), and not getting up (6, kGetUp), which an animation plays.
+    bool IsInKnockRagdoll() const noexcept
+    {
+        const uint32_t cKnock = (flags1 >> 25) & 0x7;
+        return !IsDeadOrDying() && cKnock != 0 && cKnock != 6;
+    }
 
     //! ATTACK_STATE_ENUM, bits 28-31 of flags1.
     //! Bow values (CommonLibVR): 8 kBowDraw, 9 kBowAttached (arrow on the string), 10 kBowDrawn (pulled), 11 kBowReleasing, 12 kBowReleased.

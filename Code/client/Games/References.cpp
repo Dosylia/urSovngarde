@@ -59,6 +59,11 @@ float CalculateRealDamage(Actor* apHittee, float aDamage, bool aKillMove, bool a
 
     float multiplier = s_getDifficultyMultiplier(PlayerCharacter::Get()->difficulty, ActorValueInfo::kHealth, isPlayer);
 
+    // Between players only half of what the difficulty adds counts: Master hits 1.5 times as hard instead of 2, Legendary 2 times instead of 3.
+    constexpr float cPvpShareOfExtra = 0.5f;
+    if (aOnOtherPlayer && multiplier > 1.f)
+        multiplier = 1.f + (multiplier - 1.f) * cPvpShareOfExtra;
+
     float realDamage = aDamage;
 
     // TODO(cosideci): this seems problematic? It may not register the kill for others?

@@ -46,7 +46,8 @@ bool TakeClash(Clash& aOut) noexcept;
 //! A clash the other player saw on one of this player's weapons: felt on the hand holding it (0 left, 1 right).
 void PulseClashHaptics(uint8_t aSide) noexcept;
 //! A dead body whose owner has it elsewhere: its ragdoll, which it is drawn from, is moved there.
-//! Every rigid body moves by the same offset, when it lies more than 64 units away (at most twice a second).
+//! A living NPC knocked down here is moved only right after its owner carried it.
+//! Every rigid body moves by the same offset, when it lies more than 64 units away across the ground, or more than 256 below (at most twice a second).
 //! False when nothing was moved.
 bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept;
 //! Forgets what PlaceCorpse and the owner's posing knew of a copy, so a new copy under the same id starts afresh.

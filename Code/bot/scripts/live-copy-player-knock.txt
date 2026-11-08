@@ -1,0 +1,28 @@
+# A player's copy knocked down here stands again at once, so the other player's sword still lands on it.
+#
+#   python Tools\VR\live-check.py live-copy-player-knock
+#   python Tools\VR\live-check.py --expect-fail live-copy-player-knock     on a build without the fix: must be RED
+#
+# A copy never goes down here, and its AI does not run here, so a knock that a hit here left on it was never finished.
+# In play, a player knocked by the other player's heavy blow stayed knocked in that game, and no sword hit landed on them there after.
+# Here the player pushes this bot's character away (PushActorAway), which knocks it as such a blow does.
+log live copy player knock
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+stay
+
+# The rig's controllers point straight ahead, and a VR player cannot be turned: the bot's character goes there.
+infront 200
+wait 3
+log DO logmark
+
+log -- the player pushes this bot's character away
+log DO papyrus ObjectReference PushActorAway 14 copy f:8
+wait 4
+log CHECK logged KnockDown: player copy \w+ was knocked here
+log CHECK game alive
+wait 2
+log done
+stop

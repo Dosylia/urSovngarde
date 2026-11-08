@@ -2894,6 +2894,10 @@ struct PlacedCorpse
     uint32_t Streak = 0; // moves in a row
     bool SaidInView = false;
     std::chrono::steady_clock::time_point PosedAt{}; // the end of the owner's last drag this has seen
+    // TEMPORARY, for the CorpseFall line: when this body was first measured, how far below its owner's corpse it was then, and whether its fall was logged.
+    std::chrono::steady_clock::time_point FirstSeenAt{};
+    float FirstDepth = 0.f;
+    bool SaidFallen = false;
 };
 std::unordered_map<uint32_t, PlacedCorpse> s_placedCorpses;
 
@@ -3493,17 +3497,20 @@ void OnFrameEnd() noexcept
             spdlog::info("VRBodySync: body {:X} not posed this time: {} ({:.0f})", formId, acpWhy, aValue);
         };
 
-        if (pActor->actorState.IsDeadOrDying() || pActor->actorState.IsBleedingOut())
+        // An NPC knocked into its ragdoll is a body too while its owner carries it (AnimationSystem::SerializeMovement).
+        const ActorExtension* pBodyExtension = pActor->GetExtension();
+        const bool cKnockedNpc = pBodyExtension && !pBodyExtension->IsRemotePlayer() && !pBodyExtension->IsLocalPlayer() && pActor->actorState.IsInKnockRagdoll() &&
+                                 !pActor->actorState.IsBleedingOut();
+        if (pActor->actorState.IsDeadOrDying() || pActor->actorState.IsBleedingOut() || cKnockedNpc)
         {
             if (pCount)
                 ++pCount->Down;
-            const ActorExtension* pExtension = pActor->GetExtension();
-            if (!pExtension || pExtension->IsRemotePlayer() || pExtension->IsLocalPlayer())
+            if (!pBodyExtension || pBodyExtension->IsRemotePlayer() || pBodyExtension->IsLocalPlayer())
                 continue;
 
-            // Only a properly dead body: a downed one gets back up, and a dying one is playing its death animation.
+            // Only a properly dead body or one lying in its ragdoll: a downed one gets back up, and a dying one is playing its death animation.
             // Writing bones into either fights the game. The sender does not send for those, and this refuses them from an older client.
-            if (!pActor->actorState.IsDead())
+            if (!pActor->actorState.IsDead() && !cKnockedNpc)
                 continue;
             isBody = true;
             {
@@ -4339,7 +4346,7 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     // A corpse is drawn from its ragdoll, and moving the reference (ForcePosition, MoveTo, SetPosition) leaves the ragdoll behind.
     // So each of the ragdoll's rigid bodies is moved by the same offset, as PLANCK warps a ragdoll.
     // PLANCK's main.cpp does it with `rb->getRigidMotion()->setTransform` and `updateMovedBodyInfo`, velocities zeroed.
-    // Covered by `live-corpse-place`.
+    // Covered by `live-corpse-place` and `live-corpse-fallen`.
     if (!apActor)
         return false;
     const auto cNow = std::chrono::steady_clock::now();
@@ -4353,6 +4360,10 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
         if (s_poses.find(apActor->formID) != s_poses.end())
             return false;
     }
+
+    // A living NPC knocked down here lies where this game's own fall put it (live-copy-knockdown), unless its owner just carried it elsewhere.
+    if (!apActor->actorState.IsDead() && !(cPosedAt && cNow - *cPosedAt < std::chrono::seconds(10)))
+        return false;
 
     auto& placed = s_placedCorpses[apActor->formID];
     // A drag that just ended starts over: the moves before it say nothing about this one.
@@ -4405,7 +4416,27 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
 
     const float* pRootAt = reinterpret_cast<const float*>(bodies[0] + kBodyTranslationOffset);
     const glm::vec3 cRagdollRoot = glm::vec3{pRootAt[0], pRootAt[1], pRootAt[2]} / cScale;
-    const float cApart = glm::length(glm::vec2{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y});
+    // A ragdoll that fell through the ground stays over its owner's corpse as it falls, so depth counts too.
+    // The owner sends its body's 3D root, a few tens of units from its ragdoll's root, so a settled body is never that deep.
+    constexpr float cFallenDepth = 256.f;
+    const float cDepth = acWanted.z - cRagdollRoot.z;
+    const float cApart = cDepth > cFallenDepth ? glm::distance(acWanted, cRagdollRoot) : glm::length(glm::vec2{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y});
+
+    // TEMPORARY: a copy's ragdoll found under the ground, with how far under it was when first measured, to tell a fall at death from a later one.
+    if (placed.FirstSeenAt == std::chrono::steady_clock::time_point{})
+    {
+        placed.FirstSeenAt = cNow;
+        placed.FirstDepth = cDepth;
+    }
+    if (cDepth > cFallenDepth && !placed.SaidFallen)
+    {
+        placed.SaidFallen = true;
+        spdlog::info("CorpseFall: {:X}'s ragdoll lies {:.0f} units below where its owner's corpse is, {:.1f} s after it was first measured here, when it lay {:.0f} units below "
+                     "(negative is above); {:.0f} units off across the ground; its cell {:X}, attached {}",
+                     apActor->formID, cDepth, std::chrono::duration<float>(cNow - placed.FirstSeenAt).count(), placed.FirstDepth,
+                     glm::length(glm::vec2{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y}), apActor->parentCell ? apActor->parentCell->formID : 0,
+                     apActor->parentCell && apActor->parentCell->IsAttached());
+    }
 
     if (placed.SayAfter && cNow - placed.MovedAt >= std::chrono::seconds(1))
     {

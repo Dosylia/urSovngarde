@@ -1373,7 +1373,7 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
             aDamage *= GameplayFormulas::PartyEnemyDamage(cPlayersNearby);
     }
 
-    // Every hit of this player on another player, by weapon or by spell, is as strong as an NPC's hit on a player.
+    // Every hit of this player on another player, by weapon or by spell, is as strong as an NPC's hit on a player, with half of what the difficulty adds.
     const ActorExtension* pExPlayerHitter = apHitter ? apHitter->GetExtension() : nullptr;
     const bool cOnOtherPlayer = pExHittee->IsRemotePlayer() && pExPlayerHitter && pExPlayerHitter->IsLocalPlayer();
     float realDamage = GameplayFormulas::CalculateRealDamage(apThis, aDamage, aKillMove, cOnOtherPlayer);
@@ -1737,6 +1737,11 @@ bool TP_MAKE_THISCALL(HookInitiateMountPackage, Actor, Actor* apMount)
     const ActorExtension* pExtension = apThis->GetExtension();
     if (apMount && pExtension && pExtension->IsLocal())
         World::Get().GetRunner().Trigger(MountEvent(apThis->formID, apMount->formID));
+
+    // TEMPORARY: a horse killed in play could still be ridden (its prompt said "Steal"); what the game had of it when a ride began.
+    if (apMount && pExtension && pExtension->IsLocal() && (((apMount->actorState.flags1 >> 21) & 0xF) != 0 || apMount->GetActorValue(ActorValueInfo::kHealth) <= 0.f))
+        spdlog::info("Mount: {:X} starts to ride {:X}, whose life state here is {} (dead {}), health {:.0f}", apThis->formID, apMount->formID,
+                     (apMount->actorState.flags1 >> 21) & 0xF, apMount->IsDead(), apMount->GetActorValue(ActorValueInfo::kHealth));
 
     return TiltedPhoques::ThisCall(RealInitiateMountPackage, apThis, apMount);
 }

@@ -40,8 +40,8 @@ wait 2
 log -- Fireball
 log DO papyrus Spell Cast 1C789 14 copy
 wait 6
-log REQUIRE logged PvP: hit remote player \w+ for 120
-log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -120\.0
+log REQUIRE logged PvP: hit remote player \w+ for 80
+log CHECK bot logged Health change of our [0-9A-F]+ by player \d+: -80\.0
 wait 3
 log CHECK game alive
 log done

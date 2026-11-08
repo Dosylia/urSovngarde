@@ -1,0 +1,42 @@
+# A corpse whose ragdoll fell through the ground is put back where its owner's corpse lies.
+#
+#   python Tools\VR\live-check.py live-corpse-fallen
+#
+# A ragdoll falling through the ground stays over its owner's corpse, so only its depth gives it away.
+# The bot kills its bear and then reports it 400 units higher, so the game's ragdoll, once on the bot's spot, lies about that far under its owner's corpse.
+# The bot's spot is not exactly where the game's bear lies, so the first move can be across the ground.
+# VRBodySync::PlaceCorpse must log CorpseFall and move it up; the body settles back onto the ground each time, so it is left after its moves.
+# Moves in a row wait 1, 2, 4 and 8 s, so that takes up to about 20 s.
+log live corpse fallen
+waitfor connected 45
+collect spawn health death ownership
+expect known me
+waitfor known other 40
+wait 5
+
+log -- a bear of this bot's, killed
+npc temp 23A8A
+waitfor owned == 1 20
+wait 8
+npclife dead 0
+wait 8
+log REQUIRE npc dead
+log DO look away npc 500 hold 35000
+wait 1
+log REQUIRE view npc away
+log DO logmark
+
+log -- its owner's corpse 400 units higher: the ragdoll here lies that far under it
+npcmove 0 0 400
+wait 3
+npcmove 0 0 0
+wait 24
+log CHECK logged CorpseFall: \w+'s ragdoll lies \d+ units below where its owner's corpse is
+log CHECK logged CorpseDiag: \w+'s ragdoll lay \d+ units from where its owner's corpse is; moved there
+log CHECK logged CorpseDiag: \w+'s ragdoll still lies \d+ units from where its owner's corpse is after its moves
+log SHOT after of npc
+wait 4
+log CHECK game alive
+wait 3
+log done
+stop

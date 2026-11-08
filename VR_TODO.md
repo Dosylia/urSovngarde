@@ -438,6 +438,20 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Open work
 
+- [!] **Soldiers revived before a player joins are killed by that player's save** (siege at Fort Sungard, 2026-11-08 12:04). Fixed in build v1.9.8-13-g4d4c33ad-dirty.9137376, not seen in play.
+      The host's game revived the fort's soldiers at 12:03:26 (`Death sync: local actor 526EB is now alive, telling the server`). Player 2 joined at 12:04:02 with them dead in its save:
+      `DeathWins: 526F2 (server id 1A) is dead here but alive in its owner's game`, and the host's game took `player 2's blow of 100000` (`health broadcast killed actor 526F2`). Player 2 saw them all dead and stripped as it spawned.
+      Fix (a protocol change, `6b296bbe`: every player and the server need this build): the owner's revive report marks the character on the server, a death clears the mark, and an announcement from a game that saw the revive carries it.
+      A game joining later follows the owner's life for a marked character instead of keeping its save's body (`Death sync: X is dead here, but its owner's game revived it since its last death; it follows its owner`).
+      `s_lifeFollowsOwner` keeps only the leader's switch-on case. A kill player 2 made where the owner did not see it, after the owner's revive, is lost: the body stands up again, as at the owner.
+      Rig: `live-dead-revived-joins` RED on the build before (body kept dead, killing blow sent), ok after; `live-dead-stays-dead` ok after. TPTests 114 pass (a round trip of the mark).
+      To see: soldiers alive at the host stay alive for a player who joins mid-siege.
+- [ ] **An NPC announced again every 4 to 5 s when the game it is handed to declines it** (2026-11-08 14:46:09 to :25, rabbits 107D04 and 107D15; 12:04 to 12:06, Stormcloak Archer 8C00A316, 18 times). Not fixed.
+      The owner's player walked out of range, so the server handed the NPC to player 2. Player 2's game declined (`Hand-off of ... declined: a copy of ours stands in`), the server removed the character, and the owner's game, which still had it loaded, announced it again (`is gone from the server while ... stands here; announced again`).
+      Each round, player 2's copy is deleted and made again. Which side should break the loop is open.
+- [ ] **A dead horse that could still be ridden** (2026-11-08 14:22, the host's game). Cause unknown.
+      The host killed horse 798EB at 14:20:58 (`BodyStand: dead 798EB had 289 health; taken` at its death). Its prompt then read "Steal", and at 14:22:08 the host's game reported riding it (`Mount: copy FF001386 of rider 12 told to ride copy 798EB` in player 2's log).
+      It read "Search" after player 2 touched it; no log line says what changed. Build 1a16be1 adds the TEMPORARY `Mount: X starts to ride Y, whose life state here is ...`, logged when a ride starts on a horse that is not plainly alive.
 - [!] **Dead bodies standing: a body already dead here was given health** (session 2026-10-31 20:09, 20:12: a searchable guard standing, almost all NPCs standing for player 2 at connect, standing skeletons for player 1). Fixed in build eed5ad8, not seen in play.
       Cause: a copy that is to die gets 1 health so it lives until `Kill()` (`ValuesUntilKilled`). Three arrival paths gave it to a body already dead in this game, where no kill follows, so the body kept 1 health, got up and stood, still searchable. A save keeps that.
       Two real games on one save: the same corpse read -99877 health, lying, in its owner's game and 1 health, standing (pelvis 63 over the feet), in the second. Taking the health alone did not lay it down; `RagdollInstant` did. The first guess, the leveled rebuild, was wrong: with no rebuild they stood all the same.
