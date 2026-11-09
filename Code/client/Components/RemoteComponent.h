@@ -26,4 +26,6 @@ struct RemoteComponent
     //! A copy can die here alone; its corpse is then not placed where its owner has the living actor (InterpolationSystem::Update).
     //! A health broadcast that kills the copy does not count: the copy's health can be lower than the owner's.
     bool DeadAtOwner{};
+    //! The party leader's game did not claim it on arrival, as it was far from this player; it is claimed once it comes near (CharacterService::RunLeaderClaims).
+    bool ClaimWhenNear{};
 };

@@ -1503,6 +1503,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     RunGhostChecks();
     SpawnReveal::Tick();
     RunFollowerReclaims();
+    RunLeaderClaims();
     RunFollowerReports();
     RunPresenceReports();
     RunReleasedGhosts();
@@ -1881,7 +1882,8 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         pActor->GetExtension()->SetRemote(true);
 
         m_world.remove<EarlyAnimationBufferComponent>(cEntity);
-        InterpolationSystem::Setup(m_world, cEntity);
+        // Where its owner has it, until its movement arrives: the leader's claim is judged by it (IsNearLocalPlayer).
+        InterpolationSystem::Setup(m_world, cEntity).Position = acMessage.Position;
         AnimationSystem::Setup(m_world, cEntity);
         AnimationSystem::AddActionsForReplay(m_world.get<RemoteAnimationComponent>(cEntity), acMessage.ActionsToReplay);
         // This path adopted a levelled reference without ever seeing the owner's base; the response carries it now.
@@ -3415,6 +3417,65 @@ bool CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
     return true;
 }
 
+// The party leader's game takes an NPC near its own player, and leaves one farther away with the game that runs it.
+// Taken at any distance, an NPC at the edge of both games' loaded areas went back and forth: claimed here, given up as it left this game's area, announced again by the other.
+constexpr float cLeaderClaimDistance = 6000.f;
+
+// A placed NPC alive at its owner: a temporary actor is not the same one in another game, and a body stays with its owner.
+static bool IsLeaderClaimable(const Actor* apActor, const RemoteComponent& acRemote) noexcept
+{
+    return !apActor->IsTemporary() && !apActor->IsMount() && !apActor->IsDead() && !acRemote.DeadAtOwner;
+}
+
+// Measured where its owner last reported it, which can be far from where this game's reference was.
+static bool IsNearLocalPlayer(const Actor* apActor, const InterpolationComponent* apInterpolation) noexcept
+{
+    const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return false;
+
+    // A whole interior is loaded, so it has no edge to go back and forth across: inside the player's cell every NPC is near, as before.
+    const TESWorldSpace* pWorldSpace = pPlayer->GetWorldSpace();
+    if (!pWorldSpace)
+        return apActor->parentCell == pPlayer->parentCell;
+    if (apActor->GetWorldSpace() != pWorldSpace)
+        return false;
+
+    glm::vec3 position(apActor->position);
+    if (apInterpolation)
+        position = apInterpolation->TimePoints.empty() ? apInterpolation->Position : apInterpolation->TimePoints.back().Position;
+    return glm::distance(position, glm::vec3(pPlayer->position)) <= cLeaderClaimDistance;
+}
+
+void CharacterService::RunLeaderClaims() const noexcept
+{
+    static std::chrono::steady_clock::time_point s_nextCheck{};
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < s_nextCheck)
+        return;
+    s_nextCheck = cNow + std::chrono::seconds(1);
+
+    if (!m_transport.IsOnline() || !m_world.GetPartyService().IsLeader())
+        return;
+
+    auto view = m_world.view<FormIdComponent, RemoteComponent>(entt::exclude<WaitingFor3D>);
+    for (const auto cEntity : view)
+    {
+        auto& remoteComponent = view.get<RemoteComponent>(cEntity);
+        if (!remoteComponent.ClaimWhenNear)
+            continue;
+
+        Actor* pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id));
+        if (!pActor || pActor->IsDisabled() || !pActor->GetNiNode() || !IsLeaderClaimable(pActor, remoteComponent) || !IsNearLocalPlayer(pActor, m_world.try_get<InterpolationComponent>(cEntity)))
+            continue;
+
+        // One try, as on arrival: a claim refused here is not repeated every second.
+        remoteComponent.ClaimWhenNear = false;
+        spdlog::info("Sending ownership claim for actor {:X} with server id {:X}; it came within {:.0f} units of this player", pActor->formID, remoteComponent.Id, cLeaderClaimDistance);
+        RequestOwnership(pActor->formID, remoteComponent.Id, cEntity);
+    }
+}
+
 void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
 {
     if (!m_transport.IsOnline())
@@ -3447,15 +3508,25 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
         // TODO(cosideci): don't just take all actors (i.e. from other parties),
         // maybe check it server side, add a variable to the request.
         // A body stays with its owner: a hand on it is what asks for it (IsRemoteBodyGrabbedHere).
-        if (m_world.GetPartyService().IsLeader() && !pActor->IsTemporary() && !pActor->IsMount() && !pActor->IsDead() && !pRemoteComponent->DeadAtOwner)
+        if (m_world.GetPartyService().IsLeader() && IsLeaderClaimable(pActor, *pRemoteComponent))
         {
-            spdlog::info("Sending ownership claim for actor {:X} with server id {:X}", pActor->formID, pRemoteComponent->Id);
+            // A player's own follower is claimed at any distance, as before: the server decides that claim by its follower rules.
+            if (pActor->IsPlayerFollower() || IsNearLocalPlayer(pActor, m_world.try_get<InterpolationComponent>(aEntity)))
+            {
+                pRemoteComponent->ClaimWhenNear = false;
+                spdlog::info("Sending ownership claim for actor {:X} with server id {:X}", pActor->formID, pRemoteComponent->Id);
 
-            RequestOwnership(pActor->formID, pRemoteComponent->Id, aEntity);
+                RequestOwnership(pActor->formID, pRemoteComponent->Id, aEntity);
+                return;
+            }
+
+            pRemoteComponent->ClaimWhenNear = true;
+            spdlog::info("New entity remotely managed, form id: {:X}, server id: {:X}; farther than {:.0f} units from this player, claimed if it comes nearer", pActor->formID,
+                         pRemoteComponent->Id, cLeaderClaimDistance);
+            return;
         }
-        else
-            spdlog::info("New entity remotely managed, form id: {:X}, server id: {:X}", pActor->formID, pRemoteComponent->Id);
 
+        spdlog::info("New entity remotely managed, form id: {:X}, server id: {:X}", pActor->formID, pRemoteComponent->Id);
         return;
     }
 
