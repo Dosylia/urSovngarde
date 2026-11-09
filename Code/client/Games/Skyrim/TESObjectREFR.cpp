@@ -14,6 +14,7 @@
 #include <Events/InventoryChangeEvent.h>
 #include <Events/DroppedItemEvents.h>
 #include <PlayerCharacter.h>
+#include <RecentModelChanges.h>
 #include <Events/ScriptAnimationEvent.h>
 #include <Events/LockChangeEvent.h>
 #include <Events/ReferenceEnableEvent.h>
@@ -409,6 +410,13 @@ ExtraDataList* TESObjectREFR::GetExtraDataList() noexcept
     return &extraData;
 }
 
+// TEMPORARY: see RecentModelChanges.
+static void NoteActorChange(const TESObjectREFR* apReference, const RecentModelChanges::Kind aKind) noexcept
+{
+    if (apReference->formType == FormType::Character)
+        RecentModelChanges::Note(static_cast<const Actor*>(apReference), aKind);
+}
+
 // Delete() should only be used on temporaries
 void TESObjectREFR::Delete() const noexcept
 {
@@ -416,6 +424,7 @@ void TESObjectREFR::Delete() const noexcept
 
     PAPYRUS_FUNCTION(void, ObjectReference, Delete);
 
+    NoteActorChange(this, RecentModelChanges::Kind::Deleted);
     s_pDelete(this);
 }
 
@@ -423,6 +432,7 @@ void TESObjectREFR::Delete() const noexcept
 // Loaded later, the task names a form id the game may have given to something else since, as it does a temporary copy's.
 void TESObjectREFR::Disable() const noexcept
 {
+    NoteActorChange(this, RecentModelChanges::Kind::Disable);
     const_cast<TESObjectREFR*>(this)->DisableImpl();
 }
 
@@ -445,6 +455,9 @@ void TESObjectREFR::MoveTo(TESObjectCELL* apCell, const NiPoint3& acPosition) co
 
     POINTER_SKYRIMSE(TInternalMoveTo, s_internalMoveTo, 56626, 56227);
 
+    // Without its 3D a move frees nothing, and copies waiting for theirs are moved every frame (RunSpawnUpdates).
+    if (const_cast<TESObjectREFR*>(this)->GetNiNode())
+        NoteActorChange(this, RecentModelChanges::Kind::Moved);
     TiltedPhoques::ThisCall(s_internalMoveTo, this, GetNullHandle(), apCell, apCell->worldspace, acPosition, rotation);
 }
 
@@ -1294,6 +1307,9 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
     if (pObject->formType == FormType::LeveledItem)
         return;
 
+    // A whole inventory set again is noted once, by Actor::SetActorInventory.
+    if (!aIsSettingInventory)
+        NoteActorChange(this, RecentModelChanges::Kind::ItemsChanged);
     ExtraDataList* pExtraDataList = GetExtraDataFromItem(arEntry);
 
     // A quest object another player picked up from the world already reached their copy here, through the replayed pick-up.
@@ -1372,6 +1388,7 @@ void TESObjectREFR::EnableImpl() noexcept
 
     POINTER_SKYRIMSE(TEnableImpl, s_enable, 19800, 19373);
 
+    NoteActorChange(this, RecentModelChanges::Kind::Enable);
     TiltedPhoques::ThisCall(s_enable, this, false);
 }
 

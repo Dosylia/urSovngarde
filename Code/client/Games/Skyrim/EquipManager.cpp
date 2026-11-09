@@ -7,6 +7,7 @@
 #include <Events/EquipmentChangeEvent.h>
 
 #include <World.h>
+#include <RecentModelChanges.h>
 #ifdef SKYRIMVR
 #include <Services/CalendarService.h>
 #endif
@@ -90,6 +91,7 @@ void* EquipManager::Equip(Actor* apActor, TESForm* apItem, ExtraDataList* apExtr
     POINTER_SKYRIMSE(TEquipInternal, s_equipFunc, 38894, 37938);
 
     ScopedEquipOverride equipOverride;
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Equip);
 
     spdlog::debug("Call Actor[{:X}]::Equip(), item id: {:X}, extra data? {}, count: {}", apActor->formID, apItem->formID, (bool)apExtraDataList, aCount);
 
@@ -102,6 +104,7 @@ void* EquipManager::UnEquip(Actor* apActor, TESForm* apItem, ExtraDataList* apEx
     POINTER_SKYRIMSE(TUnEquipInternal, s_unequipFunc, 38901, 37945);
 
     ScopedEquipOverride equipOverride;
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Unequip);
 
     spdlog::debug("Call Actor[{:X}]::UnEquip(), item id: {:X}, extra data? {}, count: {}", apActor->formID, apItem->formID, (bool)apExtraDataList, aCount);
 
@@ -114,6 +117,7 @@ void* EquipManager::EquipSpell(Actor* apActor, TESForm* apSpell, uint32_t aSlotI
     POINTER_SKYRIMSE(TEquipSpellInternal, s_equipFunc, 38896, 38896);
 
     ScopedEquipOverride equipOverride;
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Equip);
 
     return TiltedPhoques::ThisCall(s_equipFunc, this, apActor, apSpell, aSlotId);
 }
@@ -124,6 +128,7 @@ void* EquipManager::UnEquipSpell(Actor* apActor, TESForm* apSpell, uint32_t aSlo
     POINTER_SKYRIMSE(TUnEquipSpellInternal, s_unequipFunc, 38903, 38903);
 
     ScopedEquipOverride equipOverride;
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Unequip);
 
     return TiltedPhoques::ThisCall(s_unequipFunc, this, apActor, apSpell, aSlotId);
 }
@@ -134,6 +139,7 @@ void* EquipManager::EquipShout(Actor* apActor, TESForm* apShout)
     POINTER_SKYRIMSE(TEquipShoutInternal, s_equipFunc, 38897, 37941);
 
     ScopedEquipOverride equipOverride;
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Equip);
 
     return TiltedPhoques::ThisCall(s_equipFunc, this, apActor, apShout);
 }
@@ -144,6 +150,7 @@ void* EquipManager::UnEquipShout(Actor* apActor, TESForm* apShout)
     POINTER_SKYRIMSE(TUnEquipShoutInternal, s_unequipFunc, 38903, 38903);
 
     ScopedEquipOverride equipOverride;
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Unequip);
 
     return TiltedPhoques::ThisCall(s_unequipFunc, this, apActor, apShout);
 }
@@ -154,6 +161,7 @@ void EquipManager::UnequipAll(Actor* apActor)
     POINTER_SKYRIMSE(TUnEquipAll, s_unequipAll, 38899, 38899);
 
     ScopedEquipOverride equipOverride;
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Unequip);
 
     TiltedPhoques::ThisCall(s_unequipAll, this, apActor);
 }

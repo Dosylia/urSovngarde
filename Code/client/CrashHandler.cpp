@@ -1,4 +1,5 @@
 #include <RecentDeletes.h>
+#include <RecentModelChanges.h>
 #include <BranchInfo.h>
 #include "CrashHandler.h"
 #include <DbgHelp.h>
@@ -505,6 +506,15 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
             const uint64_t regs[] = {cr.Rax, cr.Rcx, cr.Rdx, cr.Rbx, cr.Rsi, cr.Rdi, cr.Rbp,
                                      cr.R8,  cr.R9,  cr.R10, cr.R11, cr.R12, cr.R13, cr.R14, cr.R15};
             RecentDeletes::Report(regs, std::size(regs));
+
+            // The crashing code can hold an actor in a frame of its own rather than a register, so the same stack window as LogCrashContext is checked.
+            const auto* pTib = reinterpret_cast<const NT_TIB*>(NtCurrentTeb());
+            const auto* pStack = reinterpret_cast<const uint64_t*>(cr.Rsp & ~static_cast<uint64_t>(7));
+            const auto* pStackTop = reinterpret_cast<const uint64_t*>(pTib->StackBase);
+            const auto* pStackLimit = reinterpret_cast<const uint64_t*>(pTib->StackLimit);
+            constexpr size_t cMaxStackWords = 4096;
+            const size_t cStackWords = pStack >= pStackLimit && pStack < pStackTop ? std::min<size_t>(static_cast<size_t>(pStackTop - pStack), cMaxStackWords) : 0;
+            RecentModelChanges::Report(regs, std::size(regs), pStack, cStackWords);
         }
 
         // The small dump first, in every build: it is the one a player can send with a report.

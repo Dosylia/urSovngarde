@@ -5,6 +5,7 @@
 #include <ExtraData/ExtraLeveledCreature.h>
 #include <Forms/TESNPC.h>
 #include <Misc/GarbageCollector.h>
+#include <RecentModelChanges.h>
 
 bool LeveledNpcSystem::IsLeveledNpcBase(const TESNPC* apBase) noexcept
 {
@@ -43,6 +44,7 @@ bool LeveledNpcSystem::ApplyPick(Actor* apActor, TESNPC* apPick) noexcept
         return false;
 
     auto* pOldBase = Cast<TESNPC>(apActor->baseForm);
+    RecentModelChanges::Note(apActor, RecentModelChanges::Kind::Rebuilt);
     apActor->SetLeveledCreature(pOriginalBase, apPick);
     apActor->SetObjectReference(pResolvedBase);
 

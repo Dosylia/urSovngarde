@@ -15,6 +15,7 @@
 #include <Games/Memory.h>
 #include <Combat/CombatController.h>
 #include <CrashHandler.h>
+#include <RecentModelChanges.h>
 
 #include <Events/HealthChangeEvent.h>
 #include <Events/InventoryChangeEvent.h>
@@ -326,6 +327,7 @@ void Actor::QueueUpdate() noexcept
     TP_THIS_FUNCTION(TQueueUpdate, void, Actor, bool);
     POINTER_SKYRIMSE(TQueueUpdate, QueueUpdate, 40255, 39181);
 
+    RecentModelChanges::Note(this, RecentModelChanges::Kind::Rebuilt);
     TiltedPhoques::ThisCall(QueueUpdate, this, true);
 
     pSetting->data = originalValue;
@@ -426,6 +428,7 @@ void Actor::SetWeaponDrawnEx(bool aDraw) noexcept
         spdlog::debug("Setting weapon drawn after update: {:X}:{}, current state: {}", formID, aDraw, actorState.IsWeaponDrawn());
     }
 
+    RecentModelChanges::Note(this, RecentModelChanges::Kind::WeaponDrawn);
     g_forceAnimation = true;
     SetWeaponDrawn(aDraw);
     g_forceAnimation = false;
@@ -934,6 +937,7 @@ void Actor::SetActorInventory(const Inventory& acInventory) noexcept
 
     if (!cUnchanged)
     {
+        RecentModelChanges::Note(this, RecentModelChanges::Kind::ItemsChanged);
         const ActorExtension* pSelfExtension = this->GetExtension();
         if (pSelfExtension && !pSelfExtension->IsPlayer() && currentInventory.ContainsQuestItems())
             SetInventoryRetainingQuestItems(currentInventory, acInventory);
@@ -1151,6 +1155,8 @@ void Actor::Kill(Actor* apKiller) noexcept
     if (pExtension->IsPlayer())
         return;
 
+    RecentModelChanges::Note(this, RecentModelChanges::Kind::Killed);
+
     // Remote actors only play animations sent by their owner (HookPerformAction).
     // The death animation and ragdoll have to go through here, or the body dies standing up.
     const bool forceAnimation = pExtension->IsRemote();
@@ -1203,6 +1209,7 @@ bool Actor::PlayIdle(TESIdleForm* apIdle) noexcept
 
 void Actor::Respawn() noexcept
 {
+    RecentModelChanges::Note(this, RecentModelChanges::Kind::Revived);
     LetHandsGoOfStrayExtraData("its item does not hold, before its revival");
 #ifdef SKYRIMVR
     // Resurrect(resetInventory, attach3D) = SE 36331, by address like KillImpl above.
@@ -1676,7 +1683,10 @@ void Actor::DropOrPickUpObject(const Inventory::Entry& arEntry, NiPoint3* apLoca
     }
 
     if (arEntry.Count < 0)
+    {
+        RecentModelChanges::Note(this, RecentModelChanges::Kind::ItemsChanged);
         DropObject(pObject, pExtraData, -arEntry.Count, apLocation, apRotation);
+    }
     // TODO: pick up
 }
 

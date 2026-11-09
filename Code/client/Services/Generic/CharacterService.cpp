@@ -10,6 +10,7 @@
 #include <Services/InventoryService.h>
 #include <Services/DiscoveryService.h>
 #include <RecentDeletes.h>
+#include <RecentModelChanges.h>
 #include <CrashHandler.h>
 #include <unordered_set>
 #include <CopyRemovalPolicy.h>
@@ -4250,6 +4251,7 @@ void CharacterService::ProcessLeveledConforms() noexcept
 
         // DisableImpl() is asynchronous: it only queues a request to disable this actor.
         // Wait for the disabled flag and old 3D removal before changing the base.
+        RecentModelChanges::Note(pActor, RecentModelChanges::Kind::Disable);
         pActor->DisableImpl();
         stage = ReconciliationStage::WaitingForDisable;
         ++it;

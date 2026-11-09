@@ -1,6 +1,7 @@
 #include <Services/InventoryService.h>
 #include <EpochMiss.h>
 #include <PerfScope.h>
+#include <RecentModelChanges.h>
 
 #include <Messages/RequestObjectInventoryChanges.h>
 #include <Messages/NotifyObjectInventoryChanges.h>
@@ -465,6 +466,7 @@ void InventoryService::RunNakedNPCBugChecks() noexcept
         ScopedEquipOverride seo;
         ScopedInventoryOverride sio;
 
+        RecentModelChanges::Note(pActor, RecentModelChanges::Kind::ItemsChanged);
         pActor->ResetInventory(false);
 
         if (++resets == cMaxResets)
