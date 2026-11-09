@@ -35,11 +35,7 @@
 #include <Events/PreUpdateEvent.h>
 #include <Events/UpdateEvent.h>
 
-#include <ModCompat/BehaviorVar.h>
-
-#ifdef SKYRIMVR
-#include <Games/Skyrim/HeadPartWatch.h>
-#endif  
+#include <ModCompat/BehaviorVar.h>  
 
 World::World()
     : m_runner(m_dispatcher)
@@ -102,10 +98,6 @@ void World::Update() noexcept
         m_runner.OnUpdate(UpdateEvent(cDeltaSeconds));
     }
     m_dispatcher.trigger(UpdateEvent(cDeltaSeconds));
-
-#ifdef SKYRIMVR
-    HeadPartWatch::Update();
-#endif
 
     const double frameMs = cDeltaSeconds * 1000.0;
     const double updateMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cUpdateStart).count();

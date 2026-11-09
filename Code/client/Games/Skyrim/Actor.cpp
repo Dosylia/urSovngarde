@@ -1534,6 +1534,24 @@ static TApplyActorEffect* RealApplyActorEffect = nullptr;
 
 void TP_MAKE_THISCALL(HookApplyActorEffect, ActiveEffect, Actor* apTarget, float aEffectValue, unsigned int unk1)
 {
+    // A copy's effect is not applied while this player has no cell, as while a jail sentence moves them out.
+    // Applying it checks the effect's conditions, and one that asks the player's region reads a cell that is not there.
+    // A copy's values come from its owner, so nothing is lost.
+    if (apTarget && apTarget->GetExtension() && apTarget->GetExtension()->IsRemote())
+    {
+        const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+        if (pPlayer && !pPlayer->parentCell)
+        {
+            static std::atomic<uint32_t> s_skipped{0};
+            static std::atomic<int64_t> s_nextSaid{0};
+            const uint32_t cSkipped = ++s_skipped;
+            const int64_t cNow = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (int64_t next = s_nextSaid.load(); cNow >= next && s_nextSaid.compare_exchange_strong(next, cNow + 10))
+                spdlog::info("ApplyEffect: an effect on copy {:X} not applied while this player has no cell ({} so far)", apTarget->formID, cSkipped);
+            return;
+        }
+    }
+
     const auto* pValueModEffect = Cast<ValueModifierEffect>(apThis);
 
     if (pValueModEffect)

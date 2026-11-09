@@ -438,6 +438,13 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Open work
 
+- [!] **A crash as a jail sentence moves the player out, with another player's copy in the cell** (2026-11-08 23:17, a public v1.9.8 pair, Riften Jail, report 20261108-221734). Guarded, not seen in play.
+      Player B accepted serving the sentence; 0.27 s later the game applied an effect (`PeakValueModifierEffect`) to player A's copy, and the effect's condition asked whether the player is in region C5853 (Skyrim.esm, edited by Azurite Weathers III).
+      Player B had no cell at that moment, and `TESObjectCELL::GetRegionList` read a null cell (`SkyrimVR.exe+0x276DB9`, under `IsPlayerInRegion` and our pass-through `HookApplyActorEffect`).
+      Guard: a copy's effect is not applied while the local player has no cell (`ApplyEffect: an effect on copy X not applied while this player has no cell`); a copy's values come from its owner.
+      Which mod gave player A that effect is not known. Not tried on the rig: it cannot make that effect.
+- [ ] **A null call on an AI thread updating an actor's face** (2026-11-08 21:36, player 2, Fort Greymoor, report 20261108-203703). Not looked into yet.
+      `SkyrimVR.exe+0x5EB6C9` under `Actor::IsMoving` / `UpdateActor3DPosition` / `ProcessLists::UpdateHighActors`, `BSFaceGenAnimationData` and `"NPCEyeBone"` in the registers; no code of ours on the stack. 3 s before, Stormcloak soldier 8C00A309 changed hands three times.
 - [ ] **Crashes in character creation, connected, with no other player nearby** (2026-11-08 19:46:49 and 20:01:00, two new games at Helgen, the RaceSex Menu open for 17 s and 35 s; 20:05:00, Realm of Lorkhan, connected by the auto-connect 3 s after the menu opened, crash 8 s later). Cause unknown.
       Three of three were connected; player 2's character creation with the mod but not connected went fine. That points at something that runs only while connected, but no such code is found yet.
       Each time a part of the player's head read a pointer from freed memory, after a race or sex change. 20:05 is the same crash as 19:46 (`FemaleHeadHighElf`).
@@ -445,7 +452,7 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       All four crashes were on v1.9.8-16-geed70ddc and in brand-new games, so the build and the new game are not told apart yet. The builds before it that day had no crash of this kind, but they only loaded existing saves.
       Not reproduced on the rig: console race and sex changes, Papyrus face, tint and weight changes (over 1100 steps, connected, also connecting mid-way), on a finished and on a new character; the rig cannot drive the VR menu itself.
       All three character creation crashes are one fault: a head part's shader property (`[geometry+0x168]`) freed while the part still held it.
-      Diagnostic `HeadPartWatch` (TEMPORARY): logs a head part holding a freed property, and the stack of the release that destroyed one while a part held it. Deployed v1.9.8-16-geed70ddc-dirty.1fcdc77, FUS and MGO, client and server.
+      Diagnostic `HeadPartWatch` (TEMPORARY): logs a head part holding a freed property, and the stack of the release that destroyed one while a part held it. Deployed v1.9.8-17-gfab767c9-dirty.52e2ab5, FUS and MGO, client and server; it runs from the main loop on the main thread, its guarded reads tell the crash handler to leave their faults alone, and an address a new property took is not reported. Rig: 37 head rebuilds in character creation, no false line.
       Seen in play once on it (22:00, the owner): a new game in Realm of Lorkhan, connected 4 s after the menu opened as at 20:05, 2 min 46 s in the menu, 29 head rebuilds, a save after; no crash and no `HeadPartWatch:` fault line.
       So it does not happen every time; what differed from the three crashes is not known (that build, a freshly started server, nobody else on it).
       To see: a `HeadPartWatch: shader property ... was destroyed while` or `... holds no shader property now` line in any log, with the stack under it.

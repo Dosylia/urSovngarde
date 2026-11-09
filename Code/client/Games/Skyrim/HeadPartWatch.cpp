@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #ifdef SKYRIMVR
+#include <CrashHandler.h>
 #include <Games/Skyrim/GameStack.h>
 #include <Games/Skyrim/HeadPartWatch.h>
 #include <Games/Skyrim/Interface/UI.h>
@@ -13,24 +14,25 @@
 // TEMPORARY: character creation crashed three times on a part of the player's head whose shader property was freed memory.
 // Each frame this reads the head's parts, and logs a part whose shader property no longer holds one.
 // The destructor of each shader property class seen on the head is hooked, and a property destroyed while a part held it is noted with its stack.
-// If the part still holds it the next frame, its last release was one too many, and that stack is the culprit.
+// If the same part still holds it the next frame, and no live property took its address, that stack is its last release.
 namespace
 {
 constexpr uint32_t kRefCountOffset = 0x8;         // NiRefObject::refCount
 constexpr uint32_t kNameOffset = 0x10;            // NiObjectNET::name
 constexpr uint32_t kChildrenOffset = 0x138;       // NiNode::children, on VR
 constexpr uint32_t kShaderPropertyOffset = 0x168; // BSGeometry's shader property, on VR
-constexpr uint32_t kAsGeometrySlot = 7;           // NiAVObject's vtable slot the game's face update asks for the geometry
+constexpr uint32_t kAsGeometrySlot = 7;           // NiObject::AsGeometry, as the game's face update asks for it
 constexpr size_t kMaxParts = 16;
 
 struct Part
 {
     void* pGeometry;
     void* pProperty;
-    char Name[48];
+    const char* pName;
 };
 
-// The head's properties as the main thread last read them, for the destructor hook on any thread.
+// The head's parts as the last frame read them, for the destructor hook on any thread.
+std::atomic<void*> s_watchedGeometries[kMaxParts]{};
 std::atomic<void*> s_watched[kMaxParts]{};
 
 using TDestructor = void*(void*, uint32_t);
@@ -44,6 +46,7 @@ std::atomic<size_t> s_hookedCount{0};
 
 struct Suspect
 {
+    void* pGeometry;
     void* pProperty;
     uint32_t Thread;
     uint64_t Frame;
@@ -51,7 +54,7 @@ struct Suspect
     USHORT Depth;
 };
 std::mutex s_suspectLock;
-Suspect s_suspects[8]{};
+Suspect s_suspects[kMaxParts * 2]{};
 size_t s_suspectCount = 0;
 
 // Properties already told, so each is logged once by each check.
@@ -73,17 +76,50 @@ ToldList s_toldReleases;
 ToldList s_toldMemory;
 
 // A read that answers false instead of faulting, cheap enough for every part every frame.
+// The crash handler is told the fault is expected, or it would report a crash first.
 template <class T> bool SafeRead(const void* apAddress, T& aOut) noexcept
 {
+    bool read = false;
+    CrashGuard::Enter();
     __try
     {
         aOut = *static_cast<const T*>(apAddress);
-        return true;
+        read = true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
-        return false;
     }
+    CrashGuard::Leave();
+    return read;
+}
+
+// A child's geometry, or null when it is none or cannot be asked.
+void* GeometryOf(void* apChild) noexcept
+{
+    void** pVTable = nullptr;
+    if (!SafeRead(apChild, pVTable) || !pVTable)
+        return nullptr;
+    void* pGeometry = nullptr;
+    CrashGuard::Enter();
+    __try
+    {
+        using TAsGeometry = void*(__fastcall*)(void*);
+        pGeometry = reinterpret_cast<TAsGeometry>(pVTable[kAsGeometrySlot])(apChild);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        pGeometry = nullptr;
+    }
+    CrashGuard::Leave();
+    return pGeometry;
+}
+
+std::string TextAt(const char* apText) noexcept
+{
+    char text[64]{};
+    for (size_t i = 0; apText && i + 1 < sizeof(text) && GameStack::Readable(apText + i, 1) && apText[i]; ++i)
+        text[i] = apText[i];
+    return text;
 }
 
 // The class of an object from MSVC's type information before its vtable, in the game or in any plugin.
@@ -98,13 +134,24 @@ std::string ClassOf(const void* apVTable) noexcept
     if (pFields[0] != 1)
         return {};
     const uintptr_t cModule = reinterpret_cast<uintptr_t>(pLocator) - pFields[5];
-    const char* pName = reinterpret_cast<const char*>(cModule + pFields[3] + 0x10);
-    if (!GameStack::Readable(pName, 4))
-        return {};
-    char name[96]{};
-    for (size_t i = 0; i + 1 < sizeof(name) && GameStack::Readable(pName + i, 1) && pName[i]; ++i)
-        name[i] = pName[i];
-    return name;
+    return TextAt(reinterpret_cast<const char*>(cModule + pFields[3] + 0x10));
+}
+
+// A top-level shader property class (".?AVBSLightingShaderProperty@@"), not one nested in such a class.
+bool IsShaderPropertyClass(const std::string& acClass) noexcept
+{
+    constexpr std::string_view cEnd = "ShaderProperty@@";
+    return acClass.size() > 4 + cEnd.size() && acClass.rfind(".?AV", 0) == 0 && acClass.compare(acClass.size() - cEnd.size(), cEnd.size(), cEnd) == 0 &&
+           acClass.find('@') == acClass.size() - 2;
+}
+
+bool IsHookedVTable(void** apVTable) noexcept
+{
+    const size_t cHooked = s_hookedCount.load(std::memory_order_acquire);
+    for (size_t i = 0; i < cHooked; ++i)
+        if (s_hooked[i].pVTable == apVTable)
+            return true;
+    return false;
 }
 
 void* HookDestructor(void* apThis, uint32_t aFlags)
@@ -119,14 +166,15 @@ void* HookDestructor(void* apThis, uint32_t aFlags)
     if (!pReal)
         return apThis;
 
-    for (const auto& cWatched : s_watched)
+    for (size_t i = 0; i < kMaxParts; ++i)
     {
-        if (cWatched.load(std::memory_order_relaxed) != apThis)
+        if (s_watched[i].load(std::memory_order_relaxed) != apThis)
             continue;
         std::scoped_lock lock(s_suspectLock);
         if (s_suspectCount < std::size(s_suspects))
         {
             Suspect& suspect = s_suspects[s_suspectCount++];
+            suspect.pGeometry = s_watchedGeometries[i].load(std::memory_order_relaxed);
             suspect.pProperty = apThis;
             suspect.Thread = GetCurrentThreadId();
             suspect.Frame = MainLoopFrame();
@@ -140,10 +188,7 @@ void* HookDestructor(void* apThis, uint32_t aFlags)
 void HookClass(void** apVTable, const std::string& acClass) noexcept
 {
     const size_t cHooked = s_hookedCount.load(std::memory_order_acquire);
-    for (size_t i = 0; i < cHooked; ++i)
-        if (s_hooked[i].pVTable == apVTable)
-            return;
-    if (cHooked == std::size(s_hooked) || apVTable[0] == reinterpret_cast<void*>(&HookDestructor))
+    if (IsHookedVTable(apVTable) || cHooked == std::size(s_hooked) || apVTable[0] == reinterpret_cast<void*>(&HookDestructor))
         return;
 
     DWORD oldProtect = 0;
@@ -168,33 +213,36 @@ void ReadParts(void* apFace, Part (&aParts)[kMaxParts], size_t& aCount) noexcept
     aCount = 0;
     void** pChildren = nullptr;
     uint16_t capacity = 0;
-    if (!SafeRead(static_cast<uint8_t*>(apFace) + kChildrenOffset + 0x8, pChildren) || !SafeRead(static_cast<uint8_t*>(apFace) + kChildrenOffset + 0x10, capacity) || !pChildren)
+    if (!SafeRead(static_cast<uint8_t*>(apFace) + kChildrenOffset + 0x8, pChildren) || !SafeRead(static_cast<uint8_t*>(apFace) + kChildrenOffset + 0x10, capacity) ||
+        !pChildren)
         return;
     for (uint16_t i = 0; i < capacity && aCount < kMaxParts; ++i)
     {
         void* pChild = nullptr;
-        void** pChildVTable = nullptr;
-        if (!SafeRead(&pChildren[i], pChild) || !pChild || !SafeRead(pChild, pChildVTable) || !pChildVTable)
+        if (!SafeRead(&pChildren[i], pChild) || !pChild)
             continue;
-        using TAsGeometry = void*(__fastcall*)(void*);
-        void* pGeometry = reinterpret_cast<TAsGeometry>(pChildVTable[kAsGeometrySlot])(pChild);
+        void* pGeometry = GeometryOf(pChild);
         void* pProperty = nullptr;
-        if (!pGeometry || !SafeRead(static_cast<uint8_t*>(pGeometry) + kShaderPropertyOffset, pProperty))
+        const char* pName = nullptr;
+        if (!pGeometry || !SafeRead(static_cast<uint8_t*>(pGeometry) + kShaderPropertyOffset, pProperty) ||
+            !SafeRead(static_cast<uint8_t*>(pGeometry) + kNameOffset, pName))
             continue;
-        Part& part = aParts[aCount++];
-        part.pGeometry = pGeometry;
-        part.pProperty = pProperty;
-        std::memset(part.Name, 0, sizeof(part.Name));
-        const char* pName = *reinterpret_cast<const char**>(static_cast<uint8_t*>(pGeometry) + kNameOffset);
-        for (size_t c = 0; pName && c + 1 < sizeof(part.Name) && GameStack::Readable(pName + c, 1) && pName[c]; ++c)
-            part.Name[c] = pName[c];
+        aParts[aCount++] = {pGeometry, pProperty, pName};
     }
 }
 
 std::string Context() noexcept
 {
-    return fmt::format("frame {}, connected {}, character creation {}", MainLoopFrame(), World::Get().GetTransport().IsConnected() ? "yes" : "no",
-                       CharacterCreationOpen() ? "open" : "closed");
+    const bool cConnected = entt::locator<World>::has_value() && World::Get().GetTransport().IsConnected();
+    return fmt::format("frame {}, connected {}, character creation {}", MainLoopFrame(), cConnected ? "yes" : "no", CharacterCreationOpen() ? "open" : "closed");
+}
+
+// Whether a live shader property now sits at this address: a new one the allocator put where the freed one was.
+bool LivePropertyAt(void* apProperty) noexcept
+{
+    void** pVTable = nullptr;
+    uint32_t refs = 0;
+    return SafeRead(apProperty, pVTable) && IsHookedVTable(pVTable) && SafeRead(static_cast<uint8_t*>(apProperty) + kRefCountOffset, refs) && refs > 0;
 }
 } // namespace
 
@@ -232,7 +280,7 @@ void Update() noexcept
             ++s_rebuilds;
     }
 
-    // A property destroyed while a part held it, and still held by that part now: one release too many.
+    // A property destroyed while a part held it, still held by that same part now, and no live property in its place: one release too many.
     Suspect suspects[std::size(s_suspects)]{};
     size_t suspectCount = 0;
     {
@@ -247,50 +295,54 @@ void Update() noexcept
         for (size_t i = 0; i < count; ++i)
         {
             const Part& cPart = parts[i];
-            if (cPart.pProperty != cSuspect.pProperty || !GameStack::Readable(cPart.pGeometry, kRefCountOffset + 4))
+            if (cPart.pGeometry != cSuspect.pGeometry || cPart.pProperty != cSuspect.pProperty)
                 continue;
-            const uint32_t cRefs = *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(cPart.pGeometry) + kRefCountOffset);
-            if (cRefs == 0 || s_toldReleases.Told(cSuspect.pProperty))
+            uint32_t refs = 0;
+            if (!SafeRead(static_cast<const uint8_t*>(cPart.pGeometry) + kRefCountOffset, refs) || refs == 0 || LivePropertyAt(cSuspect.pProperty))
+                continue;
+            if (s_toldReleases.Told(cSuspect.pProperty))
                 continue;
             spdlog::error("HeadPartWatch: shader property {} was destroyed while the player's '{}' ({}, {} references) still holds it; destroyed on thread {} "
                           "(main thread {}) in frame {}; {}",
-                          fmt::ptr(cSuspect.pProperty), cPart.Name, fmt::ptr(cPart.pGeometry), cRefs, cSuspect.Thread, GameMainThreadId(), cSuspect.Frame, Context());
-            spdlog::error("HeadPartWatch:   the release that destroyed it: {}", GameStack::Describe(cSuspect.Frames, cSuspect.Depth));
+                          fmt::ptr(cSuspect.pProperty), TextAt(cPart.pName), fmt::ptr(cPart.pGeometry), refs, cSuspect.Thread, GameMainThreadId(), cSuspect.Frame,
+                          Context());
+            spdlog::error("HeadPartWatch:   its last release: {}", GameStack::Describe(cSuspect.Frames, cSuspect.Depth));
         }
     }
 
     for (size_t i = 0; i < count; ++i)
     {
-        Part& part = parts[i];
-        if (!part.pProperty)
+        const Part& cPart = parts[i];
+        if (!cPart.pProperty)
             continue;
         void** pVTable = nullptr;
-        SafeRead(part.pProperty, pVTable);
-        bool cHookedClass = false;
-        const size_t cHooked = s_hookedCount.load(std::memory_order_acquire);
-        for (size_t h = 0; h < cHooked; ++h)
-            cHookedClass |= s_hooked[h].pVTable == pVTable;
-        if (cHookedClass)
+        SafeRead(cPart.pProperty, pVTable);
+        if (IsHookedVTable(pVTable))
             continue;
 
         const std::string cClass = ClassOf(pVTable);
-        if (cClass.find("ShaderProperty@@") != std::string::npos)
+        if (IsShaderPropertyClass(cClass))
         {
             HookClass(pVTable, cClass);
             continue;
         }
-        if (s_toldMemory.Told(part.pProperty))
+        if (s_toldMemory.Told(cPart.pProperty))
             continue;
-        const uint64_t* pWords = GameStack::Readable(part.pProperty, 0x70) ? static_cast<const uint64_t*>(part.pProperty) : nullptr;
+        uint64_t words[0x68 / 8]{};
+        for (size_t w = 0; w < std::size(words); ++w)
+            SafeRead(static_cast<const uint64_t*>(cPart.pProperty) + w, words[w]);
         spdlog::error("HeadPartWatch: the player's '{}' ({}) holds shader property {} whose memory holds no shader property now: it begins {:X} ({}, {}), "
                       "then {:X}; at +0x60 {:X}; {}",
-                      part.Name, fmt::ptr(part.pGeometry), fmt::ptr(part.pProperty), pWords ? pWords[0] : 0, GameStack::Where(pVTable),
-                      cClass.empty() ? std::string("no class") : cClass, pWords ? pWords[1] : 0, pWords ? pWords[0x60 / 8] : 0, Context());
+                      TextAt(cPart.pName), fmt::ptr(cPart.pGeometry), fmt::ptr(cPart.pProperty), words[0], GameStack::Where(pVTable),
+                      cClass.empty() ? std::string("no class") : cClass, words[1], words[0x60 / 8], Context());
     }
 
     // The parts as now, for the next frame and for the hook.
     for (size_t i = 0; i < kMaxParts; ++i)
+    {
+        s_watchedGeometries[i].store(i < count ? parts[i].pGeometry : nullptr, std::memory_order_relaxed);
         s_watched[i].store(i < count ? parts[i].pProperty : nullptr, std::memory_order_relaxed);
+    }
 }
 } // namespace HeadPartWatch
 #endif

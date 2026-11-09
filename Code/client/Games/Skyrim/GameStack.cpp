@@ -2,6 +2,7 @@
 
 #ifdef SKYRIMVR
 #include <Games/Skyrim/GameStack.h>
+#include <CrashHandler.h>
 
 namespace
 {
@@ -92,6 +93,8 @@ __declspec(noinline) USHORT Capture(void** apFrames, const USHORT aMax) noexcept
     RtlCaptureContext(&context);
     USHORT depth = 0;
     int skip = 1;
+    // A fault in the walk is expected and caught below, so the crash handler is told to leave it alone.
+    CrashGuard::Enter();
     __try
     {
         while (depth < aMax && context.Rip)
@@ -125,6 +128,7 @@ __declspec(noinline) USHORT Capture(void** apFrames, const USHORT aMax) noexcept
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
     }
+    CrashGuard::Leave();
     return depth;
 }
 
