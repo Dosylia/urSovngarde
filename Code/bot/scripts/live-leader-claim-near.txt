@@ -1,0 +1,44 @@
+# The party leader's game claims an NPC only once it is near its own player, not wherever the NPC is.
+#
+#   python Tools\VR\live-check.py live-leader-claim-near
+#   python Tools\VR\live-check.py --expect-fail live-leader-claim-near     on a build without the fix: must be RED
+#
+# In play an NPC at the edge of both games' loaded areas went back and forth every 8 to 11 s.
+# The leader's game claimed it at any distance, gave it up as it left that game's area, and the other game announced it again.
+# Here the bot's Ralof (2BF9E, a reference of Skyrim.esm) is announced 7500 units in front of the player, and this game, leading, keeps him a copy.
+# Brought 3000 units in front, within 6000, he is claimed.
+# A run counts only when (REQUIRE) this game leads and its own Ralof is the copy, not a stand-in.
+log live leader claim near
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+stay
+log REQUIRE bot logged info\] In the party of player \d+ as a member
+
+log -- the bot's Ralof, 7500 units in front of the player
+infront 7500
+wait 1
+npc 2BF9E
+waitfor owned == 1 20
+wait 10
+log REQUIRE logged CharacterSpawnRequest, server id: \w+, form id: 2BF9E,
+log REQUIRE absent Stand-in: reference 2BF9E
+log CHECK absent Sending ownership claim for actor 2BF9E
+expect owned == 1
+wait 2
+
+log -- he comes 3000 units in front of the player, and this game asks for him
+infront 3000
+wait 1
+# Two points, as a moving owner streams them: a copy plays back from the second one.
+npcmove here
+wait 0.3
+npcmove 0 0 0
+wait 15
+log CHECK logged Sending ownership claim for actor 2BF9E with server id \w+; it came within 6000 units of this player
+log CHECK logged Gained ownership of actor \w+ \(form 2BF9E\)
+log CHECK game alive
+wait 2
+log done
+stop

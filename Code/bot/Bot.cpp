@@ -2710,10 +2710,12 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // game that only watches it move (2026-10-03 20:55, the Mistwatch dragon's corpse traded back and forth).
     if (name == "npcmove")
     {
+        // "npcmove here": the NPC goes to where this bot stands.
+        const bool cHere = !args.empty() && args[0] == "here";
         float dx = 0.f, dy = 0.f, dz = 0.f;
-        if (args.size() < 3 || !ParseFloat(args[0], dx) || !ParseFloat(args[1], dy) || !ParseFloat(args[2], dz))
+        if (!cHere && (args.size() < 3 || !ParseFloat(args[0], dx) || !ParseFloat(args[1], dy) || !ParseFloat(args[2], dz)))
         {
-            spdlog::error("[script] npcmove needs an offset, e.g. 'npcmove 0 40 0'");
+            spdlog::error("[script] npcmove needs an offset, e.g. 'npcmove 0 40 0', or 'here'");
             return true;
         }
         uint32_t npcId = kNoId;
@@ -2725,7 +2727,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             spdlog::warn("[script] npcmove: this bot owns no NPC");
             return true;
         }
-        m_npcPosition += glm::vec3(dx, dy, dz);
+        m_npcPosition = cHere ? m_position : m_npcPosition + glm::vec3(dx, dy, dz);
         ClientReferencesMoveRequest message{};
         message.Tick = GetClock().GetCurrentTick();
         ReferenceUpdate& update = message.Updates[npcId];
