@@ -2007,7 +2007,7 @@ bool ReleaseWeaponBody(const uint64_t aKey, WeaponBody& aBody, const char* acpWh
     if (!aBody.pHavok)
         return true;
     ForgetWeaponTarget(aBody.pHavok);
-    POINTER_SKYRIMSE(THkpWorldRemoveEntity, s_removeEntity, 60493, 60493);
+    POINTER_SKYRIMSE(THkpWorldRemoveEntity, s_removeEntity, 9000003, 9000003);
     POINTER_SKYRIMSE(THkpEntityContactListener, s_removeContactListener, 60095, 60095);
     void* pHkpWorld = At<void*>(aBody.pHavok, kHkWorldOffset);
     if (pHkpWorld && s_removeEntity.Get())

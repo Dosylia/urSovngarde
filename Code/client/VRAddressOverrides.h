@@ -3022,6 +3022,8 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     // VRBodySync uses them for the other player's sword.
     { 9000001u, 0x0ab0cb0u }, // hkpWorld::addEntity
     { 9000002u, 0x0aa9030u }, // hkpEntity::setPositionAndRotation
+    // SE 60493 in the newer libraries; older ones lack it, and a body added there could never be taken out again.
+    { 9000003u, 0x0ab0e50u }, // hkpWorld::removeEntity
     { 9000009u, 0x0dfb722u }, // the call to ahkpWorld::stepDeltaTime in bhkWorld::Update (HIGGS prePhysicsStepHookLoc)
     { 9000010u, 0x0a02b10u }, // hkRealTohkUFloat8 (PLANCK's offsets.cpp)
     { 9000011u, 0x0b266abu }, // the call to hkbRagdollDriver::driveToPose (PLANCK's driveToPoseHookLoc)
