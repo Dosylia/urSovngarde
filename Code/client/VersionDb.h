@@ -30,10 +30,17 @@ public:
     };
     const std::vector<OverrideConflict>& GetOverrideConflicts() const { return _overrideConflicts; }
 
+    //! The installed VR Address Library's version (its metadata line, "0.275.0"), empty when it has none.
+    const std::string& GetLibraryVersion() const { return _libraryVersion; }
+    //! How many ids the installed VR Address Library answered, before our own table is merged in.
+    size_t GetLibraryIdCount() const { return _libraryIds; }
+
 private:
     std::map<unsigned long long, unsigned long long> _data;
     std::map<unsigned long long, unsigned long long> _rdata;
     std::vector<OverrideConflict> _overrideConflicts;
+    std::string _libraryVersion;
+    size_t _libraryIds = 0;
     int _ver[4];
     std::string _verStr;
     std::string _moduleName;
@@ -385,6 +392,9 @@ public:
         HMODULE handle = GetModuleHandleA(NULL);
         _base = (unsigned long long)handle;
 
+        _libraryVersion.clear();
+        _libraryIds = 0;
+
         std::string line;
         std::getline(file, line); // skip header "id,offset"
 
@@ -395,9 +405,14 @@ public:
             if (!std::getline(ss, idStr, ',')) continue;
             if (!std::getline(ss, offsetStr, ',')) continue;
 
-            // The library's second line is metadata ("13291,0.158.0").
-            // stoull stops at the first dot and yields offset 0, which would resolve to the image base.
-            // So every field has to be consumed whole before the row is trusted.
+            if (_libraryVersion.empty() && offsetStr.find('.') != std::string::npos)
+            {
+                _libraryVersion = offsetStr;
+                continue;
+            }
+
+            // The library's second line is metadata ("13291,0.158.0"), taken above as its version.
+            // A field stoull reads only in part would yield a wrong offset, so every field has to be consumed whole.
             size_t idEnd = 0, offsetEnd = 0;
             unsigned long long id = 0, offset = 0;
             try
@@ -416,6 +431,7 @@ public:
             _data[id] = offset;
             _rdata[offset] = id;
         }
+        _libraryIds = _data.size();
 
 #ifdef SKYRIMVR
         // Our own table wins where the two disagree.

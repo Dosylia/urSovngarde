@@ -21,7 +21,6 @@ constexpr uintptr_t kOkCallback = 0x8EACA0;
 constexpr uintptr_t kSleepWaitStep = 0x6C2C00;
 constexpr uintptr_t kPlayerSleepWaitCalls[]{0x6BF425, 0x6BFDF5};
 constexpr uintptr_t kMeleeSwingMenuCheck = 0x6B93D9;
-constexpr uintptr_t kMainUpdate = 0x5BAB10;
 
 DeferredSleepWait s_accept;
 bool s_hooksReady = false;
@@ -196,13 +195,10 @@ static TiltedPhoques::Initializer s_sleepWaitHooks(
     {
         const auto cExe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
         auto* pCheck = reinterpret_cast<uint8_t*>(cExe + kMainThreadCheck);
-        // The VR address library confirms the menu's ProcessMessage (SE 51614).
-        // It has no entry for the OK callback or CanProcess, which are trusted once these checks confirm the executable.
-        if (std::memcmp(pCheck, kMainThreadJump, sizeof(kMainThreadJump)) != 0 ||
-            VersionDb::Get().FindAddressById(36564) != reinterpret_cast<void*>(cExe + kMainUpdate) ||
-            VersionDb::Get().FindAddressById(51614) != reinterpret_cast<void*>(cExe + kProcessMessage))
+        // The addresses here are this file's constants, and these byte and call checks confirm the executable they belong to.
+        if (std::memcmp(pCheck, kMainThreadJump, sizeof(kMainThreadJump)) != 0)
         {
-            spdlog::error("Sleep/Wait: unsupported main-thread check, Main::Update or ProcessMessage; leaving the menu paused");
+            spdlog::error("Sleep/Wait: unsupported main-thread check; leaving the menu paused");
             return;
         }
         for (const uintptr_t cCall : kPlayerSleepWaitCalls)

@@ -13,6 +13,8 @@ name: Create GitHub Release
 # The Linux server (linux.yml, x64 and arm64) is published beside the zips as urSovngardeServer-<version>-linux-<arch>.tar.gz.
 # It holds urSovngardeServer and libSTServer.so from one build, checked there by starting it.
 # The public server builds or takes release tags, so a Linux fix reaches it only through a release.
+#
+# Before anything is published, the tests and the bot pairs must pass, and the tag must be newer than every earlier one.
 
 on:
   push:
@@ -43,6 +45,18 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           git checkout -B main HEAD
+
+      # The launcher updates only to a version above the installed one, comparing the three numbers as numbers.
+      # A tag at or below an earlier one would publish a release that no launcher ever takes.
+      - name: The tag is newer than every earlier one
+        if: github.ref_type == 'tag'
+        run: |
+          newest=$(git tag --list | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | grep -Fvx "$GITHUB_REF_NAME" | sort -V | tail -1 || true)
+          echo "This tag: $GITHUB_REF_NAME; the newest earlier one: ${newest:-none}"
+          if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$GITHUB_REF_NAME" | sort -V | tail -1)" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::$GITHUB_REF_NAME is not newer than $newest, so no launcher would update to it"
+            exit 1
+          fi
 
       - name: Cache xmake dependencies
         uses: actions/cache@v6
@@ -75,6 +89,23 @@ jobs:
         run: |
           xmake build TPTests
           xmake run TPTests
+
+      # Two headless players per sync check, against a real server (Tools/VR/run-all-pairs.ps1), about 20 minutes.
+      # They catch what the unit tests cannot, such as a relay or ownership change that breaks every game.
+      - name: Run the bot pairs
+        shell: pwsh
+        run: |
+          xmake build STBot
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./Tools/VR/run-all-pairs.ps1
+
+      - name: Keep the bot logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bot-pair-logs
+          path: build/windows/x64/release/logs/
+          if-no-files-found: ignore
 
       - name: Gather the client's run-time files
         run: |

@@ -2,9 +2,10 @@
 
 #include <cstdint>
 
-// VR addresses for ids the official VR Address Library CSV does not answer, merged in by VersionDb::LoadCSV().
+// VR addresses for every id the client looks up on VR, merged in by VersionDb::LoadCSV().
 // An entry here wins over the CSV, because most keys are AE ids and a CSV row with the same number is an SE id.
 // A disagreement is logged at start-up ("Address id ... differs").
+// The player's VR Address Library must still be installed, but an older one cannot leave an address of ours unresolved.
 //
 // Keys are the ids the client code looks up on VR (the last POINTER_SKYRIMSE argument).
 // Most are AE ids that were never translated, mapped to the address of the matching SE/VR function.
@@ -3015,6 +3016,113 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 33236u, 0x050e7a0u }, // SE 32489 CombatController update-target hook (s_updateTarget)
     { 21600u, 0x03067f0u }, // SE 21600 PlayerCamera::IsFirstPerson helper
     { 63591u, 0x0b5f9a0u }, // SE 63591 BShkbAnimationGraph internal send event
+
+    // SE ids the VR Address Library answers, copied from its version 0.275.0.
+    // Releases older than 0.158 lack some of them; none from 0.100 on maps any of them elsewhere.
+    { 10878u, 0x01077c0u }, // BGSDefaultObjectManager::GetSingleton
+    { 11308u, 0x01150c0u }, // FixedStrings::GetSingleton
+    { 11913u, 0x0136c30u }, // ExtraDataList::HasQuestObjectAlias
+    { 12204u, 0x0143180u }, // LookupReferenceByHandle
+    { 13625u, 0x017cc30u }, // TESDataHandler::CreateReferenceAtLocation
+    { 13789u, 0x01876a0u }, // Sky::GetSingleton
+    { 14108u, 0x01964c0u }, // ScriptEventSourceHolder::GetSingleton
+    { 15802u, 0x01e99e0u }, // TESObjectREFR::MakeInventoryChanges
+    { 18188u, 0x025e3c0u }, // ImageSpaceModifierInstanceForm::Stop
+    { 19369u, 0x02a8300u }, // TESObjectREFR::ActivateRef
+    { 19373u, 0x02a9890u }, // TESObjectREFR::Enable
+    { 19385u, 0x02aabf0u }, // TESObjectREFR::GetCurrentLocation
+    { 19818u, 0x02b8c30u }, // TESObjectREFR::GetLock
+    { 20026u, 0x02c3850u }, // TESWorldSpace cell load
+    { 24481u, 0x03802b0u }, // TESQuest::EnsureQuestStarted
+    { 25694u, 0x03c47c0u }, // Sky::SetWeather
+    { 25695u, 0x03c4840u }, // Sky::ResetWeather
+    { 25696u, 0x03c48c0u }, // Sky::ForceWeather
+    { 25920u, 0x03d0a80u }, // GetDifficultyMultiplier
+    { 29218u, 0x045b4f0u }, // BSTempEffectParticle::Spawn
+    { 32141u, 0x0500950u }, // IAnimationGraphManagerHolder::SetGraphVariableBool
+    { 32142u, 0x0500970u }, // IAnimationGraphManagerHolder::SetGraphVariableInt
+    { 32143u, 0x0500990u }, // IAnimationGraphManagerHolder::SetGraphVariableFloat
+    { 33630u, 0x0550d40u }, // MagicCaster::InterruptCast
+    { 33632u, 0x0550ec0u }, // MagicCaster::FindTargets
+    { 33672u, 0x0554980u }, // MagicCaster::LaunchSpell
+    { 35263u, 0x05a67b0u }, // BGSCreatedObjectManager::AddWeaponEnchantment
+    { 35264u, 0x05a6850u }, // BGSCreatedObjectManager::AddArmorEnchantment
+    { 35492u, 0x05b1710u }, // GarbageCollector::Add
+    { 36218u, 0x05d80a0u }, // Actor::AddDeathItems
+    { 36247u, 0x05d9520u }, // Actor::CanBeKilledBy
+    { 36331u, 0x05dd850u }, // Actor::Resurrect
+    { 36344u, 0x05de910u }, // Actor::GetLevel
+    { 36345u, 0x05de930u }, // Actor::DamageHealth
+    { 36690u, 0x06025a0u }, // Actor::HasPerk
+    { 36872u, 0x060c340u }, // Actor::Kill
+    { 37513u, 0x06296b0u }, // Actor::RestoreActorValue
+    { 37673u, 0x0631af0u }, // Character::HitTarget
+    { 37772u, 0x06385f0u }, // Actor::RemoveSpell
+    { 37808u, 0x063ab50u }, // Actor::InterruptCast
+    { 37938u, 0x0640a90u }, // ActorEquipManager::EquipObject
+    { 37941u, 0x0640cb0u }, // ActorEquipManager::EquipShout
+    { 37945u, 0x06411a0u }, // ActorEquipManager::UnequipObject
+    { 38047u, 0x0646020u }, // stamina check before a player attack or bash
+    { 38858u, 0x0686920u }, // AIProcess::KnockExplosion
+    { 39181u, 0x069c710u }, // Actor::DoReset3D
+    { 39413u, 0x06c30b0u }, // PlayerCharacter::AddSkillExperience
+    { 42928u, 0x0776440u }, // Projectile::Launch
+    { 50164u, 0x08864d0u }, // Console::SetSelectedRef
+    { 51638u, 0x08ec3e0u }, // StatsMenu::ProcessMessage
+    { 51909u, 0x0903080u }, // FadeOutGame
+    { 51911u, 0x0903370u }, // SendUIMessage::SendInventoryUpdateMessage
+    { 52050u, 0x0908170u }, // DebugNotification
+    { 56227u, 0x09e90e0u }, // TESObjectREFR::MoveTo
+    { 60094u, 0x0aa6fe0u }, // hkpEntity::AddContactListener
+    { 60095u, 0x0aa7080u }, // hkpEntity::RemoveContactListener
+    { 60096u, 0x0aa7130u }, // hkpEntity::Activate
+    { 66355u, 0x0c283e0u }, // BSSoundHandle::Play
+    { 66358u, 0x0c284b0u }, // BSSoundHandle::Stop
+    { 66370u, 0x0c287d0u }, // BSSoundHandle::SetPosition
+    { 66391u, 0x0c29430u }, // BSAudioManager::GetSingleton
+    { 66404u, 0x0c29f60u }, // BSAudioManager::BuildSoundDataFromDescriptor
+    { 66859u, 0x0c3d0e0u }, // MemoryManager::Allocate
+    { 66861u, 0x0c3d3e0u }, // MemoryManager::Deallocate
+    { 66976u, 0x0c42150u }, // BSReadWriteLock::LockForRead
+    { 66977u, 0x0c421d0u }, // BSReadWriteLock::LockForWrite
+    { 66982u, 0x0c42410u }, // BSReadWriteLock::UnlockForRead
+    { 66983u, 0x0c42420u }, // BSReadWriteLock::UnlockForWrite
+    { 67819u, 0x0c6db20u }, // BSFixedString constructor
+    { 67847u, 0x0c6edb0u }, // BSFixedString release
+    { 69270u, 0x0cac0e0u }, // NiCamera::WorldPtToScreenPt3
+    { 75461u, 0x0dbbdd0u }, // the renderer's frame end
+    { 75507u, 0x0dbf9b0u }, // BSRenderManager::CreateRenderTexture
+    { 80061u, 0x0f1fca0u }, // UIMessageQueue::CreateUIMessageData
+    { 97463u, 0x126bbd0u }, // Object::GetHandle
+    { 97746u, 0x129a720u }, // BSScript::Stack::GetStackFrameVariable
+    { 97923u, 0x129dd90u }, // BSScript::NF_util::NativeFunctionBase::Call
+    { 231896u, 0x15b78f4u }, // the Havok world scale
+    { 232777u, 0x15bf5d8u }, // TESActionData vtable
+    { 235511u, 0x15e17f8u }, // TESObjectREFR vtable
+    { 261397u, 0x16d6de0u }, // Character vtable
+    { 514141u, 0x1f82ad8u }, // TESDataHandler singleton
+    { 514167u, 0x1f831b0u }, // ProcessLists singleton
+    { 514172u, 0x1f831c8u }, // BGSCreatedObjectManager::GetSingleton
+    { 514178u, 0x1f83200u }, // UI singleton
+    { 514180u, 0x1f83210u }, // GarbageCollector singleton
+    { 514283u, 0x1f850e8u }, // SubtitleManager singleton
+    { 514287u, 0x1f85108u }, // Calendar singleton
+    { 514315u, 0x1f889d8u }, // SkyrimVM singleton
+    { 514355u, 0x1f88b40u }, // FormFactory list
+    { 514494u, 0x2f896d8u }, // ActorEquipManager singleton
+    { 514642u, 0x2f8a888u }, // PlayerCamera singleton
+    { 514705u, 0x2f8aaa0u }, // ControlMap singleton
+    { 514706u, 0x2f8aaa8u }, // PlayerControls singleton
+    { 514959u, 0x2fc4878u }, // MenuTopicManager singleton
+    { 515124u, 0x2fc52e8u }, // MenuControls singleton
+    { 516574u, 0x2fea520u }, // BSInputDeviceManager singleton
+    { 516851u, 0x2feb200u }, // the change-flags manager singleton (Forms.cpp)
+    { 517228u, 0x2ffd778u }, // WeatherManager singleton
+    { 517711u, 0x2fffdeau }, // PlayerCharacter god mode flag
+    { 524557u, 0x3175fe0u }, // INISettingCollection singleton
+    { 524728u, 0x317e790u }, // the renderer window data
+    { 524729u, 0x317e798u }, // the D3D11 device
+    { 524907u, 0x3181700u }, // FaceGen TextureHolder singleton
 
     // Havok calls with no SE/AE id in either address library.
     // Ids from 9000001 up are private to this table; no library uses that range.
