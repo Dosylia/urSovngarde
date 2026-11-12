@@ -628,6 +628,8 @@ struct Rig
     // Otherwise an effect that attaches every frame would rebuild the skeleton every frame.
     std::chrono::steady_clock::time_point RestructureAt{};
     bool Valid = false;
+    // Whether it was in view at the last frame end: once in view, it leaves only well past the cone's edge.
+    bool InView = false;
 };
 
 std::unordered_map<uint32_t, Rig> s_rigs; // frame end only
@@ -876,9 +878,10 @@ const NiTransform* HeadsetTransform() noexcept
 // Posing an actor the renderer has culled can tear its skin into black strips, so only actors in front of the headset are posed.
 // A sphere around the chest is tested against a 50 degree cone, widened by the angle the sphere covers.
 // An actor close by therefore counts as visible whatever the angle.
-bool IsInView(const glm::vec3& acChest) noexcept
+// aMarginDegrees widens the cone further, for an actor already in view.
+bool IsInView(const glm::vec3& acChest, const float aMarginDegrees = 0.f) noexcept
 {
-    constexpr float cHalfAngle = 50.f * glm::pi<float>() / 180.f;
+    const float cHalfAngle = (50.f + aMarginDegrees) * glm::pi<float>() / 180.f;
     constexpr float cBodyRadius = 100.f;
 
     const NiTransform* pHmdTransform = HeadsetTransform();
@@ -893,6 +896,24 @@ bool IsInView(const glm::vec3& acChest) noexcept
     const glm::vec3 forward = ToGlm(hmd.rotate)[1]; // Skyrim: X right, Y forward, Z up
     const float offAxis = std::acos(glm::clamp(glm::dot(forward, toChest / distance), -1.f, 1.f));
     return offAxis < cHalfAngle + std::asin(cBodyRadius / distance);
+}
+
+// Where a live copy's chest is drawn: its root, moved by the pose's hips as PoseActor moves it, at chest height.
+// Its own bones cannot tell: they hold the game's animation or our last pose, depending on whether the game animated this frame.
+// Tested at its bones, a copy near the edge of the view can be in view one frame and out the next, so posed and not posed in turn.
+glm::vec3 DrawnChest(void* apRoot, const RemotePose& acPose) noexcept
+{
+    constexpr float cChestHeight = 90.f; // spine2 of a standing human, above its root
+    const NiTransform& rootWorld = At<NiTransform>(apRoot, kWorldOffset);
+    glm::vec3 local{0.f, 0.f, cChestHeight};
+    // A hip a body-length from the root is a bad read, as in OnFrameEnd.
+    const glm::vec3& hips = acPose.HipOffset;
+    if (acPose.HasHips && std::isfinite(hips.x) && std::isfinite(hips.y) && hips.x * hips.x + hips.y * hips.y < 256.f * 256.f)
+    {
+        local.x = hips.x;
+        local.y = hips.y;
+    }
+    return ToGlm(rootWorld.translate) + ToGlm(rootWorld.rotate) * local;
 }
 
 // A transform the renderer can still use: a real rotation, a sane scale, no infinities.
@@ -3449,7 +3470,25 @@ void OnFrameEnd() noexcept
         uint32_t Skeleton = 0;
         uint32_t OutOfView = 0;
         uint32_t Unusable = 0;
+        // How often it went from posed to not posed or back, and at how many frame ends the view check at its bones would have decided otherwise.
+        uint32_t Switches = 0;
+        uint32_t BonesViewDiffers = 0;
+        bool WasPosed = false;
         std::chrono::steady_clock::time_point NextLog{};
+    };
+    // TEMPORARY: counts a switch whichever way the frame end below leaves the copy.
+    struct SwitchCount
+    {
+        FrameEndCount* pCount = nullptr;
+        bool Posed = false;
+        ~SwitchCount()
+        {
+            if (!pCount)
+                return;
+            if (pCount->Frames > 1 && Posed != pCount->WasPosed)
+                ++pCount->Switches;
+            pCount->WasPosed = Posed;
+        }
     };
     static std::unordered_map<uint32_t, FrameEndCount> s_frameEndCounts;
 
@@ -3466,13 +3505,17 @@ void OnFrameEnd() noexcept
             {
                 if (pCount->Posed && pCount->Posed < pCount->Frames)
                     spdlog::info("PoseFlipDiag: copy {:X} posed at {} of {} frame ends in 10 s; not posed: no 3D {}, dead or down {}, skeleton not matched {}, out of view {}, "
-                                 "a bone the renderer cannot use {}",
-                                 formId, pCount->Posed, pCount->Frames, pCount->NoBody, pCount->Down, pCount->Skeleton, pCount->OutOfView, pCount->Unusable);
+                                 "a bone the renderer cannot use {}; switched between posed and not {} times; the view check at its bones would have decided otherwise at {}",
+                                 formId, pCount->Posed, pCount->Frames, pCount->NoBody, pCount->Down, pCount->Skeleton, pCount->OutOfView, pCount->Unusable, pCount->Switches,
+                                 pCount->BonesViewDiffers);
+                const bool cWasPosed = pCount->WasPosed;
                 *pCount = FrameEndCount{};
+                pCount->WasPosed = cWasPosed;
                 pCount->NextLog = now + std::chrono::seconds(10);
             }
             ++pCount->Frames;
         }
+        SwitchCount switchCount{pCount};
         void* pRoot = pActor ? pActor->GetNiNode() : nullptr;
         if (!pRoot)
         {
@@ -3582,10 +3625,20 @@ void OnFrameEnd() noexcept
 
         // A body being moved over there is checked for view where its owner has it, not at its own bones.
         // Its bones are still where its ragdoll left it here, so it would vanish whenever that old spot is out of view.
-        glm::vec3 viewPoint = ToGlm(rig.Bones[VRPose::kSpine2].World().translate);
+        // A live copy is checked where it is drawn (DrawnChest).
+        const glm::vec3 cBonesChest = ToGlm(rig.Bones[VRPose::kSpine2].World().translate);
+        glm::vec3 viewPoint = isBody ? cBonesChest : DrawnChest(pRoot, pose);
         if (isBody && pose.HasRootPosition && std::isfinite(pose.RootPosition.x) && std::isfinite(pose.RootPosition.y) && std::isfinite(pose.RootPosition.z))
             viewPoint += pose.RootPosition - ToGlm(At<NiTransform>(pRoot, kWorldOffset).translate);
-        if (!IsInView(viewPoint))
+        // Once in view, a copy stays posed until it is 10 degrees past the cone's edge.
+        // Without that margin, a copy at the edge is posed and let go at each small turn of the head.
+        constexpr float cLeaveMarginDegrees = 10.f;
+        const bool cInView = IsInView(viewPoint, rig.InView ? cLeaveMarginDegrees : 0.f);
+        // TEMPORARY, see FrameEndCount: what the check at the copy's bones, with no margin, would have said.
+        if (pCount && !isBody && IsInView(cBonesChest) != cInView)
+            ++pCount->BonesViewDiffers;
+        rig.InView = cInView;
+        if (!cInView)
         {
             // Its weapon body stays in the world out of view too, where the game's animation has it.
             // Taking it out and back in each time the copy leaves view would be churn for nothing.
@@ -3672,6 +3725,7 @@ void OnFrameEnd() noexcept
         PoseActor(rig, pose, worldOffset);
         if (pCount)
             ++pCount->Posed;
+        switchCount.Posed = true;
         ReachHands(rig, pose);
         PlaceWeapons(rig, pose);
         LogPhysicsOnce(formId, rig);

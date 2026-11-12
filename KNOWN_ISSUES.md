@@ -148,7 +148,8 @@ entries below are under `#ifdef SKYRIMVR` with `static_assert`s.
     node's first bytes change), and the skeleton is resolved again when they differ.
   - Not posed: dead, dying or bleeding out actors (the ragdoll owns them), and actors outside a 50 degree
     view cone from the headset (`PlayerCharacter` +0x570, checked by name), because posing a culled actor
-    tears its skin.
+    tears its skin. A live copy is tested where it is drawn (its root and the pose's hips), not at its own
+    bones, and once in view it stays posed until 10 degrees past the cone.
   - Bones are found along the skeleton chain, because physics armour carries duplicate hand nodes.
 - **Send rate:** the local player 30 Hz, other actors 10 Hz. The VR pose plays back 100 ms late,
   movement 300 ms.
