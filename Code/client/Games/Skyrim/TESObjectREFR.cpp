@@ -641,12 +641,23 @@ bool NamesStrayExtraData(const ExtraContainerChanges::Data* apChanges, const Inv
     return false;
 }
 
-void LetHandGo(TESObjectREFR* apRef, InventoryEntry* apEntry, const size_t aHand, const char* acpWhen) noexcept
+// Hands this client emptied, by actor form id, as (item, left hand).
+// Only a player copy's are taken, at its owner's next hand items (TakeEmptiedHands); an NPC's stay noted.
+TiltedPhoques::Map<uint32_t, Vector<std::pair<TESForm*, bool>>> s_emptiedHands;
+
+// The hand is emptied, as an unequip leaves it.
+// A hand left holding its item with no extra data list is not safe: the game reads that list with no null check, for a hand holding a light and in an equip.
+// The hand's entry is not freed, as that needs the game's own destructor; it is small.
+void EmptyHand(TESObjectREFR* apRef, InventoryEntry** appSlot, const size_t aHand, const char* acpWhen) noexcept
 {
+    const InventoryEntry* pEntry = *appSlot;
     const Actor* pActor = Cast<Actor>(apRef);
-    spdlog::info("HandWatch: {:X} (dead: {}) pointed its {} ({:X}) at extra data {}; it lets go of it", apRef->formID, pActor && pActor->IsDead(), kHandNames[aHand],
-                 apEntry->pObject ? apEntry->pObject->formID : 0, acpWhen);
-    apEntry->pExtraLists = nullptr;
+    spdlog::info("HandWatch: {:X} (dead: {}) pointed its {} ({:X}) at extra data {}; the hand is emptied", apRef->formID, pActor && pActor->IsDead(), kHandNames[aHand],
+                 pEntry->pObject ? pEntry->pObject->formID : 0, acpWhen);
+    // The ammunition is no hand item.
+    if (aHand < 2 && pEntry->pObject)
+        s_emptiedHands[apRef->formID].push_back({pEntry->pObject, aHand == 0});
+    *appSlot = nullptr;
 }
 
 // A removal is watched: what the hands point at is noted before it, and a hand the game left as it was is checked after.
@@ -666,7 +677,7 @@ public:
         }
     }
 
-    void LetGoOfRemoved() noexcept
+    void EmptyRemovedHands() noexcept
     {
         InventoryEntry** slots[3];
         if (!GetHandSlots(m_pRef, slots))
@@ -679,7 +690,7 @@ public:
             if (!hand.pLists || *slots[i] != hand.pEntry || hand.pEntry->pExtraLists != hand.pLists)
                 continue;
             if (NamesStrayExtraData(pChanges, hand.pEntry))
-                LetHandGo(m_pRef, hand.pEntry, i, "its item does not hold, after a removal");
+                EmptyHand(m_pRef, slots[i], i, "its item does not hold, after a removal");
         }
     }
 
@@ -698,7 +709,7 @@ private:
 // Other plugins read a living actor's hands on every equip (Enchantment Art Extender reads the right hand's extra data).
 // Items also leave an actor by the game's own hand (looting, the dead-body clean-up), which no watch here sees.
 // So before a revival and before each equip from its owner, a copy's hands are checked against its items once more.
-void TESObjectREFR::LetHandsGoOfStrayExtraData(const char* acpWhen) noexcept
+void TESObjectREFR::EmptyHandsOfStrayExtraData(const char* acpWhen) noexcept
 {
     InventoryEntry** slots[3];
     if (!GetHandSlots(this, slots))
@@ -709,8 +720,19 @@ void TESObjectREFR::LetHandsGoOfStrayExtraData(const char* acpWhen) noexcept
     {
         InventoryEntry* pEntry = *slots[i];
         if (pEntry && pEntry->pExtraLists && NamesStrayExtraData(pChanges, pEntry))
-            LetHandGo(this, pEntry, i, acpWhen);
+            EmptyHand(this, slots[i], i, acpWhen);
     }
+}
+
+Vector<std::pair<TESForm*, bool>> TESObjectREFR::TakeEmptiedHands(uint32_t aFormId) noexcept
+{
+    Vector<std::pair<TESForm*, bool>> emptied;
+    if (const auto it = s_emptiedHands.find(aFormId); it != s_emptiedHands.end())
+    {
+        emptied = std::move(it->second);
+        s_emptiedHands.erase(it);
+    }
+    return emptied;
 }
 
 // The game removes an item's extra data lists one at a time, and a removal does nothing once the item's count is used up.
@@ -865,7 +887,7 @@ void TESObjectREFR::RemoveAllItems() noexcept
 
         HandWatch hands(this);
         RemoveItem(pItem, count, ITEM_REMOVE_REASON::kRemove, pList, nullptr);
-        hands.LetGoOfRemoved();
+        hands.EmptyRemovedHands();
 
         // Progress: the list is gone, or the item's count went down.
         const ExtraContainerChanges::Entry* pAfter = FindEntry(GetContainerChanges(), pItem);
@@ -1348,7 +1370,7 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
         spdlog::debug("Removing item {:X}, count {}", pObject->formID, -arEntry.Count);
         HandWatch hands(this);
         RemoveItem(pObject, -arEntry.Count, ITEM_REMOVE_REASON::kRemove, pExtraDataList, nullptr);
-        hands.LetGoOfRemoved();
+        hands.EmptyRemovedHands();
     }
 
     // TODO(cosideci): this is still flawed. Adding the refr to the quest leader is hard.

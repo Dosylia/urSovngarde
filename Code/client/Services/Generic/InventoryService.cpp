@@ -294,7 +294,7 @@ void InventoryService::OnNotifyEquipmentChanges(const NotifyEquipmentChanges& ac
     }
 
     // The equip makes other plugins read the copy's hands.
-    pActor->LetHandsGoOfStrayExtraData("its item does not hold, before an equip from its owner");
+    pActor->EmptyHandsOfStrayExtraData("its item does not hold, before an equip from its owner");
 
     uint32_t equipSlotId = modSystem.GetGameId(acMessage.EquipSlotId);
     TESForm* pEquipSlot = TESForm::GetById(equipSlotId);
@@ -580,7 +580,7 @@ void NoteHandItem(Actor* apActor, TESForm* apItem, bool aLeft, bool aEquipped) n
 void InventoryService::ApplyHandEquipment(Actor* apActor, const Inventory& acEquipment, bool aArrival) noexcept
 {
     // The equips below make other plugins read the actor's hands.
-    apActor->LetHandsGoOfStrayExtraData("its item does not hold, before its owner's hand items");
+    apActor->EmptyHandsOfStrayExtraData("its item does not hold, before its owner's hand items");
 
     constexpr uint8_t cLightFormType = 31;
 
@@ -615,6 +615,9 @@ void InventoryService::ApplyHandEquipment(Actor* apActor, const Inventory& acEqu
     Vector<HandItem>& heldItems = s_handsApplied[apActor->formID];
     if (aArrival)
         heldItems.clear(); // a fresh copy: SetInventory set the worn flags, the hands are empty
+    // A hand the hand check emptied no longer holds what we put there: it is put there again below while its owner still holds it.
+    for (const auto& [pForm, cLeft] : TESObjectREFR::TakeEmptiedHands(apActor->formID))
+        NoteHandItem(apActor, pForm, cLeft, false);
     const Vector<HandItem> flaggedItems = collectHandItems(apActor->GetEquipment());
     spdlog::info("Equipment sync: remote actor {:X} hands {}: {} hand items wanted ({} worn entries in all), {} put there by us, {} flagged worn, left spell {}, right spell {}", apActor->formID,
                  aArrival ? "on arrival" : "on snapshot", desiredItems.size(), acEquipment.Entries.size(), heldItems.size(), flaggedItems.size(),
@@ -639,6 +642,12 @@ void InventoryService::ApplyHandEquipment(Actor* apActor, const Inventory& acEqu
     {
         if (ContainsHandItem(heldItems, item.pForm, item.Left))
             continue;
+        // Already in that hand, put there since: equipping it again would empty the hand (`live-equip-twice`).
+        if (apActor->GetEquippedWeapon(item.Left ? 0 : 1) == item.pForm)
+        {
+            NoteHandItem(apActor, item.pForm, item.Left, true);
+            continue;
+        }
         auto* pObject = Cast<TESBoundObject>(item.pForm);
         if (!pObject)
             continue;

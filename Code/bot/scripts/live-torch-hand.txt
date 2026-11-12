@@ -1,0 +1,54 @@
+# A living NPC holding a torch becomes the bot's copy and its items are set to the bot's: the game lives on.
+#
+#   headless.ps1 up
+#   python Tools\VR\live-check.py live-torch-hand
+#
+# The game reads the extra data list of a hand that holds a light with no null check (SkyrimVR.exe+0x6896F3, +0x1F0EEB).
+# In play, Aela with a torch passed to the other player at a join, her items were set to its items, and the hand guard left her left hand with no list.
+# Here Lydia (A2C94) holds a torch (1D4EC); offline, the bot registers her alive; back online she becomes its copy and her torch is taken.
+# On the rig the game mostly clears her hand itself; in one run of four it did not, and the hand guard emptied it (`HandWatch: A2C94 ... left hand (1D4EC)`), as in play.
+# So a build whose guard leaves such a hand with no list would fail here only now and then: read the `HandWatch:` line before calling a pass a test of the guard.
+# A run counts only when (REQUIRE) the bot led and her torch was taken away by the items it set.
+party lead
+log live torch hand
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+stay
+
+log -- night, and Lydia beside the player, waiting, no longer its teammate, a torch she may not put away in her left hand
+log DO console set gamehour to 23
+log DO papyrus ObjectReference MoveTo A2C94 14 f:150 f:0 f:0 b:false
+log DO papyrus Actor SetActorValue A2C94 s:WaitingForPlayer f:1
+log DO papyrus Actor SetPlayerTeammate A2C94 b:false b:false
+log DO papyrus ObjectReference AddItem A2C94 1D4EC n:1 b:true
+log DO papyrus Actor EquipItem A2C94 1D4EC b:true b:true
+wait 5
+# 11 is a torch, in the left hand (0).
+log DO papyrus Actor GetEquippedItemType A2C94 n:0
+log REQUIRE ref A2C94 count 1D4EC 1
+
+log -- offline (F6) while the bot registers her alive, with no torch
+log DO f6
+wait 8
+npc A2C94 base A2C8E
+waitfor owned == 1 20
+wait 2
+
+log -- back online: she becomes the bot's copy and her items are set to the bot's, which takes the torch out of her hand
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+log REQUIRE ref A2C94 count 1D4EC 0
+# The game's light code runs as she stands near the player: give it time.
+wait 15
+log CHECK game alive
+# Her left hand is empty (0): the game cleared it as the torch left.
+log DO papyrus Actor GetEquippedItemType A2C94 n:0
+wait 3
+log CHECK game alive
+log done
+stop
