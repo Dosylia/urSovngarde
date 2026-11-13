@@ -444,11 +444,15 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Open work
 
-- [!] **A copy switched off while a game job still ran it** (2026-11-12 23:08:14, a public pair, report 20261112-220845; also 2026-10-18 on v1.9.4). Fixed in build v1.9.81-4-g003ad8cb-dirty.74a329c, rig only, not seen in play.
+- [ ] **A copy switched off while a game job still ran it** (2026-11-12 23:08:14, a public pair, report 20261112-220845; also 2026-10-18 on v1.9.4). Not fixed: the change below is not shown to touch it.
       The server removed a dead Skeever copy (FF0008BE) the game still held. The client's update switched it off at once (`Temporary Remote Held ... disabled and queued`), and 11 ms later a movement job of the game read it, deleted by then (`SkyrimVR.exe+0x714EB2`, MovementControllerNPC, the copy in R15 with form id 0).
       The client's update runs on the game's job threads, beside the jobs that run actors. The October fix kept such a switch-off away from the game's own temporary actors; our own copies were still switched off that way.
       Now the three places that switch off a removed copy queue it, and the main loop switches it off at the start of the next frame, on the main thread (`CopyOff: X switched off at the start of a frame, on the main thread`).
-      Rig: `live-copy-removed` on a0f2f73 and 74a329c, each time 6 of 6 copies switched off on the main thread about a frame after their removal, the game alive. No red run: the race cannot be made on demand. To see: no more `+0x714EB2` crashes in the hub.
+      Rig: `live-copy-removed` on a0f2f73 and 74a329c, each time 6 of 6 copies switched off on the main thread about a frame after their removal, the game alive. No red run: the race cannot be made on demand.
+      But the game's switch-off is only a request: on 57331c6 every copy logged `the disable not landed yet` right after it, and lost its 3D 13 to 40 ms later. The game carries it out on its own schedule, wherever it was asked from, so moving the request moves nothing that matters.
+      Since 57331c6 a copy with no 3D is not switched off at all (`CopyOff: X left as it is: it has no 3D`), the rule the October fix applies to the game's own actors, and the queue drops a copy queued twice.
+      The skeever was dead, and 11 ms after the request the game had deleted it (form id 0) while 2 handles were still on it. Next: whether the game deletes a dead temporary actor at once when it is switched off, a variant of `live-copy-removed` with the bears killed first.
+      If it does, a dead copy must not be switched off while held; it waits as it is until the game lets go. To see: no more `+0x714EB2` crashes in the hub.
 - [!] **Every address the client uses comes from its own table** (2026-11-11). Not in a release, not seen in play.
       104 ids the client uses on VR were answered only by the player's VR Address Library; releases older than 0.158 lack some of them (0.100 lacks 15, among them `Actor::DamageHealth`, `Actor::AddDeathItems` and the Havok contact listeners). They are now in `VRAddressOverrides.h`, copied from 0.275.0; no release from 0.100 on maps any of them elsewhere.
       The client also logs `VR Address Library <version>: <n> ids` at start and `SKSE plugins (<n>): <file> <version>, ...` at the first update, with the version Crash Logger shows, so a report without a Crash Logger log still names DynDOLOD's DLL version.
@@ -502,7 +506,9 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       `RecentModelChanges` ran on them for the first time: this client's last changes to the copy's 3D were 1 s to 2 min before, so no one change of ours lines up.
       Build v1.9.81-4-g003ad8cb-dirty.74a329c adds the TEMPORARY `EyeBoneWatch`: the plain NiNode destructor is hooked, and an eye bone destroyed while a live parent still lists it is logged with the stack of that release (`EyeBoneWatch: eye bone ... freed while its parent ...`) and listed again in the crash block.
       Rig (`live-eye-bone-watch`): installed on the first loaded actor (`.?AVNiNode@@`, SkyrimVR.exe+0x17EEC08), silent through four trips that unloaded 140 actors, 60 fps. It has never caught a real case.
-      To see: an `EyeBoneWatch: eye bone` line in any log; its stack names what freed the bone.
+      Since 57331c6 it notes any plain node freed while a live parent lists it, not only the eye bone: a head bone released once too many frees the eye bone with it, as its child, and only the head bone's release shows the culprit.
+      Its line is now `EyeBoneWatch: node X ('<name>') freed while its parent ...`; the first 20 are logged in full, then one in a hundred. Rig on 57331c6: silent through four trips that unloaded 142 actors, 60 fps.
+      To see: an `EyeBoneWatch: node` line in any log; its stack names what freed the node.
 - [ ] **A dead horse that could still be ridden** (2026-11-08 14:22, the host's game). Cause unknown.
       The host killed horse 798EB at 14:20:58 (`BodyStand: dead 798EB had 289 health; taken` at its death). Its prompt then read "Steal", and at 14:22:08 the host's game reported riding it (`Mount: copy FF001386 of rider 12 told to ride copy 798EB` in player 2's log).
       It read "Search" after player 2 touched it; no log line says what changed. Build 1a16be1 adds the TEMPORARY `Mount: X starts to ride Y, whose life state here is ...`, logged when a ride starts on a horse that is not plainly alive.

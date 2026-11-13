@@ -1308,18 +1308,32 @@ void CharacterService::DisableQueuedCopies() noexcept
         std::scoped_lock lock(s_disableQueueLock);
         handles.swap(s_disableQueue);
     }
+    if (handles.empty() || IsProcessExiting())
+        return;
+
+    // A copy can be queued twice in a frame (removed by discovery, then by the server); its disable has not landed yet the second time.
+    std::sort(handles.begin(), handles.end());
+    handles.erase(std::unique(handles.begin(), handles.end()), handles.end());
+
     for (const uint32_t cHandle : handles)
     {
         // By handle: the game reuses a freed form id.
         Actor* pActor = Cast<Actor>(TESObjectREFR::GetByHandle(cHandle));
         if (!pActor || pActor->IsDeleted() || !pActor->IsTemporary() || pActor->IsDisabled())
             continue;
+        // One without 3D may be in the middle of being disposed of by the game, which disabling crashes; it waits unseen until it is freed.
+        if (!pActor->GetNiNode() || pActor->IsStillLoading())
+        {
+            spdlog::info("CopyOff: {:X} left as it is: it has no 3D, so the game may be disposing of it", pActor->formID);
+            continue;
+        }
         pActor->Disable();
 #ifdef SKYRIMVR
+        const char* cpLanded = pActor->IsDisabled() ? "disabled at once" : "the disable not landed yet";
         if (const uint32_t cThread = GetCurrentThreadId(); cThread == GameMainThreadId())
-            spdlog::info("CopyOff: {:X} switched off at the start of a frame, on the main thread", pActor->formID);
+            spdlog::info("CopyOff: {:X} switched off at the start of a frame, on the main thread; {}", pActor->formID, cpLanded);
         else
-            spdlog::info("CopyOff: {:X} switched off at the start of a frame, on thread {}", pActor->formID, cThread);
+            spdlog::info("CopyOff: {:X} switched off at the start of a frame, on thread {}; {}", pActor->formID, cThread, cpLanded);
 #endif
     }
 }
