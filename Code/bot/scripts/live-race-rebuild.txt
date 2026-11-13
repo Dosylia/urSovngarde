@@ -1,0 +1,68 @@
+# Rebuilds the player's skeleton again and again, as character creation does at each race change, and reads what reaches the freed bones.
+#
+#   python Tools\VR\live-check.py live-race-rebuild
+#
+# Character creation crashed in the player's lighting on a shader property that held a bone's local transform (SkyrimVR.exe+0x1354C40, +0x1355720).
+# So something wrote to a freed bone. Each race change frees the old skeleton; the client holds every freed named node 1.5 s and tells a write to it (`NodeQuarantine: freed node ... was written`).
+# This is a search, not a pass or fail: the lines name the bones that are written after their free, and how soon.
+log live race rebuild
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- the character creation menu first, as the one catch so far came right as it opened in a fresh game
+log DO console showracemenu
+wait 10
+log -- race changes, each a new skeleton
+log DO console player.setrace ImperialRace
+wait 6
+log DO console player.setrace DarkElfRace
+wait 6
+log DO console player.setrace NordRace
+wait 6
+log DO console player.setrace KhajiitRace
+wait 6
+log DO console player.setrace BretonRace
+wait 6
+log DO console player.setrace OrcRace
+wait 6
+log DO console player.setrace HighElfRace
+wait 6
+log DO console player.setrace NordRace
+wait 6
+log -- sex changes, each a new body and skeleton
+log DO console player.sexchange
+wait 6
+log DO console player.sexchange
+wait 6
+log -- quick changes, a frame or so apart, as fast clicking in the menu would make them
+log DO console player.setrace ImperialRace
+log DO console player.setrace NordRace
+log DO console player.setrace DarkElfRace
+log DO console player.setrace NordRace
+wait 8
+log CHECK game alive
+log -- the same with the character creation menu open, which keeps its own preview of the player
+log DO console showracemenu
+wait 8
+log DO console player.setrace ImperialRace
+wait 6
+log DO console player.setrace DarkElfRace
+wait 6
+log DO console player.sexchange
+wait 6
+log DO console player.setrace NordRace
+wait 6
+log DO console player.sexchange
+# A late write came 35 s after a race change in play; the player's freed bones are held 120 s and looked at every second.
+wait 45
+log CHECK game alive
+log -- save loads, each a new player 3D: a crash came in play with no race change
+log DO load last
+wait 30
+log DO load last
+wait 45
+log CHECK game alive
+log done
+stop

@@ -1,0 +1,73 @@
+# Another player's copy swapping weapons quickly, drawn, beside the player: does its animation keep a bone on a freed node?
+#
+#   python Tools\VR\live-check.py live-copy-weapon-swap
+#
+# Crashes at SkyrimVR.exe+0x1E05DB came in sparring, the other player's copy swapping weapons every couple of seconds, under the animation's pose-to-node loop (+0xB3C383).
+# That loop wrote the player's freed WEAPON and SHIELD after a skeleton rebuild; the client now moves such entries (`GraphRebind:`) and tells a write to a freed node (`NodeQuarantine: ... was written`).
+# This is a search: a `GraphRebind:` line for the copy, or a write to a freed node, says weapon swaps on a copy do it too.
+log live copy weapon swap
+waitfor connected 45
+collect equipment spawn
+expect known me
+waitfor known other 40
+wait 8
+log CHECK copy exists
+
+additem 12EB7 1
+additem 12EB6 1
+additem 1397E 1
+additem 13790 1
+additem 13982 1
+wait 4
+draw on
+wait 3
+
+log -- weapons swapped every two seconds, drawn
+equip 12EB7
+equip 12EB6 left
+wait 2
+equip 13790
+wait 2
+equip 1397E left
+wait 2
+equip 13982
+wait 2
+equip 12EB6 left
+wait 2
+equip 12EB7
+wait 2
+unequip 12EB6
+wait 2
+equip 13790
+equip 1397E left
+wait 2
+equip 12EB7
+equip 12EB6 left
+wait 2
+equip 13982
+wait 2
+equip 1397E left
+wait 2
+equip 12EB7
+wait 2
+equip 12EB6 left
+wait 2
+log -- quick swaps, as fast as a player can
+equip 13790
+equip 12EB7
+equip 13982
+equip 12EB7
+equip 1397E left
+equip 12EB6 left
+wait 4
+draw off
+wait 2
+draw on
+wait 2
+draw off
+# The copy's freed nodes are held 1.5 s and the loaded actors' graphs looked at every tenth frame; a late write shows within that hold.
+wait 10
+log CHECK absent NodeQuarantine: freed node .* was written
+log CHECK game alive
+log done
+stop
