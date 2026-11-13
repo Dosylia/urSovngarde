@@ -32,6 +32,12 @@ void ProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     m_pCoreObject->SetValue("setVoiceVolume", CefV8Value::CreateFunction("setVoiceVolume", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("setVoicePartyNearbyOnly", CefV8Value::CreateFunction("setVoicePartyNearbyOnly", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("setPlayerVoiceMuted", CefV8Value::CreateFunction("setPlayerVoiceMuted", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("launcherJoin", CefV8Value::CreateFunction("launcherJoin", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("connectFromLauncher", CefV8Value::CreateFunction("connectFromLauncher", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("launcherCancel", CefV8Value::CreateFunction("launcherCancel", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("showHudMessage", CefV8Value::CreateFunction("showHudMessage", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("setShareWithSteamFriends", CefV8Value::CreateFunction("setShareWithSteamFriends", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("joinSteamFriend", CefV8Value::CreateFunction("joinSteamFriend", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
 }
 
 void ProcessHandler::OnContextReleased(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context> context)

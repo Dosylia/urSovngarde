@@ -112,6 +112,12 @@ export class SettingService {
       'voice_party_nearby_only',
       false,
     ),
+    // Steam friends see the server this player is on, or the networks of the one they host, so they can join.
+    shareWithSteamFriends: new ToggleSetting(
+      this.storeService,
+      'share_with_steam_friends',
+      true,
+    ),
     language: new SelectSetting(
       this.storeService,
       'language',

@@ -8,6 +8,8 @@
 #include <Services/VoiceService.h>
 #ifdef SKYRIMVR
 #include <Services/VRConnectService.h>
+#include <Services/LauncherLinkService.h>
+#include <Services/SteamFriendsService.h>
 #endif
 
 #include <Messages/SendChatMessageRequest.h>
@@ -16,6 +18,7 @@
 #include <Events/SetTimeCommandEvent.h>
 
 #include <World.h>
+#include <Utils.h>
 
 OverlayClient::OverlayClient(TransportService& aTransport, TiltedPhoques::OverlayRenderHandler* apHandler)
     : TiltedPhoques::OverlayClient(apHandler)
@@ -36,10 +39,8 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         auto eventName = pArguments->GetString(0).ToString();
         auto eventArgs = pArguments->GetList(1);
 
+        // Only the name: an event's arguments can hold a server password.
         spdlog::info(eventName);
-        spdlog::info(eventArgs->GetString(0).ToString());
-        spdlog::info(std::to_string(eventArgs->GetInt(1)));
-        spdlog::info(eventArgs->GetString(2).ToString());
 
 #ifndef PUBLIC_BUILD
         LOG(INFO) << "event=ui_event name=" << eventName;
@@ -108,6 +109,37 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             const bool cMuted = eventArgs->GetBool(1);
             World::Get().GetRunner().Queue([cPlayerId, cMuted]() { World::Get().ctx().at<VoiceService>().SetPlayerMuted(cPlayerId, cMuted); });
         }
+#ifdef SKYRIMVR
+        else if (eventName == "launcherJoin")
+        {
+            const std::string cRequest = eventArgs->GetString(0);
+            const std::string cCode = eventArgs->GetString(1);
+            const std::string cName = eventArgs->GetString(2);
+            const std::string cPassword = eventArgs->GetString(3);
+            World::Get().GetRunner().Queue([cRequest, cCode, cName, cPassword]() { World::Get().ctx().at<LauncherLinkService>().RequestJoin(cRequest, cCode, cName, cPassword); });
+        }
+        else if (eventName == "connectFromLauncher")
+            World::Get().GetRunner().Queue([]() { World::Get().ctx().at<VRConnectService>().ConnectNow(); });
+        else if (eventName == "setShareWithSteamFriends")
+        {
+            const bool cSharing = eventArgs->GetBool(0);
+            World::Get().GetRunner().Queue([cSharing]() { World::Get().ctx().at<SteamFriendsService>().SetSharing(cSharing); });
+        }
+        else if (eventName == "joinSteamFriend")
+        {
+            const std::string cFriendId = eventArgs->GetString(0);
+            const std::string cPassword = eventArgs->GetString(1);
+            World::Get().GetRunner().Queue([cFriendId, cPassword]() { World::Get().ctx().at<SteamFriendsService>().JoinFriend(cFriendId, cPassword); });
+        }
+        else if (eventName == "launcherCancel")
+            World::Get().GetRunner().Queue([]() { World::Get().ctx().at<LauncherLinkService>().CancelRequest(); });
+        else if (eventName == "showHudMessage")
+        {
+            // From the menu, so a player who closed the dashboard still learns how a join ended.
+            const std::string cText = std::string(eventArgs->GetString(0)).substr(0, 200);
+            World::Get().GetRunner().Queue([cText]() { Utils::ShowHudMessage(TiltedPhoques::String(("urSovngarde: " + cText).c_str())); });
+        }
+#endif
 
         return true;
     }
@@ -135,16 +167,8 @@ void OverlayClient::ProcessDisconnectMessage()
 {
 #ifdef SKYRIMVR
     // Closing the transport directly looks like a dropped line to the connect service, which then reconnects.
-    // Toggle() marks the disconnect as chosen, and only closes when online.
-    World::Get().GetRunner().Queue(
-        []()
-        {
-            auto& connect = World::Get().ctx().at<VRConnectService>();
-            if (World::Get().GetTransport().IsConnected())
-                connect.Toggle();
-            else
-                World::Get().GetTransport().Close();
-        });
+    // Stop() marks the disconnect as chosen, whether the game was online, connecting or waiting to retry.
+    World::Get().GetRunner().Queue([]() { World::Get().ctx().at<VRConnectService>().Stop(); });
 #else
     World::Get().GetRunner().Queue([]() { World::Get().GetTransport().Close(); });
 #endif

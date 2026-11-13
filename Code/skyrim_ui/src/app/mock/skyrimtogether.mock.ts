@@ -169,6 +169,70 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
     console.log(`Player ${playerId} ${muted ? 'muted' : 'heard'}`);
   }
 
+  // A stand-in launcher: 'NOCODE' does not exist, 'PASWRD' asks for a password, any other code joins.
+  private launcher: Record<string, any> = {
+    contract: 1,
+    launcher: 'mock',
+    hosting: { code: 'HST-123', password: false },
+    join: null,
+  };
+
+  // Steam friends as the game reads them: one reachable, one with a password, one only through the launcher, one out of reach.
+  private steamFriends = {
+    friends: [
+      { id: '1', name: 'A friend', hosting: true, onServer: false, reachable: true, route: 'vlan', password: false, code: '' },
+      { id: '2', name: 'A friend with a password', hosting: true, onServer: false, reachable: true, route: 'public', password: true, code: '' },
+      { id: '3', name: 'A friend with the launcher', hosting: true, onServer: false, reachable: false, route: '', password: false, code: 'K7M-2QX' },
+      { id: '4', name: 'A friend out of reach', hosting: true, onServer: false, reachable: false, route: '', password: false, code: '' },
+    ],
+  };
+
+  setShareWithSteamFriends(sharing: boolean): void {
+    console.log(`Steam friends ${sharing ? 'see' : "don't see"} where this player plays`);
+  }
+
+  joinSteamFriend(friendId: string, password: string): void {
+    console.log(`Joining Steam friend ${friendId}${password ? ' with a password' : ''}`);
+    this.disconnect();
+    this.connect('127.0.0.1', 10578, password);
+  }
+
+  private sendLauncherState(): void {
+    this.launcher['written'] = Math.floor(Date.now() / 1000);
+    this.emit('launcherState', JSON.stringify(this.launcher));
+  }
+
+  launcherJoin(request: string, code: string, name: string, password: string): void {
+    const normalised = code.replace(/[\s-]/g, '').toUpperCase();
+    const answer = (state: string, extra: Record<string, any> = {}) => {
+      this.launcher['join'] = { request: Number(request), state, code: normalised, address: null, reason: null, detail: null, ...extra };
+      this.sendLauncherState();
+    };
+    answer('joining');
+    setTimeout(() => {
+      if (normalised === 'NOCODE') {
+        answer('failed', { reason: 'noSuchCode' });
+      } else if (normalised === 'PASWRD' && !password) {
+        answer('password');
+      } else {
+        answer('ready', { address: '127.0.0.1:10611' });
+      }
+    }, 600);
+  }
+
+  connectFromLauncher(): void {
+    this.disconnect();
+    this.connect('127.0.0.1', 10611, '');
+  }
+
+  launcherCancel(): void {
+    console.log('Join request withdrawn');
+  }
+
+  showHudMessage(text: string): void {
+    console.log(`HUD: ${text}`);
+  }
+
   launchParty(): void {
     if (this.connected) {
       this.emit('partyCreated');
@@ -246,6 +310,9 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
     this.emit('enterGame');
     this.emit('setVersion', this.version);
     this.emit('setName', this.playerName);
+    this.sendLauncherState();
+    setInterval(() => this.sendLauncherState(), 5000);
+    this.emit('steamFriends', JSON.stringify(this.steamFriends));
 
     fromEvent(window, 'keydown').subscribe((event: KeyboardEvent) => {
       if (event.ctrlKey && event.location === 2) {

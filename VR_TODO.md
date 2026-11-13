@@ -447,6 +447,23 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       An empty name and level 1 on every copy is also what a cut connect request produces (see "The connect request
       of a large mod list was cut short"). Check that server's `connected with N mods` line: from about 1800 plugins
       up, it was this.
+- [!] **Join a friend from the headset** (asked for on 2026-11-13). The menu on the SteamVR dashboard has "Join a friend":
+      the Steam friends playing urSovngarde, each with Join, a code field when the launcher is open, and the player's own
+      code while they host with it. How a join ends also shows on the HUD, for a player who closed the dashboard.
+      - Steam friends, no launcher needed: each game shows its Steam friends where it plays (rich presence `ursovngarde`):
+        the server it is on, or, when it hosts, its home and virtual LAN networks and its public address (one STUN question,
+        only while sharing is on). A friend's game picks the way it can reach (same house, a virtual LAN both are on, the
+        public address), up to three tried in turn, without touching `connect.txt`. A menu setting turns sharing off.
+        A host behind the launcher's relay shows only its code, joinable with the launcher open.
+      - Codes, through the launcher: the game passes it `launcher-request.json` and reads `launcher.json`, both beside
+        `connect.txt`, then connects to what the launcher wrote. The launcher's side is not built yet.
+      Build ba120a7 (client, TPProcess.exe, menu page by hand), FUS only, not MGO. TPTests 122 (8 `[steamjoin]` cases).
+      Rig: `live-launcher-join.py` (a stand-in launcher) red on 4d40ba5's old page, 8 of 8 on ba120a7;
+      `live-steam-join.py` 6 of 6 on ba120a7, with no red run (no build without the feature is kept). The rig has one Steam
+      account, so it joins itself: the same-house route only. Not seen in play: a friends list between two accounts, a
+      public-address or virtual LAN join, and the Windows firewall for a host's server all need two PCs.
+      Also in it: the menu's Disconnect and Cancel now stop the reconnect attempts too, and the client log no longer
+      holds a menu event's arguments (Connect's password was in it).
 
 ## Open work
 

@@ -121,6 +121,17 @@
     <section>
       <h2>{{ 'COMPONENT.SETTINGS.PARTY' | transloco }}</h2>
       <div class="setting">
+        <label for="shareWithSteamFriends">{{
+          'COMPONENT.SETTINGS.SHARE_WITH_STEAM_FRIENDS' | transloco
+        }}</label>
+        <input
+          type="checkbox"
+          id="shareWithSteamFriends"
+          [ngModel]="settings.shareWithSteamFriends | async"
+          (ngModelChange)="settings.shareWithSteamFriends.next($event)"
+        />
+      </div>
+      <div class="setting">
         <label for="showParty">{{
           'COMPONENT.SETTINGS.SHOW_PARTY' | transloco
         }}</label>

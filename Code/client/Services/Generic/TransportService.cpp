@@ -225,6 +225,7 @@ bool TransportService::Connect(const std::string& acEndpoint) noexcept
     // The networking library keeps the old one alive, so the server sees a player who is there but never sends anything.
     // Close() does nothing when there is no connection.
     Close();
+    m_serverEndpoint = acEndpoint;
     return Client::Connect(acEndpoint);
 }
 

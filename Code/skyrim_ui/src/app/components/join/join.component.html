@@ -1,0 +1,96 @@
+<app-connecting
+  *ngIf="step?.step === 'connecting'; else form"
+  [address]="step?.name || step?.code || ''"
+  (cancel)="cancelConnecting()"
+></app-connecting>
+
+<ng-template #form>
+  <div
+    class="container"
+    *ngIf="{ launcher: launcher$ | async, friends: friends$ | async } as view"
+  >
+    <div *ngIf="view.launcher?.hosting as hosting" class="join-hosting">
+      <p class="join-label">{{ 'COMPONENT.JOIN.YOUR_CODE' | transloco }}</p>
+      <p class="join-own-code">{{ hosting.code }}</p>
+      <p class="join-hint">
+        {{
+          (hosting.password
+            ? 'COMPONENT.JOIN.YOUR_CODE_PASSWORD'
+            : 'COMPONENT.JOIN.YOUR_CODE_INFO'
+          ) | transloco
+        }}
+      </p>
+    </div>
+
+    <p class="join-label">{{ 'COMPONENT.JOIN.FRIENDS' | transloco }}</p>
+    <ul *ngIf="view.friends?.length; else noFriends" class="join-friends">
+      <li *ngFor="let friend of view.friends; trackBy: trackFriend">
+        <span class="join-friend-name">{{ friend.name }}</span>
+        <span class="join-friend-where">{{
+          whereKey(friend, !!view.launcher) | transloco
+        }}</span>
+        <button
+          *ngIf="canJoin(friend, !!view.launcher)"
+          class="menu-button compact primary"
+          [disabled]="busy"
+          (click)="joinFriend(friend, !!view.launcher)"
+        >
+          {{ 'COMPONENT.JOIN.JOIN' | transloco }}
+        </button>
+      </li>
+    </ul>
+    <ng-template #noFriends>
+      <p class="join-hint">{{ 'COMPONENT.JOIN.NO_FRIENDS' | transloco }}</p>
+    </ng-template>
+
+    <ng-container *ngIf="view.launcher; else noLauncher">
+      <p class="join-label">{{ 'COMPONENT.JOIN.WITH_CODE' | transloco }}</p>
+      <input
+        type="text"
+        maxlength="16"
+        [placeholder]="'COMPONENT.JOIN.CODE' | transloco"
+        [(ngModel)]="code"
+        (ngModelChange)="onCodeTyped()"
+        (keydown.enter)="joinTyped()"
+        spellcheck="false"
+        autocomplete="off"
+      />
+    </ng-container>
+    <ng-template #noLauncher>
+      <p class="join-hint">{{ 'COMPONENT.JOIN.CODES_NEED_LAUNCHER' | transloco }}</p>
+    </ng-template>
+
+    <ng-container *ngIf="askPassword">
+      <p class="join-hint">{{ 'COMPONENT.JOIN.PASSWORD_NEEDED' | transloco }}</p>
+      <input
+        type="password"
+        maxlength="128"
+        [placeholder]="'COMPONENT.JOIN.PASSWORD' | transloco"
+        [(ngModel)]="password"
+        (keydown.enter)="joinTyped()"
+        spellcheck="false"
+      />
+    </ng-container>
+
+    <p *ngIf="step?.step === 'asking'" class="join-status">
+      {{ 'COMPONENT.JOIN.ASKING' | transloco }}
+    </p>
+    <p *ngIf="step?.step === 'failed'" class="join-status join-status-error">
+      {{ reasonKey | transloco }}
+    </p>
+
+    <app-action-buttons>
+      <button
+        *ngIf="view.launcher || askPassword"
+        class="menu-button compact primary"
+        [disabled]="busy || !canJoinTyped"
+        (click)="joinTyped()"
+      >
+        {{ 'COMPONENT.JOIN.JOIN' | transloco }}
+      </button>
+      <button class="menu-button compact" (click)="close()">
+        {{ 'COMPONENT.JOIN.CLOSE' | transloco }}
+      </button>
+    </app-action-buttons>
+  </div>
+</ng-template>

@@ -49,6 +49,20 @@
 
     <div class="app-root-main">
       <nav class="app-root-menu">
+        <button class="menu-button" (click)="setView(RootView.JOIN)">
+          <fa-icon class="menu-button-icon" [icon]="icons.join"></fa-icon>
+          <span class="menu-button-text">
+            {{ 'COMPONENT.ROOT.JOIN_FRIEND' | transloco }}
+            <span class="menu-button-sub">
+              <ng-container *ngIf="hostingCode$ | async as code; else joinInfo">
+                {{ 'COMPONENT.ROOT.YOUR_CODE' | transloco: { code: code } }}
+              </ng-container>
+              <ng-template #joinInfo>{{
+                'COMPONENT.ROOT.JOIN_FRIEND_INFO' | transloco
+              }}</ng-template>
+            </span>
+          </span>
+        </button>
         <ng-container *ngIf="!(connected$ | async)">
           <button
             *ngIf="lastServer"
@@ -187,6 +201,9 @@
         <ng-container [ngSwitch]="view$ | async">
           <app-popup *ngSwitchCase="RootView.CONNECT">
             <app-connect (done)="closeView()"></app-connect>
+          </app-popup>
+          <app-popup *ngSwitchCase="RootView.JOIN">
+            <app-join (done)="closeView()"></app-join>
           </app-popup>
           <app-popup *ngSwitchCase="RootView.CONNECT_PASSWORD">
             <app-connect-password (done)="closeView()"></app-connect-password>

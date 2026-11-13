@@ -14,6 +14,8 @@ target("TPTests")
     add_files("../server/ReviveRules.cpp")
     -- The shared clock, for the hours a sleep adds.
     add_files("../common/DateTime.cpp")
+    -- Where a Steam friend's server is reached from: plain values in and out.
+    add_files("../client/Services/Generic/SteamJoin.cpp")
     add_includedirs("../common", "..")
     add_deps("SkyrimEncoding")
     if is_plat("windows") then

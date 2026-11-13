@@ -14,6 +14,7 @@ import { ConnectingComponent } from './components/connecting/connecting.componen
 import { ConnectPasswordComponent } from './components/connect-password/connect-password.component';
 import { DebugComponent } from './components/debug/debug.component';
 import { DisconnectComponent } from './components/disconnect/disconnect.component';
+import { JoinComponent } from './components/join/join.component';
 import { DropdownOptionComponent } from './components/dropdown/dropdown-option.component';
 import { DropdownComponent } from './components/dropdown/dropdown.component';
 import { ErrorComponent } from './components/error/error.component';
@@ -55,6 +56,7 @@ import { TranslocoRootModule } from './transloco-root.module';
     ConnectPasswordComponent,
     DebugComponent,
     DisconnectComponent,
+    JoinComponent,
     DropdownComponent,
     DropdownOptionComponent,
     ErrorComponent,

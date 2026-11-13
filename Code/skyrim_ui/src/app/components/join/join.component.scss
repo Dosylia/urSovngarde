@@ -1,0 +1,72 @@
+@import 'env';
+
+@import 'functions/mod';
+@import 'mixins/gapped-vertical';
+
+.container {
+  @include gapped-vertical($-size-gap);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+input {
+  width: 100%;
+}
+
+.join-label {
+  align-self: flex-start;
+  margin: 0.3em 0 0;
+  opacity: 0.8;
+}
+
+.join-hint,
+.join-status {
+  text-align: center;
+  margin: 0.3em;
+  line-height: $-size-line;
+}
+
+.join-status-error {
+  color: #e57373;
+}
+
+// Read out to friends from the headset, so as big as the panel allows.
+.join-hosting {
+  width: 100%;
+  text-align: center;
+}
+
+.join-own-code {
+  margin: 0.2em 0;
+  font-size: 2.4em;
+  letter-spacing: 0.15em;
+  color: mod($-color-background, 1);
+}
+
+.join-friends {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+    padding: 0.3em 0;
+  }
+}
+
+.join-friend-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.join-friend-where {
+  opacity: 0.7;
+  white-space: nowrap;
+}

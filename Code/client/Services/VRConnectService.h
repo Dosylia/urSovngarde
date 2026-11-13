@@ -2,6 +2,8 @@
 
 #ifdef SKYRIMVR
 
+#include <optional>
+
 struct World;
 struct TransportService;
 struct UpdateEvent;
@@ -39,6 +41,14 @@ struct VRConnectService
 
     // F6: connect when offline, otherwise disconnect and stop reconnecting.
     void Toggle() noexcept;
+    // The launcher just put a friend's server in connect.txt: connect to it now, leaving any server or attempt.
+    void ConnectNow() noexcept;
+    // A Steam friend's server, picked in the menu: connect to it now, and after a drop, until connect.txt is chosen again.
+    // Its addresses come best first; one that does not answer gives way to the next.
+    // connect.txt stays as it was, so the next game starts with the player's own server.
+    void ConnectTo(const std::vector<std::string>& acAddresses, const std::string& acPassword) noexcept;
+    // The menu's Disconnect or Cancel: closes the connection or the attempt, and stops the retries.
+    void Stop() noexcept;
 
 private:
     enum class State
@@ -55,6 +65,8 @@ private:
     void OnConnectionError(const ConnectionErrorEvent& acEvent) noexcept;
 
     void StartAttempt() noexcept;
+    // Leaves any server or attempt; the next update connects.
+    void ReconnectNow() noexcept;
     // Reports install problems on the HUD. False when the server would refuse the connection (uGridsToLoad).
     static bool CheckInstall() noexcept;
     static bool IsInGame() noexcept;
@@ -62,6 +74,9 @@ private:
     TransportService& m_transport;
 
     State m_state{State::kIdle};
+    // A Steam friend's server, used instead of connect.txt while set, and its addresses still to try.
+    std::optional<Config> m_chosen;
+    std::vector<std::string> m_chosenNext;
     bool m_autoConnectDone{false};
     uint32_t m_failedAttempts{0};
     std::chrono::steady_clock::time_point m_inGameSince{};

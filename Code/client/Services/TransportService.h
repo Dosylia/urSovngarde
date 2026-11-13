@@ -45,6 +45,9 @@ struct TransportService : Client
     //! The local network clock in ms when this frame's messages were polled: "now" for remote playback.
     [[nodiscard]] double GetLastPollTime() const noexcept { return m_lastPollTime; }
     void SetServerPassword(const std::string& acPassword) noexcept { m_serverPassword = acPassword; }
+    // The server last connected to, as "host:port", and whether it was given a password.
+    [[nodiscard]] const std::string& GetServerEndpoint() const noexcept { return m_serverEndpoint; }
+    [[nodiscard]] bool HasServerPassword() const noexcept { return !m_serverPassword.empty(); }
     const uint32_t& GetLocalPlayerId() const noexcept { return m_localPlayerId; }
 
 protected:
@@ -63,6 +66,7 @@ private:
     bool m_connected;
     double m_lastPollTime{};
     String m_serverPassword{};
+    std::string m_serverEndpoint{};
     uint32_t m_localPlayerId;
 
     entt::scoped_connection m_updateConnection;

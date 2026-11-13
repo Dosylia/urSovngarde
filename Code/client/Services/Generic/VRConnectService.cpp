@@ -65,16 +65,61 @@ void VRConnectService::Toggle() noexcept
 {
     if (m_state == State::kOnline || m_state == State::kConnecting)
     {
-        spdlog::info("VRConnectService: disconnecting, asked for here (F6 or the menu)");
-        // Set before closing: Close() reports the disconnection synchronously, and it must not schedule a retry.
-        m_state = State::kIdle;
-        m_transport.Close();
-        Utils::ShowHudMessage("urSovngarde: disconnected (F6 to connect again)");
+        Stop();
         return;
     }
 
     m_failedAttempts = 0;
     StartAttempt();
+}
+
+void VRConnectService::Stop() noexcept
+{
+    // A friend's server never reached is given up; one left on purpose stays F6's.
+    if (m_state != State::kOnline)
+    {
+        m_chosen.reset();
+        m_chosenNext.clear();
+    }
+
+    const bool cWasTrying = m_state != State::kIdle;
+    // Set before closing: Close() reports the disconnection synchronously, and it must not schedule a retry.
+    m_state = State::kIdle;
+    m_transport.Close();
+    if (!cWasTrying)
+        return;
+
+    spdlog::info("VRConnectService: disconnecting, asked for here (F6 or the menu)");
+    Utils::ShowHudMessage("urSovngarde: disconnected (F6 to connect again)");
+}
+
+void VRConnectService::ConnectNow() noexcept
+{
+    spdlog::info("VRConnectService: joining the server the launcher just set, asked for in the menu");
+    m_chosen.reset();
+    m_chosenNext.clear();
+    ReconnectNow();
+}
+
+void VRConnectService::ConnectTo(const std::vector<std::string>& acAddresses, const std::string& acPassword) noexcept
+{
+    if (acAddresses.empty())
+        return;
+
+    spdlog::info("VRConnectService: joining a Steam friend's server, asked for in the menu");
+    m_chosen = Config{acAddresses.front().c_str(), acPassword.c_str(), false};
+    m_chosenNext.assign(acAddresses.begin() + 1, acAddresses.end());
+    ReconnectNow();
+}
+
+void VRConnectService::ReconnectNow() noexcept
+{
+    // Waiting before closing: the disconnection then schedules nothing, and the next update connects.
+    // Before a save is loaded, that update comes once the game is in.
+    m_state = State::kWaiting;
+    m_failedAttempts = 0;
+    m_nextAttempt = std::chrono::steady_clock::now();
+    m_transport.Close();
 }
 
 bool VRConnectService::CheckInstall() noexcept
@@ -116,7 +161,9 @@ void VRConnectService::StartAttempt() noexcept
     }
 
     Config config;
-    if (!LoadConfig(config))
+    if (m_chosen)
+        config = *m_chosen;
+    else if (!LoadConfig(config))
     {
         spdlog::warn("VRConnectService: no server in %LOCALAPPDATA%\\SkyrimTogetherVR\\connect.txt or Data\\SKSE\\Plugins\\urSovngarde\\connect.txt");
         Utils::ShowHudMessage("urSovngarde: no server set, join from the urSovngarde launcher");
@@ -124,8 +171,17 @@ void VRConnectService::StartAttempt() noexcept
         return;
     }
 
-    spdlog::info("VRConnectService: connecting to {} (attempt {})", config.Address.c_str(), m_failedAttempts + 1);
-    Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: connecting to ") + config.Address);
+    // A Steam friend's address stays off the HUD and out of the log: both can end up on a stream or in a crash report.
+    if (m_chosen)
+    {
+        spdlog::info("VRConnectService: connecting to a Steam friend's server (attempt {})", m_failedAttempts + 1);
+        Utils::ShowHudMessage("urSovngarde: connecting to your friend's server");
+    }
+    else
+    {
+        spdlog::info("VRConnectService: connecting to {} (attempt {})", config.Address.c_str(), m_failedAttempts + 1);
+        Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: connecting to ") + config.Address);
+    }
 
     // Any leftover connection (say a dashboard connect still trying) is closed while the state is still idle or waiting.
     // Its disconnection then schedules no retry; closed after the state change, it would read as this attempt failing.
@@ -231,6 +287,9 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
 
 void VRConnectService::OnConnected(const ConnectedEvent&) noexcept
 {
+    // Connected somewhere else from the menu: a drop from there must not come back to the friend's server.
+    if (m_chosen && m_transport.GetServerEndpoint() != m_chosen->Address.c_str())
+        m_chosen.reset();
     m_state = State::kOnline;
     m_failedAttempts = 0;
     m_autoConnectDone = true;
@@ -246,6 +305,18 @@ void VRConnectService::OnDisconnected(const DisconnectedEvent&) noexcept
         return;
 
     const bool wasOnline = m_state == State::kOnline;
+
+    // A friend's server that did not answer at one address is tried at the next one at once.
+    if (!wasOnline && m_chosen && !m_chosenNext.empty())
+    {
+        m_chosen->Address = m_chosenNext.front().c_str();
+        m_chosenNext.erase(m_chosenNext.begin());
+        m_state = State::kWaiting;
+        m_nextAttempt = std::chrono::steady_clock::now();
+        spdlog::info("VRConnectService: no answer from the friend's server there; trying its next address");
+        return;
+    }
+
     const auto delay = kRetryDelays[std::min<size_t>(m_failedAttempts, kRetryDelays.size() - 1)];
     ++m_failedAttempts;
 
@@ -267,6 +338,8 @@ void VRConnectService::OnConnectionError(const ConnectionErrorEvent&) noexcept
 
     spdlog::info("VRConnectService: connection refused by the server, not retrying");
     m_state = State::kIdle;
+    m_chosen.reset();
+    m_chosenNext.clear();
 }
 
 #endif

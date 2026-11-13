@@ -69,7 +69,10 @@ target(name)
     add_syslinks(
         "version",
         "dbghelp",
-        "kernel32")
+        "kernel32",
+        -- SteamFriendsService: the network adapters, and one STUN question.
+        "iphlpapi",
+        "ws2_32")
 
     -- The game's font library is zlib-compressed (BannerPicture.cpp, built for both games).
     add_packages("zlib")

@@ -94,6 +94,12 @@ declare namespace SkyrimTogetherTypes {
   type PartyLeftCallback = (inviterId: number) => void;
 
   type PartyInviteReceivedCallback = (inviterId: number) => void;
+
+  /** The launcher's launcher.json as it is, or an empty text once the file is gone. */
+  type LauncherStateCallback = (text: string) => void;
+
+  /** Steam friends playing urSovngarde, as JSON: { friends: [{ id, name, hosting, onServer, reachable, password, code }] }. */
+  type SteamFriendsCallback = (text: string) => void;
 }
 
 /** Global Skyrim: Together object. */
@@ -218,6 +224,21 @@ interface SkyrimTogether {
     event: 'partyInviteReceived',
     callback: SkyrimTogetherTypes.PartyInviteReceivedCallback,
   ): void;
+
+  /** Add listener to when the urSovngarde launcher's state changes. */
+  on(
+    event: 'launcherState',
+    callback: SkyrimTogetherTypes.LauncherStateCallback,
+  ): void;
+
+  /** Add listener to the Steam friends playing urSovngarde, sent every few seconds. */
+  on(
+    event: 'steamFriends',
+    callback: SkyrimTogetherTypes.SteamFriendsCallback,
+  ): void;
+
+  /** Add listener to a Steam friend's join the game could not start: no way to their server from here. */
+  on(event: 'steamJoinFailed', callback: (reason: string) => void): void;
 
   /** Remove listener from when the application is first initialized. */
   off(event: 'init', callback?: SkyrimTogetherTypes.InitCallback): void;
@@ -349,6 +370,18 @@ interface SkyrimTogether {
     callback?: SkyrimTogetherTypes.PartyInviteReceivedCallback,
   ): void;
 
+  off(
+    event: 'launcherState',
+    callback?: SkyrimTogetherTypes.LauncherStateCallback,
+  ): void;
+
+  off(
+    event: 'steamFriends',
+    callback?: SkyrimTogetherTypes.SteamFriendsCallback,
+  ): void;
+
+  off(event: 'steamJoinFailed', callback?: (reason: string) => void): void;
+
   /**
    * Connect to server at given address and port.
    *
@@ -414,6 +447,44 @@ interface SkyrimTogether {
    * Stop or start hearing one player.
    */
   setPlayerVoiceMuted(playerId: number, muted: boolean): void;
+
+  /**
+   * Ask the urSovngarde launcher to join a friend's code; it answers in the launcher state.
+   *
+   * @param request A number that tells this request's answer apart, as text.
+   * @param code The code as the player typed it.
+   * @param name The friend's name when chosen from the list, otherwise empty.
+   * @param password The server's password, or empty.
+   */
+  launcherJoin(request: string, code: string, name: string, password: string): void;
+
+  /**
+   * Connect to the server the launcher just set, leaving any server the game is on.
+   */
+  connectFromLauncher(): void;
+
+  /**
+   * Withdraw the join request, if the launcher has not taken it yet.
+   */
+  launcherCancel(): void;
+
+  /**
+   * Show a line on the game's HUD, seen with the dashboard closed.
+   */
+  showHudMessage(text: string): void;
+
+  /**
+   * Whether Steam friends see where this player plays.
+   */
+  setShareWithSteamFriends(sharing: boolean): void;
+
+  /**
+   * Join the server a Steam friend is on or hosts, straight from the game.
+   *
+   * @param friendId The friend's Steam id, as text.
+   * @param password The server's password, or empty.
+   */
+  joinSteamFriend(friendId: string, password: string): void;
 
   /**
    * Reconnect the client.
