@@ -1,5 +1,6 @@
 #include <RecentDeletes.h>
 #include <RecentModelChanges.h>
+#include <Games/Skyrim/BoneHold.h>
 #include <Games/Skyrim/EyeBoneWatch.h>
 #include <BranchInfo.h>
 #include "CrashHandler.h"
@@ -517,6 +518,7 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
             const size_t cStackWords = pStack >= pStackLimit && pStack < pStackTop ? std::min<size_t>(static_cast<size_t>(pStackTop - pStack), cMaxStackWords) : 0;
             RecentModelChanges::Report(regs, std::size(regs), pStack, cStackWords);
 #ifdef SKYRIMVR
+            BoneHold::Report(regs, std::size(regs));
             EyeBoneWatch::Report(regs, std::size(regs));
 #endif
         }
