@@ -548,6 +548,15 @@ void VoiceService::SetVolume(float aVolume) noexcept
     m_volume = std::clamp(aVolume, 0.f, 2.f);
 }
 
+void VoiceService::SetPartyNearbyOnly(bool aNearbyOnly) noexcept
+{
+    if (aNearbyOnly == m_partyNearbyOnly)
+        return;
+
+    m_partyNearbyOnly = aNearbyOnly;
+    spdlog::info("Voice: the party is heard {}", aNearbyOnly ? "only nearby" : "at any distance");
+}
+
 void VoiceService::SetPlayerMuted(uint32_t aPlayerId, bool aMuted) noexcept
 {
     if (aMuted)
@@ -790,8 +799,11 @@ void VoiceService::PlaceSpeaker(uint32_t aPlayerId, Speaker& aSpeaker) noexcept
 
     const auto& partyMembers = m_world.GetPartyService().GetPartyMembers();
     const bool cIsParty = std::find(partyMembers.begin(), partyMembers.end(), aPlayerId) != partyMembers.end();
+    const bool cRadio = cIsParty && !m_partyNearbyOnly;
 
-    float gain = cIsParty ? kRadioGain : kUnplacedGain;
+    // The server sends a party member's voice from any distance.
+    // So with the party heard only nearby, a party member whose body is not loaded here is not heard.
+    float gain = cRadio ? kRadioGain : cIsParty ? 0.f : kUnplacedGain;
     float pan = 0.f; // -1 left, 1 right
 
     glm::vec3 listener{}, forward{}, right{};
@@ -805,8 +817,8 @@ void VoiceService::PlaceSpeaker(uint32_t aPlayerId, Speaker& aSpeaker) noexcept
         if (cDistance > 1.f)
             pan = std::clamp(glm::dot(cToSpeaker / cDistance, right), -1.f, 1.f);
 
-        // A party member far away stays heard, centred, at the radio volume.
-        if (cIsParty && gain < kRadioGain)
+        // A party member far away stays heard, centred, at the radio volume, unless the party is heard only nearby.
+        if (cRadio && gain < kRadioGain)
         {
             pan *= gain / kRadioGain;
             gain = kRadioGain;

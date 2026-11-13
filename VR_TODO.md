@@ -40,6 +40,12 @@ his scene never finishes. Use an alternate start, or connect after the intro.
   No disagreement lasted to the next census. Four games with different mod lists, levelled stand-ins and a leader change, as on 2026-11-05, are not something the rig reproduces, so step 2 waits for a real session's numbers.
 - **Party of three or four: enemy damage (client only).** Enemies now deal 120% to a player when two, three or four of the party are within 50 m; it was 135% for three and 150% for four, which with the
   server's difficulty took players from full to down in about 2 s on 2026-11-05. Their health bonus is unchanged. Say whether fights still feel fair. The line `Balance: now N of the party within 50 m` shows the numbers.
+- **Party voice heard only nearby (client and menu only).** A new checkbox under "Voice chat" in the urSovngarde menu's settings: "Hear your party only within 30 m, like everyone else".
+  It changes only what the player who ticks it hears; the others still hear that player's voice from any distance unless they tick it too.
+  With it on, a party member is placed in the world and fades out at 30 m like any other player; one whose body is not loaded in this game is not heard.
+  To see: in a party, voice on, one player ticks it and walks away. Past 30 m that player stops hearing the other; with it off, the other is heard centred, like a radio.
+  In the log: `Voice: the party is heard only nearby` (or `at any distance`) when the box changes, and once at each start when it is on.
+  Build v1.9.81-6-gd6c5b2c6-dirty.c96c491, client, its menu helper `TPProcess.exe` and the menu `UI` folder, on FUS only; server unchanged, same protocol. No rig test: the rig has no microphone or second speaker. Not yet seen in play.
 - **A copy's or a chest's items set without the game freezing (client only, uncommitted on 65b14ee7).** Nothing to do in play: siege battles, loot, trade and open chests as usual.
   In the 11-07 play the game's remove-everything call looped forever in player 2's game, on the copy of the siege's Stormcloak Archer FE09F882 as it spawned (at 15:51 and 19:48).
   The stuck thread, named with the build's symbols: `CharacterService::RunRemoteUpdates` → `Actor::SetActorInventory` → `TESObjectREFR::SetInventory` → the game's `InventoryChanges::RemoveAllItems` → `RemoveItem`, over and over, memory 38 to 71 GB.

@@ -52,6 +52,17 @@
         />
       </div>
       <div class="setting">
+        <label for="voicePartyNearbyOnly">{{
+          'COMPONENT.SETTINGS.VOICE_PARTY_NEARBY_ONLY' | transloco
+        }}</label>
+        <input
+          type="checkbox"
+          id="voicePartyNearbyOnly"
+          [ngModel]="settings.voicePartyNearbyOnly | async"
+          (ngModelChange)="settings.voicePartyNearbyOnly.next($event)"
+        />
+      </div>
+      <div class="setting">
         <label for="voiceVolume">{{
           'COMPONENT.SETTINGS.VOICE_VOLUME' | transloco
         }}</label>

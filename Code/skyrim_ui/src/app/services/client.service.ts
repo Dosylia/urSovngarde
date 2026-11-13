@@ -294,6 +294,10 @@ export class ClientService implements OnDestroy {
     skyrimtogether.setVoiceVolume(volume);
   }
 
+  public setVoicePartyNearbyOnly(nearbyOnly: boolean): void {
+    skyrimtogether.setVoicePartyNearbyOnly(nearbyOnly);
+  }
+
   public setPlayerVoiceMuted(playerId: number, muted: boolean): void {
     skyrimtogether.setPlayerVoiceMuted(playerId, muted);
   }

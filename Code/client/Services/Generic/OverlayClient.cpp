@@ -97,6 +97,11 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             const float cVolume = eventArgs->GetType(0) == VTYPE_INT ? static_cast<float>(eventArgs->GetInt(0)) : static_cast<float>(eventArgs->GetDouble(0));
             World::Get().GetRunner().Queue([cVolume]() { World::Get().ctx().at<VoiceService>().SetVolume(cVolume); });
         }
+        else if (eventName == "setVoicePartyNearbyOnly")
+        {
+            const bool cNearbyOnly = eventArgs->GetBool(0);
+            World::Get().GetRunner().Queue([cNearbyOnly]() { World::Get().ctx().at<VoiceService>().SetPartyNearbyOnly(cNearbyOnly); });
+        }
         else if (eventName == "setPlayerVoiceMuted")
         {
             const uint32_t cPlayerId = eventArgs->GetInt(0);

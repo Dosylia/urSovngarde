@@ -30,6 +30,9 @@ export class VoiceService {
     settings.voiceVolume.subscribe(volume =>
       this.client.setVoiceVolume(Number(volume)),
     );
+    settings.voicePartyNearbyOnly.subscribe(nearbyOnly =>
+      this.client.setVoicePartyNearbyOnly(nearbyOnly),
+    );
     combineLatest([this.playerListService.playerList, this.mutedNames]).subscribe(
       ([playerList, muted]) => {
         for (const player of playerList?.players ?? []) {

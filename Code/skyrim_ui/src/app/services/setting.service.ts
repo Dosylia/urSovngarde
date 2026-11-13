@@ -107,6 +107,11 @@ export class SettingService {
     muted: new ToggleSetting(this.storeService, 'audio_muted', false),
     voiceEnabled: new ToggleSetting(this.storeService, 'voice_enabled', false),
     voiceVolume: new SliderSetting(this.storeService, 'voice_volume', 1),
+    voicePartyNearbyOnly: new ToggleSetting(
+      this.storeService,
+      'voice_party_nearby_only',
+      false,
+    ),
     language: new SelectSetting(
       this.storeService,
       'language',

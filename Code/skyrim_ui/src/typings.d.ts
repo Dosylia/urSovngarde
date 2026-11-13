@@ -406,6 +406,11 @@ interface SkyrimTogether {
   setVoiceVolume(volume: number): void;
 
   /**
+   * Hear the party only within 30 m, like other players, instead of at any distance.
+   */
+  setVoicePartyNearbyOnly(nearbyOnly: boolean): void;
+
+  /**
    * Stop or start hearing one player.
    */
   setPlayerVoiceMuted(playerId: number, muted: boolean): void;

@@ -114,6 +114,7 @@
       "AUDIO": "Audio",
       "VOICE": "Sprache",
       "VOICE_ENABLED": "Sprachchat: Spieler im Umkreis von 30 m und deine Gruppe hören dich",
+      "VOICE_PARTY_NEARBY_ONLY": "Deine Gruppe nur im Umkreis von 30 m hören, wie alle anderen",
       "VOICE_VOLUME": "Lautstärke der Stimmen",
       "TEST_MICROPHONE_INFO": "Fünf Sekunden sprechen, dann anhören",
       "TEST_MICROPHONE": "Mikrofon testen",

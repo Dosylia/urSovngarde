@@ -161,6 +161,10 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
     console.log(`Voice volume ${volume}`);
   }
 
+  setVoicePartyNearbyOnly(nearbyOnly: boolean): void {
+    console.log(`Party heard ${nearbyOnly ? 'only nearby' : 'at any distance'}`);
+  }
+
   setPlayerVoiceMuted(playerId: number, muted: boolean): void {
     console.log(`Player ${playerId} ${muted ? 'muted' : 'heard'}`);
   }

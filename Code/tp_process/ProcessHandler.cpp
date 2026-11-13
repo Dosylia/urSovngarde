@@ -30,6 +30,7 @@ void ProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     m_pCoreObject->SetValue("testMicrophone", CefV8Value::CreateFunction("testMicrophone", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("setVoiceEnabled", CefV8Value::CreateFunction("setVoiceEnabled", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("setVoiceVolume", CefV8Value::CreateFunction("setVoiceVolume", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("setVoicePartyNearbyOnly", CefV8Value::CreateFunction("setVoicePartyNearbyOnly", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("setPlayerVoiceMuted", CefV8Value::CreateFunction("setPlayerVoiceMuted", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
 }
 

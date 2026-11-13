@@ -109,6 +109,7 @@
       "AUDIO": "Audio",
       "VOICE": "Voix",
       "VOICE_ENABLED": "Chat vocal : les joueurs à moins de 30 m et votre groupe vous entendent",
+      "VOICE_PARTY_NEARBY_ONLY": "N'entendre votre groupe qu'à moins de 30 m, comme les autres joueurs",
       "VOICE_VOLUME": "Volume des voix",
       "TEST_MICROPHONE_INFO": "Parlez cinq secondes, puis réécoutez-vous",
       "TEST_MICROPHONE": "Tester mon micro",

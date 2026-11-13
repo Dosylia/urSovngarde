@@ -156,6 +156,7 @@
       "AUDIO": "Audio",
       "VOICE": "Voice",
       "VOICE_ENABLED": "Voice chat: players within 30 m and your party hear you",
+      "VOICE_PARTY_NEARBY_ONLY": "Hear your party only within 30 m, like everyone else",
       "VOICE_VOLUME": "Voice volume",
       "TEST_MICROPHONE_INFO": "Speak for five seconds, then hear it back",
       "TEST_MICROPHONE": "Test my microphone",

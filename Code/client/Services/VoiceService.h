@@ -14,6 +14,7 @@ struct IXAudio2SourceVoice;
 /**
  * @brief Proximity voice chat on Steam's voice functions, played placed in the world.
  * Off until turned on in the urSovngarde menu; players within about 30 m hear you, your party at any distance.
+ * A menu option makes this game hear its party only nearby, like everyone else.
  * The menu's microphone test records five seconds and plays them back.
  */
 struct VoiceService
@@ -27,6 +28,7 @@ struct VoiceService
     void StartMicrophoneTest() noexcept;
     void SetEnabled(bool aEnabled) noexcept;
     void SetVolume(float aVolume) noexcept;
+    void SetPartyNearbyOnly(bool aNearbyOnly) noexcept;
     void SetPlayerMuted(uint32_t aPlayerId, bool aMuted) noexcept;
 
 protected:
@@ -109,6 +111,8 @@ private:
 
     bool m_enabled{false};
     float m_volume{1.f};
+    // The party is heard only within the same range as other players.
+    bool m_partyNearbyOnly{false};
     bool m_connected{false};
     bool m_capturing{false};
     uint32_t m_sequence{0};
