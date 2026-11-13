@@ -1,0 +1,27 @@
+# The eye bone watch stays quiet through ordinary loads and unloads of actors, and the game lives on.
+#
+#   python Tools\VR\live-check.py live-eye-bone-watch
+#
+# The watch notes an eye bone freed while a live parent still lists it, which the game's eye tracking then reads (SkyrimVR.exe+0x5EB6C6).
+# A trip away and back unloads every actor near the start and loads others: a sound release must never be noted.
+# Its install line (`EyeBoneWatch: the destruction of ... is watched`) comes at the first loaded actor, before this script: read it in the client log.
+# Nothing here frees a bone one release too many, so a pass says the watch is quiet, not that it catches the fault.
+log live eye bone watch
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+
+log -- away and back twice: the actors near the start unload, and load again
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
+wait 25
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
+wait 25
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
+wait 25
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
+wait 25
+log CHECK absent EyeBoneWatch: eye bone
+log CHECK game alive
+log done
+stop

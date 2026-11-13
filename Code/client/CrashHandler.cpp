@@ -1,5 +1,6 @@
 #include <RecentDeletes.h>
 #include <RecentModelChanges.h>
+#include <Games/Skyrim/EyeBoneWatch.h>
 #include <BranchInfo.h>
 #include "CrashHandler.h"
 #include <DbgHelp.h>
@@ -515,6 +516,9 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
             constexpr size_t cMaxStackWords = 4096;
             const size_t cStackWords = pStack >= pStackLimit && pStack < pStackTop ? std::min<size_t>(static_cast<size_t>(pStackTop - pStack), cMaxStackWords) : 0;
             RecentModelChanges::Report(regs, std::size(regs), pStack, cStackWords);
+#ifdef SKYRIMVR
+            EyeBoneWatch::Report(regs, std::size(regs));
+#endif
         }
 
         // The small dump first, in every build: it is the one a player can send with a report.

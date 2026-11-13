@@ -375,6 +375,8 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Since build 82f3689 (with ec6f79e9) the loop guard on the list draw goes in at the first map open, not at start, so CSX 3.19.2 and later can
       start; a hook that never went live is now logged as one. No rig run yet. To see: `RenderPassWatch: each list is checked for a loop before it is drawn`
       after the first map open, and no freeze at a close.
+      FUS 5.1.0 ships CSX 3.19.2 (2026-11-12). Its first rig start logged 20 `RenderPassWatch: renderer ... still holds pass ... from frame N in frame N+2` errors in the first minute, none on the old list; that check only logs and stops after 20.
+      The map was not opened in that run.
 - [!] **Crash when another game's voice line reached a copy with no AI process** (`AIProcess::GetLipAnim`, VR 0x659B00, from
       `OnNotifyDialogue`; a second player at a siege battle's start, 2026-11-05 18:09, v1.9.8). The game's speak call reads the speaker's
       process unchecked, and a soldier switched on a second before had none yet. A sent line now waits for the process, up to the
@@ -442,18 +444,24 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Open work
 
+- [!] **A copy switched off while a game job still ran it** (2026-11-12 23:08:14, a public pair, report 20261112-220845; also 2026-10-18 on v1.9.4). Fixed in build v1.9.81-4-g003ad8cb-dirty.74a329c, rig only, not seen in play.
+      The server removed a dead Skeever copy (FF0008BE) the game still held. The client's update switched it off at once (`Temporary Remote Held ... disabled and queued`), and 11 ms later a movement job of the game read it, deleted by then (`SkyrimVR.exe+0x714EB2`, MovementControllerNPC, the copy in R15 with form id 0).
+      The client's update runs on the game's job threads, beside the jobs that run actors. The October fix kept such a switch-off away from the game's own temporary actors; our own copies were still switched off that way.
+      Now the three places that switch off a removed copy queue it, and the main loop switches it off at the start of the next frame, on the main thread (`CopyOff: X switched off at the start of a frame, on the main thread`).
+      Rig: `live-copy-removed` on a0f2f73 and 74a329c, each time 6 of 6 copies switched off on the main thread about a frame after their removal, the game alive. No red run: the race cannot be made on demand. To see: no more `+0x714EB2` crashes in the hub.
 - [!] **Every address the client uses comes from its own table** (2026-11-11). Not in a release, not seen in play.
       104 ids the client uses on VR were answered only by the player's VR Address Library; releases older than 0.158 lack some of them (0.100 lacks 15, among them `Actor::DamageHealth`, `Actor::AddDeathItems` and the Havok contact listeners). They are now in `VRAddressOverrides.h`, copied from 0.275.0; no release from 0.100 on maps any of them elsewhere.
       The client also logs `VR Address Library <version>: <n> ids` at start and `SKSE plugins (<n>): <file> <version>, ...` at the first update, with the version Crash Logger shows, so a report without a Crash Logger log still names DynDOLOD's DLL version.
       The release workflow now refuses a tag not newer than every earlier one and runs the 14 bot pairs before it packages; neither has run on GitHub yet.
       Sleep/Wait no longer compares two addresses against its own constants, which could not fail once both were in the table; its byte and call checks stay.
       Rig: `live-clash` 11 of 11 on 75f7550 (sparks and contact listeners now from the table); build 3aef7f0 started, loaded and connected, both new lines as expected, Sleep/Wait hooks installed, no `did not resolve` line; deployed to FUS and MGO, client and server. To see: the next tag's workflow run, and no `did not resolve` line in players' logs.
+      Why it matters (2026-11-12, one public machine on v1.9.81): `Address id 60493 did not resolve` in every session, and two crashes at `+1E05DB` (the weapon body left in physics). Two more crashes were in Havok with that line in the log (`+B3C2F1` with the same bhkWorldM and ahkpWorld registers, `+1114DA2` a second after a weapon body was placed), most likely the same.
 - [!] **A crash as a jail sentence moves the player out, with another player's copy in the cell** (2026-11-08 23:17, a public v1.9.8 pair, Riften Jail, report 20261108-221734). Guarded, not seen in play.
       Player B accepted serving the sentence; 0.27 s later the game applied an effect (`PeakValueModifierEffect`) to player A's copy, and the effect's condition asked whether the player is in region C5853 (Skyrim.esm, edited by Azurite Weathers III).
       Player B had no cell at that moment, and `TESObjectCELL::GetRegionList` read a null cell (`SkyrimVR.exe+0x276DB9`, under `IsPlayerInRegion` and our pass-through `HookApplyActorEffect`).
       Guard: a copy's effect is not applied while the local player has no cell (`ApplyEffect: an effect on copy X not applied while this player has no cell`); a copy's values come from its owner.
       Which mod gave player A that effect is not known. Not tried on the rig: it cannot make that effect.
-- [ ] **A null call on an AI thread updating an actor's face** (2026-11-08 21:36, player 2, Fort Greymoor, report 20261108-203703). Not looked into yet.
+- [ ] **A null call on an AI thread updating an actor's face** (2026-11-08 21:36, player 2, Fort Greymoor, report 20261108-203703). The same crash as the eye tracking entry below, followed there.
       `SkyrimVR.exe+0x5EB6C9` under `Actor::IsMoving` / `UpdateActor3DPosition` / `ProcessLists::UpdateHighActors`, `BSFaceGenAnimationData` and `"NPCEyeBone"` in the registers; no code of ours on the stack. 3 s before, Stormcloak soldier 8C00A309 changed hands three times.
 - [ ] **Crashes in character creation, connected, with no other player nearby** (2026-11-08 19:46:49 and 20:01:00, two new games at Helgen, the RaceSex Menu open for 17 s and 35 s; 20:05:00, Realm of Lorkhan, connected by the auto-connect 3 s after the menu opened, crash 8 s later). Cause unknown.
       Three of three were connected; player 2's character creation with the mod but not connected went fine. That points at something that runs only while connected, but no such code is found yet.
@@ -488,11 +496,13 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Rig: `live-leader-claim-near` ok; on 1fcdc77 the copy was claimed at 7500 units (its far check failed; the run reads INVALID because the bot then owned no NPC to move).
       Regression run on 2e9c8bb: `live-npc`, `live-levelled`, `live-levelled-copy-rebuild`, `live-follower-stays-in` ok; `live-copy-through-door` ok on a fresh game (INVALID after other scripts had left Ralof the game's); `live-takeover-walk` INVALID twice, no baseline on this PC.
       Still open: the server's own `LeaderAssignment` hands the leader an NPC its discovery announces anywhere within cell range; last night's loop did not go that way.
-- [!] **A crash in the game's eye tracking on a freed head node** (player 2, 2026-11-08 21:36:54, Fort Greymoor, confirmed by player 2). Cause unknown.
-      The game's per-actor job (0x7084b0, 0x7032f0, 0x5eb3c0) released Irileth's (1A67F) head node, which was already freed, and found no `NPCEyeBone`. CrashLogger's report names her on the stack.
-      3.4 s before, player 2's game had made its Irileth a copy of the host's and set her items again. Our update runs on the game's worker threads, so a change of ours to her 3D during that job fits, and so does another mod's; nothing showed which.
-      Build v1.9.8-16-geed70ddc-dirty.2e9c8bb adds the TEMPORARY `RecentModelChanges:` lines to the crash block: this client's last changes to actors' 3D, matched against the crashing registers and stack (`<<<< ON THE CRASHING THREAD'S STACK`).
-      Next crash like it: read those lines next to CrashLogger's report. The rig's quits never reach that part of the block, so it has not run yet.
+- [!] **A crash in the game's eye tracking on a freed eye bone** (2026-11-08 21:36:54, player 2, Fort Greymoor, Irileth; 2026-11-12 19:49 to 22:15, five times on one public machine, each on a follower copy of Jenassa; the hub links two more machines, one on a Whiterun guard that was no copy). Cause unknown, diagnostic deployed.
+      The game's per-actor job (0x7084b0, 0x7032f0, 0x5eb3c0) looks up `NPCEyeBone` by name in the actor's 3D, takes a reference, and crashes giving it back: the bone was freed already while still a child in the skeleton. `+5EB6C6`, `null call from +5EB6C9` and the jump to heap memory are this one call.
+      The five Jenassa copies were made 3 s to 2 min before each crash (`Follower: E1BA9 ... is player N's; copy ... shows her`).
+      `RecentModelChanges` ran on them for the first time: this client's last changes to the copy's 3D were 1 s to 2 min before, so no one change of ours lines up.
+      Build v1.9.81-4-g003ad8cb-dirty.74a329c adds the TEMPORARY `EyeBoneWatch`: the plain NiNode destructor is hooked, and an eye bone destroyed while a live parent still lists it is logged with the stack of that release (`EyeBoneWatch: eye bone ... freed while its parent ...`) and listed again in the crash block.
+      Rig (`live-eye-bone-watch`): installed on the first loaded actor (`.?AVNiNode@@`, SkyrimVR.exe+0x17EEC08), silent through four trips that unloaded 140 actors, 60 fps. It has never caught a real case.
+      To see: an `EyeBoneWatch: eye bone` line in any log; its stack names what freed the bone.
 - [ ] **A dead horse that could still be ridden** (2026-11-08 14:22, the host's game). Cause unknown.
       The host killed horse 798EB at 14:20:58 (`BodyStand: dead 798EB had 289 health; taken` at its death). Its prompt then read "Steal", and at 14:22:08 the host's game reported riding it (`Mount: copy FF001386 of rider 12 told to ride copy 798EB` in player 2's log).
       It read "Search" after player 2 touched it; no log line says what changed. Build 1a16be1 adds the TEMPORARY `Mount: X starts to ride Y, whose life state here is ...`, logged when a ride starts on a horse that is not plainly alive.

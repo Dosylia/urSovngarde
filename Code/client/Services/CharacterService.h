@@ -114,6 +114,8 @@ struct CharacterService
 #ifdef SKYRIMVR
     void LayDownStandingBodies() noexcept;
 #endif
+    //! Switches off the removed copies queued since the last frame; called on the main thread at the start of a frame.
+    static void DisableQueuedCopies() noexcept;
 
 private:
     //! False when the cell to move to could not be found.

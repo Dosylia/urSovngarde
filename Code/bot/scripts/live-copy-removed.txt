@@ -39,6 +39,9 @@ wait 6
 log REQUIRE logged (DeleteClaim: deleting \w+ while something still holds it -- deleted because the server removed it|Temporary Remote Held \w+: .* the server removed it)
 log CHECK absent DeleteClaim: deleting \w+ while something still holds it -- deleted because the server removed it
 log CHECK logged Temporary Remote Held \w+: \d+ handle\(s\) still on it, disabled and queued .*; the server removed it
+# A game job may still run a copy while the client's update runs, so it is switched off at the start of the next frame, on the main thread.
+log CHECK logged CopyOff: \w+ switched off at the start of a frame, on the main thread
+log CHECK absent CopyOff: \w+ switched off at the start of a frame, on thread
 wait 5
 log CHECK game alive
 log DO god off

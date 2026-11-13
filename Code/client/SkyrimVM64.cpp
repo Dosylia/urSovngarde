@@ -1,5 +1,6 @@
 #include <Games/Skyrim/VRBodySync.h>
 #include <Games/Skyrim/HeadPartWatch.h>
+#include <Games/Skyrim/EyeBoneWatch.h>
 #include <Services/CharacterService.h>
 #include <World.h>
 #include <TiltedOnlinePCH.h>
@@ -51,7 +52,9 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
         World::Get().GetCharacterService().LayDownStandingBodies();
     // On the main thread between frames: the client's own update may run on another thread during a load.
     HeadPartWatch::Update();
+    EyeBoneWatch::Update();
 #endif
+    CharacterService::DisableQueuedCopies();
 
     return TiltedPhoques::ThisCall(MainLoop, apThis);
 }

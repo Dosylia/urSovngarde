@@ -459,6 +459,18 @@ struct WaitingCopy
 
 TiltedPhoques::Vector<WaitingCopy> s_waitingCopies;
 
+// Removed copies to switch off, by handle, on the main thread at the start of a frame (CharacterService::DisableQueuedCopies).
+// The client's update runs on one of the game's job threads.
+// Switching off an actor there while another job runs it crashes in the game's movement code (SkyrimVR.exe+0x714EB2).
+std::mutex s_disableQueueLock;
+TiltedPhoques::Vector<uint32_t> s_disableQueue;
+
+void DisableAtFrameStart(const Actor* apActor) noexcept
+{
+    std::scoped_lock lock(s_disableQueueLock);
+    s_disableQueue.push_back(apActor->GetHandle().handle.iBits);
+}
+
 Actor* RememberOwnCopy(Actor* apActor) noexcept
 {
     if (!apActor)
@@ -1289,6 +1301,29 @@ void CharacterService::OnGameLoaded() noexcept
     s_pendingGhostEnables.clear();
 }
 
+void CharacterService::DisableQueuedCopies() noexcept
+{
+    TiltedPhoques::Vector<uint32_t> handles;
+    {
+        std::scoped_lock lock(s_disableQueueLock);
+        handles.swap(s_disableQueue);
+    }
+    for (const uint32_t cHandle : handles)
+    {
+        // By handle: the game reuses a freed form id.
+        Actor* pActor = Cast<Actor>(TESObjectREFR::GetByHandle(cHandle));
+        if (!pActor || pActor->IsDeleted() || !pActor->IsTemporary() || pActor->IsDisabled())
+            continue;
+        pActor->Disable();
+#ifdef SKYRIMVR
+        if (const uint32_t cThread = GetCurrentThreadId(); cThread == GameMainThreadId())
+            spdlog::info("CopyOff: {:X} switched off at the start of a frame, on the main thread", pActor->formID);
+        else
+            spdlog::info("CopyOff: {:X} switched off at the start of a frame, on thread {}", pActor->formID, cThread);
+#endif
+    }
+}
+
 void CharacterService::FollowOwnersLife(const uint32_t aFormId) noexcept
 {
     s_lifeFollowsOwner.insert(aFormId);
@@ -1331,7 +1366,7 @@ void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
         {
             spdlog::info("Temporary Remote Held {:X}: {} handle(s) still on it, disabled and queued ({} of {} slots used); the server removed it",
                          aFormId, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
-            pActor->Disable();
+            DisableAtFrameStart(pActor);
             s_waitingCopies.push_back(WaitingCopy{aFormId, pActor->GetHandle().handle.iBits, std::chrono::steady_clock::now()});
             ReleaseGhostOf(aFormId);
             return;
@@ -1560,7 +1595,7 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
                 {
                     spdlog::info("Leftover copy {:X} from the last connection: {} handle(s) still on it, disabled and queued ({} of {} slots used)",
                                  formIdComponent.Id, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
-                    pActor->Disable();
+                    DisableAtFrameStart(pActor);
                     s_waitingCopies.push_back(WaitingCopy{formIdComponent.Id, pActor->GetHandle().handle.iBits, std::chrono::steady_clock::now()});
                 }
                 else
@@ -3823,7 +3858,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
                                  aFormId, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
 
                     // Disabled, not freed: silent, no AI, not drawn, and nothing dangling.
-                    pActor->Disable();
+                    DisableAtFrameStart(pActor);
                     s_waitingCopies.push_back(WaitingCopy{aFormId, pActor->GetHandle().handle.iBits, std::chrono::steady_clock::now()});
                     ReleaseGhostOf(aFormId);
                     DeleteRemoteEntityComponents(aEntity);
