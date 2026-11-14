@@ -1,0 +1,57 @@
+# An NPC that changes hands keeps the gear its last owner had on it.
+#
+#   python Tools\VR\live-check.py live-handoff-gear
+#
+# The bot runs an Anoriath of its own next to the player, dressed as his own outfit dresses him, gives him an iron sword and puts it in his hand.
+# The outfit is given as a game reports its NPC's whole inventory: without it the copy here is bare, and this game's AI dresses him once it runs him.
+# Then the bot lets him go and this game takes him over.
+# In play the game that took an NPC over sent equipment changes for it within a second of most gains, and floods of unequips after one in five.
+# This game's copy was left wanting to sheathe: the sheathe forced on an already sheathed copy never played.
+# Running him, this game asked to sheathe over a hundred times a second, refused each time.
+# Once he is this game's own, the game's GetEquippedWeapon names no weapon although his right hand holds a sword and he draws it, so the hand is not checked after the gain.
+# A temporary NPC, so that this game, the party's leader, does not claim him before the bot lets him go.
+# A run counts only when (REQUIRE): his copy here held the sword before the hand-off, and this game took him over.
+log live handoff gear
+waitfor connected 45
+collect spawn ownership equipment
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership refuse
+log DO god on
+wait 2
+
+log -- the bot runs an Anoriath next to the player, with an iron sword in his hand
+npc temp 13B97
+waitfor owned == 1 20
+wait 6
+log REQUIRE npc exists
+additem 261C0 1 npc
+additem 13910 1 npc
+additem 13912 1 npc
+additem 12EB7 1 npc
+wait 3
+equip 261C0 npc
+equip 13910 npc
+equip 13912 npc
+equip 12EB7 npc
+wait 6
+log REQUIRE npc equipped 12EB7
+log REQUIRE npc righthand 12EB7
+wait 2
+
+log -- the bot lets him go; this game takes him over
+log DO logmark
+release any
+wait 8
+log REQUIRE logged Gained ownership of actor \w+ \(form FF[0-9A-F]+\)
+log CHECK npc equipped 12EB7
+log CHECK fewer 3 Sending equipment request, item: \w+, count: \d+, target object: FF
+log CHECK absent ActionFlood: actor FF[0-9A-F]+ performed action \w+ \(Unequip\)
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

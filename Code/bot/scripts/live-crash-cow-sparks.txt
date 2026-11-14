@@ -1,0 +1,239 @@
+# Repro attempt for crash SkyrimVR.exe+0x28DEC3: a cow this game just took over, hit by another player's replayed Sparks.
+#
+#   python Tools\VR\live-check.py live-crash-cow-sparks
+#
+# In play the leader's game claimed three cows it showed as copies, and 9 to 14 s later crashed in the game's update of a Sparks beam another player's NPC cast at them.
+# The crash read the child list of a cow's head bone ("Scull") while that list had lost its storage; Locational Damage was looking a bone up by name.
+# Here the bot runs a cow, lets it go so that this game takes it over, then casts Sparks at it over and over, three times with a new cow.
+# Combat AI is on, so a cow flees when hit, as in play. The game must still answer at the end.
+log live crash cow sparks
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership refuse
+log DO god on
+log DO combat on
+wait 2
+
+log -- round 1: a cow of the bot's in front of it, let go so this game takes it over
+npc temp 23A90
+waitfor owned >= 1 20
+wait 3
+npcmove here
+npcmove 0 450 0
+wait 4
+release any
+wait 6
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+
+log -- round 2: a cow of the bot's in front of it, let go so this game takes it over
+npc temp 23A90
+waitfor owned >= 1 20
+wait 3
+npcmove here
+npcmove 0 450 0
+wait 4
+release any
+wait 6
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+
+log -- round 3: a cow of the bot's in front of it, let go so this game takes it over
+npc temp 23A90
+waitfor owned >= 1 20
+wait 3
+npcmove here
+npcmove 0 450 0
+wait 4
+release any
+wait 6
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+cast 2DD2A at npc
+wait 3
+cast 2DD2A stop
+wait 1
+
+log CHECK logged Gained ownership of actor \w+ \(form FF[0-9A-F]+\)
+log CHECK atleast 30 Remote spell cast: caster \w+, spell 2DD2A
+log CHECK game alive
+log DO combat off
+wait 2
+log DO god off
+wait 2
+log done
+stop

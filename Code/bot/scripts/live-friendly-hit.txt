@@ -1,0 +1,72 @@
+# An NPC friendly to the players that the game tells to ignore friendly hits does not turn on another player who hits it; an enemy still does.
+#
+#   python Tools\VR\live-check.py live-friendly-hit
+#   python Tools\VR\live-check.py --expect-fail live-friendly-hit     on a build without the fix: must be RED
+#
+# This game places an Anoriath of its own and tells him to ignore friendly hits, as Helgen's quest does for Ralof and Hadvar.
+# The bot then hits him with a spell, as the other player's game sends its hits on a copy.
+# Before, this game set him on the bot's character at the first hit, whatever the game's own rule said.
+# Then the flag goes, and a hit must start the fight as before: an NPC that minds friendly hits still fights back.
+# Last, a bear with the same flag, as a siege sets it on the enemy's soldiers too: an enemy of the players must still fight the bot's character.
+# A run counts only when (REQUIRE): the bot's hits reached the NPCs this game runs.
+log live friendly hit
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership refuse
+log DO logmark
+log DO god on
+log DO combat on
+wait 2
+
+log -- this game places an Anoriath and tells him to ignore friendly hits
+log DO place 13B97
+wait 5
+log DO papyrus Actor IgnoreFriendlyHits placed b:true
+wait 2
+
+log -- the bot hits him three times with a spell
+hit base:13B97 -5 spell
+wait 1
+hit base:13B97 -5 spell
+wait 1
+hit base:13B97 -5 spell
+wait 3
+log REQUIRE logged Death sync: player \d+'s blow of 5 on this game's NPC FF[0-9A-F]+
+log CHECK absent Combat: actor FF[0-9A-F]+ now also fights player
+log CHECK logged Combat: actor FF[0-9A-F]+ lets player \d+'s hit go, as the game does for a friendly hit \(it ignores friendly hits\)
+log CHECK placed fights none
+
+log -- the flag goes; the next hit starts the fight
+log DO logmark
+log DO papyrus Actor IgnoreFriendlyHits placed b:false
+wait 2
+hit base:13B97 -5 spell
+wait 3
+log CHECK logged Combat: actor FF[0-9A-F]+ now also fights player
+log DO papyrus Actor StopCombat placed
+wait 2
+
+log -- a bear with the same flag: an enemy, so the bot's hit puts the bot's character into its fight
+log DO logmark
+log DO place 23A8A
+wait 5
+log DO papyrus Actor IgnoreFriendlyHits placed b:true
+wait 1
+hit base:23A8A -5 spell
+wait 3
+log REQUIRE logged Death sync: player \d+'s blow of 5 on this game's NPC FF[0-9A-F]+
+log CHECK logged Combat: actor FF[0-9A-F]+ now also fights player
+log DO papyrus Actor Kill placed 14
+wait 2
+log DO papyrus ObjectReference Disable placed b:false
+log DO combat off
+wait 2
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

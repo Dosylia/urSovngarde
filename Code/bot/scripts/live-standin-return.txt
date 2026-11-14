@@ -1,0 +1,51 @@
+# A copy this game ran for a stand-in is not announced again as a new character when the player comes back.
+#
+#   python Tools\VR\live-check.py live-standin-return
+#
+# As in live-standin-takeover, this game takes the necromancer over on the copy standing in for reference D86A8.
+# Then the player leaves, the game lets the copy go, and the bot is given the character.
+# When the player comes back the bot's character must come back as one copy: the copy this game ran, if the game still had it, must not be announced as an NPC of its own.
+# It needs a fresh game (headless.ps1 up), as live-standin-takeover does.
+# A run counts only when (REQUIRE): this game took the character over on the copy, and let it go when the player left.
+log live standin return
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership refuse
+log DO logmark
+log DO god on
+wait 2
+
+log -- this bot runs the necromancer reference D86A8, picked as an adept
+npc D86A8 base 713DD pick 551C2
+waitfor owned == 1 20
+wait 10
+log REQUIRE logged Stand-in: reference D86A8 is not loaded here
+
+log -- the bot lets the character go; this game takes it over on the copy
+release any
+wait 8
+log REQUIRE logged Hand-off of FF[0-9A-F]+ \(server id \w+\) taken on the copy standing in for reference D86A8
+ownership accept
+wait 2
+
+log -- the player leaves, so the game lets the copy go and the bot is given the character
+log DO papyrus ObjectReference MoveTo 14 35E6E f:0 f:0 f:0 b:false
+wait 40
+log REQUIRE logged Transferring ownership of local actor, server id
+log DO logmark
+
+log -- the player comes back
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
+wait 45
+log CHECK absent Entity: local actor FF[0-9A-F]+ has server id
+log CHECK logged Stand-in: reference D86A8 is not loaded here
+log CHECK game alive
+wait 2
+log DO god off
+wait 2
+log done
+stop

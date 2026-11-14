@@ -1,0 +1,53 @@
+# A trigger box the party leader's game fired and switched off stays armed in a member's game.
+#
+#   python Tools\VR\live-check.py live-trigger-stays
+#   python Tools\VR\live-check.py --expect-fail live-trigger-stays     on a build without the change: must be RED
+#
+# Helgen Keep's collapse is played by the trigger MQ101KeepCollapseTriggerRef (BACC8) in the game whose player walks in; it then switches itself off.
+# The leader's switch-off reached the member before its player got there, so the collapse never played there.
+# Here the bot leads and this game is a member. The camp marker 8680C is the control: a plain reference still follows the leader.
+# A run counts only when (REQUIRE): the bot leads, and the marker follows the leader's switches, live and at a rejoin.
+party lead
+log live trigger stays
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+
+log -- both on here, by this member's own calls, which are not sent
+log DO papyrus ObjectReference Enable BACC8 b:false
+log DO papyrus ObjectReference Enable 8680C b:false
+wait 3
+log REQUIRE ref BACC8 enabled
+log REQUIRE ref 8680C enabled
+
+log -- the leader's scripts switch both off
+refenable BACC8 off
+refenable 8680C off
+wait 5
+log REQUIRE ref 8680C disabled
+log CHECK ref BACC8 enabled
+log CHECK logged ReferenceEnable: trigger BACC8 \(base BACC7\) left on here
+
+log -- a rejoin: the server replays the party's kept switches
+log DO f6
+wait 10
+log DO papyrus ObjectReference Enable 8680C b:false
+log DO f6
+wait 15
+waitfor known other 60
+wait 10
+log REQUIRE ref 8680C disabled
+log CHECK ref BACC8 enabled
+log CHECK game alive
+log done
+stop

@@ -1,0 +1,30 @@
+# A player renamed in play stays connected across a loading screen, and the server takes the new name.
+#
+#   python Tools\VR\live-check.py live-rename-load
+#   python Tools\VR\live-check.py --expect-fail live-rename-load     on a build without the fix: must be RED
+#
+# Character creation names the player in play, and the next loading screen used to connect the game again.
+# That handed away every NPC it ran, mid-scene if need be: in Helgen Keep, Ralof's scene went to the other game and stopped.
+# Here the player's base is renamed by script, then the player goes through a loading screen into the inn and back.
+# A save of another character loaded while connected still connects again (live-load-other-character).
+log live rename load
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO logmark
+
+log -- the player's base renamed in play, then a loading screen into the inn and back
+log DO papyrus Form SetName 7 s:RigRenamed
+wait 2
+log DO papyrus ObjectReference MoveTo 14 13486 f:60 f:0 f:0 b:false
+wait 15
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
+wait 15
+log CHECK absent VRConnectService: the character is now
+log CHECK absent Disconnected from server
+log CHECK logged VRConnectService: the character was renamed 'RigRenamed' in play
+log CHECK server logged Rename: player \d+ '.*' is now 'RigRenamed', renamed in play
+log CHECK game alive
+log done
+stop

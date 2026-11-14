@@ -1,0 +1,47 @@
+# An NPC that changes hands mid-fight fights on in the game that takes it over.
+#
+#   python Tools\VR\live-check.py live-handoff-fight
+#
+# The bot runs an Anoriath of its own next to the player and reports him fighting the player, as a game's presence report does.
+# Then the bot lets him go and this game takes him over.
+# Before, this game's AI started him afresh: Anoriath is no enemy of the player here, so he stayed out of the fight.
+# In play the same showed as soldiers and a dragon putting their weapons away when their owner left.
+# A temporary NPC, so that this game, the party's leader, does not claim him before the bot lets him go.
+# Not a follower such as Lydia: the game will not set the player's ally on the player at all.
+# A run counts only when (REQUIRE): this game took him over.
+log live handoff fight
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership refuse
+log DO logmark
+log DO god on
+log DO combat on
+wait 2
+
+log -- the bot runs an Anoriath next to the player, fighting the player
+npc temp 13B97
+waitfor owned == 1 20
+wait 6
+log REQUIRE npc exists
+npc fights other
+wait 4
+
+log -- the bot lets him go; this game takes him over
+release any
+wait 6
+log REQUIRE logged Gained ownership of actor \w+ \(form FF[0-9A-F]+\)
+log CHECK logged Combat: actor FF[0-9A-F]+ \(server id \w+\) fights 14
+log CHECK npc fights player
+wait 2
+log DO papyrus Actor StopCombat npc
+log DO combat off
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

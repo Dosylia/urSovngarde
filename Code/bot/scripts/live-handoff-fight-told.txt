@@ -1,0 +1,48 @@
+# A game tells the server whom its NPCs fight, and the next owner is told when the NPC changes hands.
+#
+#   python Tools\VR\live-check.py live-handoff-fight-told
+#
+# This game spawns a bear and sets it on the bot's character; the player itself goes unseen (tdetect), so the bear keeps to the bot.
+# Then the game drops its connection (F6), as a player leaving does, and the server gives the bear to the bot.
+# The bot must hear that the bear was fighting it: the other half of live-handoff-fight, with a real game as the last owner.
+# A run counts only when (REQUIRE): the bear was in combat with the bot's character before the hand-off, and the bot was given it.
+log live handoff fight told
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership accept
+log DO logmark
+log DO god on
+log DO combat on
+log DO console tdetect
+wait 2
+
+log -- a bear of this game's, set on the bot's character
+log DO place 23A8A
+wait 6
+log DO papyrus Actor StartCombat placed copy
+wait 5
+log REQUIRE placed fights copy
+
+log -- the game drops its connection; the server gives the bear to the bot
+log DO f6
+waitfor owned >= 1 30
+wait 3
+log REQUIRE bot logged Actor \w+ is now player \d+'s at epoch \d+ -- that is us
+log CHECK bot logged Actor \w+ goes to player \d+ fighting server character \w+ \(this bot\)
+log DO f6
+wait 15
+waitfor known other 60
+wait 3
+log DO papyrus Actor Kill placed 14
+log DO console tdetect
+log DO combat off
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

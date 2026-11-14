@@ -1,0 +1,65 @@
+# A copy standing in for a reference is run by this game when the owner lets the character go.
+#
+#   python Tools\VR\live-check.py live-standin-takeover
+#   python Tools\VR\live-check.py --expect-fail live-standin-takeover     on a build without the fix: must be RED
+#
+# The bot runs the necromancer reference D86A8 from a far cell, as in live-levelled-copy-rebuild: it is not loaded here, so a copy stands in for it.
+# Then the bot lets the character go while the player stands near the copy.
+# Before, this game declined it (a copy of ours stands in), the server removed the character, and the creature vanished here.
+# Now this game runs the copy: it stays, its AI moves it, and it can be killed, with the death reaching the server.
+# A run counts only when (REQUIRE): the copy stood in for the reference, and the server offered the character to this game.
+# It needs a fresh game (headless.ps1 up): a second run finds the necromancer dead from the first.
+log live standin takeover
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership refuse
+log DO logmark
+log DO god on
+wait 2
+
+log -- this bot runs the necromancer reference D86A8, picked as an adept
+npc D86A8 base 713DD pick 551C2
+waitfor owned == 1 20
+wait 10
+log REQUIRE logged Stand-in: reference D86A8 is not loaded here
+log REQUIRE npc exists
+wait 3
+
+log -- the bot lets the character go
+release any
+wait 8
+log REQUIRE logged Hand-off of \w+ \(server id \w+\) declined|Gained ownership of actor \w+ \(form FF[0-9A-F]+\)
+log CHECK logged Hand-off of FF[0-9A-F]+ \(server id \w+\) taken on the copy standing in for reference D86A8
+log CHECK logged Gained ownership of actor \w+ \(form FF[0-9A-F]+\)
+log CHECK absent Hand-off of \w+ \(server id \w+\) declined
+log CHECK npc exists
+log CHECK npc alive
+wait 3
+
+log -- its AI runs: told to keep near the player, it follows when the player steps away
+log DO papyrus Actor KeepOffsetFromActor npc 14 f:0 f:0 f:0 f:0 f:0 f:0 f:150 f:75
+log DO mark followed npc
+log DO papyrus ObjectReference MoveTo 14 14 f:1500 f:0 f:0 b:false
+log DO sleep 8
+# It walks there, so it covers a few hundred units; a frozen copy stays put.
+log CHECK moved followed atleast 150
+log DO papyrus Actor ClearKeepOffsetFromActor npc
+wait 5
+
+log -- it can be killed here, and its death reaches the server
+log DO papyrus Actor Kill npc 14
+wait 6
+log CHECK npc dead
+report
+wait 2
+log CHECK bot logged info\] \[report\] actor \w+ ref D86A8 dead theirs
+log CHECK game alive
+wait 2
+log DO god off
+wait 2
+log done
+stop

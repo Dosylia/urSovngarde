@@ -1,0 +1,61 @@
+# The server ranges a player by the centre of the game's loaded cells, not by the cell the player stands in.
+#
+#   python Tools\VR\live-check.py live-range-centre
+#   python Tools\VR\live-check.py --expect-fail live-range-centre     on a build without the fix: must be RED
+#
+# The game's centre trails the player: it moves only once the player is well into the next cell.
+# The cell entry, sent after each grid shift, carried the cell the player stands in, and the server took it as the centre.
+# So the server ranged the player a cell ahead of what its game had loaded.
+# An NPC two cells behind the centre, still loaded, was taken for out of range: never sent to this game, or, if this game ran it, handed away.
+# In play most hand-offs "out of its range" were of an NPC exactly three cells from where its owner stood.
+# The game also keeps running some actors a cell or two beyond its loaded cells (the critters south of the start here).
+# Its presence report says so, and an owner whose report still has an NPC keeps it.
+#
+# Here the player steps three cells north from the start, cell (34, -9), into (34, -6); the game's centre stays a cell or two behind.
+# A Skeever this game made at the start stays this game's, and the bot's bear, put at the start then, is sent to this game.
+log live range centre
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+stay
+
+log -- a Skeever of this game's own at the start
+log DO console player.placeatme 23ab7 1
+wait 8
+log REQUIRE logged Entity: local actor \w+ has server id \w+
+log DO god on
+wait 2
+
+log -- the player steps three cells north, each time just past the cell's edge, as by walking
+log DO logmark
+log DO console player.setpos z -4500
+log DO console player.setpos y -32468
+wait 6
+log DO console player.setpos z -4500
+log DO console player.setpos y -28372
+wait 6
+log DO console player.setpos z -4500
+log DO console player.setpos y -24276
+wait 10
+# The game's centre moved, and stayed behind the player's cell (34, -6).
+log REQUIRE logged Grid change: reporting centre \(34, -[78]\)
+log REQUIRE absent Grid change: reporting centre \(34, -6\)
+
+log -- the bot, still at the start, brings a bear there
+npc temp 23A8A
+waitfor owned == 1 20
+wait 12
+log CHECK logged CharacterSpawnRequest, server id: \w+, form id: \w+, local base 23A8A
+log CHECK npc exists
+log CHECK absent Actor \w+ is now owned by player
+log CHECK game alive
+wait 3
+
+log -- back to the start
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
+wait 10
+log DO god off
+wait 2
+log done
+stop

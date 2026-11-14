@@ -1,0 +1,45 @@
+# The server knows an NPC's health when it changes hands, so the next owner does not heal it.
+#
+#   python Tools\VR\live-check.py live-handoff-health
+#
+# This game spawns a bear and hurts it, as its own player's blows do.
+# Then the game drops its connection (F6), as a player leaving does, and the server gives the bear to the bot.
+# The health the bot is given is what the next owner's game sets on the bear: it must be the health the bear has here.
+# A run counts only when (REQUIRE): the bear lost health here, and the bot was given it.
+log live handoff health
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 5
+stay
+ownership accept
+log DO logmark
+log DO god on
+wait 2
+
+log -- a bear of this game's, hurt here
+log DO place 23A8A
+wait 6
+log CHECK health placed mark
+log DO papyrus Actor DamageActorValue placed s:Health f:100
+wait 6
+log REQUIRE health placed lost hurt
+
+log -- the game drops its connection; the server gives the bear to the bot
+log DO f6
+waitfor owned >= 1 30
+wait 3
+log REQUIRE bot logged Actor \w+ is now player \d+'s at epoch \d+ -- that is us
+log CHECK told health placed 30
+log DO f6
+wait 15
+waitfor known other 60
+wait 3
+log DO papyrus Actor Kill placed 14
+wait 3
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

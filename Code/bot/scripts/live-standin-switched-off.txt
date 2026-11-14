@@ -1,0 +1,57 @@
+# A copy this game runs for a stand-in goes when the leader switches its reference off.
+#
+#   python Tools\VR\live-check.py live-standin-switched-off
+#   python Tools\VR\live-check.py --expect-fail live-standin-switched-off     on a build without the fix: must be RED
+#
+# The bot leads the party and runs the necromancer reference D86A8, which this game shows on a stand-in; then it lets the character go and this game runs the copy.
+# The leader's game switching a reference off, as a siege's scripts do, removes its character from the server for everyone.
+# Before, this game kept the copy it ran standing, unknown to the server, and its own reference hidden: switched on again, the character came back beside it.
+# It needs a fresh game (headless.ps1 up), as live-standin-takeover does.
+# A run counts only when (REQUIRE): the bot leads the party, and this game took the character over on the copy.
+party lead
+log live standin switched off
+waitfor connected 45
+collect spawn ownership
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+log REQUIRE bot logged info\] Leading the party
+stay
+ownership refuse
+log DO logmark
+log DO god on
+wait 2
+
+log -- this bot runs the necromancer reference D86A8, picked as an adept
+npc D86A8 base 713DD pick 551C2
+waitfor owned == 1 20
+wait 10
+log REQUIRE logged Stand-in: reference D86A8 is not loaded here
+
+log -- the bot lets the character go; this game takes it over on the copy
+release any
+wait 8
+log REQUIRE logged Hand-off of FF[0-9A-F]+ \(server id \w+\) taken on the copy standing in for reference D86A8
+log REQUIRE npc exists
+wait 2
+
+log -- the leader switches the reference off, as a script does
+refenable D86A8 off
+wait 6
+log CHECK npc gone
+log CHECK logged Character \w+ is gone from the server; copy FF[0-9A-F]+ this game ran goes too
+refenable D86A8 on
+wait 5
+log CHECK game alive
+log DO god off
+wait 2
+log done
+stop

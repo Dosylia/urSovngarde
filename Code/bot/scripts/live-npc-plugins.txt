@@ -1,0 +1,30 @@
+# Two players whose games do not have the same plugins adding or changing NPCs are both told.
+#
+#   python Tools\VR\live-check.py live-npc-plugins
+#   python Tools\VR\live-check.py --expect-fail live-npc-plugins     on a build without the warning: must be RED
+#
+# Such games roll other people and creatures in the same places, and a player sees one where the other sees another.
+# The game lists the plugins whose records make or change NPCs and levelled NPC lists, and sends it once connected.
+# The bot then says its game has one plugin the game lacks, and lacks all of the game's: the server tells both.
+# The server tells a pair once per run for the same difference: a second run on the same server is told nothing.
+log live npc plugins
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+npcplugins BotCreatures.esp
+wait 5
+log CHECK logged NpcPlugins: .+ has other NPC plugins: 1 only there, [1-9]\d* only here
+log CHECK logged Only .+ has: BotCreatures\.esp\.
+log CHECK bot logged info\] NPC plugins differ from player .+: [1-9]\d* only there, 1 only here
+log CHECK game alive
+wait 3
+
+log -- the same lists again: nobody is told twice
+npcplugins BotCreatures.esp
+wait 5
+log CHECK distinct 1 NpcPlugins: (.+) has other NPC plugins
+wait 2
+log done
+stop
