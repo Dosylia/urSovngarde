@@ -272,6 +272,15 @@ struct PendingLine
 // By server id: a copy's form id can pass to another actor while a line waits.
 TiltedPhoques::Map<uint32_t, PendingLine> s_pendingLines;
 
+// A scene line left to this game's own copy of the scene, played after all if the speaker says nothing here.
+// A copy runs its own AI but cannot complete its owner's packages, so its scene can sit in a phase without voicing the line.
+struct SceneLine
+{
+    String File;
+    std::chrono::steady_clock::time_point HeardAt{};
+};
+TiltedPhoques::Map<uint32_t, SceneLine> s_sceneLines;
+
 bool StartLine(Actor* apActor, const char* acpFile) noexcept
 {
     // The game's speak call reads the speaker's AI process for its lip sync without checking it.
@@ -305,6 +314,21 @@ bool IsLipLoading(const Actor* apActor) noexcept
 
     const uint32_t cState = *reinterpret_cast<const uint32_t*>(pEntry + cLoadState) & cLoadStateBits;
     return cState == cQueued || cState == cLoading;
+}
+
+// Whether the actor's voice plays here: the handle the game's speak call keeps in the high process data (0x14065a5c0), asked of the audio manager.
+bool IsVoicePlaying(const Actor* apActor) noexcept
+{
+    using TIsPlaying = bool(const uint32_t* apHandle);
+    POINTER_SKYRIMSE(TIsPlaying, s_isPlaying, 67620, 66359);
+    constexpr size_t cVoiceHandle = 0x2FC;
+
+    const auto* pHigh = apActor->currentProcess ? static_cast<const uint8_t*>(apActor->currentProcess->unk8) : nullptr;
+    if (!pHigh || !s_isPlaying.Get())
+        return false;
+
+    const uint32_t cHandle[3]{*reinterpret_cast<const uint32_t*>(pHigh + cVoiceHandle), 0, 0};
+    return s_isPlaying.Get()(cHandle);
 }
 
 void RunPendingLines() noexcept
@@ -341,6 +365,40 @@ void RunPendingLines() noexcept
         }
         else
             ++it;
+    }
+}
+
+// A scene line left to this game's scene: its speaker must be talking here a moment later, or the sender's line plays.
+void RunSceneLines() noexcept
+{
+    constexpr auto cSpeakWithin = std::chrono::milliseconds(800);
+    constexpr float cVoiceReach = 4096.f;
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = s_sceneLines.begin(); it != s_sceneLines.end();)
+    {
+        if (cNow - it->second.HeardAt < cSpeakWithin)
+        {
+            ++it;
+            continue;
+        }
+
+        const SceneLine& cLine = it->second;
+        Actor* pActor = Utils::GetByServerId<Actor>(it->first);
+        const PlayerCharacter* pPlayer = PlayerCharacter::Get();
+        if (pActor && pPlayer && pActor->GetNiNode() && !pActor->actorState.IsDeadOrDying())
+        {
+            const float cDistance = glm::distance(static_cast<glm::vec3>(pActor->position), static_cast<glm::vec3>(pPlayer->position));
+            if (IsVoicePlaying(pActor))
+                spdlog::info("Dialogue: {:X} says {}; its copy here is talking, so the scene here voices it", pActor->formID, cLine.File.c_str());
+            else if (cDistance < cVoiceReach)
+            {
+                spdlog::info("Dialogue: {:X} says {}; its copy here said nothing in {} ms, so the sender's line plays", pActor->formID, cLine.File.c_str(), cSpeakWithin.count());
+                // No scene id from here on: the pending path would otherwise leave it to the scene again.
+                if (!StartLine(pActor, cLine.File.c_str()))
+                    s_pendingLines[it->first] = PendingLine{cLine.File, GameId{}, 0, cNow};
+            }
+        }
+        it = s_sceneLines.erase(it);
     }
 }
 
@@ -1558,6 +1616,7 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     RunReleasedGhosts();
     RunGainedMoving();
     RunPendingLines();
+    RunSceneLines();
     RunTakeoverDiag(m_world);
 
     {
@@ -1713,6 +1772,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     s_ownCopies.clear();
     s_handedAway.clear();
     s_pendingLines.clear();
+    s_sceneLines.clear();
     s_revivalsOnSwitchOn.clear();
 
     m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>();
@@ -3300,10 +3360,13 @@ void CharacterService::OnNotifyDialogue(const NotifyDialogue& acMessage) noexcep
     // Every client plays a quest's scenes itself, so when the line's scene plays here too, the local copy usually voices it.
     // Playing the sender's line would cut that off and end the scene phase early. Menu and other-scene lines still play.
     // A local copy stuck in an earlier phase, on a package of an NPC another game runs, plays the sender's line.
+    // If the speaker says nothing here soon after, RunSceneLines plays the sender's line after all.
+    s_sceneLines.erase(acMessage.ServerId);
     if (IsLineVoicedByLocalScene(pActor, acMessage.SceneId, acMessage.ScenePhase))
     {
         spdlog::info("Dialogue: {:X} (server id {:X}) says {} in scene {:X} (sender's phase {}), which plays here too; the local line is kept", pActor->formID,
                      acMessage.ServerId, acMessage.SoundFilename.c_str(), pActor->GetCurrentScene()->formID, acMessage.ScenePhase);
+        s_sceneLines[acMessage.ServerId] = SceneLine{acMessage.SoundFilename, std::chrono::steady_clock::now()};
         return;
     }
 

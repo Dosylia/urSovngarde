@@ -3078,6 +3078,7 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 60096u, 0x0aa7130u }, // hkpEntity::Activate
     { 66355u, 0x0c283e0u }, // BSSoundHandle::Play
     { 66358u, 0x0c284b0u }, // BSSoundHandle::Stop
+    { 66359u, 0x0c284f0u }, // BSSoundHandle::IsPlaying
     { 66370u, 0x0c287d0u }, // BSSoundHandle::SetPosition
     { 66391u, 0x0c29430u }, // BSAudioManager::GetSingleton
     { 66404u, 0x0c29f60u }, // BSAudioManager::BuildSoundDataFromDescriptor
