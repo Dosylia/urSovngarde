@@ -61,6 +61,9 @@ The full forms are in the docstring at the top of `live-check.py`.
   second), a whole body 18. DevBench's `inspect` kind `refs` (filters `formType`, `radius`) lists nearby references
   with their type, position and, for actors, life and health in one call of 0.02 s. DevBench also takes inspect
   kinds registered by other plugins (`inspect kind=extensions`): the way to a fast bone sampler, if one is needed.
+- The game's loaded cells are centred where its last grid shift said, which trails the player. `player.setpos` deep into the
+  next cell recentres at once; landing about 300 units past the cell's edge keeps the centre a cell behind, as walking does
+  (`live-range-centre`).
 - Only doors show a moving state (opening, closing). A bridge or gate run by a lever goes straight from one end to the
   other, so `door ... once toggled` judges only where it ends and how often it changed.
 - Helgen keep's door `9B0A5` is disabled in the test save: no 3D, so it jumps to a new state. `F8239`, its drawn twin,

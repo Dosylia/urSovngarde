@@ -3,6 +3,7 @@
 #include "Events/PlayerLeaveCellEvent.h"
 
 #include <Services/PlayerService.h>
+#include <Structs/PluginList.h>
 #include <Services/CharacterService.h>
 #include <GameServer.h>
 
@@ -25,6 +26,10 @@ constexpr uint32_t kHealthValue = 24;
 #include <Messages/PlayerLevelRequest.h>
 #include <Messages/NotifyPlayerLevel.h>
 #include <Messages/NotifyPlayerCellChanged.h>
+#include <Messages/RequestNpcPlugins.h>
+#include <Messages/NotifyNpcPluginsDiffer.h>
+#include <Messages/NotifyPlayerName.h>
+#include <Services/PartyService.h>
 
 #include <Setting.h>
 namespace
@@ -39,6 +44,7 @@ PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher) noexc
     , m_exteriorCellEnterConnection(aDispatcher.sink<PacketEvent<EnterExteriorCellRequest>>().connect<&PlayerService::HandleExteriorCellEnter>(this))
     , m_playerRespawnConnection(aDispatcher.sink<PacketEvent<PlayerRespawnRequest>>().connect<&PlayerService::OnPlayerRespawnRequest>(this))
     , m_playerLevelConnection(aDispatcher.sink<PacketEvent<PlayerLevelRequest>>().connect<&PlayerService::OnPlayerLevelRequest>(this))
+    , m_npcPluginsConnection(aDispatcher.sink<PacketEvent<RequestNpcPlugins>>().connect<&PlayerService::OnNpcPlugins>(this))
 {
 }
 
@@ -78,6 +84,9 @@ void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>&
         pPlayer->MarkCellEnter();
     CellIdComponent cell = CellIdComponent{message.PlayerCell, message.WorldSpaceId, message.CenterCoords};
     pPlayer->SetCellComponent(cell);
+    // Until the cell entry that follows says where in its loaded cells the player stands.
+    if (!previous || previous.IsInInteriorCell() || previous.WorldSpaceId != message.WorldSpaceId)
+        pPlayer->SetStandingCoords(message.CenterCoords);
 
     m_world.GetDispatcher().trigger(PlayerLeaveCellEvent(oldCell));
 
@@ -110,7 +119,7 @@ void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>&
 }
 
 // Removes from a viewer's view what was in range of its previous place but not of its current one.
-// Called by both exterior handlers, because a client sends the cell entry before the grid shift (`rangeback`).
+// Called by both exterior handlers: the cell entry moves the range when no grid shift came first (`rangeback`).
 void PlayerService::RemoveWhatLeftRange(Player* apPlayer, const CellIdComponent& acPrevious) const noexcept
 {
     if (!acPrevious.WorldSpaceId)
@@ -144,21 +153,34 @@ void PlayerService::HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellR
     {
         auto entity = *pPlayer->GetCharacter();
 
-        auto cell = CellIdComponent{message.CellId, message.WorldSpaceId, message.CurrentCoords};
+        const CellIdComponent previous = pPlayer->GetCellComponent();
+        // An arrival is a jump from where the player stood, not from the loaded cells' centre, which trails a walk.
+        const CellIdComponent cStoodIn = pPlayer->GetStandingCell();
+
+        // A player's range is the game's loaded cells, centred where its last grid shift said.
+        // That centre trails the cell the player stands in by up to one, so a walk into the next cell keeps it.
+        // Ranged from the cell it stands in, the server would miss what the game still has loaded a cell further back.
+        const bool cSameWorld = previous && !previous.IsInInteriorCell() && previous.WorldSpaceId == message.WorldSpaceId;
+        auto cell = CellIdComponent{message.CellId, message.WorldSpaceId, cSameWorld ? previous.CenterCoords : message.CurrentCoords};
 
         if (pPlayer->GetCellComponent())
         {
             m_world.GetDispatcher().trigger(CharacterExteriorCellChangeEvent{pPlayer, entity, message.CellId, message.WorldSpaceId, message.CurrentCoords});
         }
 
-        const CellIdComponent previous = pPlayer->GetCellComponent();
-        if (IsArrival(previous, message.WorldSpaceId, message.CurrentCoords))
+        if (IsArrival(cStoodIn, message.WorldSpaceId, message.CurrentCoords))
             pPlayer->MarkCellEnter();
         pPlayer->SetCellComponent(cell);
+        pPlayer->SetStandingCoords(message.CurrentCoords);
+        SendPlayerCellChanged(pPlayer);
+
+        // The range moved only when no grid shift came first, from indoors or another worldspace.
+        if (cSameWorld)
+            return;
+
         RemoveWhatLeftRange(pPlayer, previous);
 
         // Sends this player every character in range of where they now are, as the other two cell handlers do.
-        // Walking into the next outdoor cell raises only this event, not a grid shift.
         // Re-sending an existing copy is harmless: the client keeps it and refreshes its ownership epoch.
         auto characterView = m_world.view<CellIdComponent, CharacterComponent, OwnerComponent>();
         for (auto character : characterView)
@@ -179,8 +201,6 @@ void PlayerService::HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellR
 
             pPlayer->Send(spawnMessage);
         }
-
-        SendPlayerCellChanged(pPlayer);
     }
 }
 
@@ -328,4 +348,89 @@ void PlayerService::OnPlayerLevelRequest(const PacketEvent<PlayerLevelRequest>& 
     notify.NewLevel = acMessage.Packet.NewLevel;
 
     GameServer::Get()->SendToPlayers(notify, acMessage.pPlayer);
+}
+
+namespace
+{
+bool SamePlugin(const String& acLeft, const String& acRight) noexcept
+{
+    return acLeft.size() == acRight.size() &&
+           std::equal(acLeft.begin(), acLeft.end(), acRight.begin(), [](const char aLeft, const char aRight) { return std::tolower(static_cast<unsigned char>(aLeft)) == std::tolower(static_cast<unsigned char>(aRight)); });
+}
+
+Vector<String> OnlyIn(const Vector<String>& acFrom, const Vector<String>& acNotIn) noexcept
+{
+    Vector<String> only;
+    for (const String& plugin : acFrom)
+        if (std::none_of(acNotIn.begin(), acNotIn.end(), [&plugin](const String& acOther) { return SamePlugin(plugin, acOther); }))
+            only.push_back(plugin);
+    return only;
+}
+
+} // namespace
+
+// A game says which of its plugins add or change NPCs, once connected.
+// Each other player whose list differs is told, and so is this one: their games roll other people and creatures in the same places.
+// A pair is told once per server run for the same difference, so a reconnect does not tell them again.
+// A connection sends its list once; another is ignored, so a game cannot have everybody told again and again.
+void PlayerService::OnNpcPlugins(const PacketEvent<RequestNpcPlugins>& acMessage) const noexcept
+{
+    static TiltedPhoques::Set<uint64_t> s_told;
+
+    Player* pPlayer = acMessage.pPlayer;
+    if (!pPlayer->GetNpcPlugins().empty())
+        return;
+    pPlayer->SetNpcPlugins(acMessage.Packet.Plugins);
+
+    for (Player* pOther : m_world.GetPlayerManager())
+    {
+        if (pOther == pPlayer || pOther->GetNpcPlugins().empty())
+            continue;
+
+        Vector<String> onlyHere = OnlyIn(pPlayer->GetNpcPlugins(), pOther->GetNpcPlugins());
+        Vector<String> onlyThere = OnlyIn(pOther->GetNpcPlugins(), pPlayer->GetNpcPlugins());
+        if (onlyHere.empty() && onlyThere.empty())
+            continue;
+
+        // Each side is its name and what only it has, in a set order, so the key is the same whoever reports last.
+        std::string here = fmt::format("{}|{}", pPlayer->GetUsername().c_str(), PluginList::Joined(onlyHere).c_str());
+        std::string there = fmt::format("{}|{}", pOther->GetUsername().c_str(), PluginList::Joined(onlyThere).c_str());
+        if (there < here)
+            std::swap(here, there);
+        if (!s_told.insert(std::hash<std::string>{}(here + "||" + there)).second)
+            continue;
+
+        spdlog::warn("NpcPlugins: '{}' and '{}' do not have the same plugins adding or changing NPCs; only '{}' has {} ({}); only '{}' has {} ({})", pPlayer->GetUsername().c_str(),
+                     pOther->GetUsername().c_str(), pPlayer->GetUsername().c_str(), onlyHere.size(), PluginList::Joined(onlyHere).c_str(), pOther->GetUsername().c_str(), onlyThere.size(),
+                     PluginList::Joined(onlyThere).c_str());
+
+        NotifyNpcPluginsDiffer toPlayer{};
+        toPlayer.Username = pOther->GetUsername();
+        toPlayer.OnlyHere = onlyHere;
+        toPlayer.OnlyThere = onlyThere;
+        pPlayer->Send(toPlayer);
+
+        NotifyNpcPluginsDiffer toOther{};
+        toOther.Username = pPlayer->GetUsername();
+        toOther.OnlyHere = std::move(onlyThere);
+        toOther.OnlyThere = std::move(onlyHere);
+        pOther->Send(toOther);
+    }
+}
+
+// The same player under a new name: character creation, a quest or a mod renamed their character in play.
+// The id, the party and every NPC this player runs stay; only the name the others read changes.
+void PlayerService::Rename(Player& aPlayer, const String& acName) const noexcept
+{
+    const String cOld = aPlayer.GetUsername();
+    aPlayer.SetUsername(acName);
+    if (aPlayer.GetUsername() == cOld)
+        return;
+
+    spdlog::info("Rename: player {} '{}' is now '{}', renamed in play", aPlayer.GetId(), cOld.c_str(), aPlayer.GetUsername().c_str());
+    NotifyPlayerName notify{};
+    notify.PlayerId = aPlayer.GetId();
+    notify.Username = aPlayer.GetUsername();
+    GameServer::Get()->SendToPlayers(notify, &aPlayer);
+    m_world.GetPartyService().BroadcastPlayerList();
 }

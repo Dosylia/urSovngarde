@@ -15,6 +15,7 @@
 #include <Interface/UI.h>
 #include <Forms/TESNPC.h>
 #include <PlayerCharacter.h>
+#include <PlayerLook.h>
 #include <ScriptExtender.h>
 #include <Utils.h>
 #include <World.h>
@@ -53,12 +54,20 @@ bool VRConnectService::LoadConfig(Config& aConfig) noexcept
 }
 
 VRConnectService::VRConnectService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
-    : m_transport(aTransport)
+    : m_world(aWorld)
+    , m_transport(aTransport)
 {
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&VRConnectService::OnUpdate>(this);
     m_connectedConnection = aDispatcher.sink<ConnectedEvent>().connect<&VRConnectService::OnConnected>(this);
     m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&VRConnectService::OnDisconnected>(this);
     m_connectionErrorConnection = aDispatcher.sink<ConnectionErrorEvent>().connect<&VRConnectService::OnConnectionError>(this);
+    EventDispatcherManager::Get()->loadGameEvent.RegisterSink(this);
+}
+
+BSTEventResult VRConnectService::OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*)
+{
+    ++m_saveLoads;
+    return BSTEventResult::kOk;
 }
 
 void VRConnectService::Toggle() noexcept
@@ -208,6 +217,38 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
         m_nameCheckDue = true;
     }
 
+    // A trip through the main menu counts as a save load: a New Game started there raises no load event, and is another character all the same.
+    static const BSFixedString s_mainMenu("Main Menu");
+    const UI* pUI = UI::Get();
+    const bool cAtMainMenu = pUI && pUI->GetMenuOpen(s_mainMenu);
+    if (cAtMainMenu && !m_atMainMenu)
+        ++m_saveLoads;
+    m_atMainMenu = cAtMainMenu;
+
+    // Character creation, or a race menu later, changes the look and often the name with no loading screen: both go at once.
+    static const BSFixedString s_raceMenu("RaceSex Menu");
+    const bool cInRaceMenu = pUI && pUI->GetMenuOpen(s_raceMenu);
+    if (m_inRaceMenu && !cInRaceMenu && m_state == State::kOnline)
+    {
+        // After a save load the name check has not seen, that check decides: a New Game's race menu belongs to another character.
+        if (m_saveLoads != m_saveLoadsChecked)
+            m_nameCheckDue = true;
+        else
+        {
+            spdlog::info("VRConnectService: the race menu closed; the character's look and name '{}' sent, still connected", PlayerName().c_str());
+            m_lookPending = true;
+        }
+    }
+    m_inRaceMenu = cInRaceMenu;
+
+    // Tried again each update until it goes: right after connecting the player has no server character yet.
+    if (m_lookPending && m_state == State::kOnline && PlayerLook::SendRenamed(m_world, m_transport))
+    {
+        m_lookPending = false;
+        if (const auto cName = PlayerName(); !cName.empty())
+            m_connectedName = cName;
+    }
+
     if (!IsInGame())
     {
         m_inGameSince = {};
@@ -261,16 +302,25 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
         break;
 
     case State::kOnline:
-        // Another character loaded while connected: reconnect, or the others keep seeing the old one.
-        // The server keeps the name and body it was given when connecting.
+        // Checked once after each loading screen, when the cell has settled.
+        // A new name after a save load is another character: reconnect, as the server keeps the name and body it was given when connecting.
+        // A new name with no save loaded is the same character renamed in play (character creation, a quest, a mod): its look and name are sent instead.
+        // A reconnect hands away every NPC this game runs, mid-scene if need be, and sends every actor again.
         // The name is compared rather than the race, which changes in a werewolf's fight.
-        // Only once after each loading screen, when the cell has settled: a quest or a mod may rename the player in play.
-        // A name that changes in play is not another character, and each reconnect sends every actor again.
         if (m_nameCheckDue && now - m_inGameSince >= kAutoConnectDelay)
         {
             m_nameCheckDue = false;
             const auto name = PlayerName();
-            if (!name.empty() && !m_connectedName.empty() && name != m_connectedName)
+            const bool cSaveLoaded = m_saveLoads != m_saveLoadsChecked;
+            m_saveLoadsChecked = m_saveLoads;
+            if (!name.empty() && !m_connectedName.empty() && name != m_connectedName && !cSaveLoaded)
+            {
+                // Renamed in play (character creation, a quest, a mod): the same character, who keeps their id, party and NPCs.
+                spdlog::info("VRConnectService: the character was renamed '{}' in play, was '{}'; its name and look sent, still connected", name.c_str(),
+                             m_connectedName.c_str());
+                m_lookPending = true;
+            }
+            else if (!name.empty() && !m_connectedName.empty() && name != m_connectedName)
             {
                 spdlog::info("VRConnectService: the character is now '{}', was '{}' when connecting; connecting again", name.c_str(), m_connectedName.c_str());
                 Utils::ShowHudMessage("urSovngarde: another character was loaded, connecting again");
@@ -296,6 +346,8 @@ void VRConnectService::OnConnected(const ConnectedEvent&) noexcept
     m_connectedName = PlayerName();
     m_nameCheckDue = false;
     m_loadingScreensSeen = UI::LoadingScreensQueued();
+    m_saveLoadsChecked = m_saveLoads;
+    m_lookPending = false;
 }
 
 void VRConnectService::OnDisconnected(const DisconnectedEvent&) noexcept

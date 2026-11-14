@@ -154,7 +154,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
     // A door's state is kept, so a player who enters its cell later gets the door as it was left.
     if (const uint8_t cAfter = DoorState::AfterActivation(acMessage.Packet.PreActivationOpenState))
     {
-        s_doorStates[acMessage.Packet.Id] = DoorRecord{cAfter, acMessage.pPlayer->GetCellComponent()};
+        s_doorStates[acMessage.Packet.Id] = DoorRecord{cAfter, acMessage.pPlayer->GetStandingCell()};
         spdlog::debug("Doors: {:X}:{:X} left in door state {} by an activation", acMessage.Packet.Id.ModId, acMessage.Packet.Id.BaseId, cAfter);
     }
 
@@ -165,7 +165,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
     // Outdoors, every player who has the door's cell loaded gets it, not only those in that very cell.
     // The sender's game made the activation, so the door is within the sender's loaded grid.
-    const CellIdComponent& cSenderCell = acMessage.pPlayer->GetCellComponent();
+    const CellIdComponent cSenderCell = acMessage.pPlayer->GetStandingCell();
     for (auto pPlayer : m_world.GetPlayerManager())
     {
         if (pPlayer == acMessage.pPlayer)
@@ -209,7 +209,7 @@ void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage
 
     // Outdoors, every player who has the reference's cell loaded gets it, not only those in that very cell (as OnActivate).
     // The sender's game changed the lock, so the reference is within the sender's loaded grid.
-    const CellIdComponent& cSenderCell = acMessage.pPlayer->GetCellComponent();
+    const CellIdComponent cSenderCell = acMessage.pPlayer->GetStandingCell();
     for (Player* pPlayer : m_world.GetPlayerManager())
     {
         if (pPlayer == acMessage.pPlayer)

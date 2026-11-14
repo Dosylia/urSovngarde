@@ -11,13 +11,34 @@
 
 #include <Systems/ModSystem.h>
 #include <World.h>
+#include <Utils.h>
 
 #include <Projectiles/Projectile.h>
 #include <Forms/TESObjectWEAP.h>
 #include <Forms/TESAmmo.h>
 #include <Games/ActorExtension.h>
+#include <PlayerCharacter.h>
 #include <Games/Skyrim/Interface/UI.h>
 #include <Services/PvpProjectiles.h>
+#include <Services/PartyService.h>
+
+namespace
+{
+// One line per NPC every 10 s: a flame's hits come four times a second.
+void SayFriendlyHitIgnored(Actor* apActor, const uint32_t aAttackerPlayerId) noexcept
+{
+    static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_saidAt;
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = s_saidAt.begin(); it != s_saidAt.end();)
+        it = cNow - it->second > std::chrono::seconds(60) ? s_saidAt.erase(it) : std::next(it);
+    auto& saidAt = s_saidAt[apActor->formID];
+    if (saidAt.time_since_epoch().count() && cNow - saidAt < std::chrono::seconds(10))
+        return;
+    saidAt = cNow;
+    spdlog::info("Combat: actor {:X} lets player {}'s hit go, as the game does for a friendly hit ({})", apActor->formID, aAttackerPlayerId,
+                 apActor->IsPlayerTeammate() ? "a follower" : "it ignores friendly hits");
+}
+} // namespace
 
 CombatService::CombatService(World& aWorld, TransportService& aTransport, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
@@ -28,6 +49,105 @@ CombatService::CombatService(World& aWorld, TransportService& aTransport, entt::
     m_localComponentRemoved = m_world.on_destroy<LocalComponent>().connect<&CombatService::OnLocalComponentRemoved>(this);
     m_projectileLaunchedConnection = aDispatcher.sink<ProjectileLaunchedEvent>().connect<&CombatService::OnProjectileLaunchedEvent>(this);
     m_projectileLaunchConnection = aDispatcher.sink<NotifyProjectileLaunch>().connect<&CombatService::OnNotifyProjectileLaunch>(this);
+}
+
+bool CombatService::CanFight(Actor* apActor) noexcept
+{
+    const ActorExtension* pExtension = apActor ? apActor->GetExtension() : nullptr;
+    return pExtension && pExtension->IsLocal() && !pExtension->IsPlayer() && !apActor->IsDead() && !apActor->actorState.IsBleedingOut();
+}
+
+bool CombatService::SetOnTarget(Actor* apActor, Actor* apTarget) const noexcept
+{
+    if (!CanFight(apActor) || !apTarget || apTarget == apActor || apTarget->IsDead() || apTarget->IsDisabled() || !apTarget->GetNiNode())
+        return false;
+    apActor->StartCombatEx(apTarget);
+    return true;
+}
+
+uint32_t CombatService::FightOf(Actor* apActor) const noexcept
+{
+    if (!CanFight(apActor))
+        return 0;
+    const Actor* pTarget = apActor->GetCombatTarget();
+    if (!pTarget)
+        return 0;
+    const auto cEntity = Utils::FindByFormId(m_world.view<FormIdComponent>(), pTarget->formID);
+    return cEntity ? Utils::GetServerId(*cEntity).value_or(0) : 0;
+}
+
+void CombatService::FightBack(Actor* apActor, const uint32_t aAttackerPlayerId, const float aDeltaHealth) const noexcept
+{
+    // An NPC's combat runs on its owner, so a hit from another player must put that player into it.
+    // Otherwise an NPC hostile to one player ignores the other, however hard they hit it.
+    if (!apActor || !aAttackerPlayerId)
+        return;
+
+    // Damage only. The client adds the delta, so a hit is negative; a heal or a buff must never start a fight.
+    if (aDeltaHealth >= 0.f)
+        return;
+
+    if (!CanFight(apActor))
+        return;
+
+    // The game's own rule for a friendly hit, which never runs here: the hit arrives as a health message.
+    // A party is one side, so a member's hit is a friend's for an NPC that is no enemy of this game's player.
+    // A follower, and an NPC told to ignore friendly hits (a quest's companion, a siege's own soldiers), let it go.
+    // The flag alone is not enough: a siege sets it on both sides, and the game applies it to friends only.
+    const auto& cMembers = m_world.GetPartyService().GetPartyMembers();
+    const bool cPartyMember = std::find(cMembers.begin(), cMembers.end(), aAttackerPlayerId) != cMembers.end();
+    if (cPartyMember && (apActor->IsPlayerTeammate() || (apActor->GetIgnoreFriendlyHit() && !apActor->IsHostileToActor(PlayerCharacter::Get()))))
+    {
+        SayFriendlyHitIgnored(apActor, aAttackerPlayerId);
+        return;
+    }
+
+    auto view = m_world.view<FormIdComponent, PlayerComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [view, aAttackerPlayerId](auto aEntity)
+                                 { return view.get<PlayerComponent>(aEntity).Id == aAttackerPlayerId; });
+    if (it == view.end())
+        return;
+
+    Actor* pAttacker = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(*it).Id));
+    if (!pAttacker || pAttacker == apActor)
+        return;
+
+    // A flurry of arrows would otherwise restart combat every frame.
+    static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_startedAt;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto entry = s_startedAt.begin(); entry != s_startedAt.end();)
+        entry = now - entry->second > std::chrono::seconds(30) ? s_startedAt.erase(entry) : std::next(entry);
+
+    auto& startedAt = s_startedAt[apActor->formID];
+    if (startedAt.time_since_epoch().count() && now - startedAt < std::chrono::seconds(3))
+        return;
+    startedAt = now;
+
+    if (!SetOnTarget(apActor, pAttacker))
+        return;
+    spdlog::info("Combat: actor {:X} now also fights player {} (copy {:X}), which hit it for {:.0f}", apActor->formID, aAttackerPlayerId, pAttacker->formID, -aDeltaHealth);
+}
+
+// A character gained while its last owner's game had it fighting fights the same one here.
+// Left to itself, this game's AI starts it afresh: it puts its weapon away or goes back to its routine.
+// The target is found by server id: the local player, another player's character or an NPC.
+void CombatService::CarryOnFight(Actor* apActor, const uint32_t aServerId, const uint32_t aTargetServerId) const noexcept
+{
+    if (!aTargetServerId || !CanFight(apActor))
+        return;
+
+    const auto cTargetEntity = Utils::FindEntityByServerId(aTargetServerId);
+    const auto* pTargetForm = cTargetEntity ? m_world.try_get<FormIdComponent>(*cTargetEntity) : nullptr;
+    Actor* pTarget = pTargetForm ? Cast<Actor>(TESForm::GetById(pTargetForm->Id)) : nullptr;
+    if (!SetOnTarget(apActor, pTarget))
+    {
+        spdlog::info("Combat: actor {:X} (server id {:X}) was fighting server character {:X} at its last owner, which is not here to fight; left to this game's AI",
+                     apActor->formID, aServerId, aTargetServerId);
+        return;
+    }
+
+    spdlog::info("Combat: actor {:X} (server id {:X}) fights {:X} (server id {:X}) here, as at its last owner; now in combat: {}", apActor->formID, aServerId, pTarget->formID,
+                 aTargetServerId, apActor->IsInCombat());
 }
 
 void CombatService::OnUpdate(const UpdateEvent& acEvent) const noexcept
@@ -48,9 +168,9 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
 
     uint32_t shooterFormId = acEvent.ShooterID;
     auto view = m_world.view<FormIdComponent, LocalComponent>();
-    const auto shooterEntityIt = std::find_if(std::begin(view), std::end(view), [shooterFormId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == shooterFormId; });
+    const auto shooterEntityIt = Utils::FindByFormId(view, shooterFormId);
 
-    if (shooterEntityIt == std::end(view))
+    if (!shooterEntityIt)
         return;
 
     LocalComponent& localComponent = view.get<LocalComponent>(*shooterEntityIt);
@@ -223,9 +343,9 @@ void CombatService::OnHitEvent(const HitEvent& acEvent) const noexcept
 
     auto view = m_world.view<FormIdComponent, LocalComponent>(entt::exclude<ObjectComponent>);
 
-    const auto hitteeIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.HitteeId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto hitteeIt = Utils::FindByFormId(view, acEvent.HitteeId);
 
-    if (hitteeIt == std::end(view))
+    if (!hitteeIt)
     {
         spdlog::warn(__FUNCTION__ ": hittee form id component not found, form id: {:X}", acEvent.HitterId);
         return;

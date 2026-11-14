@@ -38,7 +38,7 @@ STATE = os.path.join(FOLDER, 'launcher.json')
 REQUEST = os.path.join(FOLDER, 'launcher-request.json')
 CONNECT = os.path.join(FOLDER, 'connect.txt')
 STAND_IN = 'rig stand-in'
-FRIEND = {'code': 'RIG-J01'}
+FRIEND = {'code': 'RGK-J4M'}
 # The panel still open. The rig's page is hidden, so a closed popup never ends its closing animation and stays in the
 # page; Angular marks it as being removed (an internal mark, so this is the rig's test only, never the menu's code).
 OPEN_JOIN = "Array.from(document.querySelectorAll('app-join')).find(j => !j.closest('app-popup')?.__ng_removed)"

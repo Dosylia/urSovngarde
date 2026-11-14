@@ -21,6 +21,9 @@ Checks:
     copy exists | copy 3d | copy alive | copy dead | copy health <n>      the game's copy of the bot's character
     npc exists  | npc alive | npc dead | npc health <n|full>             its copy of an NPC the bot owns
     npc gone | copy gone                                                  that copy is no longer in this game (deleted or disabled)
+    copy|npc|placed fights player|copy|none                               in combat with the local player, with the bot's character, or not in combat
+    told health placed [<units>]                                          the bot was given the placed actor's health here when it went to the bot
+    server logged|absent <regular expression>                             the rig server wrote such a line since the script began or the last DO logmark, or none
                                                                           (exists: in this game and enabled; a DevBench timeout makes either INVALID)
     player cell <hex>                                                     the cell the player stands in, by form id
     player mark | player dropped <n>|<low>..<high>                        the local player's health, before and after
@@ -416,6 +419,27 @@ def log_time(line):
     """When the client wrote a line, in seconds since the epoch, or None."""
     m = re.match(r'\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.(\d{3})\]', line)
     return time.mktime(time.strptime(m.group(1), '%Y-%m-%d %H:%M:%S')) + int(m.group(2)) / 1000.0 if m else None
+
+
+SERVER_LOG = os.path.join(RELEASE, 'logs', 'STServerOut.log')
+
+
+def server_log_size():
+    try:
+        return os.path.getsize(SERVER_LOG)
+    except OSError:
+        return 0
+
+
+def server_lines_from(offset):
+    """The rig server's log lines written since that byte offset; all of them when the log started again."""
+    try:
+        with open(SERVER_LOG, 'rb') as f:
+            if os.path.getsize(SERVER_LOG) >= offset:
+                f.seek(offset)
+            return f.read().decode('utf-8', errors='replace').splitlines()
+    except OSError:
+        return []
 
 
 def session_lines():
@@ -1193,6 +1217,24 @@ class Run:
                             wrong.append('reference %s is %s here, %s for the other player' % (ref, 'locked' if here_locked else 'unlocked', 'locked' if locked else 'unlocked'))
                     ok = not wrong
                     detail = ('%d things compared, %d differ: ' % (compared, len(wrong)) + '; '.join(wrong)) if wrong else '%d things compared, all the same' % compared
+            elif who == 'told' and what == 'health':
+                # "told health placed [<units>]": when the actor last placed went to the bot, the bot was given the health it has here, within that much (default 5).
+                # The server's word on its health, which the next owner's game takes on.
+                form = getattr(self, 'placed', None)
+                sid = None
+                for l in session_lines():
+                    m = re.search(r'Entity: local actor ([0-9A-Fa-f]+) has server id ([0-9A-Fa-f]+)', l)
+                    if m and form and m.group(1).upper() == form.upper():
+                        sid = m.group(2).upper()
+                told = None
+                for line in self.bot_lines:
+                    m = re.search(r'Actor ([0-9A-Fa-f]+) goes to player \d+ with health (-?[\d.]+) of', line)
+                    if m and sid and m.group(1).upper() == sid:
+                        told = float(m.group(2))
+                here = papyrus('Actor', 'GetActorValue', form, ['Health']) if form else None
+                tolerance = float(words[3]) if len(words) > 3 else 5.0
+                ok = told is not None and isinstance(here, (int, float)) and abs(told - here) <= tolerance
+                detail = 'actor %s (server id %s): health %s here, the bot was told %s' % (form, sid, here, 'nothing' if told is None else '%.0f' % told)
             elif who == 'told':
                 # "told door <hex> open|closed", "told lock <hex> locked|unlocked": the bot's last "report" has that reference so.
                 # What this game did to it reached the other player.
@@ -1207,6 +1249,12 @@ class Run:
                     known = locks.get(words[2].upper())
                     ok = known is not None and known == (words[3] == 'locked')
                     detail = 'lock %s: %s for the other player' % (words[2], 'never told' if known is None else 'locked' if known else 'unlocked')
+            elif who == 'server' and what in ('logged', 'absent'):
+                # "server logged|absent <regular expression>": the rig server wrote such a line since the script began, or since "DO logmark"; or none.
+                rx = re.compile(' '.join(words[2:]))
+                hits = [l for l in server_lines_from(self.server_from) if rx.search(l)]
+                ok = bool(hits) if what == 'logged' else not hits
+                detail = ('%d lines, e.g. %s' % (len(hits), hits[0][35:160].strip())) if hits else 'none'
             elif who == 'absent':
                 # "absent <regular expression>": the client has written no such line since the script began.
                 rx = re.compile(' '.join(words[1:]))
@@ -1388,7 +1436,8 @@ class Run:
                         ok = abs(dropped - float(low)) <= PLAYER_TOLERANCE
                     detail = 'health %.0f -> %.0f, dropped %.0f (wanted %s)' % (self.mark, health, dropped, words[2])
             else:
-                form, why = self.subject(who)
+                # "placed" also takes these checks, for the actor the last "DO console player.placeatme" made.
+                form, why = (getattr(self, 'placed', None), 'nothing placed') if who == 'placed' else self.subject(who)
                 if not form:
                     ok, detail = False, why
                 elif what in ('exists', 'gone'):
@@ -1468,6 +1517,19 @@ class Run:
                     inside = papyrus('Actor', 'IsInFaction', form, [{'form': '0x' + words[2]}])
                     ok = isinstance(inside, bool) and inside is (what == 'infaction')
                     detail = 'actor %s, IsInFaction(%s) %s' % (form, words[2], inside)
+                elif what == 'fights':
+                    # "npc fights player|copy|none": the actor is in combat with the local player, with the bot's character, or not in combat at all.
+                    fighting = papyrus('Actor', 'IsInCombat', form, [])
+                    target = papyrus('Actor', 'GetCombatTarget', form, [])
+                    got = target.get('formId', '') if isinstance(target, dict) else ''
+                    if words[2] == 'none':
+                        ok = fighting is False
+                    else:
+                        wanted, why = ('14', None) if words[2] == 'player' else self.subject('copy')
+                        ok = fighting is True and bool(got) and bool(wanted) and int(got, 16) & 0xFFFFFFFF == int(wanted, 16) & 0xFFFFFFFF
+                        if why:
+                            got += ' (%s)' % why
+                    detail = 'actor %s, IsInCombat %s, combat target %s' % (form, fighting, got or target)
                 elif what in ('mounted', 'unmounted'):
                     # "copy mounted": the game's copy is riding (Actor.IsOnMount), for a rider's MountRequest (2026-10-10).
                     riding = papyrus('Actor', 'IsOnMount', form, [])
@@ -1621,6 +1683,7 @@ class Run:
         print('== %s' % self.script, flush=True)
         self.log_start = len(session_lines())
         self.log_from = self.log_start
+        self.server_from = server_log_size()
         proc = subprocess.Popen(cmd, cwd=RELEASE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
         log = io.open(os.path.join(RELEASE, 'logs', self.script + '-bot.log'), 'w', encoding='utf-8')
         # Read on a thread of its own: a DO line holds the loop below for up to half a minute ("DO watch"), and a bot that fills
@@ -1896,6 +1959,7 @@ class Run:
                 elif text.strip() == 'DO logmark':
                     # From here on, logged, absent, atleast, fewer and distinct count only the client lines written after this one.
                     self.log_from = len(session_lines())
+                    self.server_from = server_log_size()
                     print('   (log mark: the checks count client lines from line %d of this session)' % self.log_from, flush=True)
                 elif text.strip() == 'DO pickup own':
                     # The newest item this game dropped itself, picked up by the player through the game's own Activate.

@@ -8,6 +8,7 @@ struct EnterInteriorCellRequest;
 struct EnterExteriorCellRequest;
 struct PlayerRespawnRequest;
 struct PlayerLevelRequest;
+struct RequestNpcPlugins;
 
 /**
  * @brief Handles player specific actions that might change the information needed by other clients about that player.
@@ -19,12 +20,15 @@ struct PlayerService
 
     TP_NOCOPYMOVE(PlayerService);
 
+    void Rename(Player& aPlayer, const String& acName) const noexcept;
+
 protected:
     void HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>& acMessage) const noexcept;
     void HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellRequest>& acMessage) const noexcept;
     void HandleInteriorCellEnter(const PacketEvent<EnterInteriorCellRequest>& acMessage) const noexcept;
     void OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnRequest>& acMessage) const noexcept;
     void OnPlayerLevelRequest(const PacketEvent<PlayerLevelRequest>& acMessage) const noexcept;
+    void OnNpcPlugins(const PacketEvent<RequestNpcPlugins>& acMessage) const noexcept;
 
 private:
     void RemoveWhatLeftRange(Player* apPlayer, const CellIdComponent& acPrevious) const noexcept;
@@ -36,4 +40,5 @@ private:
     entt::scoped_connection m_interiorCellEnterConnection;
     entt::scoped_connection m_playerRespawnConnection;
     entt::scoped_connection m_playerLevelConnection;
+    entt::scoped_connection m_npcPluginsConnection;
 };

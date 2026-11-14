@@ -4,14 +4,35 @@
 
 struct ActorState : IMovementState
 {
+    //! WEAPON_STATE, bits 5-7 of flags2.
+    enum class WeaponState : uint32_t
+    {
+        Sheathed = 0,
+        WantToDraw = 1,
+        Drawing = 2,
+        Drawn = 3,
+        WantToSheathe = 4,
+        Sheathing = 5,
+    };
+
     virtual ~ActorState();
 
     uint32_t flags1;
     uint32_t flags2;
 
-    bool IsWeaponDrawn() const noexcept { return (flags2 >> 5 & 7) >= 3; }
+    WeaponState GetWeaponState() const noexcept { return static_cast<WeaponState>(flags2 >> 5 & 7); }
+    static const char* WeaponStateName(WeaponState aState) noexcept
+    {
+        static constexpr const char* kNames[8] = {"sheathed", "wantToDraw", "drawing", "drawn", "wantToSheathe", "sheathing", "6", "7"};
+        return kNames[static_cast<uint32_t>(aState) & 7];
+    }
 
-    bool IsWeaponFullyDrawn() const noexcept { return (flags2 >> 5 & 7) == 3; }
+    bool IsWeaponDrawn() const noexcept { return GetWeaponState() >= WeaponState::Drawn; }
+
+    bool IsWeaponFullyDrawn() const noexcept { return GetWeaponState() == WeaponState::Drawn; }
+
+    //! Drawn, or on its way back: the weapon is in the hand.
+    bool IsWeaponInHand() const noexcept { return GetWeaponState() >= WeaponState::Drawn && GetWeaponState() <= WeaponState::Sheathing; }
 
     bool IsBleedingOut() const noexcept { return (flags1 & 0x1E00000) == 0x1000000 || (flags1 & 0x1E00000) == 0xE00000; }
 

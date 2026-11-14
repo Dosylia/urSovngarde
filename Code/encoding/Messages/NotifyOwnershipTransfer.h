@@ -19,7 +19,7 @@ struct NotifyOwnershipTransfer final : ServerMessage
 
     bool operator==(const NotifyOwnershipTransfer& achRhs) const noexcept
     {
-        return ServerId == achRhs.ServerId && OwnerPlayerId == achRhs.OwnerPlayerId && OwnershipEpoch == achRhs.OwnershipEpoch && CurrentActorData == achRhs.CurrentActorData && LeveledNpcPickId == achRhs.LeveledNpcPickId && GetOpcode() == achRhs.GetOpcode();
+        return ServerId == achRhs.ServerId && OwnerPlayerId == achRhs.OwnerPlayerId && OwnershipEpoch == achRhs.OwnershipEpoch && CurrentActorData == achRhs.CurrentActorData && LeveledNpcPickId == achRhs.LeveledNpcPickId && CombatTarget == achRhs.CombatTarget && GetOpcode() == achRhs.GetOpcode();
     }
 
     uint32_t ServerId{};
@@ -27,4 +27,6 @@ struct NotifyOwnershipTransfer final : ServerMessage
     uint32_t OwnershipEpoch{};
     ActorData CurrentActorData{};
     GameId LeveledNpcPickId{};
+    //! Whom its last owner's game had it fighting, by server id; 0 for nobody.
+    uint32_t CombatTarget{};
 };

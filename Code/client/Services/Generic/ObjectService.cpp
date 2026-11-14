@@ -679,9 +679,17 @@ bool IsOwnPluginReference(uint32_t aFormId) noexcept
     return IsReferenceOf(s_pMarkers, aFormId) || IsReferenceOf(s_pLodPlugin, aFormId) || IsReferenceOf(s_pLodMaster, aFormId);
 }
 
+// A trigger box: an activator with a primitive shape, which the game fires when something walks into it.
+// Its script plays its effect in that game only (a hall's collapse, a scene's start), sets its stage, and often switches the box off.
+// Each game keeps its own, so every player still fires it on arrival; the stage it sets goes once per party.
+bool IsTriggerVolume(const TESObjectREFR* apRef) noexcept
+{
+    return apRef && apRef->baseForm && static_cast<uint8_t>(apRef->baseForm->formType) == 24 && apRef->extraData.Contains(ExtraDataType::Primitive);
+}
+
 bool IsSharedSwitchKind(const TESObjectREFR* apRef) noexcept
 {
-    if (!apRef || !apRef->baseForm || apRef->formID >= 0xFF000000 || IsOwnPluginReference(apRef->formID))
+    if (!apRef || !apRef->baseForm || apRef->IsTemporary() || IsOwnPluginReference(apRef->formID) || IsTriggerVolume(apRef))
         return false;
     switch (static_cast<uint8_t>(apRef->baseForm->formType))
     {
@@ -703,7 +711,7 @@ bool IsSharedSwitchKind(const TESObjectREFR* apRef) noexcept
 // So one arriving here was handed over by a plugin, and the game's own scripts never send one.
 bool IsSwitchableActor(TESObjectREFR* apRef) noexcept
 {
-    return apRef && apRef->formID < 0xFF000000 && apRef != PlayerCharacter::Get() && Cast<Actor>(apRef);
+    return apRef && !apRef->IsTemporary() && apRef != PlayerCharacter::Get() && Cast<Actor>(apRef);
 }
 
 // A dead actor whose reference a master file holds (the game's own people, the DLCs', the patches') stays on.
@@ -765,6 +773,16 @@ bool ObjectService::ApplyReferenceEnable(uint32_t aFormId, bool aEnabled) noexce
     auto* pRef = Cast<TESObjectREFR>(TESForm::GetById(aFormId));
     if (!pRef)
         return false;
+    // A switch an older leader sent, or one kept on the server from before, leaves a trigger box as it is here.
+    if (IsTriggerVolume(pRef))
+    {
+        // Logged only when the leader's switch differs here: a join replay can hold hundreds of them.
+        if (aEnabled == pRef->IsDisabled())
+            spdlog::info("ReferenceEnable: trigger {:X} (base {:X}) left {} here; each game's trigger fires for its own player", pRef->formID, pRef->baseForm->formID,
+                         pRef->IsDisabled() ? "off" : "on");
+        ++s_enableLeftAlone;
+        return true;
+    }
     // The leader sends only these kinds; another plugin at the same id here is left alone.
     if ((!IsSharedSwitchKind(pRef) && !IsSwitchableActor(pRef)) || pRef->IsDeleted())
     {

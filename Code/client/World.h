@@ -7,6 +7,7 @@
 #include <Services/OverlayService.h>
 #include <Services/CharacterService.h>
 #include <Services/MagicService.h>
+#include <Services/CombatService.h>
 #include <Services/DebugService.h>
 
 #include <Systems/ModSystem.h>
@@ -33,6 +34,8 @@ struct World : entt::registry
     DebugService& GetDebugService() noexcept { return ctx().at<DebugService>(); }
     const DebugService& GetDebugService() const noexcept { return ctx().at<const DebugService>(); }
     MagicService& GetMagicService() noexcept { return ctx().at<MagicService>(); }
+    CombatService& GetCombatService() noexcept { return ctx().at<CombatService>(); }
+    const CombatService& GetCombatService() const noexcept { return ctx().at<const CombatService>(); }
     const MagicService& GetMagicService() const noexcept { return ctx().at<const MagicService>(); }
 
     auto& GetDispatcher() noexcept { return m_dispatcher; }

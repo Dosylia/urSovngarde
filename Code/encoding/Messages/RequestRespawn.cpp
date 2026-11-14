@@ -5,6 +5,8 @@ void RequestRespawn::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const 
     Serialization::WriteVarInt(aWriter, ActorId);
     Serialization::WriteString(aWriter, AppearanceBuffer);
     Serialization::WriteVarInt(aWriter, ChangeFlags);
+    FaceTints.Serialize(aWriter);
+    Serialization::WriteString(aWriter, Username);
 }
 
 void RequestRespawn::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -14,4 +16,6 @@ void RequestRespawn::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noex
     ActorId = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     AppearanceBuffer = Serialization::ReadString(aReader);
     ChangeFlags = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
+    FaceTints.Deserialize(aReader);
+    Username = Serialization::ReadString(aReader);
 }

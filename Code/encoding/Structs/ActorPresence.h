@@ -18,8 +18,13 @@ struct ActorPresence
     uint32_t ServerId{};
     ActorPresenceKind Kind{ActorPresenceKind::Own};
     bool Dead{};
+    //! Whom the character fights here, by server id; 0 when it fights nobody or is not this game's own.
+    uint32_t CombatTarget{};
 
-    bool operator==(const ActorPresence& acRhs) const noexcept { return ServerId == acRhs.ServerId && Kind == acRhs.Kind && Dead == acRhs.Dead; }
+    bool operator==(const ActorPresence& acRhs) const noexcept
+    {
+        return ServerId == acRhs.ServerId && Kind == acRhs.Kind && Dead == acRhs.Dead && CombatTarget == acRhs.CombatTarget;
+    }
 };
 
 namespace ActorPresences
@@ -35,6 +40,7 @@ inline void Write(TiltedPhoques::Buffer::Writer& aWriter, const TiltedPhoques::V
         Serialization::WriteVarInt(aWriter, actor.ServerId);
         aWriter.WriteBits(static_cast<uint8_t>(actor.Kind), 2);
         Serialization::WriteBool(aWriter, actor.Dead);
+        Serialization::WriteVarInt(aWriter, actor.CombatTarget);
     }
 }
 
@@ -51,6 +57,7 @@ inline void Read(TiltedPhoques::Buffer::Reader& aReader, TiltedPhoques::Vector<A
         aReader.ReadBits(kind, 2);
         actor.Kind = static_cast<ActorPresenceKind>(kind);
         actor.Dead = Serialization::ReadBool(aReader);
+        actor.CombatTarget = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     }
 }
 } // namespace ActorPresences

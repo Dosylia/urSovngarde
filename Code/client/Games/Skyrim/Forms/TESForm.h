@@ -126,7 +126,9 @@ struct TESForm : BaseFormComponent
     bool IsDisabled() const noexcept { return (flags & DISABLED) != 0; }
     bool IsDeleted() const noexcept { return (flags & DELETED) != 0; }
     bool IsStillLoading() const noexcept { return (flags & STILL_LOADING) != 0; }
-    bool IsTemporary() const noexcept { return formID >= 0xFF000000; }
+    //! Made at run time (by the game or by us), never saved: ids from 0xFF000000.
+    static bool IsTemporaryId(uint32_t aFormId) noexcept { return aFormId >= 0xFF000000; }
+    bool IsTemporary() const noexcept { return IsTemporaryId(formID); }
     bool IsConsumable() const noexcept { return formType == FormType::Ingredient || formType == FormType::Alchemy; }
 
     uintptr_t unk4;

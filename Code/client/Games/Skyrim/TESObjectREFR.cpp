@@ -1444,7 +1444,7 @@ bool TP_MAKE_THISCALL(HookPlayAnimationAndWait, void, uint32_t auiStackID, TESOb
     spdlog::debug("Animation: {}, EventName: {}", apAnimation->AsAscii(), apEventName->AsAscii());
 
 #if OBJECT_ANIM_SYNC
-    if (!s_cancelAnimationWaitEvent && (apSelf->formID < 0xFF000000))
+    if (!s_cancelAnimationWaitEvent && !apSelf->IsTemporary())
         World::Get().GetRunner().Trigger(ScriptAnimationEvent(apSelf->formID, apAnimation->AsAscii(), apEventName->AsAscii()));
 #endif
 
@@ -1475,7 +1475,7 @@ bool TP_MAKE_THISCALL(HookPlayAnimation, void, uint32_t auiStackID, TESObjectREF
     spdlog::debug("EventName: {}", apEventName->AsAscii());
 
 #if OBJECT_ANIM_SYNC
-    if (!s_cancelAnimationEvent && (apSelf->formID < 0xFF000000))
+    if (!s_cancelAnimationEvent && !apSelf->IsTemporary())
         World::Get().GetRunner().Trigger(ScriptAnimationEvent(apSelf->formID, String{}, apEventName->AsAscii()));
 #endif
 
@@ -1692,7 +1692,7 @@ constexpr size_t kDisableSlot = 0x8A;
 // A switch that changed the disabled flag is reported; ObjectService decides whether the party gets it.
 void ReportEnableChange(const TESObjectREFR* apRef, bool aWasDisabled) noexcept
 {
-    if (apRef && aWasDisabled != apRef->IsDisabled() && apRef->formID < 0xFF000000 && !IsProcessExiting())
+    if (apRef && aWasDisabled != apRef->IsDisabled() && !apRef->IsTemporary() && !IsProcessExiting())
         World::Get().GetRunner().Trigger(ReferenceEnableEvent(apRef->formID, !apRef->IsDisabled()));
 }
 

@@ -2,6 +2,7 @@
 #include <PerfScope.h>
 
 #include <Services/ActorValueService.h>
+#include <Services/CombatService.h>
 #include <World.h>
 #include <Forms/ActorValueInfo.h>
 #include <Forms/TESNPC.h>
@@ -180,8 +181,8 @@ TiltedPhoques::Map<uint32_t, CopyRevival> s_copyRevivals;
 bool IsAliveAtOwner(const uint32_t aFormId) noexcept
 {
     auto view = World::Get().view<FormIdComponent, RemoteComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [&view, aFormId](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
-    return it != view.end() && !view.get<RemoteComponent>(*it).DeadAtOwner;
+    const auto it = Utils::FindByFormId(view, aFormId);
+    return it && !view.get<RemoteComponent>(*it).DeadAtOwner;
 }
 
 void RunCopyRevivals() noexcept
@@ -337,9 +338,9 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
 
     auto view = m_world.view<FormIdComponent>();
 
-    const auto hitteeIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.HitteeId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto hitteeIt = Utils::FindByFormId(view, acEvent.HitteeId);
 
-    if (hitteeIt == std::end(view))
+    if (!hitteeIt)
     {
         spdlog::warn("Health change event form id component not found, form id: {:X}", acEvent.HitteeId);
         return;
@@ -686,57 +687,13 @@ void ActorValueService::ApplyHealthChange(const NotifyHealthChangeBroadcast& acM
         }
     }
 
-    StartCombatWithAttacker(pActor, acMessage.AttackerPlayerId, acMessage.DeltaHealth);
+    m_world.GetCombatService().FightBack(pActor, acMessage.AttackerPlayerId, acMessage.DeltaHealth);
 
     // TODO(cosideci): find fix for player health sync so this can be used again
     /*
     if (pActor->GetExtension()->IsRemotePlayer())
         World::Get().GetOverlayService().SetPlayerHealthPercentage(pActor->formID);
     */
-}
-
-void ActorValueService::StartCombatWithAttacker(Actor* apActor, uint32_t aAttackerPlayerId, float aDeltaHealth) const noexcept
-{
-    // An NPC's combat runs on its owner, so a hit from another player must put that player into it.
-    // Otherwise an NPC hostile to one player ignores the other, however hard they hit it.
-    if (!apActor || !aAttackerPlayerId)
-        return;
-
-    // Damage only. The client adds the delta, so a hit is negative; a heal or a buff must never start a fight.
-    if (aDeltaHealth >= 0.f)
-        return;
-
-    // Only the owner runs this actor's AI, and only it can usefully start combat. Players are never made to fight.
-    ActorExtension* pExtension = apActor->GetExtension();
-    if (!pExtension || !pExtension->IsLocal() || pExtension->IsPlayer())
-        return;
-
-    if (apActor->IsDead() || apActor->actorState.IsBleedingOut())
-        return;
-
-    auto view = m_world.view<FormIdComponent, PlayerComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [view, aAttackerPlayerId](auto aEntity)
-                                 { return view.get<PlayerComponent>(aEntity).Id == aAttackerPlayerId; });
-    if (it == view.end())
-        return;
-
-    Actor* pAttacker = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(*it).Id));
-    if (!pAttacker || pAttacker == apActor)
-        return;
-
-    // A flurry of arrows would otherwise restart combat every frame.
-    static TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_startedAt;
-    const auto now = std::chrono::steady_clock::now();
-    for (auto entry = s_startedAt.begin(); entry != s_startedAt.end();)
-        entry = now - entry->second > std::chrono::seconds(30) ? s_startedAt.erase(entry) : std::next(entry);
-
-    auto& startedAt = s_startedAt[apActor->formID];
-    if (startedAt.time_since_epoch().count() && now - startedAt < std::chrono::seconds(3))
-        return;
-    startedAt = now;
-
-    apActor->StartCombatEx(pAttacker);
-    spdlog::info("Combat: actor {:X} now also fights player {} (copy {:X}), which hit it for {:.0f}", apActor->formID, aAttackerPlayerId, pAttacker->formID, -aDeltaHealth);
 }
 
 void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMessage) const noexcept

@@ -65,7 +65,7 @@ bool VoiceService::CanHear(const Player& acListener, const Player& acSpeaker) co
         return true;
 
     // Proximity: the same area, then the distance between both characters.
-    if (!acSpeaker.GetCellComponent().IsInRange(acListener.GetCellComponent(), false))
+    if (!acSpeaker.GetStandingCell().IsInRange(acListener.GetCellComponent(), false))
         return false;
 
     const auto cSpeakerCharacter = acSpeaker.GetCharacter();

@@ -9,6 +9,7 @@ struct DisconnectedEvent;
 struct UpdateEvent;
 struct NotifyPlayerJoined;
 struct NotifyPlayerLeft;
+struct NotifyPlayerName;
 struct NotifyPlayerWhereabouts;
 struct TESObjectREFR;
 struct TESObjectCELL;
@@ -33,6 +34,7 @@ protected:
     void OnDisconnected(const DisconnectedEvent& acEvent) noexcept;
     void OnPlayerJoined(const NotifyPlayerJoined& acMessage) noexcept;
     void OnPlayerLeft(const NotifyPlayerLeft& acMessage) noexcept;
+    void OnPlayerName(const NotifyPlayerName& acMessage) noexcept;
     void OnWhereabouts(const NotifyPlayerWhereabouts& acMessage) noexcept;
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
     BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
@@ -67,6 +69,7 @@ private:
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_joinedConnection;
     entt::scoped_connection m_leftConnection;
+    entt::scoped_connection m_nameConnection;
     entt::scoped_connection m_whereaboutsConnection;
     entt::scoped_connection m_updateConnection;
 

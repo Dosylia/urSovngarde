@@ -21,6 +21,7 @@ struct PartyLeftEvent;
 
 struct NotifyPlayerRespawn;
 struct NotifyDownedState;
+struct NotifyNpcPluginsDiffer;
 
 /**
  * @brief Handles logic related to the local player.
@@ -39,6 +40,7 @@ protected:
     void OnServerSettingsReceived(const ServerSettings& acSettings) noexcept;
     void OnNotifyPlayerRespawn(const NotifyPlayerRespawn& acMessage) const noexcept;
     void OnNotifyDownedState(const NotifyDownedState& acMessage) noexcept;
+    void OnNotifyNpcPluginsDiffer(const NotifyNpcPluginsDiffer& acMessage) const noexcept;
     void OnGridCellChangeEvent(const GridCellChangeEvent& acEvent) const noexcept;
     void OnCellChangeEvent(const CellChangeEvent& acEvent) const noexcept;
     void OnPlayerDialogueEvent(const PlayerDialogueEvent& acEvent) const noexcept;
@@ -94,6 +96,7 @@ private:
     void RunBeastFormDetection() const noexcept;
     void RunPlaceUpdates() noexcept;
     void RunCrashPlaceNote() noexcept;
+    void RunNpcPluginReport() noexcept;
 #ifdef SKYRIMVR
     /**
      * @brief Take the world map away from a player who is losing health.
@@ -164,6 +167,9 @@ private:
     float m_lastHealth = -1.f;
 #endif
 
+    //! This connection has sent the plugins adding or changing NPCs (RequestNpcPlugins).
+    bool m_npcPluginsSent = false;
+
     // The last place sent for the public server page, and when to check again.
     String m_lastPlace;
     std::chrono::steady_clock::time_point m_nextPlaceCheck{};
@@ -180,6 +186,7 @@ private:
     entt::scoped_connection m_settingsConnection;
     entt::scoped_connection m_notifyRespawnConnection;
     entt::scoped_connection m_downedStateConnection;
+    entt::scoped_connection m_npcPluginsConnection;
     entt::scoped_connection m_gridCellChangeConnection;
     entt::scoped_connection m_cellChangeConnection;
     entt::scoped_connection m_playerDialogueConnection;

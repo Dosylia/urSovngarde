@@ -29,6 +29,7 @@
 #include <Messages/NotifyVoiceData.h>
 #include <Messages/NotifyPlayerWhereabouts.h>
 #include <Messages/RequestOwnershipClaim.h>
+#include <Messages/RequestActorPresence.h>
 #include <Messages/RequestFollowerState.h>
 #include <Messages/RequestPlayerHealthUpdate.h>
 #include <Messages/MountRequest.h>
@@ -77,6 +78,8 @@
 #include <Messages/ServerMessageFactory.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ShiftGridCellRequest.h>
+#include <Messages/RequestNpcPlugins.h>
+#include <Messages/NotifyNpcPluginsDiffer.h>
 #include <Messages/StringCacheUpdate.h>
 #include <StringCache.h>
 #include <Structs/GridCellCoords.h>
@@ -396,6 +399,18 @@ void Bot::ApplyFakeNetwork() noexcept
     spdlog::info("Fake network on what this bot sends: {:.0f} ms lag, {:.1f}% lost, {:.1f}% 40 ms late", cLag, cLoss, cReorder);
 }
 
+// The NPCs this bot runs, as a game reports what it has loaded, with whom they fight ("npc fights").
+void Bot::SendPresence() noexcept
+{
+    m_lastPresence = Clock::now();
+    RequestActorPresence request{};
+    for (const auto& actor : m_actors)
+        if (actor.OwnedByUs && !actor.IsPlayer && actor.ServerId != m_serverId)
+            request.Actors.push_back({actor.ServerId, ActorPresenceKind::Own, actor.Dead, actor.Dead ? 0u : m_npcFightTarget.value_or(0)});
+    if (!request.Actors.empty())
+        SendMsg(request);
+}
+
 void Bot::Tick() noexcept
 {
     const auto now = Clock::now();
@@ -483,6 +498,8 @@ void Bot::Tick() noexcept
             SendMovement();
         if (m_speechNext < m_speech.size())
             UpdateSpeech(now);
+        if (m_npcFightTarget && now - m_lastPresence >= 2s)
+            SendPresence();
         if (m_healthRestorePending && now >= m_healthRestoreAt)
         {
             m_healthRestorePending = false;
@@ -654,6 +671,38 @@ void Bot::SendCellEntry() noexcept
     enter.WorldSpaceId = m_worldSpace;
     enter.CellId = m_cell;
     enter.CurrentCoords = grid;
+
+    // Close to the game's walk: its centre trails the player and moves once the player is two cells from it; here by one cell.
+    // The game sends that shift before the cell entry. Further than two is a teleport, after which it loads around the player.
+    if (m_gridShiftLags)
+    {
+        GridCellCoords centre = m_lagCentre.value_or(grid);
+        const auto follow = [](int32_t& aCentre, const int32_t aStanding)
+        {
+            const int32_t cAway = aStanding - aCentre;
+            if (std::abs(cAway) > 2)
+                aCentre = aStanding;
+            else if (std::abs(cAway) == 2)
+                aCentre += cAway / 2;
+        };
+        follow(centre.X, grid.X);
+        follow(centre.Y, grid.Y);
+
+        const bool cShift = !m_lagCentre || *m_lagCentre != centre;
+        if (cShift)
+        {
+            ShiftGridCellRequest shift{};
+            shift.WorldSpaceId = m_worldSpace;
+            shift.PlayerCell = m_cell;
+            shift.CenterCoords = centre;
+            SendMsg(shift);
+        }
+        m_lagCentre = centre;
+        SendMsg(enter);
+        spdlog::info("Cell entry sent: grid ({}, {}), centre ({}, {}){}", grid.X, grid.Y, centre.X, centre.Y, cShift ? ", shifted" : ", not shifted");
+        return;
+    }
+
     SendMsg(enter);
 
     // A real client sends these two on different triggers: the exterior-enter when the grid square it stands in
@@ -693,6 +742,7 @@ void Bot::FollowHostIntoCell(const GameId& acCell, const GameId& acWorldSpace) n
     m_cell = acCell;
     m_worldSpace = acWorldSpace;
     m_standaloneCell = false;
+    m_lagCentre.reset();
 
     // Beside the host rather than inside them, and at their height: an interior has no terrain to stand on and
     // the exterior z the bot was carrying would put it through the floor or in the sky.
@@ -722,6 +772,8 @@ void Bot::FollowHostIntoCell(const GameId& acCell, const GameId& acWorldSpace) n
         shift.PlayerCell = acCell;
         shift.CenterCoords = grid;
         SendMsg(shift);
+        if (m_gridShiftLags)
+            m_lagCentre = grid;
 
         spdlog::info("Host went out into worldspace {:X}:{:X} cell {:X}; following to grid ({}, {})", acWorldSpace.ModId, acWorldSpace.BaseId, acCell.BaseId, grid.X, grid.Y);
     }
@@ -1436,6 +1488,13 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         return;
     }
 
+    if (opcode == NotifyNpcPluginsDiffer::Opcode)
+    {
+        const auto& message = static_cast<const NotifyNpcPluginsDiffer&>(acMessage);
+        spdlog::info("NPC plugins differ from player '{}': {} only there, {} only here", message.Username.c_str(), message.OnlyThere.size(), message.OnlyHere.size());
+        return;
+    }
+
     if (opcode == NotifyOwnershipTransfer::Opcode)
     {
         const auto& message = static_cast<const NotifyOwnershipTransfer&>(acMessage);
@@ -1448,6 +1507,22 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         // test passed because each side only ever checked its own count. The server was doing the right thing
         // throughout.
         const bool cOursNow = message.OwnerPlayerId == m_playerId;
+        // What the server knew of its health, which the new owner's game takes on.
+        const auto& cValues = message.CurrentActorData.InitialActorValues;
+        if (const auto cHealth = cValues.ActorValuesList.find(24); cHealth != cValues.ActorValuesList.end())
+        {
+            const auto cMax = cValues.ActorMaxValuesList.find(24);
+            const float cMaxHealth = cMax != cValues.ActorMaxValuesList.end() ? cMax->second : 0.f;
+            spdlog::info("Actor {:X} goes to player {} with health {:.0f} of {:.0f} ({})", message.ServerId, message.OwnerPlayerId, cHealth->second, cMaxHealth,
+                         cHealth->second < cMaxHealth - 1.f ? "damaged" : "full");
+        }
+        if (message.CombatTarget)
+        {
+            const bool cOtherPlayer = std::any_of(m_players.begin(), m_players.end(), [&message, this](const KnownPlayer& acPlayer)
+                                                  { return acPlayer.ServerId == message.CombatTarget && acPlayer.ServerId != m_serverId; });
+            spdlog::info("Actor {:X} goes to player {} fighting server character {:X}{}", message.ServerId, message.OwnerPlayerId, message.CombatTarget,
+                         message.CombatTarget == m_serverId ? " (this bot)" : cOtherPlayer ? " (the other player)" : "");
+        }
 
         if (m_acceptOwnership)
         {
@@ -2447,7 +2522,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // "cast <spell hex> [stop|away [noaim]]": this bot's character casts that Skyrim.esm spell from its right hand at the host, or stops, as a client sends a concentration spell.
+    // "cast <spell hex> [stop|away [noaim]|at npc]": this bot's character casts that Skyrim.esm spell from its right hand at the host, or stops, as a client sends a concentration spell.
+    // "at npc" casts at the NPC this bot registered last, whoever runs it now, facing where it was last told it stands.
     if (name == "cast")
     {
         uint32_t spell = 0;
@@ -2471,7 +2547,20 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         // "away" turns the body from the host with no target, as a VR player's hand points where its body does not.
         // Its aim then goes with the pose, unless "noaim".
         const bool cAway = args.size() > 1 && args[1] == "away";
-        const glm::vec3 cWay = pHost->Position - m_position;
+        const KnownActor* pNpc = nullptr;
+        if (args.size() > 2 && args[1] == "at" && args[2] == "npc")
+        {
+            for (const auto& actor : m_actors)
+                if (!actor.IsPlayer && actor.ServerId != m_serverId)
+                    pNpc = &actor;
+            if (!pNpc)
+            {
+                spdlog::error("[script] cast at npc: this bot has registered no NPC");
+                return true;
+            }
+        }
+        const glm::vec3 cTargetAt = pNpc ? (pNpc->PositionKnown ? pNpc->Position : m_npcPosition) : pHost->Position;
+        const glm::vec3 cWay = cTargetAt - m_position;
         const float cHeading = std::atan2(cWay.x, cWay.y);
         m_yaw = cAway ? cHeading + glm::pi<float>() : cHeading;
         m_castAiming = cAway && !(args.size() > 2 && args[2] == "noaim");
@@ -2484,9 +2573,12 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.SpellFormId = Skyrim(spell);
         request.CastingSource = 1;
         request.IsDualCasting = false;
-        request.DesiredTarget = cAway ? 0 : pHost->ServerId;
+        request.DesiredTarget = cAway ? 0 : pNpc ? pNpc->ServerId : pHost->ServerId;
         SendMsg(request);
-        spdlog::info("[script] spell {:X} cast at the host{}", spell, cAway ? (m_castAiming ? ", the body turned away and the aim sent" : ", the body turned away and no aim sent") : "");
+        if (pNpc)
+            spdlog::info("[script] spell {:X} cast at NPC {:X}, {:.0f} units away", spell, pNpc->ServerId, glm::length(cWay));
+        else
+            spdlog::info("[script] spell {:X} cast at the host{}", spell, cAway ? (m_castAiming ? ", the body turned away and the aim sent" : ", the body turned away and no aim sent") : "");
         return true;
     }
 
@@ -2545,6 +2637,8 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
     // The bot says it is in an interior and the server treats it exactly as a player walking through a door, which is all the bug needs.
     if (name == "cell")
     {
+        // A load door: the game loads around the player on the other side.
+        m_lagCentre.reset();
         if (args.empty())
         {
             spdlog::error("[script] cell needs a hex cell id, or 'out' to go back to the worldspace");
@@ -2601,22 +2695,32 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         return true;
     }
 
-    // Announce cells the way a client walking between neighbouring outdoor cells does: the exterior-enter only.
-    //
-    // The bot has always sent the grid shift alongside it, so the server's handling of an exterior-enter on its
-    // own was never exercised -- and that handler was the one of the three cell handlers that did not send the
-    // arriving player what is around them. Anything it failed to do, the grid shift did a moment later, in the
-    // test but not in the game.
+    // "npcplugins <file> ...": tells the server these are the plugins of this bot's game that add or change NPCs.
+    if (name == "npcplugins")
+    {
+        RequestNpcPlugins request{};
+        for (const auto& plugin : args)
+            request.Plugins.push_back(plugin.c_str());
+        SendMsg(request);
+        spdlog::info("[script] told the server of {} NPC plugins", request.Plugins.size());
+        return true;
+    }
+
+    // "gridshift on" sends both messages centred where the bot stands, "lag" walks as the game does (its centre trails),
+    // "off" sends the exterior-enter alone.
     if (name == "gridshift")
     {
-        if (args.empty() || (args[0] != "on" && args[0] != "off"))
+        if (args.empty() || (args[0] != "on" && args[0] != "off" && args[0] != "lag"))
         {
-            spdlog::error("[script] gridshift needs 'on' or 'off'");
+            spdlog::error("[script] gridshift needs 'on', 'off' or 'lag'");
             return true;
         }
 
-        m_sendGridShift = args[0] == "on";
-        spdlog::info("[script] grid shift {}", m_sendGridShift ? "on: cell changes send both messages" : "off: cell changes send the exterior enter alone");
+        m_sendGridShift = args[0] != "off";
+        m_gridShiftLags = args[0] == "lag";
+        m_lagCentre.reset();
+        spdlog::info("[script] grid shift {}", m_gridShiftLags ? "lag: the centre trails as the game's does" :
+                                               m_sendGridShift ? "on: cell changes send both messages" : "off: cell changes send the exterior enter alone");
         return true;
     }
 
@@ -3311,6 +3415,24 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         if (args.empty())
         {
             spdlog::error("[script] npc needs a hex form id, e.g. 'npc A2C94'");
+            return true;
+        }
+
+        // "npc fights me|other|none": this bot's NPCs fight this bot's character, the other player's, or nobody.
+        // A game's presence report says that of each NPC it runs; the bot starts sending them, every 2 s.
+        if (args[0] == "fights")
+        {
+            const std::string cWho = args.size() > 1 ? args[1] : "none";
+            uint32_t target = 0;
+            if (cWho == "me")
+                target = m_serverId;
+            else if (cWho == "other")
+                for (const auto& player : m_players)
+                    if (player.ServerId != m_serverId)
+                        target = player.ServerId;
+            m_npcFightTarget = target;
+            SendPresence();
+            spdlog::info("[script] this bot's NPCs fight {} (server id {:X})", cWho, target);
             return true;
         }
 

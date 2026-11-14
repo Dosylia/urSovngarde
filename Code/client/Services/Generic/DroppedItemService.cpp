@@ -705,7 +705,7 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
         for (TESObjectREFR* pRef : pCell->GetRefsByFormTypes(s_types))
         {
             // Temporary references are dropped items, which have their own record above.
-            if (!pRef || pRef->formID >= 0xFF000000 || m_idByRef.count(pRef->formID))
+            if (!pRef || pRef->IsTemporary() || m_idByRef.count(pRef->formID))
                 continue;
             if (pRef->IsDisabled() || pRef->IsDeleted() || !pRef->GetNiNode() || DistanceTo(pRef, playerAt) > cWatchRadius)
                 continue;

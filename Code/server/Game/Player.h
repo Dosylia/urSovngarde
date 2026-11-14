@@ -35,6 +35,9 @@ struct Player
     void SetUsername(String aUsername) noexcept;
     void SetMods(Vector<String> aMods) noexcept;
     [[nodiscard]] const Vector<String>& GetMods() const noexcept { return m_mods; }
+    //! The plugins of its game that add or change NPCs (RequestNpcPlugins); empty until it says.
+    void SetNpcPlugins(Vector<String> aPlugins) noexcept { m_npcPlugins = std::move(aPlugins); }
+    [[nodiscard]] const Vector<String>& GetNpcPlugins() const noexcept { return m_npcPlugins; }
     void SetModIds(Vector<uint16_t> aModIds) noexcept;
     void SetCharacter(entt::entity aCharacter) noexcept;
     void SetStringCacheId(uint32_t aStringCacheId) noexcept;
@@ -66,18 +69,25 @@ struct Player
     [[nodiscard]] std::chrono::steady_clock::time_point GetLastCellEnterAt() const noexcept { return m_lastCellEnterAt; }
     void MarkCellEnter() noexcept { m_lastCellEnterAt = std::chrono::steady_clock::now(); }
 
+    // The cell component's centre is that of the game's loaded cells, which trails the cell the player stands in by up to one.
+    // Something the player does happens here; whether another game has it loaded goes by that game's cell component.
+    [[nodiscard]] CellIdComponent GetStandingCell() const noexcept { return CellIdComponent{m_cell.Cell, m_cell.WorldSpaceId, m_standing}; }
+    void SetStandingCoords(const GridCellCoords& acCoords) noexcept { m_standing = acCoords; }
+
 private:
     uint32_t m_id{0};
     ConnectionId_t m_connectionId;
     std::optional<entt::entity> m_character;
     Vector<String> m_mods;
     Vector<uint16_t> m_modIds;
+    Vector<String> m_npcPlugins;
     uint64_t m_discordId{0};
     String m_endpoint;
     String m_username;
     PartyComponent m_party;
     QuestLogComponent m_questLog;
     CellIdComponent m_cell;
+    GridCellCoords m_standing{};
     uint32_t m_stringCacheId{0};
     uint16_t m_level{0};
     std::chrono::steady_clock::time_point m_lastMovementAt{};

@@ -21,12 +21,14 @@ Player::Player(Player&& aRhs) noexcept
     , m_character{std::exchange(aRhs.m_character, std::nullopt)}
     , m_mods{std::exchange(aRhs.m_mods, {})}
     , m_modIds{std::exchange(aRhs.m_modIds, {})}
+    , m_npcPlugins{std::exchange(aRhs.m_npcPlugins, {})}
     , m_discordId{std::exchange(aRhs.m_discordId, 0)}
     , m_endpoint{std::exchange(aRhs.m_endpoint, {})}
     , m_username{std::exchange(aRhs.m_username, {})}
     , m_party{std::exchange(aRhs.m_party, {})}
     , m_questLog{std::exchange(aRhs.m_questLog, {})}
     , m_cell{std::exchange(aRhs.m_cell, {})}
+    , m_standing{aRhs.m_standing}
     , m_place{std::exchange(aRhs.m_place, {})}
     , m_hiddenFromPublicPage{aRhs.m_hiddenFromPublicPage}
 {

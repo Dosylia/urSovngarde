@@ -6,6 +6,7 @@ struct UpdateEvent;
 struct ProjectileLaunchedEvent;
 struct NotifyProjectileLaunch;
 struct HitEvent;
+struct Actor;
 
 /**
  * @brief Responsible for projectiles, combat agro, etc.
@@ -16,6 +17,17 @@ struct CombatService
     ~CombatService() noexcept = default;
 
     TP_NOCOPYMOVE(CombatService);
+
+    //! A living NPC this game runs, which is not bleeding out: only the owner runs an NPC's AI, and players are never made to fight.
+    static bool CanFight(Actor* apActor) noexcept;
+    //! Sets an NPC that can fight on a target alive and drawn here; one already fighting is turned to it, never stopped first.
+    bool SetOnTarget(Actor* apActor, Actor* apTarget) const noexcept;
+    //! Whom an NPC this game runs fights, by server id; 0 for nobody, or a target without one.
+    uint32_t FightOf(Actor* apActor) const noexcept;
+    //! An NPC hit by another player fights that player too.
+    void FightBack(Actor* apActor, uint32_t aAttackerPlayerId, float aDeltaHealth) const noexcept;
+    //! A character gained while its last owner's game had it fighting fights the same one here.
+    void CarryOnFight(Actor* apActor, uint32_t aServerId, uint32_t aTargetServerId) const noexcept;
 
 protected:
     void OnUpdate(const UpdateEvent& acEvent) const noexcept;

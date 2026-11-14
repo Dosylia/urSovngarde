@@ -3,7 +3,7 @@
 #   python Tools\VR\live-check.py live-temp-reuse
 #
 # The fix for the crash of 2026-10-01 18:45 (live-away-seeker) rests on the client knowing which temporary actors
-# it made itself: it keeps their form ids in a list (s_ownCopies in CharacterService.cpp) and leaves every other
+# it made itself: it keeps their form ids in a list (the copy registry, CopyRegistry.cpp) and leaves every other
 # temporary actor to the game. The game hands form ids out again once an actor is deleted -- the log of 2026-10-02
 # has "Deleted actor FF001169" three times in two minutes -- so an id that stays in the list after its copy is
 # gone will sooner or later belong to an actor the game made, and that actor is then disabled and deleted in the

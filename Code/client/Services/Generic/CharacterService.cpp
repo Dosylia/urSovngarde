@@ -1,10 +1,14 @@
 #include "Forms/TESObjectCELL.h"
 #include <PerfScope.h>
+#include <CopyRegistry.h>
+#include <Takeover.h>
+#include <PlayerLook.h>
 #include "Forms/TESWorldSpace.h"
 #include "Services/PapyrusService.h"
 #include <Services/PartyService.h>
 
 #include <Services/CharacterService.h>
+#include <Services/CombatService.h>
 #include <Services/QuestService.h>
 #include <Services/TransportService.h>
 #include <Services/InventoryService.h>
@@ -71,7 +75,6 @@
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
 #include <Messages/RequestFollowerState.h>
-#include <Messages/RequestActorPresence.h>
 #include <Messages/MountRequest.h>
 #include <Messages/NotifyMount.h>
 #include <Messages/NewPackageRequest.h>
@@ -99,14 +102,6 @@
 
 namespace
 {
-// Levelled references the owner rolled as another kind of creature: ghost form id -> form id of the copy standing in for it.
-// Adopting the wrong creature freezes it or makes it slide, so the owner's creature is spawned here as a copy instead.
-// The local reference (the "ghost") is disabled while its copy stands in, and is never assigned to the server.
-// A ghost is enabled again when its copy is deleted, on disconnect, or when this client goes away.
-// The save guard (Actor.cpp) writes a ghost to a save as enabled, so a save made meanwhile does not keep it disabled.
-// A value of 0: no copy yet, as for this player's own follower while another player's stands far away (s_hiddenFollowers).
-TiltedPhoques::Map<uint32_t, uint32_t> s_ghosts;
-
 // Followers of this player that another player's follower hides while it is far from here: server id -> reference.
 // No copy is on its way for them, so they come back when the server no longer has that character.
 TiltedPhoques::Map<uint32_t, uint32_t> s_hiddenFollowers;
@@ -178,49 +173,6 @@ struct HandedAway
     uint32_t BaseFormId{}; // 0 when the actor was already gone from the game when it was let go
 };
 TiltedPhoques::Map<uint32_t, HandedAway> s_handedAway;
-
-// NPCs gained while their owner's reports had them moving.
-// This game's AI shows what it wants a moment later: a speed if it walks them on, none if it has them standing.
-// Standing, it never had them moving, so it never stops the legs, and they would hold a stride until its next move.
-struct GainedMoving
-{
-    uint32_t FormId{};
-    float CopySpeed{};
-    std::chrono::steady_clock::time_point At{};
-};
-TiltedPhoques::Vector<GainedMoving> s_gainedMoving;
-
-void RunGainedMoving() noexcept
-{
-    const auto cNow = std::chrono::steady_clock::now();
-    for (auto it = s_gainedMoving.begin(); it != s_gainedMoving.end();)
-    {
-        if (cNow < it->At)
-        {
-            ++it;
-            continue;
-        }
-
-        Actor* pActor = Cast<Actor>(TESForm::GetById(it->FormId));
-        // Given away again by now, or killed, thrown or mounted: its legs are not this stop's to touch.
-        const bool cStillOurs = pActor && pActor->GetNiNode() && !pActor->GetExtension()->IsRemote();
-        if (cStillOurs && !pActor->IsMount() && InterpolationSystem::OnFoot(pActor) && !pActor->actorState.IsDeadOrDying() && !pActor->actorState.IsBleedingOut() &&
-            !pActor->actorState.IsKnockedDown())
-        {
-            const float cSpeed = InterpolationSystem::FootSpeed(pActor);
-            if (cSpeed > 1.f)
-                spdlog::info("Takeover: NPC {:X} was moving as a copy here (speed {:.0f}), and this game's AI walks it on (speed {:.0f})", pActor->formID, it->CopySpeed, cSpeed);
-            else
-            {
-                static BSFixedString s_moveStop("moveStop");
-                const bool cTaken = pActor->SendAnimationEvent(&s_moveStop);
-                spdlog::info("Takeover: NPC {:X} was moving as a copy here (speed {:.0f}), and this game's AI has it standing; stopped ('moveStop' {})", pActor->formID,
-                             it->CopySpeed, cTaken ? "taken" : "not taken");
-            }
-        }
-        it = s_gainedMoving.erase(it);
-    }
-}
 
 // Whether the phase waits on a package of an NPC remote here.
 // Packages only complete on the client running the NPC's AI, so this copy of the scene can't get past the phase on its own.
@@ -423,75 +375,6 @@ void RunSceneLines() noexcept
     }
 }
 
-// By its owner's reports, not its graph: this game's AI writes its own speed there, even on a copy.
-// A slow walker reports about 60 units a second, and a standing body none.
-void NoteGainedMoving(Actor* apActor, const InterpolationComponent* apInterpolation) noexcept
-{
-    constexpr float cMovingSpeed = 20.f;
-    const bool cOwnGraphCopy = apActor->GetExtension()->IsRemote() && apInterpolation && !apInterpolation->ForeignGraph;
-    if (const float cCopySpeed = cOwnGraphCopy ? InterpolationSystem::ReportedSpeed(apActor->formID, *apInterpolation) : 0.f; cCopySpeed > cMovingSpeed)
-        s_gainedMoving.push_back({apActor->formID, cCopySpeed, std::chrono::steady_clock::now() + std::chrono::milliseconds(500)});
-}
-
-// TEMPORARY: what a living NPC carries over from being a copy, read as it is gained and 3 s later.
-// In flags1, bits 0-3 are its moving directions and bits 6-8 walking, running and sprinting.
-// In flags2, bits 5-7 are its weapon: 0 sheathed, 3 drawn, 4 wanting to sheathe, 5 sheathing.
-struct TakeoverWatch
-{
-    uint32_t FormId{};
-    std::chrono::steady_clock::time_point At{};
-};
-TiltedPhoques::Vector<TakeoverWatch> s_takeoverWatches;
-
-void LogTakeoverState(Actor* apActor, const char* acpWhen) noexcept
-{
-    static BSFixedString s_speed("Speed");
-    static BSFixedString s_state("iState");
-    float graphSpeed = 0.f;
-    uint32_t graphState = 0;
-    apActor->animationGraphHolder.GetVariableFloat(&s_speed, &graphSpeed);
-    apActor->animationGraphHolder.GetVariableInt(&s_state, &graphState);
-    const uint32_t cFlags2 = apActor->actorState.flags2;
-    spdlog::info("TakeoverDiag: NPC {:X} {}: flags1 {:#x}, flags2 {:#x}, weapon {}, speed {:.0f}, graph speed {:.0f}, graph state {}", apActor->formID, acpWhen,
-                 apActor->actorState.flags1, cFlags2, (cFlags2 >> 5) & 7, apActor->GetSpeed(), graphSpeed, graphState);
-}
-
-// TEMPORARY: the second reading of each gained NPC, and a line each time an NPC this game runs starts or stops swimming.
-void RunTakeoverDiag(World& aWorld) noexcept
-{
-    const auto cNow = std::chrono::steady_clock::now();
-    for (auto it = s_takeoverWatches.begin(); it != s_takeoverWatches.end();)
-    {
-        if (cNow < it->At)
-        {
-            ++it;
-            continue;
-        }
-        if (Actor* pActor = Cast<Actor>(TESForm::GetById(it->FormId)))
-            LogTakeoverState(pActor, "3 s after the gain");
-        it = s_takeoverWatches.erase(it);
-    }
-
-    static std::chrono::steady_clock::time_point s_nextSwimCheck;
-    if (cNow < s_nextSwimCheck)
-        return;
-    s_nextSwimCheck = cNow + std::chrono::seconds(1);
-
-    static TiltedPhoques::Map<uint32_t, bool> s_swimming;
-    auto view = aWorld.view<FormIdComponent, LocalComponent>();
-    for (const auto cEntity : view)
-    {
-        const Actor* pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id));
-        if (!pActor || pActor == PlayerCharacter::Get())
-            continue;
-        const bool cSwimming = pActor->actorState.IsSwimming();
-        const auto it = s_swimming.find(pActor->formID);
-        if (cSwimming != (it != s_swimming.end() && it->second))
-            spdlog::info("SwimDiag: own NPC {:X} {} swimming here at height {:.0f}", pActor->formID, cSwimming ? "starts" : "stops", pActor->position.z);
-        s_swimming[pActor->formID] = cSwimming;
-    }
-}
-
 // References standing here whose teleport was refused, and when.
 // The server sends that teleport right before it takes a character through a door and out of this player's view.
 TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_teleportsRefused;
@@ -513,13 +396,6 @@ bool IsHandedAway(const Actor* apActor, uint32_t& aServerId) noexcept
     }
     return false;
 }
-
-// Form ids of the temporary actors this client made itself: copies of other players and of their creatures.
-// Only these are this client's to disable or delete; game-spawned temporary actors can be remote too.
-// Disabling a game actor while the game disposes of it crashes in its movement code (SkyrimVR.exe+0x714EB2).
-// An id leaves this set as soon as its copy is gone, because the game reuses a deleted actor's form id (`live-temp-reuse`).
-// When in doubt an id is removed: a copy left standing is harmless, disabling a game actor is the crash.
-std::unordered_set<uint32_t> s_ownCopies;
 
 // Copies this client still had when its last connection ended: form id -> base form id.
 // The clean-up on connect deletes them instead of announcing them to the server as new characters.
@@ -557,7 +433,7 @@ Actor* RememberOwnCopy(Actor* apActor) noexcept
 
     // A waiting copy on this id is gone: its entry must not take the mark off the new one.
     std::erase_if(s_waitingCopies, [cFormId = apActor->formID](const WaitingCopy& acWaiting) { return acWaiting.FormId == cFormId; });
-    s_ownCopies.insert(apActor->formID);
+    CopyRegistry::AddOwnCopy(apActor->formID);
     return apActor;
 }
 
@@ -762,7 +638,7 @@ Actor* StandInForForeignCreature(Actor* apLocal, TESNPC* apOwnerBase) noexcept
     if (pLocalBase && pLocalBase->IsTemporary())
         pLocalBase = pLocalBase->GetTemplateBase();
 
-    s_ghosts[apLocal->formID] = pCopy->formID;
+    CopyRegistry::SetStandIn(apLocal->formID, pCopy->formID);
 
     // Only a loaded creature is disabled now: one without 3D may be in the middle of being disposed of by the game.
     // Disabling it then crashes in the game's movement code (SkyrimVR.exe+0x714EB2).
@@ -809,15 +685,8 @@ Actor* FollowerCopy(Actor* apLocal, TESNPC* apOwnerBase, const uint32_t aServerI
 // Called for every temporary actor this client deletes: if it was a stand-in, its ghost comes back.
 void ReleaseGhostOf(const uint32_t aCopyFormId) noexcept
 {
-    for (auto it = s_ghosts.begin(); it != s_ghosts.end(); ++it)
-    {
-        if (it->second != aCopyFormId)
-            continue;
-        const uint32_t cGhost = it->first;
-        s_ghosts.erase(it);
-        EnableGhost(cGhost);
-        return;
-    }
+    if (const auto cGhost = CopyRegistry::TakeGhostOfCopy(aCopyFormId))
+        EnableGhost(*cGhost);
 }
 
 uint32_t OutstandingHandles(const Actor* apActor) noexcept
@@ -832,7 +701,7 @@ void FreeCopy(Actor* apActor, const uint32_t aFormId, const char* acpWhy) noexce
     // session-report.py parses this line; keep the colon before the reason.
     spdlog::info("Temporary Remote Deleted {:X}: {}", aFormId, acpWhy);
     apActor->Delete();
-    s_ownCopies.erase(aFormId); // the game may give this id to an actor of its own next
+    CopyRegistry::ForgetOwnCopy(aFormId); // the game may give this id to an actor of its own next
 }
 
 void RunWaitingCopies() noexcept
@@ -855,7 +724,7 @@ void RunWaitingCopies() noexcept
         Actor* pActor = Cast<Actor>(TESObjectREFR::GetByHandle(waiting.Handle));
         if (!pActor || pActor->IsDeleted() || !pActor->IsTemporary())
         {
-            s_ownCopies.erase(waiting.FormId);
+            CopyRegistry::ForgetOwnCopy(waiting.FormId);
             continue; // gone already, which is the outcome we wanted
         }
 
@@ -883,9 +752,8 @@ void RunWaitingCopies() noexcept
 
 void ReleaseAllGhosts() noexcept
 {
-    for (const auto& [ghost, copy] : s_ghosts)
+    for (const auto& [ghost, copy] : CopyRegistry::TakeAllGhosts())
         EnableGhost(ghost);
-    s_ghosts.clear();
 }
 
 // A ghost disabled while its cell loads can get its 3D back from the game and fight, unknown to the server.
@@ -897,7 +765,7 @@ void RunGhostChecks() noexcept
     static TiltedPhoques::Map<uint32_t, uint32_t> s_redisabled; // ghost form id -> times disabled again
     const auto cNow = std::chrono::steady_clock::now();
     // The first check two seconds after a ghost appears, not in the frame it was hidden, when its disable has not landed yet.
-    if (s_ghosts.empty())
+    if (CopyRegistry::Ghosts().empty())
     {
         s_nextCheck = cNow + std::chrono::seconds(2);
         return;
@@ -907,7 +775,7 @@ void RunGhostChecks() noexcept
     s_nextCheck = cNow + std::chrono::seconds(2);
 
     TiltedPhoques::Vector<uint32_t> noLongerFollowers;
-    for (const auto& [ghost, copy] : s_ghosts)
+    for (const auto& [ghost, copy] : CopyRegistry::Ghosts())
     {
         Actor* pGhost = Cast<Actor>(TESForm::GetById(ghost));
         // Hidden with no copy only as this player's follower: after a load of a save where she is not one, she is not hidden any more.
@@ -926,7 +794,7 @@ void RunGhostChecks() noexcept
 
     for (const uint32_t cGhost : noLongerFollowers)
     {
-        s_ghosts.erase(cGhost);
+        CopyRegistry::ForgetGhost(cGhost);
         EnableGhost(cGhost);
     }
 }
@@ -1294,8 +1162,8 @@ void CharacterService::ClaimForKillingBlow(const uint32_t aFormId) noexcept
     constexpr auto cKillWithin = std::chrono::seconds(3);
 
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [&view, aFormId](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
-    if (it == view.end())
+    const auto it = Utils::FindByFormId(view, aFormId);
+    if (!it)
         return;
 
     const uint32_t cServerId = view.get<RemoteComponent>(*it).Id;
@@ -1332,8 +1200,8 @@ void CharacterService::ReviveActor(const uint32_t aFormId) noexcept
 
     // Revived here directly: this game's own actor, whose word reaches every game, or a body dead only here.
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [&view, aFormId](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
-    if (it == view.end() || !view.get<RemoteComponent>(*it).DeadAtOwner)
+    const auto it = Utils::FindByFormId(view, aFormId);
+    if (!it || !view.get<RemoteComponent>(*it).DeadAtOwner)
     {
         pActor->Respawn();
         return;
@@ -1373,7 +1241,7 @@ void CharacterService::OnGameLoaded() noexcept
             pExtension->SetHiddenHere(false);
     };
 
-    for (const auto& [ghost, copy] : s_ghosts)
+    for (const auto& [ghost, copy] : CopyRegistry::Ghosts())
         forget(ghost);
     for (const PendingGhostEnable& acPending : s_pendingGhostEnables)
         forget(acPending.FormId);
@@ -1434,8 +1302,8 @@ void CharacterService::LeaderSwitchedOn(const uint32_t aFormId) noexcept
 void CharacterService::AnnounceAgain(const uint32_t aFormId) noexcept
 {
     auto view = m_world.view<FormIdComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [&view, aFormId](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
-    if (it != view.end() && std::find(s_notAnnounced.begin(), s_notAnnounced.end(), *it) == s_notAnnounced.end())
+    const auto it = Utils::FindByFormId(view, aFormId);
+    if (it && std::find(s_notAnnounced.begin(), s_notAnnounced.end(), *it) == s_notAnnounced.end())
         s_notAnnounced.push_back(*it);
 }
 
@@ -1448,7 +1316,7 @@ void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
     // Gone already: what it stood in for is not left hidden.
     if (!pActor)
         ReleaseGhostOf(aFormId);
-    if (pActor && ((pActor->formID & 0xFF000000) == 0xFF000000))
+    if (pActor && pActor->IsTemporary())
     {
         const uint32_t refWord = static_cast<uint32_t>(pActor->handleRefObject.refCount);
         const uint32_t handles = refWord & 0x3FF;
@@ -1470,7 +1338,7 @@ void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
 
         RecentDeletes::Record(pActor, aFormId, handles, refWord, RecentDeletes::kOnServersWord);
         pActor->Delete();
-        s_ownCopies.erase(aFormId); // the game may give this id to an actor of its own next
+        CopyRegistry::ForgetOwnCopy(aFormId); // the game may give this id to an actor of its own next
         spdlog::info("\tDeleted actor {:X}", aFormId);
         ReleaseGhostOf(aFormId);
     }
@@ -1570,9 +1438,9 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
     InterpolationSystem::Forget(acEvent.FormId);
 
     auto view = m_world.view<FormIdComponent>();
-    const auto entityIt = std::find_if(view.begin(), view.end(), [view, formId = acEvent.FormId](auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == formId; });
+    const auto entityIt = Utils::FindByFormId(view, acEvent.FormId);
 
-    if (entityIt == view.end())
+    if (!entityIt)
     {
         // Not an error: the game removes many actors this client never tracked, dozens at once on a cell change.
         spdlog::debug("Actor removed that was not tracked here: {:X}", acEvent.FormId);
@@ -1633,12 +1501,10 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     RunFollowerReclaims();
     RunLeaderClaims();
     RunFollowerReports();
-    RunPresenceReports();
     RunReleasedGhosts();
-    RunGainedMoving();
     RunPendingLines();
     RunSceneLines();
-    RunTakeoverDiag(m_world);
+    Takeover::Run(m_world);
 
     {
         PerfScope perfScope("CharacterService::RunFactionsUpdates");
@@ -1703,15 +1569,15 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
         }
 
         // Only this client's own copies are deleted; a temporary actor the game made itself is kept and announced.
-        // Deleting a game actor while its AI still runs crashes the game (SkyrimVR.exe+0x683850). See s_ownCopies.
-        if (formIdComponent.Id > 0xFF000000 && s_ownCopies.find(formIdComponent.Id) == s_ownCopies.end())
+        // Deleting a game actor while its AI still runs crashes the game (SkyrimVR.exe+0x683850). See CopyRegistry.
+        if (TESForm::IsTemporaryId(formIdComponent.Id) && !CopyRegistry::IsOwnCopy(formIdComponent.Id))
         {
             spdlog::info("Temporary actor {:X} was made by the game, not by this client; kept on connect", formIdComponent.Id);
             ProcessNewEntity(entity);
             continue;
         }
 
-        if (formIdComponent.Id > 0xFF000000)
+        if (TESForm::IsTemporaryId(formIdComponent.Id))
         {
             Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
             if (pActor)
@@ -1720,7 +1586,7 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
                 RecentDeletes::Record(pActor, formIdComponent.Id, refWord & 0x3FF, refWord, RecentDeletes::kOnConnect);
                 pActor->Delete();
             }
-            s_ownCopies.erase(formIdComponent.Id);
+            CopyRegistry::ForgetOwnCopy(formIdComponent.Id);
 
             continue;
         }
@@ -1771,7 +1637,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
 
     // A copy of another player's follower does not stay on as a second one, even one not loaded yet: this game's own comes back with the ghosts below.
     TiltedPhoques::Vector<uint32_t> followerCopies;
-    for (const uint32_t cFormId : s_ownCopies)
+    for (const uint32_t cFormId : CopyRegistry::OwnCopies())
     {
         Actor* pCopy = Cast<Actor>(TESForm::GetById(cFormId));
         const ActorExtension* pExtension = pCopy ? pCopy->GetExtension() : nullptr;
@@ -1781,16 +1647,16 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     for (const uint32_t cFormId : followerCopies)
         DeleteTempActor(cFormId);
 
-    // Every remaining copy now belongs to the game, so s_ownCopies is emptied; their ids will be reused.
+    // Every remaining copy now belongs to the game, so the copy registry is emptied; their ids will be reused.
     // The ones still standing are remembered for the clean-up on the next connect (s_lastConnectionCopies).
-    // Added to, not replaced: a failed connection attempt also reports a disconnection, with s_ownCopies already empty.
-    for (const uint32_t cFormId : s_ownCopies)
+    // Added to, not replaced: a failed connection attempt also reports a disconnection, with no copies left in the registry.
+    for (const uint32_t cFormId : CopyRegistry::OwnCopies())
     {
         const Actor* pActor = Cast<Actor>(TESForm::GetById(cFormId));
         if (pActor && !pActor->IsDeleted() && pActor->baseForm)
             s_lastConnectionCopies[cFormId] = pActor->baseForm->formID;
     }
-    s_ownCopies.clear();
+    CopyRegistry::ForgetAllOwnCopies();
     s_handedAway.clear();
     s_pendingLines.clear();
     s_sceneLines.clear();
@@ -1949,7 +1815,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
             const bool cHide = pActor->IsPlayerFollower() && Actor::IsSaveGuarded();
             if (cHide)
             {
-                s_ghosts[pActor->formID] = 0;
+                CopyRegistry::SetStandIn(pActor->formID, 0);
                 s_hiddenFollowers[acMessage.ServerId] = pActor->formID;
                 // Only a loaded one: this can be a reference just released, with no 3D yet. RunGhostChecks hides it once it has its 3D.
                 if (pActor->GetNiNode() && !pActor->IsDeleted() && !pActor->IsStillLoading())
@@ -2242,12 +2108,12 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
             const bool cSameKind = pOwn && pSentBase && pOwn->baseForm == pSentBase;
 
             const auto view = m_world.view<FormIdComponent>();
-            const auto itor = std::find_if(std::begin(view), std::end(view), [cOwnId, view](entt::entity aOther) { return view.get<FormIdComponent>(aOther).Id == cOwnId; });
+            const auto itor = Utils::FindByFormId(view, cOwnId);
 
             if (pOwn && !pOwn->IsDeleted() && cSameKind)
             {
                 pActor = pOwn;
-                entity = itor != std::end(view) ? *itor : m_world.create();
+                entity = itor ? *itor : m_world.create();
                 spdlog::info("HandedAway: server character {:X} is this game's own actor {:X} come back; it is that actor again and no copy is made", acMessage.ServerId, cOwnId);
             }
             else
@@ -2255,7 +2121,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                 spdlog::info("HandedAway: server character {:X} came back, but the actor it was here ({:X}) is {}; a copy is made", acMessage.ServerId, cOwnId,
                              !pOwn ? "not loaded" : pOwn->IsDeleted() ? "deleted" : "another creature now");
                 // The actor now carrying that id was held back from the server because of the record, so it is processed now.
-                if (pOwn && itor != std::end(view))
+                if (pOwn && itor)
                     ProcessNewEntity(*itor);
             }
         }
@@ -2299,9 +2165,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
         const uint32_t cActorId = World::Get().GetModSystem().GetGameId(acMessage.FormId);
 
         auto waitingView = m_world.view<FormIdComponent, WaitingForAssignmentComponent>();
-        const auto waitingItor = std::find_if(std::begin(waitingView), std::end(waitingView), [waitingView, cActorId](auto entity) { return waitingView.get<FormIdComponent>(entity).Id == cActorId; });
+        const auto waitingItor = Utils::FindByFormId(waitingView, cActorId);
 
-        if (waitingItor != std::end(waitingView))
+        if (waitingItor)
         {
             spdlog::info("Character with form id {:X} already has a spawn request in progress.", cActorId);
             return;
@@ -2329,7 +2195,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                 spdlog::error("\tForm : {:X}", pForm ? pForm->formID : 0);
                 return;
             }
-            s_ghosts[cActorId] = pCopy->formID;
+            CopyRegistry::SetStandIn(cActorId, pCopy->formID);
             if (acMessage.FollowerOfPlayerId && acMessage.FollowerOfPlayerId != m_transport.GetLocalPlayerId())
                 pCopy->GetExtension()->SetFollowerCopy(true);
             spdlog::info("Stand-in: reference {:X} is not loaded here; copy {:X} of the owner's {} ({:X}) stands in for it", cActorId, pCopy->formID, pOwnerBase->fullName.value.AsAscii(),
@@ -2365,13 +2231,13 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
         if (!entity)
         {
             // The reference itself takes the character now, so an old stand-in's record must not keep disabling it.
-            s_ghosts.erase(cActorId);
+            CopyRegistry::ForgetGhost(cActorId);
             StopHiding(pActor);
 
             const auto view = m_world.view<FormIdComponent>();
-            const auto itor = std::find_if(std::begin(view), std::end(view), [cActorId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == cActorId; });
+            const auto itor = Utils::FindByFormId(view, cActorId);
 
-            if (itor != std::end(view))
+            if (itor)
                 entity = *itor;
             else
                 entity = m_world.create();
@@ -2443,7 +2309,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
     // Kept now too: a reference handed back to this game before its 3D comes keeps the mark.
     if (ActorExtension* pExtension = pActor->GetExtension())
         pExtension->RevivedSinceDeath = acMessage.RevivedSinceDeath;
-    if (s_ownCopies.find(pActor->formID) != s_ownCopies.end() && pActor->baseForm)
+    if (CopyRegistry::IsOwnCopy(pActor->formID) && pActor->baseForm)
         newRemote.CachedBaseId = pActor->baseForm->formID;
     ClaimCopyId(*entity, pActor->formID);
 
@@ -2523,9 +2389,9 @@ void CharacterService::OnNotifyActionEvents(const NotifyActionEvents& acMessage)
 void CharacterService::OnActionEvent(const ActionEvent& acActionEvent) const noexcept
 {
     auto view = m_world.view<LocalAnimationComponent, FormIdComponent>();
-    const auto itor = std::find_if(std::begin(view), std::end(view), [id = acActionEvent.ActorId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto itor = Utils::FindByFormId(view, acActionEvent.ActorId);
 
-    if (itor != std::end(view))
+    if (itor)
     {
         auto& localComponent = view.get<LocalAnimationComponent>(*itor);
 
@@ -2536,9 +2402,9 @@ void CharacterService::OnActionEvent(const ActionEvent& acActionEvent) const noe
         // A `LocalAnimationComponent` is not attached yet, but the actor already exists and is running animations
 
         auto view = m_world.view<FormIdComponent, EarlyAnimationBufferComponent>();
-        const auto itor = std::find_if(std::begin(view), std::end(view), [id = acActionEvent.ActorId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
+        const auto itor = Utils::FindByFormId(view, acActionEvent.ActorId);
 
-        if (itor != std::end(view))
+        if (itor)
         {
             view.get<EarlyAnimationBufferComponent>(*itor).Actions.push_back(acActionEvent);
         }
@@ -2616,29 +2482,33 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
     if (auto* pWaitingFor3D = m_world.try_get<WaitingFor3D>(cEntity))
         pWaitingFor3D->SpawnRequest.LeveledNpcPickId = acMessage.LeveledNpcPickId;
 
-    // A reference that rolled as another creature here is ghosted behind a copy; taking it over would flip the creature for everyone.
-    // So the hand-off is declined and the server keeps looking.
-    // Matched by either id: the character is usually bound to the stand-in copy, not to the ghost the map is keyed by.
+    // A reference that rolled as another creature here is ghosted behind a copy of the owner's creature.
+    // The character is run here on that copy, which every game sees as the same creature.
+    // Bound to the ghost itself, it is declined and the server keeps looking: running the ghost would flip the creature for everyone.
+    // A living follower's copy is declined too: another player's follower is run by her own player's game.
+    uint32_t standInFor = 0;
     if (isLocalOwner && pFormIdComponent)
     {
         const uint32_t cBoundId = pFormIdComponent->Id;
-        const auto ghost = std::find_if(s_ghosts.begin(), s_ghosts.end(), [cBoundId](const auto& acEntry) { return acEntry.first == cBoundId || acEntry.second == cBoundId; });
-        // A follower's body is the exception: it goes to whoever grabs it, on the copy here.
+        const auto ghost = CopyRegistry::StandInEntryOf(cBoundId);
         Actor* pBoundActor = Cast<Actor>(TESForm::GetById(cBoundId));
         ActorExtension* pBoundExtension = pBoundActor ? pBoundActor->GetExtension() : nullptr;
-        const bool cFollowerBody = pBoundExtension && pBoundExtension->IsFollowerCopy() && pBoundActor->IsDead();
-        if (ghost != s_ghosts.end() && !cFollowerBody)
+        const bool cOnCopy = ghost && ghost->second == cBoundId;
+        const bool cLivingFollower = pBoundExtension && pBoundExtension->IsFollowerCopy() && !pBoundActor->IsDead();
+        if (ghost && (!cOnCopy || cLivingFollower))
         {
             const auto* pCopy = Cast<Actor>(TESForm::GetById(ghost->second));
             const Actor* pLocal = Cast<Actor>(TESForm::GetById(ghost->first));
             const auto* pLocalBase = pLocal ? Cast<TESNPC>(pLocal->baseForm) : nullptr;
             const auto* pCopyBase = pCopy ? Cast<TESNPC>(pCopy->baseForm) : nullptr;
-            spdlog::info("Hand-off of {:X} (server id {:X}) declined: a copy of ours stands in for reference {:X} here ({} here, the owner's kind is {}); taking it "
-                         "would run our copy as the creature", pFormIdComponent->Id, acMessage.ServerId, ghost->first, pLocalBase ? pLocalBase->fullName.value.AsAscii() : "not loaded",
-                         pCopyBase ? pCopyBase->fullName.value.AsAscii() : "?");
+            spdlog::info("Hand-off of {:X} (server id {:X}) declined: {} reference {:X} here ({} here, the owner's kind is {})", pFormIdComponent->Id, acMessage.ServerId,
+                         cOnCopy ? "it is another player's follower, shown on a copy standing in for" : "it is bound to the hidden", ghost->first,
+                         pLocalBase ? pLocalBase->fullName.value.AsAscii() : "not loaded", pCopyBase ? pCopyBase->fullName.value.AsAscii() : "?");
             DeclineOwnership(acMessage.ServerId, acMessage.OwnershipEpoch);
             return;
         }
+        if (cOnCopy)
+            standInFor = ghost->first;
     }
 
     if (isLocalOwner)
@@ -2665,14 +2535,8 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
             return;
         }
 
-        NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
-
-        // TEMPORARY: see LogTakeoverState.
-        if (!pActor->IsDead())
-        {
-            LogTakeoverState(pActor, "as it is gained");
-            s_takeoverWatches.push_back({pActor->formID, std::chrono::steady_clock::now() + std::chrono::seconds(3)});
-        }
+        Takeover::NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
+        Takeover::LogGain(pActor, m_world.try_get<InterpolationComponent>(cEntity));
 
         // Reconcile while hooks still treat the actor as remote/non-authoritative.
         pActor->GetExtension()->SetRemote(true);
@@ -2699,6 +2563,9 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         VRBodySync::ClearRemotePose(pActor->formID);
 #endif
         spdlog::info("Gained ownership of actor {:X} (form {:X}) at epoch {}", acMessage.ServerId, pActor ? pActor->formID : 0, acMessage.OwnershipEpoch);
+        if (standInFor)
+            spdlog::info("Hand-off of {:X} (server id {:X}) taken on the copy standing in for reference {:X} here", pActor->formID, acMessage.ServerId, standInFor);
+        m_world.GetCombatService().CarryOnFight(pActor, acMessage.ServerId, acMessage.CombatTarget);
         if (cMyFollower)
             SendInventoryDifference(pActor, acMessage.ServerId, acMessage.OwnershipEpoch, acMessage.CurrentActorData.InitialInventory);
 
@@ -2860,49 +2727,6 @@ void CharacterService::RunFollowerReports() const noexcept
         it = it->second.Visit == s_visit ? std::next(it) : s_followerReports.erase(it);
 }
 
-void CharacterService::RunPresenceReports() const noexcept
-{
-    // The whole list each time, so a lost or late report is put right by the next one.
-    // Only once the server has accepted this player: it kicks a connection that sends anything before.
-    static std::chrono::steady_clock::time_point s_next;
-    const auto cNow = std::chrono::steady_clock::now();
-    if (cNow < s_next || !m_transport.IsOnline())
-        return;
-    s_next = cNow + std::chrono::seconds(2);
-
-    TiltedPhoques::Set<uint32_t> standIns;
-    for (const auto& [ghost, copy] : s_ghosts)
-        if (copy)
-            standIns.insert(copy);
-
-    RequestActorPresence request{};
-    const auto add = [this, &request, &standIns](const entt::entity aEntity, const uint32_t aServerId, const bool aOwn)
-    {
-        const auto* pFormId = m_world.try_get<FormIdComponent>(aEntity);
-        Actor* pActor = pFormId ? Cast<Actor>(TESForm::GetById(pFormId->Id)) : nullptr;
-        const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
-        // Only what is drawn here: a disabled copy waiting to be freed, or one without 3D, is not seen.
-        if (!pExtension || pExtension->IsPlayer() || pActor->IsDisabled() || !pActor->GetNiNode())
-            return;
-
-        ActorPresence presence{};
-        presence.ServerId = aServerId;
-        presence.Kind = aOwn ? ActorPresenceKind::Own : standIns.contains(pActor->formID) ? ActorPresenceKind::StandIn : ActorPresenceKind::Copy;
-        presence.Dead = pActor->IsDead();
-        request.Actors.push_back(presence);
-    };
-
-    const auto localView = m_world.view<LocalComponent>();
-    for (const auto cEntity : localView)
-        add(cEntity, localView.get<LocalComponent>(cEntity).Id, true);
-    const auto remoteView = m_world.view<RemoteComponent>();
-    for (const auto cEntity : remoteView)
-        add(cEntity, remoteView.get<RemoteComponent>(cEntity).Id, false);
-
-    if (!request.Actors.empty())
-        m_transport.Send(request);
-}
-
 void CharacterService::RunReleasedGhosts() const noexcept
 {
     if (!s_pendingGhostEnables.empty() && !IsProcessExiting())
@@ -2915,7 +2739,7 @@ void CharacterService::RunReleasedGhosts() const noexcept
             if (!pExtension || pActor->IsDeleted())
                 return true;
             // Hidden again meanwhile: that one wants the disable, and a save still has it enabled.
-            if (s_ghosts.find(acPending.FormId) != s_ghosts.end())
+            if (CopyRegistry::IsGhost(acPending.FormId))
             {
                 pExtension->SetHiddenHere(true);
                 return true;
@@ -2949,8 +2773,7 @@ void CharacterService::RunReleasedGhosts() const noexcept
     const auto view = m_world.view<FormIdComponent>();
     for (const uint32_t cFormId : released)
     {
-        const auto itor = std::find_if(view.begin(), view.end(), [view, cFormId](const entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == cFormId; });
-        if (itor != view.end())
+        if (const auto itor = Utils::FindByFormId(view, cFormId))
             ProcessNewEntity(*itor);
     }
 }
@@ -2964,9 +2787,9 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
         const uint32_t cFormId = hidden->second;
         s_hiddenFollowers.erase(hidden);
         // Only while no copy of hers stands in: deleting that copy brings the reference back itself.
-        if (const auto ghost = s_ghosts.find(cFormId); ghost != s_ghosts.end() && ghost->second == 0)
+        if (CopyRegistry::StandInFor(cFormId) == 0u)
         {
-            s_ghosts.erase(ghost);
+            CopyRegistry::ForgetGhost(cFormId);
             EnableGhost(cFormId);
         }
     }
@@ -2981,8 +2804,7 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
 
         // If it stands here unannounced, it is announced now.
         const auto formView = m_world.view<FormIdComponent>();
-        const auto itor = std::find_if(std::begin(formView), std::end(formView), [cOwnId, formView](entt::entity aOther) { return formView.get<FormIdComponent>(aOther).Id == cOwnId; });
-        if (itor != std::end(formView))
+        if (const auto itor = Utils::FindByFormId(formView, cOwnId))
             ProcessNewEntity(*itor);
     }
 
@@ -2994,7 +2816,15 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
         const auto localIt = std::find_if(std::begin(localView), std::end(localView), [id = acMessage.ServerId, localView](entt::entity entity) { return localView.get<LocalComponent>(entity).Id == id; });
         if (localIt != std::end(localView))
         {
+            const auto* pFormId = m_world.try_get<FormIdComponent>(*localIt);
+            const uint32_t cFormId = pFormId ? pFormId->Id : 0;
             m_world.remove<LocalAnimationComponent, LocalComponent>(*localIt);
+            // A copy of ours that this game ran is nothing to announce again: it goes, and a reference it stood in for comes back.
+            if (cFormId && CopyRegistry::IsOwnCopy(cFormId))
+            {
+                spdlog::info("Character {:X} is gone from the server; copy {:X} this game ran goes too", acMessage.ServerId, cFormId);
+                CharacterService::DeleteTempActor(cFormId);
+            }
             return;
         }
     }
@@ -3024,22 +2854,19 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
         else if (const auto* pWaiting = m_world.try_get<WaitingFor3D>(*itor); pWaiting && pWaiting->SpawnRequest.FormId != GameId{})
         {
             const uint32_t cRefId = m_world.GetModSystem().GetGameId(pWaiting->SpawnRequest.FormId);
-            if (const auto ghost = s_ghosts.find(cRefId); ghost != s_ghosts.end())
-            {
-                s_ghosts.erase(ghost);
+            if (CopyRegistry::ForgetGhost(cRefId))
                 EnableGhost(cRefId);
-            }
         }
 
         if (formId)
         {
             Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
-            if ((pActor && pActor->IsTemporary()) || (!pActor && (formId & 0xFF000000) == 0xFF000000))
+            if (TESForm::IsTemporaryId(formId))
                 CharacterService::DeleteTempActor(formId);
             else if (pActor)
             {
                 if (acMessage.Gone && !cDeadAtOwner)
-                    NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
+                    Takeover::NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
                 pActor->GetExtension()->SetRemote(false);
 #ifdef SKYRIMVR
                 VRBodySync::ClearRemotePose(formId);
@@ -3121,10 +2948,10 @@ void CharacterService::OnBeastFormChange(const BeastFormChangeEvent& acEvent) co
 {
     auto view = m_world.view<FormIdComponent>();
 
-    const auto it = std::find_if(view.begin(), view.end(), [view](auto entity) { return view.get<FormIdComponent>(entity).Id == 0x14; });
+    const auto it = Utils::FindByFormId(view, 0x14);
 
     // The player's entity may not exist yet, or may already be torn down.
-    if (it == view.end())
+    if (!it)
     {
         spdlog::warn("{}: the player has no entity right now; beast form change not sent", __FUNCTION__);
         return;
@@ -3166,9 +2993,9 @@ void CharacterService::OnMountEvent(const MountEvent& acEvent) const noexcept
 {
     auto view = m_world.view<FormIdComponent>();
 
-    const auto riderIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.RiderID, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto riderIt = Utils::FindByFormId(view, acEvent.RiderID);
 
-    if (riderIt == std::end(view))
+    if (!riderIt)
     {
         spdlog::warn("Rider not found, form id: {:X}", acEvent.RiderID);
         return;
@@ -3179,9 +3006,9 @@ void CharacterService::OnMountEvent(const MountEvent& acEvent) const noexcept
     if (!pRiderLocalComponent)
         return;
 
-    const auto mountIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.MountID, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto mountIt = Utils::FindByFormId(view, acEvent.MountID);
 
-    if (mountIt == std::end(view))
+    if (!mountIt)
     {
         spdlog::warn("Mount not found, form id: {:X}", acEvent.MountID);
         return;
@@ -3256,9 +3083,9 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
 
     auto view = m_world.view<FormIdComponent>();
 
-    const auto actorIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.ActorId, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto actorIt = Utils::FindByFormId(view, acEvent.ActorId);
 
-    if (actorIt == std::end(view))
+    if (!actorIt)
         return;
 
     const entt::entity cActorEntity = *actorIt;
@@ -3345,9 +3172,9 @@ void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
     s_lastAt = cNow;
 
     auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
-    auto entityIt = std::find_if(view.begin(), view.end(), [view, formId = acEvent.ActorID](auto entity) { return view.get<FormIdComponent>(entity).Id == formId; });
+    auto entityIt = Utils::FindByFormId(view, acEvent.ActorID);
 
-    if (entityIt == view.end())
+    if (!entityIt)
         return;
 
     auto serverIdRes = Utils::GetServerId(*entityIt);
@@ -3418,9 +3245,9 @@ void CharacterService::OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept
         return;
 
     auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
-    auto entityIt = std::find_if(view.begin(), view.end(), [view, formId = acEvent.SpeakerID](auto entity) { return view.get<FormIdComponent>(entity).Id == formId; });
+    auto entityIt = Utils::FindByFormId(view, acEvent.SpeakerID);
 
-    if (entityIt == view.end())
+    if (!entityIt)
         return;
 
     auto serverIdRes = Utils::GetServerId(*entityIt);
@@ -3465,7 +3292,7 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     const uint32_t cActorId = World::Get().GetModSystem().GetGameId(acMessage.FormId);
 
     // A reference hidden behind a stand-in stays where this game's save has it; the stand-in follows the owner's reports.
-    if (s_ghosts.find(cActorId) != s_ghosts.end())
+    if (CopyRegistry::IsGhost(cActorId))
     {
         spdlog::debug("Teleport of {:X} not made: a stand-in shows it here", cActorId);
         return;
@@ -3624,9 +3451,9 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
         return;
     }
 
-    // A ghost: a copy of the owner's creature is bound to the server in its place (see s_ghosts).
+    // A ghost: a copy of the owner's creature is bound to the server in its place (see CopyRegistry).
     // One that was not loaded when the copy was made turns up here, enabled, once its cell loads, and is disabled now.
-    if (s_ghosts.find(formIdComponent.Id) != s_ghosts.end())
+    if (CopyRegistry::IsGhost(formIdComponent.Id))
     {
         // Only a loaded one, as StandInForForeignCreature: this also runs for a reference just released, which may have no 3D yet.
         if (pActor && !pActor->IsDisabled() && pActor->GetNiNode() && !pActor->IsDeleted() && !pActor->IsStillLoading() && !IsProcessExiting())
@@ -3752,7 +3579,7 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
 
     // Serialize the base form
     const auto isPlayer = (formIdComponent.Id == 0x14);
-    const auto isTemporary = pActor->formID >= 0xFF000000;
+    const auto isTemporary = pActor->IsTemporary();
 
     if (isPlayer)
     {
@@ -3768,23 +3595,7 @@ void CharacterService::RequestServerAssignment(const entt::entity aEntity) const
     }
 
     if (isPlayer)
-    {
-        auto& entries = message.FaceTints.Entries;
-
-        const auto& tints = PlayerCharacter::Get()->GetTints();
-
-        entries.resize(tints.length);
-
-        for (auto i = 0u; i < tints.length; ++i)
-        {
-            entries[i].Alpha = tints[i]->alpha;
-            entries[i].Color = tints[i]->color;
-            entries[i].Type = tints[i]->type;
-
-            if (tints[i]->texture)
-                entries[i].Name = tints[i]->texture->name.AsAscii();
-        }
-    }
+        message.FaceTints = PlayerLook::FaceTints();
 
     if (isPlayer)
     {
@@ -3873,15 +3684,15 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
     s_lastConnectionCopies.erase(aFormId);
 
     // TEMPORARY: logs what a temporary actor was when its removal was noticed (checked by live-copies-left, live-seeker-copy-*).
-    const bool cTemporaryId = (aFormId & 0xFF000000) == 0xFF000000;
-    const bool cGameMade = s_ownCopies.find(aFormId) == s_ownCopies.end();
+    const bool cTemporaryId = TESForm::IsTemporaryId(aFormId);
+    const bool cGameMade = !CopyRegistry::IsOwnCopy(aFormId);
     if (cTemporaryId)
     {
         Actor* pSeen = apActor;
         spdlog::info("CopyGone: {:X} removed as {}; the actor is {}; made by this client: {}", aFormId,
                      m_world.all_of<RemoteComponent>(aEntity) ? "remote" : m_world.all_of<LocalComponent>(aEntity) ? "local" : m_world.all_of<WaitingForAssignmentComponent>(aEntity) ? "waiting" : "untracked",
                      pSeen ? (pSeen->IsDeleted() ? "still there, marked deleted" : pSeen->GetNiNode() ? "still there, with 3D" : "still there, no 3D") : "gone from the game already",
-                     s_ownCopies.find(aFormId) != s_ownCopies.end() ? "yes" : "no");
+                     CopyRegistry::IsOwnCopy(aFormId) ? "yes" : "no");
 
         // TEMPORARY: why a dead copy near the player loses its 3D, the body vanishing until it is spawned again.
         if (pSeen && m_world.all_of<RemoteComponent>(aEntity) && pSeen->IsDead() && !pSeen->GetNiNode())
@@ -3900,10 +3711,10 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
 
         if (pActor)
         {
-            if (pActor->IsTemporary() && !IsProcessExiting() && s_ownCopies.find(aFormId) == s_ownCopies.end())
+            if (pActor->IsTemporary() && !IsProcessExiting() && !CopyRegistry::IsOwnCopy(aFormId))
             {
                 // The game's own temporary actor, remote only because the server gave it to somebody else.
-                // The game is disposing of it and will finish; only the record of it is ours. See s_ownCopies.
+                // The game is disposing of it and will finish; only the record of it is ours. See CopyRegistry.
                 spdlog::info("Temporary remote {:X} was made by the game, not by this client; left to the game (form flags {:X})", aFormId, pActor->flags);
                 const uint32_t refWord = static_cast<uint32_t>(pActor->handleRefObject.refCount);
                 RecentDeletes::Record(pActor, aFormId, refWord & 0x3FF, refWord, RecentDeletes::kLeftToGame);
@@ -3982,7 +3793,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
                 }
 
                 pActor->Delete();
-                s_ownCopies.erase(aFormId);
+                CopyRegistry::ForgetOwnCopy(aFormId);
                 ReleaseGhostOf(aFormId);
 
                 // The cell unloaded under the copy, but the server still counts this character as spawned here.
@@ -3998,7 +3809,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
         // Gone from the game already: what it stood in for is not left hidden, and the game may give its id to an actor of its own next.
         else if (cTemporaryId)
         {
-            s_ownCopies.erase(aFormId);
+            CopyRegistry::ForgetOwnCopy(aFormId);
             ReleaseGhostOf(aFormId);
         }
 
@@ -4008,8 +3819,8 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
     }
 
     // Not remote: a copy of ours that this client now runs is let go by the game like its own actors, not deleted here.
-    // So its id leaves s_ownCopies.
-    s_ownCopies.erase(aFormId);
+    // So its id leaves the copy registry.
+    CopyRegistry::ForgetOwnCopy(aFormId);
 
     // Keep the cookie until the server response arrives so awarded ownership can be relinquished.
     if (m_world.all_of<WaitingForAssignmentComponent>(aEntity))
@@ -4023,7 +3834,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
     {
         auto& localComponent = m_world.get<LocalComponent>(aEntity);
 
-        // A follower's body taken over on the copy here: the reference it stood in for comes back with it.
+        // A character run here on the copy standing in for a reference: the reference comes back with it.
         if (cTemporaryId)
             ReleaseGhostOf(aFormId);
 
@@ -4149,7 +3960,7 @@ Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const no
             pActor = RememberOwnCopy(Actor::Create(pOwnerBase));
             if (pActor)
             {
-                s_ghosts[cRefId] = pActor->formID;
+                CopyRegistry::SetStandIn(cRefId, pActor->formID);
                 if (cFollowerCopy)
                     pActor->GetExtension()->SetFollowerCopy(true);
                 // Only a loaded one, as StandInForForeignCreature: disabling one the game is disposing of crashes.
@@ -5235,7 +5046,7 @@ void CharacterService::RunSpawnUpdates() const noexcept
                     s_madeAt[remoteComponent.Id] = cNow;
 
                     remoteComponent.CachedRefId = pActor->formID;
-                    remoteComponent.CachedBaseId = s_ownCopies.find(pActor->formID) != s_ownCopies.end() && pActor->baseForm ? pActor->baseForm->formID : 0;
+                    remoteComponent.CachedBaseId = CopyRegistry::IsOwnCopy(pActor->formID) && pActor->baseForm ? pActor->baseForm->formID : 0;
                     ClaimCopyId(entity, pActor->formID);
                 }
 
@@ -5383,13 +5194,17 @@ void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) 
             continue;
         }
 
-        // WEAPON_STATE, bits 5-7 of ActorState::flags2: a draw that took shows "wantToDraw" or "drawing" here.
-        static constexpr const char* kWeaponStates[8] = {"sheathed", "wantToDraw", "drawing", "drawn", "wantToSheathe", "sheathing", "6", "7"};
-        const uint32_t cStateBefore = pActor->actorState.flags2 >> 5 & 7;
-        pActor->SetWeaponDrawnEx(data.m_drawWeapon);
+        // A draw that took shows "wantToDraw" or "drawing" here.
+        const auto cStateBefore = pActor->actorState.GetWeaponState();
+        // A copy already sheathed is left as it is.
+        // A sheathe forced on it starts no animation, so the copy would wait for good for a sheathe that never plays.
+        // A game that takes the character over would keep asking for that sheathe and be refused.
+        const bool cAlreadySheathed = !data.m_drawWeapon && cStateBefore == ActorState::WeaponState::Sheathed;
+        if (!cAlreadySheathed)
+            pActor->SetWeaponDrawnEx(data.m_drawWeapon);
         if (pActor->GetExtension()->IsRemotePlayer())
-            spdlog::info("Weapon of player copy {:X} set {} ({} pass); the game went from {} to {}", cId, data.m_drawWeapon ? "drawn" : "sheathed", data.m_isFirstPass ? "first" : "second",
-                         kWeaponStates[cStateBefore], kWeaponStates[pActor->actorState.flags2 >> 5 & 7]);
+            spdlog::info("Weapon of player copy {:X} {} ({} pass); the game went from {} to {}", cId, cAlreadySheathed ? "already sheathed, left as it is" : data.m_drawWeapon ? "set drawn" : "set sheathed",
+                         data.m_isFirstPass ? "first" : "second", ActorState::WeaponStateName(cStateBefore), ActorState::WeaponStateName(pActor->actorState.GetWeaponState()));
 
         if (!data.m_isFirstPass)
             toRemove.push_back(cId);
@@ -5410,8 +5225,8 @@ void CharacterService::SendClashes() noexcept
     while (VRBodySync::TakeClash(clash))
     {
         auto view = m_world.view<FormIdComponent, RemoteComponent>();
-        const auto it = std::find_if(view.begin(), view.end(), [&view, &clash](auto entity) { return view.get<FormIdComponent>(entity).Id == clash.FormId; });
-        if (it == view.end())
+        const auto it = Utils::FindByFormId(view, clash.FormId);
+        if (!it)
             continue;
         // A weapon on a hand holding no weapon or shield is a hit on the hand, not a parry: nothing is felt, heard or sent.
         // Such touches are logged at most every 5 s.
@@ -5465,8 +5280,8 @@ void CharacterService::OnNotifyClash(const NotifyClash& acMessage) const noexcep
 {
     // Every player near it is told; the one whose weapon it was feels it.
     auto view = m_world.view<FormIdComponent, LocalComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [&view](auto entity) { return view.get<FormIdComponent>(entity).Id == 0x14; });
-    const bool cOurs = it != view.end() && view.get<LocalComponent>(*it).Id == acMessage.OtherId;
+    const auto it = Utils::FindByFormId(view, 0x14);
+    const bool cOurs = it && view.get<LocalComponent>(*it).Id == acMessage.OtherId;
     const glm::vec3 point(acMessage.Point);
     const int64_t cAgo = static_cast<int64_t>(m_transport.GetClock().GetCurrentTick()) - static_cast<int64_t>(acMessage.Tick);
     spdlog::info("Clash from server {}: their {} met {} {} weapon at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units a second, {} ms ago", acMessage.FromId,

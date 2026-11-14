@@ -4,6 +4,8 @@
 
 #include <optional>
 
+#include <Events/EventDispatcher.h>
+
 struct World;
 struct TransportService;
 struct UpdateEvent;
@@ -21,7 +23,7 @@ struct ConnectionErrorEvent;
  * F6 toggles the connection by hand, and disconnecting with it stops the retries.
  * A refused connection (wrong version, wrong password, ...) stops them too, because trying again would give the same answer.
  */
-struct VRConnectService
+struct VRConnectService final : BSTEventSink<TESLoadGameEvent>
 {
     struct Config
     {
@@ -50,6 +52,8 @@ struct VRConnectService
     // The menu's Disconnect or Cancel: closes the connection or the attempt, and stops the retries.
     void Stop() noexcept;
 
+    BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
+
 private:
     enum class State
     {
@@ -71,6 +75,7 @@ private:
     static bool CheckInstall() noexcept;
     static bool IsInGame() noexcept;
 
+    World& m_world;
     TransportService& m_transport;
 
     State m_state{State::kIdle};
@@ -88,6 +93,13 @@ private:
     bool m_nameCheckDue{false};
     // Loading screens the game had queued by the last update (UI::LoadingScreensQueued).
     uint32_t m_loadingScreensSeen{0};
+    // Saves loaded since the game started, and as of the last name check: a name changed with no load between is a rename in play.
+    std::atomic<uint32_t> m_saveLoads{0};
+    uint32_t m_saveLoadsChecked{0};
+    bool m_atMainMenu{false};
+    bool m_inRaceMenu{false};
+    // The player's look and name, to send to the server as soon as it can take them.
+    bool m_lookPending{false};
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;

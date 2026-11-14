@@ -43,6 +43,15 @@ static void Assert(const char* apExpression, const char* apMessage)
 
 std::optional<uint32_t> GetServerId(entt::entity aEntity) noexcept;
 std::optional<entt::entity> FindEntityByServerId(uint32_t aServerId) noexcept;
+
+//! The first entity of the view, which holds FormIdComponent, with that form id.
+template <class View> std::optional<entt::entity> FindByFormId(const View& acView, const uint32_t aFormId) noexcept
+{
+    for (const auto cEntity : acView)
+        if (acView.template get<FormIdComponent>(cEntity).Id == aFormId)
+            return cEntity;
+    return std::nullopt;
+}
 std::optional<ActorOwnershipToken> GetLocalOwnershipToken(uint32_t aFormId) noexcept;
 std::optional<ActorOwnershipToken> GetRemoteOwnershipToken(uint32_t aFormId) noexcept;
 //! The owner's token when an item drops out of a dead body another player's game runs, within this player's reach.

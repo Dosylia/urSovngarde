@@ -525,6 +525,12 @@ void Actor::StopCombat() noexcept
     s_pStopCombat(this);
 }
 
+bool Actor::IsHostileToActor(Actor* apActor) noexcept
+{
+    PAPYRUS_FUNCTION(bool, Actor, IsHostileToActor, Actor*);
+    return apActor && s_pIsHostileToActor(this, apActor);
+}
+
 bool Actor::RemoveSpell(MagicItem* apSpell) noexcept
 {
     if (!apSpell)

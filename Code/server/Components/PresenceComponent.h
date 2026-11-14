@@ -21,4 +21,9 @@ struct PresenceComponent
     static constexpr std::chrono::seconds kFresh{5};
 
     TiltedPhoques::Vector<Seen> SeenBy{};
+
+    //! Whom its owner's game last reported it fighting (a server id, 0 for nobody), and when.
+    //! Kept apart from SeenBy, which loses the owner's entry as soon as it lets the character go.
+    uint32_t CombatTarget{};
+    std::chrono::steady_clock::time_point CombatTargetAt{};
 };

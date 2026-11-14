@@ -23,6 +23,7 @@
 #include <Messages/NotifyPlayerList.h>
 #include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifyPlayerJoined.h>
+#include <Messages/NotifyPlayerName.h>
 #include <Messages/NotifyPlayerDialogue.h>
 #include <Messages/NotifyPlayerLevel.h>
 #include <Messages/NotifyPlayerCellChanged.h>
@@ -123,6 +124,7 @@ OverlayService::OverlayService(World& aWorld, TransportService& transport, entt:
     m_chatMessageConnection = aDispatcher.sink<NotifyChatMessageBroadcast>().connect<&OverlayService::OnChatMessageReceived>(this);
     m_playerJoinedConnection = aDispatcher.sink<NotifyPlayerJoined>().connect<&OverlayService::OnPlayerJoined>(this);
     m_playerLeftConnection = aDispatcher.sink<NotifyPlayerLeft>().connect<&OverlayService::OnPlayerLeft>(this);
+    m_playerNameConnection = aDispatcher.sink<NotifyPlayerName>().connect<&OverlayService::OnPlayerName>(this);
     m_playerDialogueConnection = aDispatcher.sink<NotifyPlayerDialogue>().connect<&OverlayService::OnPlayerDialogue>(this);
     m_playerAddedConnection = m_world.on_destroy<WaitingFor3D>().connect<&OverlayService::OnWaitingFor3DRemoved>(this);
     m_playerRemovedConnection = m_world.on_destroy<PlayerComponent>().connect<&OverlayService::OnPlayerComponentRemoved>(this);
@@ -555,6 +557,15 @@ void OverlayService::OnPlayerJoined(const NotifyPlayerJoined& acMessage) noexcep
     pArguments->SetString(3, cellName.c_str());
 
     m_pOverlay->ExecuteAsync("playerConnected", pArguments);
+}
+
+// The menu's player list keeps the old name until the next connect: the page has no rename yet.
+void OverlayService::OnPlayerName(const NotifyPlayerName& acMessage) noexcept
+{
+    spdlog::info("Player {} is now called '{}', renamed in play", acMessage.PlayerId, acMessage.Username.c_str());
+#ifdef SKYRIMVR
+    Utils::ShowHudMessage(String("urSovngarde: a player is now called ") + acMessage.Username);
+#endif
 }
 
 void OverlayService::OnPlayerLeft(const NotifyPlayerLeft& acMessage) noexcept

@@ -44,6 +44,8 @@ struct PartyService
     bool IsPlayerInParty(Player* const apPlayer) const noexcept;
     bool IsPlayerLeader(const Player* const apPlayer) const noexcept;
     Party* GetPlayerParty(Player* const apPlayer) noexcept;
+    // Every player's list of the others, with their names; apPlayer, if given, gets none.
+    void BroadcastPlayerList(Player* apPlayer = nullptr) const noexcept;
 
 protected:
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
@@ -59,7 +61,6 @@ protected:
     void OnPartyValue(const PacketEvent<RequestPartyValue>& acPacket) noexcept;
     void RemovePlayerFromParty(Player* apPlayer) noexcept;
 
-    void BroadcastPlayerList(Player* apPlayer = nullptr) const noexcept;
     void BroadcastPartyInfo(uint32_t aPartyId) const noexcept;
 
 private:

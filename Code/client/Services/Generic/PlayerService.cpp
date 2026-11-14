@@ -1,4 +1,5 @@
 #include <Services/PlayerService.h>
+#include <Structs/PluginList.h>
 #include <PerfScope.h>
 
 #include <World.h>
@@ -25,6 +26,10 @@
 #include <Messages/PlayerDialogueRequest.h>
 #include <Messages/PlayerLevelRequest.h>
 #include <Messages/PlayerPlaceRequest.h>
+#include <Messages/RequestNpcPlugins.h>
+#include <Messages/NotifyNpcPluginsDiffer.h>
+#include <NpcPlugins.h>
+#include <Services/OverlayService.h>
 
 #include <Structs/ServerSettings.h>
 
@@ -133,6 +138,7 @@ PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_settingsConnection = m_dispatcher.sink<ServerSettings>().connect<&PlayerService::OnServerSettingsReceived>(this);
     m_notifyRespawnConnection = m_dispatcher.sink<NotifyPlayerRespawn>().connect<&PlayerService::OnNotifyPlayerRespawn>(this);
     m_downedStateConnection = m_dispatcher.sink<NotifyDownedState>().connect<&PlayerService::OnNotifyDownedState>(this);
+    m_npcPluginsConnection = m_dispatcher.sink<NotifyNpcPluginsDiffer>().connect<&PlayerService::OnNotifyNpcPluginsDiffer>(this);
     EventDispatcherManager::Get()->loadGameEvent.RegisterSink(this);
     m_gridCellChangeConnection = m_dispatcher.sink<GridCellChangeEvent>().connect<&PlayerService::OnGridCellChangeEvent>(this);
     m_cellChangeConnection = m_dispatcher.sink<CellChangeEvent>().connect<&PlayerService::OnCellChangeEvent>(this);
@@ -158,9 +164,47 @@ void PlayerService::OnUpdate(const UpdateEvent&) noexcept
     RunBeastFormDetection();
     RunPlaceUpdates();
     RunCrashPlaceNote();
+    RunNpcPluginReport();
 #ifdef SKYRIMVR
     RunMapCloseUpdates();
 #endif
+}
+
+// Once a connection is accepted: the server compares the list with every other player's and warns both of a difference.
+// Sent only then, as the server kicks a connection that sends anything before.
+void PlayerService::RunNpcPluginReport() noexcept
+{
+    if (m_npcPluginsSent || !m_transport.IsOnline())
+        return;
+    m_npcPluginsSent = true;
+
+    const Vector<String>& acPlugins = NpcPlugins::Get();
+    if (acPlugins.empty())
+        return;
+
+    RequestNpcPlugins request{};
+    request.Plugins = acPlugins;
+    m_transport.Send(request);
+}
+
+void PlayerService::OnNotifyNpcPluginsDiffer(const NotifyNpcPluginsDiffer& acMessage) const noexcept
+{
+    const auto names = [](const Vector<String>& acList)
+    {
+        constexpr size_t cShown = 6;
+        return std::string(PluginList::Joined(acList, cShown).c_str());
+    };
+
+    const std::string cWho = acMessage.Username.c_str();
+    std::string message = "You and " + cWho + " don't have the same NPC mods, so you may see different people and creatures.";
+    if (!acMessage.OnlyThere.empty())
+        message += " Only " + cWho + " has: " + names(acMessage.OnlyThere) + ".";
+    if (!acMessage.OnlyHere.empty())
+        message += " Only you have: " + names(acMessage.OnlyHere) + ".";
+
+    spdlog::warn("NpcPlugins: {} has other NPC plugins: {} only there, {} only here. {}", cWho, acMessage.OnlyThere.size(), acMessage.OnlyHere.size(), message);
+    m_world.GetOverlayService().SendSystemMessage(message);
+    VRBanner::Show("Not the same NPC mods as " + cWho, cPlaceColour, 60, 8.f);
 }
 
 #ifdef SKYRIMVR
@@ -185,6 +229,8 @@ void PlayerService::RunMapCloseUpdates() noexcept
 
 void PlayerService::OnConnected(const ConnectedEvent& acEvent) noexcept
 {
+    m_npcPluginsSent = false;
+
     // Every connection starts with the place unknown to the server: send it at the next check.
     m_lastPlace.clear();
     m_nextPlaceCheck = {};

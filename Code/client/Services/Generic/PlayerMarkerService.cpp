@@ -9,6 +9,7 @@
 #include <Events/UpdateEvent.h>
 
 #include <Messages/NotifyPlayerJoined.h>
+#include <Messages/NotifyPlayerName.h>
 #include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifyPlayerWhereabouts.h>
 
@@ -112,6 +113,7 @@ PlayerMarkerService::PlayerMarkerService(World& aWorld, entt::dispatcher& aDispa
     m_connectedConnection = aDispatcher.sink<ConnectedEvent>().connect<&PlayerMarkerService::OnConnected>(this);
     m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&PlayerMarkerService::OnDisconnected>(this);
     m_joinedConnection = aDispatcher.sink<NotifyPlayerJoined>().connect<&PlayerMarkerService::OnPlayerJoined>(this);
+    m_nameConnection = aDispatcher.sink<NotifyPlayerName>().connect<&PlayerMarkerService::OnPlayerName>(this);
     m_leftConnection = aDispatcher.sink<NotifyPlayerLeft>().connect<&PlayerMarkerService::OnPlayerLeft>(this);
     m_whereaboutsConnection = aDispatcher.sink<NotifyPlayerWhereabouts>().connect<&PlayerMarkerService::OnWhereabouts>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&PlayerMarkerService::OnUpdate>(this);
@@ -178,6 +180,11 @@ void PlayerMarkerService::OnDisconnected(const DisconnectedEvent&) noexcept
 }
 
 void PlayerMarkerService::OnPlayerJoined(const NotifyPlayerJoined& acMessage) noexcept
+{
+    m_names[acMessage.PlayerId] = acMessage.Username;
+}
+
+void PlayerMarkerService::OnPlayerName(const NotifyPlayerName& acMessage) noexcept
 {
     m_names[acMessage.PlayerId] = acMessage.Username;
 }

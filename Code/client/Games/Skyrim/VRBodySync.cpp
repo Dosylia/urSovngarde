@@ -2111,8 +2111,7 @@ void UpdateWeaponBodies(const uint32_t aFormId, Actor* apActor, const Rig& acRig
 
     // Out means weapon state 3 (drawn), 4 (asked to sheathe) or 5 (sheathing); the node hanging under the hand decides.
     // State 4 counts: a copy's own AI asks to sheathe, but its graph only follows its owner's actions and may never do it.
-    const uint32_t weaponState = apActor->actorState.flags2 >> 5 & 7;
-    const bool cOut = weaponState >= 3 && weaponState <= 5;
+    const bool cOut = apActor->actorState.IsWeaponInHand();
     for (uint32_t side = 0; side < 2; ++side)
     {
         const uint64_t key = (static_cast<uint64_t>(aFormId) << 1) | side;
@@ -4045,8 +4044,7 @@ std::array<BladeExtent, 2> MeasureCopyBlades(const Rig& acRig) noexcept
 void RecordCopyBlades(const uint32_t aFormId, Actor* apActor, const std::array<BladeExtent, 2>& acExtents) noexcept
 {
     // Drawn, asked to sheathe or sheathing, as for its weapon bodies (UpdateWeaponBodies).
-    const uint32_t weaponState = apActor->actorState.flags2 >> 5 & 7;
-    if (weaponState < 3 || weaponState > 5)
+    if (!apActor->actorState.IsWeaponInHand())
         return;
     for (uint32_t side = 0; side < 2; ++side)
     {
@@ -4166,8 +4164,7 @@ void TurnDrawnWeapon(void* apAttach, const glm::vec3& acPivot, const glm::mat3& 
 void StopLocalBlades(const std::chrono::steady_clock::time_point aNow) noexcept
 {
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
-    const uint32_t weaponState = pPlayer ? pPlayer->actorState.flags2 >> 5 & 7 : 0;
-    const bool cDrawn = pPlayer && weaponState >= 3 && weaponState <= 5 && !pPlayer->actorState.IsDeadOrDying();
+    const bool cDrawn = pPlayer && pPlayer->actorState.IsWeaponInHand() && !pPlayer->actorState.IsDeadOrDying();
 
     std::array<SharedStop, 2> shared{};
     for (size_t side = 0; side < 2; ++side)
