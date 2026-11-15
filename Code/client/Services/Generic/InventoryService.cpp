@@ -1,4 +1,6 @@
 #include <Services/InventoryService.h>
+#include <Services/Generic/NpcEquipmentCheck.h>
+#include <Services/Generic/PlayerCopyWeapon.h>
 #include <EpochMiss.h>
 #include <PerfScope.h>
 #include <RecentModelChanges.h>
@@ -11,6 +13,7 @@
 #include <Messages/NotifyEquipmentChanges.h>
 #include <Messages/DrawWeaponRequest.h>
 #include <Messages/NotifyDrawWeapon.h>
+#include <Messages/CharacterSpawnRequest.h>
 
 #include <Events/UpdateEvent.h>
 #include <Events/InventoryChangeEvent.h>
@@ -32,6 +35,7 @@
 #include <DefaultObjectManager.h>
 #include <PlayerCharacter.h>
 #include <Forms/MagicItem.h>
+#include <Forms/TESObjectARMO.h>
 
 namespace
 {
@@ -49,6 +53,8 @@ InventoryService::InventoryService(World& aWorld, entt::dispatcher& aDispatcher,
     m_equipmentConnection = m_dispatcher.sink<EquipmentChangeEvent>().connect<&InventoryService::OnEquipmentChangeEvent>(this);
     m_inventoryChangeConnection = m_dispatcher.sink<NotifyInventoryChanges>().connect<&InventoryService::OnNotifyInventoryChanges>(this);
     m_equipmentChangeConnection = m_dispatcher.sink<NotifyEquipmentChanges>().connect<&InventoryService::OnNotifyEquipmentChanges>(this);
+    m_drawWeaponConnection = m_dispatcher.sink<NotifyDrawWeapon>().connect<&PlayerCopyWeapon::OnNotify>();
+    m_spawnConnection = m_dispatcher.sink<CharacterSpawnRequest>().connect<&PlayerCopyWeapon::OnSpawn>();
 }
 
 void InventoryService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
@@ -58,6 +64,8 @@ void InventoryService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     RunWeaponStateUpdates();
     RunNakedNPCBugChecks();
     RunEquipmentSnapshotUpdates();
+    NpcEquipmentCheck::Run(m_world, m_transport);
+    PlayerCopyWeapon::Run(m_world, m_transport.IsConnected());
 }
 
 void InventoryService::OnInventoryChangeEvent(const InventoryChangeEvent& acEvent) noexcept
@@ -159,7 +167,14 @@ void InventoryService::OnEquipmentChangeEvent(const EquipmentChangeEvent& acEven
 
     m_transport.Send(request);
 
-    spdlog::info("Sending equipment request, item: {:X}, count: {}, target object: {:X}", acEvent.ItemId, acEvent.Count, acEvent.ActorId);
+    spdlog::info("Sending equipment request, item: {:X}, count: {}, target object: {:X}{}", acEvent.ItemId, acEvent.Count, acEvent.ActorId, acEvent.Unequip ? " (unequip)" : "");
+    // The hook queues the change before the game makes it, and the equipment above is read a frame later.
+    // An item taken off but worn by then, or put on but not worn, was undone through a path no hook sees: the first check sends what it wears.
+    if (pActor->formID != 0x14)
+    {
+        const bool cUndone = !acEvent.IsSpell && !acEvent.IsShout && NpcEquipmentCheck::IsWorn(request.CurrentInventory, request.ItemId) == acEvent.Unequip;
+        NpcEquipmentCheck::Note(pActor->formID, request.ServerId, request.OwnershipEpoch, request.CurrentInventory, cUndone);
+    }
 }
 
 namespace
@@ -276,7 +291,10 @@ void InventoryService::OnNotifyEquipmentChanges(const NotifyEquipmentChanges& ac
     if (!acMessage.ItemId)
     {
         if (pActor->GetExtension()->IsRemote())
+        {
             ApplyHandEquipment(pActor, acMessage.CurrentInventory);
+            NpcEquipmentCheck::ApplyShield(pActor, acMessage.CurrentInventory);
+        }
         return;
     }
 
@@ -361,10 +379,17 @@ void InventoryService::OnNotifyEquipmentChanges(const NotifyEquipmentChanges& ac
         pEquipManager->Equip(pActor, pItem, nullptr, acMessage.Count, pEquipSlot, false, true, false, false);
         NoteHandItem(pActor, pItem, pEquipSlot == DefaultObjectManager::Get().leftEquipSlot, true);
 
+        // The owner's game took off what the new armor replaces without a change of its own, so that piece stays off here.
+        // Put back on, it would take its slot back: a shield or helmet changed for another would show the old one.
+        // Only when the copy has the new piece: an equip of one it lacks does nothing, and the slot would stay empty.
+        const auto* pNewArmor = pActor->GetItemCountInInventory(pItem) > 0 ? Cast<TESObjectARMO>(pItem) : nullptr;
         for (const auto& armor : wornArmor.Entries)
         {
             uint32_t armorId = modSystem.GetGameId(armor.BaseId);
             TESForm* pArmor = TESForm::GetById(armorId);
+            const auto* pOldArmor = Cast<TESObjectARMO>(pArmor);
+            if (pNewArmor && pOldArmor && pOldArmor != pNewArmor && (pOldArmor->slotType & pNewArmor->slotType) != 0)
+                continue;
             if (pArmor)
                 pEquipManager->Equip(pActor, pArmor, nullptr, 1, pEquipSlot, false, true, false, false);
         }
@@ -516,23 +541,7 @@ void InventoryService::RunEquipmentSnapshotUpdates() noexcept
     }
 
     // Compare only what is worn where: charges and similar extra data change constantly in combat.
-    const auto isSameEquipment = [](const Inventory& acLhs, const Inventory& acRhs)
-    {
-        if (acLhs.Entries.size() != acRhs.Entries.size() || !(acLhs.CurrentMagicEquipment == acRhs.CurrentMagicEquipment))
-            return false;
-
-        for (size_t i = 0; i < acLhs.Entries.size(); ++i)
-        {
-            const auto& lhs = acLhs.Entries[i];
-            const auto& rhs = acRhs.Entries[i];
-            if (lhs.BaseId != rhs.BaseId || lhs.ExtraWorn != rhs.ExtraWorn || lhs.ExtraWornLeft != rhs.ExtraWornLeft)
-                return false;
-        }
-
-        return true;
-    };
-
-    if (serverId == m_lastSnapshotServerId && isSameEquipment(equipment, m_lastEquipmentSnapshot))
+    if (serverId == m_lastSnapshotServerId && NpcEquipmentCheck::HasSameWornItems(equipment, m_lastEquipmentSnapshot))
         return;
 
     RequestEquipmentChanges request;

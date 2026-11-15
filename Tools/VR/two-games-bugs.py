@@ -908,7 +908,44 @@ def t_walk_away(r, n):
             len(apart), len(near), sum(1 for _, d in apart if d > 200), ', '.join('%s %.0f' % x for x in apart if x[1] > 200)[:300], ', '.join(missing)[:300]))
 
 
-TESTS = {'walk-away': t_walk_away, 'spells-baseline': t_spells_baseline, 'spells': t_spells, 'respawn': t_respawn, 'corpse': t_corpse, 'drops': t_drops, 'reconnect-body': t_reconnect_body, 'door': t_door, 'npc-animation': t_npc_animation, 'brawl': t_brawl}
+def t_sword_pause(r, n):
+    """2026-11-15 Companions: one game sat paused in its journal while the other player drew a sword, and the paused game never showed it.
+    The watcher pauses, the drawer draws, the watcher runs again: its copy of the drawer should hold the sword out."""
+    r.both_at(gap=250)
+    drawer, watcher = r.a, r.b
+
+    def call(game, function, form='0x00000014'):
+        return game.p.tool('papyrus', {'action': 'call', 'script': 'Actor', 'function': function, 'self': {'form': form}}).get('returned')
+
+    call(drawer, 'SheatheWeapon')
+    time.sleep(5)
+    copy = next((c for c in watcher.copies() if c['has3d']), None)
+    if not copy:
+        n.append('%s has no copy of the other player' % watcher.label)
+        return
+    form = copy['form']
+    n.append('before: %s weapon drawn %s; its copy %s in %s, drawn %s' % (drawer.label, call(drawer, 'IsWeaponDrawn'), form, watcher.label, call(watcher, 'IsWeaponDrawn', form)))
+    offset = watcher.log_size()
+    watcher.p.tool('menu', {'action': 'open', 'name': 'Journal Menu'})
+    time.sleep(2)
+    call(drawer, 'DrawWeapon')
+    time.sleep(4)
+    n.append('%s drew while %s sat in its journal: drawn %s' % (drawer.label, watcher.label, call(drawer, 'IsWeaponDrawn')))
+    time.sleep(4)
+    watcher.p.tool('menu', {'action': 'close', 'name': 'Journal Menu'})
+    started = time.time()
+    for at in (1, 3, 6):
+        time.sleep(max(0.0, at - (time.time() - started)))
+        n.append('  +%ds after the journal closed: the copy drawn %s' % (at, call(watcher, 'IsWeaponDrawn', form)))
+    now = watcher.actor(form) or copy
+    watcher.look_at(now['pos'])
+    time.sleep(1)
+    r.picture(watcher, 'sword-pause-copy', now['pos'])
+    n.append('  %s log: %s' % (watcher.label, [x[-150:] for x in watcher.lines_since(offset, 'PlayerCopyWeapon|Weapon of player copy')[-6:]]))
+    call(drawer, 'SheatheWeapon')
+
+
+TESTS = {'walk-away': t_walk_away, 'spells-baseline': t_spells_baseline, 'spells': t_spells, 'respawn': t_respawn, 'corpse': t_corpse, 'drops': t_drops, 'reconnect-body': t_reconnect_body, 'door': t_door, 'npc-animation': t_npc_animation, 'brawl': t_brawl, 'sword-pause': t_sword_pause}
 
 
 def game_ids():

@@ -87,4 +87,6 @@ private:
     entt::scoped_connection m_equipmentConnection;
     entt::scoped_connection m_inventoryChangeConnection;
     entt::scoped_connection m_equipmentChangeConnection;
+    entt::scoped_connection m_drawWeaponConnection;
+    entt::scoped_connection m_spawnConnection;
 };

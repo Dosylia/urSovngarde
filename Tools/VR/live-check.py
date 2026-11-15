@@ -77,7 +77,7 @@ The bot's script does not stop while the driver is busy with that, so its own `w
 `log DO papyrus <Script> <Function> <self>|global [form ...]` calls a native function on a reference, or a global one (ids in hex; a number as n:<value>,
 a float as f:<value>, a bool as b:true or b:false, a string as s:<text>).
 
-`log CHECK copy|npc mounted|unmounted` asks whether the copy rides (IsOnMount). `log CHECK copy|npc equipped|unequipped <hex>` asks the game whether its copy has that item equipped (not for the left hand: the
+`log CHECK copy|npc mounted|unmounted` asks whether the copy rides (IsOnMount). `log CHECK copy|npc weapon drawn|sheathed` asks whether its weapon is out (IsWeaponDrawn). `log CHECK copy|npc equipped|unequipped <hex>` asks the game whether its copy has that item equipped (not for the left hand: the
 game's IsEquipped does not count it); `lefthand|righthand <hex>` asks which weapon is in that hand; `has <hex>` whether it owns one.
 `log CHECK ref <hex> count <item hex> <n>` asks whether a reference of the game's own holds exactly that many of the item.
 `log CHECK distinct <most> <regular expression with one group>` passes when the client has logged at least one and
@@ -1535,6 +1535,11 @@ class Run:
                     riding = papyrus('Actor', 'IsOnMount', form, [])
                     ok = isinstance(riding, bool) and riding is (what == 'mounted')
                     detail = 'actor %s, IsOnMount %s' % (form, riding)
+                elif what == 'weapon' and len(words) > 2 and words[2] in ('drawn', 'sheathed'):
+                    # "copy weapon drawn|sheathed": the copy's weapon is out or put away (Actor.IsWeaponDrawn).
+                    out = papyrus('Actor', 'IsWeaponDrawn', form, [])
+                    ok = isinstance(out, bool) and out is (words[2] == 'drawn')
+                    detail = 'actor %s, IsWeaponDrawn %s' % (form, out)
                 elif what == 'has':
                     # "copy has <hex>": the copy's inventory holds at least one.
                     n = papyrus('ObjectReference', 'GetItemCount', form, [{'form': '0x' + words[2]}])

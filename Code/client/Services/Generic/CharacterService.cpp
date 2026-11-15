@@ -5217,10 +5217,16 @@ void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) 
         // A sheathe forced on it starts no animation, so the copy would wait for good for a sheathe that never plays.
         // A game that takes the character over would keep asking for that sheathe and be refused.
         const bool cAlreadySheathed = !data.m_drawWeapon && cStateBefore == ActorState::WeaponState::Sheathed;
-        if (!cAlreadySheathed)
+        // A correction's draw that took is not played again: a copy in view would draw its sword twice.
+        const bool cAlreadyDrawn = data.m_correction && data.m_drawWeapon && cStateBefore == ActorState::WeaponState::Drawn;
+        if (!cAlreadySheathed && !cAlreadyDrawn)
             pActor->SetWeaponDrawnEx(data.m_drawWeapon);
+        // A forced draw that started is not played again by the second pass on a copy in view.
+        if (data.m_forced && data.m_isFirstPass && pActor->actorState.GetWeaponState() != ActorState::WeaponState::Sheathed)
+            data.m_correction = true;
         if (pActor->GetExtension()->IsRemotePlayer())
-            spdlog::info("Weapon of player copy {:X} {} ({} pass); the game went from {} to {}", cId, cAlreadySheathed ? "already sheathed, left as it is" : data.m_drawWeapon ? "set drawn" : "set sheathed",
+            spdlog::info("Weapon of player copy {:X} {} ({} pass); the game went from {} to {}", cId,
+                         cAlreadySheathed ? "already sheathed, left as it is" : cAlreadyDrawn ? "already drawn, left as it is" : data.m_drawWeapon ? "set drawn" : "set sheathed",
                          data.m_isFirstPass ? "first" : "second", ActorState::WeaponStateName(cStateBefore), ActorState::WeaponStateName(pActor->actorState.GetWeaponState()));
 
         if (!data.m_isFirstPass)

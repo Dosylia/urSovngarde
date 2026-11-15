@@ -11,6 +11,7 @@
 #include <Messages/RequestEquipmentChanges.h>
 #include <Messages/NotifyEquipmentChanges.h>
 #include <Messages/DrawWeaponRequest.h>
+#include <Messages/NotifyDrawWeapon.h>
 
 #include <Setting.h>
 
@@ -156,5 +157,15 @@ void InventoryService::OnWeaponDrawnRequest(const PacketEvent<DrawWeaponRequest>
         auto& characterComponent = characterView.get<CharacterComponent>(*it);
         characterComponent.SetWeaponDrawn(message.IsWeaponDrawn);
         spdlog::debug("Updating weapon drawn state {:x}:{}", message.Id, message.IsWeaponDrawn);
+
+        // A player's draw reaches the others' copies by its animation, which a paused game refuses; this lets them put it right once they run again.
+        if (characterComponent.IsPlayer())
+        {
+            NotifyDrawWeapon notify;
+            notify.Id = message.Id;
+            notify.IsWeaponDrawn = message.IsWeaponDrawn;
+            if (!GameServer::Get()->SendToPlayersInRange(notify, *it, acMessage.GetSender()))
+                spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
+        }
     }
 }

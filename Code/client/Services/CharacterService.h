@@ -116,6 +116,17 @@ struct CharacterService
 #endif
     //! Switches off the removed copies queued since the last frame; called on the main thread at the start of a frame.
     static void DisableQueuedCopies() noexcept;
+    //! Draws or sheathes a remote copy's weapon in two passes, as for a copy that arrives (ApplyCachedWeaponDraws).
+    //! aForce: drawn even if the copy's state already says so, as on arrival, for a draw whose animation this game never played.
+    void QueueWeaponDraw(const uint32_t aFormId, const bool aDrawn, const bool aForce = false) noexcept
+    {
+        WeaponDrawData data(aDrawn);
+        data.m_correction = !aForce;
+        data.m_forced = aForce;
+        m_weaponDrawUpdates[aFormId] = data;
+    }
+    //! Whether a weapon draw or sheathe is queued for that copy.
+    [[nodiscard]] bool IsWeaponDrawQueued(const uint32_t aFormId) const noexcept { return m_weaponDrawUpdates.find(aFormId) != m_weaponDrawUpdates.end(); }
 
 private:
     //! False when the cell to move to could not be found.
@@ -180,6 +191,10 @@ private:
         double m_timer = 0.0;
         bool m_drawWeapon = false;
         bool m_isFirstPass = true;
+        // Asked for a copy already in view (QueueWeaponDraw), not one that just arrived: a copy already drawn is left as it is.
+        bool m_correction = false;
+        // Drawn even if its state says so; once that draw has started, the second pass only retries a draw that was undone.
+        bool m_forced = false;
     };
 
     Map<uint32_t, WeaponDrawData> m_weaponDrawUpdates{};

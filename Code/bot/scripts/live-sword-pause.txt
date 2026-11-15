@@ -1,0 +1,43 @@
+# A player draws while the other player's game is paused: does the copy show the weapon out once that game runs again?
+#
+#   python Tools\VR\live-check.py live-sword-pause
+#
+# A copy drew only by replaying its owner's draw animation, and a paused game refuses replays; the weapon-drawn message
+# only updated the server's record, for players arriving later. So a sword drawn while the other game sat in its journal
+# never showed there (play, 2026-11-15). The server now passes the message on, and a game that runs again draws the copy.
+# This bot sends no draw animation at all, only the message, so on a build without the fix its copy never draws.
+# A bot cannot hold the copy drawn afterwards: a player's game keeps sending the drawn state with its animation data, this bot sends none,
+# so the copy sheathes again a moment later. What it checks is that the draw is asked for once the game runs again, and that it starts.
+# Red on fd3f66c (the copy never drew), the draw started on fcaa5d2 (2026-11-15).
+log live sword pause
+waitfor connected 45
+collect ownership
+expect known me
+waitfor known other 40
+wait 8
+
+log -- the bot's weapon put away to begin with
+draw off
+wait 3
+log CHECK copy exists
+log CHECK copy weapon sheathed
+wait 2
+
+log -- the game paused in its journal; the bot draws its weapon meanwhile
+log DO menu 12 Journal Menu
+wait 4
+draw on
+wait 12
+
+log -- the journal closed: the draw is asked for a second later, and the copy starts drawing
+log DO sleep 4
+log CHECK logged PlayerCopyWeapon: copy \w+'s owner drew while this game was paused
+log CHECK logged Weapon of player copy \w+ set drawn \(first pass\); the game went from sheathed to drawing
+wait 3
+
+log -- put away again, with the game running
+draw off
+wait 5
+log CHECK copy weapon sheathed
+log done
+stop
