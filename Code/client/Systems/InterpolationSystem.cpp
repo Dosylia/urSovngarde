@@ -16,6 +16,7 @@
 #include <World.h>
 
 #include <Games/Skyrim/VRBodySync.h>
+#include <Services/DiscoveryService.h>
 
 namespace
 {
@@ -50,8 +51,12 @@ struct Down
     std::chrono::steady_clock::time_point QueuedSince;
     uint32_t GetUpsSent;
     bool SaidLong;
+    // Put on its feet where its owner stands, once its own get-ups were all refused.
+    bool Stood;
 };
 TiltedPhoques::Map<uint32_t, Down> s_down;
+// NPC copies put on their feet where their owner stands, and when: once in 30 s each, as their next fall starts a new entry above.
+TiltedPhoques::Map<uint32_t, std::chrono::steady_clock::time_point> s_stoodUp;
 
 // Copies dead here while their owner's game has not said they died, so that it is logged once per copy.
 std::unordered_set<uint32_t> s_saidDeadAlone;
@@ -618,7 +623,7 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         const auto it = s_down.find(apActor->formID);
         if (cKnockedNpc && it == s_down.end())
         {
-            s_down[apActor->formID] = Down{cNow, {}, 0, false};
+            s_down[apActor->formID] = Down{cNow, {}, 0, false, false};
             spdlog::info("KnockDown: NPC copy {:X} lies in its own ragdoll (knock state {}); it stays where it fell until it gets up", apActor->formID, cKnockState);
         }
         else if (cKnockedNpc)
@@ -642,6 +647,27 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
                 spdlog::info("KnockDown: NPC copy {:X} waited {} ms with its get-up queued; sent it 'GetUpBegin' ({}, try {})", apActor->formID,
                              std::chrono::duration_cast<std::chrono::milliseconds>(cNow - down.QueuedSince).count(), cTaken ? "taken" : "not taken", down.GetUpsSent);
                 down.QueuedSince = {};
+            }
+            // Every get-up refused while its owner's NPC stands elsewhere: the copy would lie there for good while it fights on over there.
+            // The other player could neither find it nor hit it (a brawl, 2026-11-15).
+            // The game's own move puts it on its feet where its owner has it, and it follows from there.
+            constexpr float cOwnerAway = 100.f;
+            const float cApart = glm::distance(static_cast<glm::vec3>(apActor->position), static_cast<glm::vec3>(position));
+            const auto cStoodBefore = s_stoodUp.find(apActor->formID);
+            const bool cStoodLately = cStoodBefore != s_stoodUp.end() && cNow - cStoodBefore->second < 30s;
+            TESObjectCELL* pCell = apActor->GetParentCellEx();
+            if (down.GetUpsSent >= cMaxGetUps && !down.Stood && !cStoodLately && pCell && cKnockState == cKnockQueued && cNow - down.Since > 6s && cApart > cOwnerAway)
+            {
+                down.Stood = true;
+                if (s_stoodUp.size() > 256)
+                    s_stoodUp.clear();
+                s_stoodUp[apActor->formID] = cNow;
+                apActor->actorState.flags1 &= ~0xE000000u;
+                // The move drops its 3D for a moment; noted, discovery does not take that for a copy gone.
+                DiscoveryService::NoteMovedHere(apActor->formID);
+                apActor->MoveTo(pCell, position);
+                spdlog::info("KnockDown: NPC copy {:X} could not get up after {} tries while its owner stands {:.0f} units away; moved there on its feet", apActor->formID,
+                             down.GetUpsSent, cApart);
             }
             if (!down.SaidLong && cNow - down.Since > 15s)
             {

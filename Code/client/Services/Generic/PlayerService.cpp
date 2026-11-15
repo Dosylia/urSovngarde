@@ -50,9 +50,20 @@
 #include <Games/Skyrim/DeathCause.h>
 #include <Games/Skyrim/DeathSentence.h>
 #include <Components.h>
+#include <Forms/TESQuest.h>
 
 namespace
 {
+// The game's brawl (a fist fight for a favor, a bet or a job): losing one puts the player in bleedout, and the game stands them up again.
+// Skyrim.esm DGIntimidateQuest; it still runs when that bleedout ends, and stops a moment later.
+constexpr uint32_t cBrawlQuest = 0x47AE6;
+
+bool IsBrawlRunning() noexcept
+{
+    const auto* pQuest = Cast<TESQuest>(TESForm::GetById(cBrawlQuest));
+    return pQuest && pQuest->IsEnabled();
+}
+
 // A third of the health back: enough to get away, not enough to fight on as if nothing happened.
 constexpr float cRevivedHealthShare = 0.3f;
 
@@ -68,6 +79,18 @@ constexpr uint32_t cUnarmed = 0x1F4;
 constexpr float cFallDrop = 500.f;
 constexpr auto cFallWindow = 1200ms;
 constexpr auto cKillingBlow = 500ms;
+
+// Down in a brawl: the brawl runs and the last blow was a fist. A brawl quest left running by the game does not make a later armed down a brawl.
+bool IsBrawlDown(const std::chrono::steady_clock::time_point acNow) noexcept
+{
+    if (!IsBrawlRunning())
+        return false;
+    const auto cHit = DeathCause::LastBetween(acNow - 2s, acNow);
+    return cHit && cHit->SourceFormId == cUnarmed;
+}
+
+// Set while the player lies in a brawl's bleedout, which the game ends itself.
+bool s_brawlDown = false;
 // The blow that downed the player is the last one this long before it went down.
 constexpr auto cBlowsCounted = 10s;
 // The heartbeat felt in both hands: two beats, then a pause, about 55 a minute.
@@ -524,11 +547,31 @@ void PlayerService::RunRespawnUpdates() noexcept
 
         if (!pPlayer->actorState.IsBleedingOut())
         {
+            // The brawl's script cleared the setting that keeps the player down for a revive; put back, a later down waits for one again.
+            if (s_brawlDown)
+            {
+                s_brawlDown = false;
+                pPlayer->SetNoBleedoutRecovery(true);
+                spdlog::info("PlayerService: up again after the brawl");
+            }
             SampleHeight(cNow);
             m_cachedMainSpellId = pPlayer->magicItems[0] ? pPlayer->magicItems[0]->formID : 0;
             m_cachedSecondarySpellId = pPlayer->magicItems[1] ? pPlayer->magicItems[1]->formID : 0;
             m_cachedPowerId = pPlayer->equippedShout ? pPlayer->equippedShout->formID : 0;
             return;
+        }
+
+        // A brawl never kills: the game stands the player up when it is lost, so the down below is not started.
+        // With nobody near, the server would declare the death at once, before the game stands the player up.
+        // If the brawl quest stops while the player still lies there, the down below starts then.
+        if (s_brawlDown || IsBrawlDown(cNow))
+        {
+            if (!s_brawlDown)
+                spdlog::info("PlayerService: down in a brawl (DGIntimidateQuest, a fist); left to the game, which stands the player up");
+            s_brawlDown = IsBrawlRunning();
+            if (s_brawlDown)
+                return;
+            spdlog::info("PlayerService: the brawl ended with the player still down; the down starts");
         }
 
         // If a player dies not by its health reaching 0, getting it up from its bleedout state isn't possible
@@ -568,11 +611,16 @@ void PlayerService::RunRespawnUpdates() noexcept
 
         if (!pPlayer->actorState.IsBleedingOut())
         {
-            // After a loaded save the player is up in it: no respawn, as when playing alone.
-            if (m_saveLoaded)
+            // After a loaded save the player is up in it, and a lost brawl stands the player up: no respawn, as when playing alone.
+            const bool cBrawl = IsBrawlRunning();
+            if (m_saveLoaded || cBrawl)
             {
-                spdlog::info("PlayerService: a save was loaded while down; up again without a respawn");
+                spdlog::info("PlayerService: {} {} ms after going down; up again without a respawn", m_saveLoaded ? "a save was loaded while down" : "the brawl stood the player up",
+                             std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count());
                 StopHeartbeat();
+                VRBanner::Hide();
+                if (cBrawl)
+                    pPlayer->SetNoBleedoutRecovery(true);
                 m_downState = DownState::kUp;
                 PlayerDownedRequest up{};
                 up.IsDown = false;
