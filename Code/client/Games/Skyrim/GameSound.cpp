@@ -19,12 +19,13 @@ using TPlay = bool(Handle* apHandle);
 using TStop = bool(Handle* apHandle);
 } // namespace
 
+// The flat ids are Anniversary Edition ids; the VR ones are SE ids, which the VR address table translates.
 bool Play(const uint32_t aDescriptorId, const NiPoint3* apAt, Handle* apOut) noexcept
 {
-    POINTER_SKYRIMSE(TGetAudioManager, s_getAudioManager, 66391, 66391);
-    POINTER_SKYRIMSE(TGetSoundHandle, s_getSoundHandle, 66404, 66404);
-    POINTER_SKYRIMSE(TSetPosition, s_setPosition, 66370, 66370);
-    POINTER_SKYRIMSE(TPlay, s_play, 66355, 66355);
+    POINTER_SKYRIMSE(TGetAudioManager, s_getAudioManager, 67652, 66391);
+    POINTER_SKYRIMSE(TGetSoundHandle, s_getSoundHandle, 67666, 66404);
+    POINTER_SKYRIMSE(TSetPosition, s_setPosition, 67631, 66370);
+    POINTER_SKYRIMSE(TPlay, s_play, 67616, 66355);
     if (!s_getAudioManager.Get() || !s_getSoundHandle.Get() || !s_setPosition.Get() || !s_play.Get())
         return false;
 
@@ -48,7 +49,7 @@ bool Play(const uint32_t aDescriptorId, const NiPoint3* apAt, Handle* apOut) noe
 
 bool Stop(Handle& aHandle) noexcept
 {
-    POINTER_SKYRIMSE(TStop, s_stop, 66358, 66358);
+    POINTER_SKYRIMSE(TStop, s_stop, 67619, 66358);
     if (aHandle.SoundId == 0xFFFFFFFF || !s_stop.Get())
         return false;
     const bool cStopped = s_stop.Get()(&aHandle);

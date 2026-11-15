@@ -1141,6 +1141,9 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       plugins), with a rule for the expected differences; (3) a flat block counted in the defender's rule, which knows
       only VR blade contact; (4) the flat build untested since the fork, testing needs a Skyrim SE copy. Only once VR to
       VR is solid.
+      2026-11-15: a flat rig, `Tools/Flat/flat-rig.ps1 up|down|status` and `Tools/Flat/deploy-flat-client.ps1`, a Mod Organizer instance of its own named by the `SKYRIM_FLAT_ROOT` user variable, Skyrim 1.7.104, DevBench on port 8922.
+      The flat build starts, loads the world and connects to the test server, announcing its NPCs, at 60 fps (build 01b63b9). Its first connect crashed in `BSReadWriteLock` and its sound calls passed SE ids: both now take Anniversary Edition ids in the flat slot, the VR ids unchanged.
+      Known on flat: the client reads keys only while its window has the focus; DevBench's keyboard is not ready (the Script Extender's input stage reported unfinished), so rig keys go in at the Windows level.
 - [ ] **SkyrimNet with the mod** (low priority; an MGO player asked 2026-10-23 whether both work together). Not started.
       SkyrimNet (AI dialogue for NPCs; MGO's optional "AI and Speech" section, beta 24, off in the host's profile) runs
       on its own in each game. Its lines play through the game's audio manager, not the `SpeakSound` call we sync, so

@@ -6,6 +6,7 @@
 #
 # The instance is a portable Mod Organizer for Skyrim Special Edition, in the folder the SKYRIM_FLAT_ROOT user variable names.
 # Its profile "Rig" keeps its own saves and INIs, so the rig never touches a player's saves.
+# The first start begins a new game outside Mistwatch, answers its Survival Mode question with No, and saves it as FlatRigStart; later starts load that save.
 # Its mods: the Script Extender for the game's version, the Address Library for that version, DevBench, and SkyrimTogether.esp.
 # DevBench answers on port 8922 there (its config.json), so this game can run beside the VR rig, which uses 8921.
 # Its executable "Skyrim Together" starts tools\Skyrim Together\SkyrimTogether.exe; deploy-flat-client.ps1 puts each build there.
@@ -34,6 +35,7 @@ $clientDir = Join-Path $root 'tools\Skyrim Together'
 $clientLog = Join-Path $clientDir 'logs\tp_client.log'
 $stateFile = Join-Path $root 'flat-rig.state.json'
 $devbench = "http://127.0.0.1:$Port"
+$startSave = 'FlatRigStart'
 # The flat client maps the game into its own process, so the game runs under the client's name.
 $gamePattern = '^SkyrimTogether$'
 $serverPattern = '^(urSovngardeServer|SkyrimTogetherServer)$'
@@ -89,6 +91,37 @@ function Show-Status {
         $(if (Test-Running $serverPattern) { 'running' } else { 'stopped' })
 }
 
+if (-not ('FlatRigKeys' -as [type])) {
+    Add-Type -Name FlatRigKeys -Namespace '' -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern System.IntPtr FindWindow(string windowClass, string title);
+[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr window);
+[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr window, int command);
+[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
+'@
+}
+
+# The flat client reads keys only while the game's window has the focus.
+# The process's main window is the client's console, so the game's is found by the class the client gives it.
+# Windows lets a background process bring a window to the front only just after a key press of its own, hence the Alt press.
+function Set-GameFocus {
+    $window = [FlatRigKeys]::FindWindow('Skyrim Together', 'Skyrim Together')
+    if ($window -eq [IntPtr]::Zero) { return $false }
+    [FlatRigKeys]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+    [FlatRigKeys]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+    [FlatRigKeys]::ShowWindow($window, 9) | Out-Null
+    [FlatRigKeys]::SetForegroundWindow($window) | Out-Null
+    Start-Sleep -Milliseconds 600
+    return [FlatRigKeys]::GetForegroundWindow() -eq $window
+}
+
+function Send-Key([byte]$vk, [int]$holdMs = 150) {
+    [FlatRigKeys]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds $holdMs
+    [FlatRigKeys]::keybd_event($vk, 0, 2, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 600
+}
+
 function Write-RigQuit([string]$what) {
     $line = '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $what
     Write-Host $line
@@ -135,6 +168,9 @@ try {
     Wait-Until { Get-Health } $MenuTimeout 'DevBench to answer (the game to start)' -NeedsGame
     Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } $MenuTimeout 'the main menu' -NeedsGame
 
+    # The rig's own start save, once made, spares the new game and its Survival Mode question.
+    if (-not $Save -and (Test-Path (Join-Path $root "profiles\Rig\saves\$startSave.ess"))) { $Save = $startSave }
+
     if ($Save) {
         Invoke-Tool 'game' @{ action = 'load'; name = $Save } | Out-Null
         Wait-Until { $h = Get-Health; $h -and $h.lastLifecycle -eq 'postLoadGame' } $LoadTimeout 'the save to load' -NeedsGame
@@ -145,19 +181,34 @@ try {
     }
     Start-Sleep -Seconds 5
 
+    # A new game asks whether to turn Survival Mode on, in a message box that pauses it: the answer is No.
+    # DevBench's keyboard does not reach the flat game's menus, so the keys go in at the Windows level.
+    foreach ($attempt in 1..5) {
+        if (-not ((Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'MessageBoxMenu')) { break }
+        if (Set-GameFocus) {
+            Send-Key 0x27
+            Send-Key 0x0D
+            Write-Host 'Answered No to a message box.'
+        }
+        Start-Sleep -Seconds 2
+    }
+    if ((Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'MessageBoxMenu') { throw 'A message box stayed open and pauses the game.' }
+
+    # Made once, after a new game's question is answered: the next starts load it.
+    if (-not $Save) {
+        try { Invoke-Tool 'console' @{ action = 'exec'; command = "save $startSave" } | Out-Null; Start-Sleep -Seconds 4; Write-Host "Saved the rig's start as $startSave." }
+        catch { Write-Host "The start save was not made: $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
+
     if ($NoConnect) {
         Write-Host 'Up, not connected (no server was started).' -ForegroundColor Green
         Show-Status
         return
     }
 
-    # The client reads F6 with GetAsyncKeyState, so it is pressed at the Windows level.
-    if (-not ('FlatRigKeys' -as [type])) {
-        Add-Type -Name FlatRigKeys -Namespace '' -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);'
-    }
-    [FlatRigKeys]::keybd_event(0x75, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 300
-    [FlatRigKeys]::keybd_event(0x75, 0, 2, [UIntPtr]::Zero)
+    # The client reads F6 with GetAsyncKeyState, so it is pressed at the Windows level, with the game's window in front.
+    if (-not (Set-GameFocus)) { Write-Host 'The game window could not be brought to the front; F6 may go unheard.' -ForegroundColor Yellow }
+    Send-Key 0x75 300
     Write-Host 'Pressed F6 to connect.'
     Wait-Until { Get-Connected } 60 'the connection' -NeedsGame
     Write-Host 'Up.' -ForegroundColor Green
