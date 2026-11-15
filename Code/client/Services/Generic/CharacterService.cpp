@@ -426,6 +426,17 @@ void DisableAtFrameStart(const Actor* apActor) noexcept
     s_disableQueue.push_back(apActor->GetHandle().handle.iBits);
 }
 
+// The waiting entry of that actor, by handle as well as id, or null when it is not waiting to be freed.
+WaitingCopy* FindWaitingCopy(const Actor* apActor) noexcept
+{
+    if (s_waitingCopies.empty())
+        return nullptr;
+    const uint32_t cHandle = apActor->GetHandle().handle.iBits;
+    const auto it = std::find_if(s_waitingCopies.begin(), s_waitingCopies.end(),
+                                 [apActor, cHandle](const WaitingCopy& acWaiting) { return acWaiting.FormId == apActor->formID && acWaiting.Handle == cHandle; });
+    return it != s_waitingCopies.end() ? &*it : nullptr;
+}
+
 Actor* RememberOwnCopy(Actor* apActor) noexcept
 {
     if (!apActor)
@@ -743,6 +754,10 @@ void RunWaitingCopies() noexcept
                              waiting.FormId, waitedMs, handles, CopyRemovalPolicy::Describe(reason));
             continue;
         }
+
+        // One that had no 3D when it was queued was left switched on; once its cell gives it 3D it is switched off.
+        if (!pActor->IsDisabled() && pActor->GetNiNode() && !pActor->IsStillLoading())
+            DisableAtFrameStart(pActor);
 
         stillWaiting.push_back(waiting);
     }
@@ -3493,6 +3508,17 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
 
     if (m_world.any_of<RemoteComponent, LocalComponent, WaitingForAssignmentComponent>(aEntity))
         return;
+
+    // A removed copy waits, switched on if it had no 3D, until the game lets go of it (RunWaitingCopies).
+    // Its cell loading again gives it 3D; announced, it would become this game's NPC and a nameless copy in the other game.
+    // It is not announced, it is switched off at the start of a frame, and its wait starts again now that the game runs it.
+    if (WaitingCopy* pWaiting = pActor->IsTemporary() ? FindWaitingCopy(pActor) : nullptr)
+    {
+        spdlog::info("OwnCopy: {:X} came back with its cell after its removal; not announced, to be switched off", pActor->formID);
+        pWaiting->QueuedAt = std::chrono::steady_clock::now();
+        DisableAtFrameStart(pActor);
+        return;
+    }
 
     // One of this game's own actors given to another player while out of view (see s_handedAway).
     // The server still has it and sends it when in range; announcing it here would duplicate it for everybody.
