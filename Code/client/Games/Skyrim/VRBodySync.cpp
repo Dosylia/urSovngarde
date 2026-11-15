@@ -17,6 +17,9 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <PerfScope.h>
+#ifndef SKYRIMVR
+#include <Camera/CameraView.h>
+#endif
 
 #include <mutex>
 #include <optional>
@@ -636,6 +639,11 @@ std::unordered_map<uint32_t, Rig> s_rigs; // frame end only
 
 uint8_t* GetBoneArray(void* apTree, uint32_t& aOutCount) noexcept
 {
+#ifndef SKYRIMVR
+    // Its offsets were measured on VR only; on flat a wrong guess would be written to, so the flattened bones keep the animation.
+    aOutCount = 0;
+    return nullptr;
+#else
     ReadableRegionScope regions; // a few hundred readability questions, almost all about the same few regions
     aOutCount = 0;
     if (!apTree || !IsReadable(static_cast<uint8_t*>(apTree) + kTreeBoneArray, sizeof(void*)))
@@ -668,6 +676,7 @@ uint8_t* GetBoneArray(void* apTree, uint32_t& aOutCount) noexcept
     }
 
     return nullptr;
+#endif
 }
 
 uint8_t* FindBoneEntry(uint8_t* apArray, uint32_t aCount, void* apNode) noexcept
@@ -881,6 +890,10 @@ const NiTransform* HeadsetTransform() noexcept
 // aMarginDegrees widens the cone further, for an actor already in view.
 bool IsInView(const glm::vec3& acChest, const float aMarginDegrees = 0.f) noexcept
 {
+#ifndef SKYRIMVR
+    // A flat screen has no headset: the game's camera decides, with a third of the screen around its edges for the rest of the body.
+    return CameraView::ShowsBody(NiPoint3(acChest), 0.3f + aMarginDegrees / 90.f);
+#else
     const float cHalfAngle = (50.f + aMarginDegrees) * glm::pi<float>() / 180.f;
     constexpr float cBodyRadius = 100.f;
 
@@ -896,6 +909,7 @@ bool IsInView(const glm::vec3& acChest, const float aMarginDegrees = 0.f) noexce
     const glm::vec3 forward = ToGlm(hmd.rotate)[1]; // Skyrim: X right, Y forward, Z up
     const float offAxis = std::acos(glm::clamp(glm::dot(forward, toChest / distance), -1.f, 1.f));
     return offAxis < cHalfAngle + std::asin(cBodyRadius / distance);
+#endif
 }
 
 // Where a live copy's chest is drawn: its root, moved by the pose's hips as PoseActor moves it, at chest height.
@@ -3426,11 +3440,13 @@ bool HasCopyArrow(uint32_t aFormId) noexcept
 
 void OnFrameEnd() noexcept
 {
+#ifdef SKYRIMVR
     // The nocked arrows go last, once every hand is where it ends up this frame, whichever way this returns.
     struct ArrowsLast
     {
         ~ArrowsLast() { PlaceNockedArrows(); }
     } arrowsLast;
+#endif
 
     TiltedPhoques::Vector<std::pair<uint32_t, RemotePose>> poses;
     {
@@ -3450,8 +3466,10 @@ void OnFrameEnd() noexcept
     s_copyBlades.clear();
     if (poses.empty())
     {
+#ifdef SKYRIMVR
         StopLocalBlades(std::chrono::steady_clock::now());
         ReleaseUnseenWeaponBodies();
+#endif
         return;
     }
 
@@ -3543,6 +3561,11 @@ void OnFrameEnd() noexcept
         const ActorExtension* pBodyExtension = pActor->GetExtension();
         const bool cKnockedNpc = pBodyExtension && !pBodyExtension->IsRemotePlayer() && !pBodyExtension->IsLocalPlayer() && pActor->actorState.IsInKnockRagdoll() &&
                                  !pActor->actorState.IsBleedingOut();
+#ifndef SKYRIMVR
+        // On flat only remote players are posed: an NPC's body sent by its owner is placed through VR's physics (PlaceCorpse), which flat lacks.
+        if (!pBodyExtension || !pBodyExtension->IsRemotePlayer())
+            continue;
+#endif
         if (pActor->actorState.IsDeadOrDying() || pActor->actorState.IsBleedingOut() || cKnockedNpc)
         {
             if (pCount)
@@ -3639,9 +3662,11 @@ void OnFrameEnd() noexcept
         rig.InView = cInView;
         if (!cInView)
         {
+#ifdef SKYRIMVR
             // Its weapon body stays in the world out of view too, where the game's animation has it.
             // Taking it out and back in each time the copy leaves view would be churn for nothing.
             UpdateWeaponBodies(formId, pActor, rig);
+#endif
             whyNotPosed("out of view");
             if (pCount)
                 ++pCount->OutOfView;
@@ -3720,18 +3745,23 @@ void OnFrameEnd() noexcept
             }
         }
 
+#ifdef SKYRIMVR
         const std::array<BladeExtent, 2> bladeExtents = MeasureCopyBlades(rig);
+#endif
         PoseActor(rig, pose, worldOffset);
         if (pCount)
             ++pCount->Posed;
         switchCount.Posed = true;
         ReachHands(rig, pose);
         PlaceWeapons(rig, pose);
+        // The weapons' physics bodies, blade contact and the drawn pose for the hit rule exist only in VR builds.
+#ifdef SKYRIMVR
         LogPhysicsOnce(formId, rig);
         UpdateWeaponBodies(formId, pActor, rig);
         RecordCopyBlades(formId, pActor, bladeExtents);
         if (!isBody && pActor->GetExtension() && pActor->GetExtension()->IsRemotePlayer())
             RecordDrawnPose(formId, pActor, rig);
+#endif
         // Where the drawn weapon is, with its axes, for the rig's physics tests (live-check "DO drop ... onto copy weapon").
         if (rig.Attach[1].pNode && !rig.AttachBelow[1].empty())
         {
@@ -3773,8 +3803,10 @@ void OnFrameEnd() noexcept
         }
     }
 
+#ifdef SKYRIMVR
     StopLocalBlades(now);
     ReleaseUnseenWeaponBodies();
+#endif
 }
 
 float HeadsetAngleTo(const NiPoint3& acPosition) noexcept
@@ -5836,8 +5868,13 @@ void SetRemotePose(Actor* apActor, const VRPose& acPose) noexcept
     if (!acPose.HasData)
     {
         // Without pose data the arms follow the animation, for example a sword held up in the vanilla idle.
-        // Only players send a pose, so this is logged for remote players only, at most every 10 s each.
-        if (apActor->GetExtension()->IsRemotePlayer() && !apActor->actorState.IsDeadOrDying())
+        // Only VR players send a pose, so this is logged for remote players that had one, at most every 10 s each.
+        bool hadPose = false;
+        {
+            std::shared_lock lock(s_posesLock);
+            hadPose = s_poses.find(apActor->formID) != s_poses.end();
+        }
+        if (hadPose && apActor->GetExtension()->IsRemotePlayer() && !apActor->actorState.IsDeadOrDying())
         {
             static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextNote;
             const auto now = std::chrono::steady_clock::now();

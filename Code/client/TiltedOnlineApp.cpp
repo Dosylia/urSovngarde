@@ -32,9 +32,13 @@ namespace
 std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> CreateClientLogSink(const std::filesystem::path& acLogPath)
 {
     std::string filename = "tp_client.log";
+    // A slot belongs to one log folder: a game started from another folder (a flat game beside a VR one) keeps its tp_client.log.
+    std::wstring folder = std::filesystem::absolute(acLogPath).wstring();
+    std::transform(folder.begin(), folder.end(), folder.begin(), towlower);
+    const size_t cFolderHash = std::hash<std::wstring>{}(folder);
     for (uint32_t instance = 1;; ++instance)
     {
-        const auto mutexName = fmt::format("SkyrimTogether.ClientLog.Instance_{}", instance);
+        const auto mutexName = fmt::format("SkyrimTogether.ClientLog.{:016X}.Instance_{}", cFolderHash, instance);
         HANDLE pMutex = CreateMutexA(nullptr, FALSE, mutexName.c_str());
         const DWORD error = GetLastError();
 
@@ -195,6 +199,10 @@ static void LogPluginVersions() noexcept
 // RenderPassWatch.cpp: hooks the list draw the first time the map is open, after every SKSE plugin has loaded.
 void InstallDrawListCheck() noexcept;
 #endif
+#ifndef SKYRIMVR
+// BSInputDeviceManager.cpp: hooks the device poll at the first update, after every SKSE plugin has loaded.
+void InstallInputFocusCheck() noexcept;
+#endif
 
 TiltedOnlineApp::TiltedOnlineApp()
 {
@@ -298,6 +306,8 @@ void TiltedOnlineApp::Update()
     }
 #ifdef SKYRIMVR
     InstallDrawListCheck();
+#else
+    InstallInputFocusCheck();
 #endif
 
     World::Get().Update();

@@ -7,8 +7,8 @@
 #include "BSGraphics/BSGraphicsRenderer.h"
 #include "BSRandom/BSRandom.h"
 
-#ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
+#ifdef SKYRIMVR
 #include <PatchCheck.h>
 #endif
 
@@ -78,9 +78,8 @@ void Hook_StopTimer(int type)
     if (g_sRs)
         g_sRs->OnRender();
 
-#ifdef SKYRIMVR
+    // Remote VR players' poses, after the frame's animation: in VR builds and on flat screens.
     VRBodySync::OnFrameEnd();
-#endif
 
     StopTimer(type);
 }

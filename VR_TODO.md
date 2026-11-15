@@ -1133,6 +1133,10 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       the same crash came three times on 2026-10-12, all at Mistwatch loading screens in the rig, so it is not the battle
       mods. Watch for it in play: a crash right as a loading screen starts.
 - [ ] **A small in-headset overlay for chat:** chat shows only on the dashboard tab.
+- [ ] **VR FPS Stabilizer crash at loading screens** (seen 2026-11-15, on the rig). The game closes in VRFpsStabilizer.dll+0xFFF6, on that plugin's own thread, reading 0xFFFFFFFFFFFFFFFF, during a loading screen.
+      Five times in our client logs: 11-13 21:25, 11-14 03:53 and 10:07, 11-15 16:41 and 17:24, all on rig runs, with and without a connection, on several builds; not in our code.
+      The plugin came with the FUS 5.1.0 install (11-12, mod "VR FPS Stabilizer"). It can hit play too: a crash at a loading screen with that line in the log is this one.
+      Not looked into: the plugin's version and whether a newer one fixes it; whether the rig's quick loads make it likelier.
 - [ ] **A flat (non-VR) player with VR players** (asked on Reddit, 2026-10-09). Possible in principle: the repo still
       builds the flat client, and `Code/encoding` has no VR-only message, so both builds share the protocol and the
       server. Missing: (1) the VR player on the flat screen -- VR swings are not animations, and the poses we send
@@ -1143,7 +1147,35 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       VR is solid.
       2026-11-15: a flat rig, `Tools/Flat/flat-rig.ps1 up|down|status` and `Tools/Flat/deploy-flat-client.ps1`, a Mod Organizer instance of its own named by the `SKYRIM_FLAT_ROOT` user variable, Skyrim 1.7.104, DevBench on port 8922.
       The flat build starts, loads the world and connects to the test server, announcing its NPCs, at 60 fps (build 01b63b9). Its first connect crashed in `BSReadWriteLock` and its sound calls passed SE ids: both now take Anniversary Edition ids in the flat slot, the VR ids unchanged.
-      Known on flat: the client reads keys only while its window has the focus; DevBench's keyboard is not ready (the Script Extender's input stage reported unfinished), so rig keys go in at the Windows level.
+      Known on flat: the client reads keys only while its window is in front, and that now holds for DevBench's keys too.
+      DevBench's keyboard was not ready because our focus hook took the input poll's first bytes before it; the hook now goes on at the first update, on top of DevBench's (build 6271913, rig: keys walk the flat player, refused on 01b63b9).
+      Both rigs at once: `flat-rig.ps1 up` first, then `headless.ps1 up -AutoConnect`, which presses no F6 (the VR game takes F6 whatever window is in front).
+      Mod Organizer runs once per PC unless given `--multiple`; both scripts add it only when another instance's runs, and `flat-rig.ps1 down` closes its own.
+      A VR game beside the flat one wrote `tp_client_instance_2.log`, so the rig read a stale log; the log slot now belongs to one folder (6271913, rig: the VR game kept `tp_client.log`).
+      2026-11-15 probe, one VR rig game and one flat rig game on one server (01b63b9, then 6271913), rig only, not seen in play:
+        - both are let in; the server and both games warn that the plugins differ, and the VR game shows its banner;
+        - each sees the other where it is, within a unit, 45 ms behind with 3 ms jitter; weapon drawn, equipping, running and the party leader's weather come through;
+        - a flat sword hit landed on the VR player (`Defender's rule: a hit of 8 from player 1 lands`), with no blade check, as expected;
+        - each game draws the other player's copy crouched, though neither is sneaking: the VR side's behaviour mods add variables to the human graph's list (`ConstructModdedDescriptor`), so the two games read each other's animation values in different slots; the same happens between two players with different behaviour mods; sending the variables by name would fix it;
+        - the flat player's swing is not drawn in VR: the game refused `attackStart` on his copy (`ReplayDiag`), its target id unresolved there;
+        - on flat, the VR player's appearance names a form from a VR-only plugin and 25 of her items are not found; 20 lock changes on VR-only references fail as errors;
+        - NPCs: each side rolled other creatures for the same references (23 ghosts in VR, 36 on flat), carried by stand-ins; no crash, no error beyond those.
+      Crouch fix written, not built (protocol change: both players update): a modded descriptor keeps the original graph's variables first, in the original order, with a placeholder where its graph lacks one, and its mod's own variables after them; a game whose list is not as long as the sender's applies only that shared part (`BehaviorVar.cpp`, `AnimationGraphDescriptor.h`, `TESObjectREFR.cpp`).
+      Rig check to run: the same two games, the copies standing upright with a weapon drawn, and whether the flat swing then plays in VR (likely the same cause: its target arrives empty, but NPC attacks on player copies play with empty targets too).
+      Open from the code: actions carry the owner's raw action, idle and target ids, not server ids, so they match only where both games load the same plugin at the same index; index 05 is `SkyrimVR.esm` in VR and the Fishing Creation Club file on flat.
+      A behaviour mod's own variables keep one slot per name its replacer file lists (a placeholder where the graph lacks it), so their slots follow the file, not each game's graph; a short or empty list leaves the slots it lacks alone. Still open: two players whose replacer files differ but give lists of equal length would mix those extra slots.
+      Not changed, to watch: in first person a modded human graph not yet patched gets the plain descriptor (`BehaviorVar::Patch`); in the probe the VR player was patched normally.
+      The VR player's arms on flat, first version written, not built: the flat client stores the pose and poses the copy's arms, hands and weapon at the frame end (`VRBodySync::SetRemotePose`, `OnFrameEnd`, the three `ClearRemotePose`); on flat only remote players are posed (no NPC bodies, whose placement uses VR's physics); weapon physics, blade contact and nocked arrows stay VR only; the game's camera decides which copies are on screen (`Camera/CameraView.cpp`); the missing-pose warning now fires only for a player who had a pose.
+      Unknowns for the rig: whether the game animates the copy again before it is drawn (a one-frame lag or flicker), the flattened bone array on Anniversary Edition (off on flat until measured, since a wrong offset would be written to; fingers keep the animation, and if the flat skin follows that array the arms may not move at all), skeleton mods that turn bone axes differently.
+      2026-11-15 rig, builds 435c542 and fd3f66c (protocol change: client and server on FUS, flat rig; MGO not yet), not seen in play:
+        - crouch: both copies stand normally with a weapon drawn (VR player's copy on flat in a sword-and-shield ready stance, flat player's copy in VR upright); crouched on 6271913;
+        - flat swing in VR: 3 of 3 swings landed and none of the flat player's attacks was refused in VR; every one was refused on 6271913;
+        - VR arms on flat: with the rig's headset held at standing height the flat copy's head stood 114 above its root and its hands matched the owner's to the decimal, but the body was not drawn at all; the flat log showed its spine with a rotation the renderer refuses (`rotation row 0.6752`); posing is off on flat again at its one entry (`InterpolationSystem.cpp`, fd3f66c), the rest of the code stays; next: find what corrupts that spine (instrumented build).
+        - one rig start crashed in the third-party VRFpsStabilizer.dll while the save loaded (16:41:47); see "VR FPS Stabilizer crash at loading screens".
+        - the default live suite on fd3f66c, for the slot order every VR player now uses: 26 of 39 ok in one pass; of the rest, re-run by name, knockdown, protected copy dies, body hold, world object, quest item copy, copy door race and NPC grace outdoors were ok (order-dependent the first time); one batch did not run (the stabilizer crash).
+          Not ok, none traced to this change: PvP spell elements (the second spell hit for 40, the test wants 60: its last pass was 10-31, on the old install, so probably the new list's spell values), copy bleedout (ok, then no answer: the bot's recording lacked the get-up), load and door state (no answer both times: DevBench timed out while the game's main thread stalled; load did the same twice that morning on older builds), ref enable leader (no answer both times: the bot runs out of time in phase 3; last ok 11-01, old install).
+          Not run on an older build, so those last ones are unexplained rather than cleared.
+      Seen on the way, not cross-play: the VR game sent 509 lock changes in ten minutes, 66 of them for one reference (20177CA), and did the same with no other player at 12:31.
 - [ ] **SkyrimNet with the mod** (low priority; an MGO player asked 2026-10-23 whether both work together). Not started.
       SkyrimNet (AI dialogue for NPCs; MGO's optional "AI and Speech" section, beta 24, off in the host's profile) runs
       on its own in each game. Its lines play through the game's audio manager, not the `SpeakSound` call we sync, so

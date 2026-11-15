@@ -12,7 +12,13 @@ struct AnimationGraphDescriptor
         BooleanLookUpTable.assign(acBooleanList, acBooleanList + N);
         FloatLookupTable.assign(acFloatList, acFloatList + O);
         IntegerLookupTable.assign(acIntegerList, acIntegerList + P);
+        SharedBooleans = N;
+        SharedFloats = O;
+        SharedIntegers = P;
     }
+
+    // A variable this game's graph lacks keeps its slot with this index, so the slots after it keep their meaning.
+    static constexpr uint32_t kMissing = 0xFFFFFFFF;
 
     bool IsSynced(uint32_t aIdx) const
     {
@@ -34,4 +40,11 @@ struct AnimationGraphDescriptor
     TiltedPhoques::Vector<uint32_t> BooleanLookUpTable;
     TiltedPhoques::Vector<uint32_t> FloatLookupTable;
     TiltedPhoques::Vector<uint32_t> IntegerLookupTable;
+
+    // Values travel by slot, so two games read a slot alike only if it names the same variable in both.
+    // The first slots of each list are the original game graph's, in its order, in every game whose graph comes from it.
+    // The slots after them are a behaviour mod's own; a game whose list is not as long as the sender's applies only the first ones.
+    uint32_t SharedBooleans = 0;
+    uint32_t SharedFloats = 0;
+    uint32_t SharedIntegers = 0;
 };

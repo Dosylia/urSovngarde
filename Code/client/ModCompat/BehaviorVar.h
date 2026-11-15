@@ -42,9 +42,10 @@ private:
         const uint64_t acHash,
         const AnimationGraphDescriptor* acpDescriptor,
         TiltedPhoques::Map<TiltedPhoques::String, uint32_t>& acReverseMap,
-        TiltedPhoques::Set<uint32_t>& aBoolVars,
-        TiltedPhoques::Set<uint32_t>& aFloatVars,
-        TiltedPhoques::Set<uint32_t>& aIntVars);
+        TiltedPhoques::Vector<uint32_t>& aBoolVars,
+        TiltedPhoques::Vector<uint32_t>& aFloatVars,
+        TiltedPhoques::Vector<uint32_t>& aIntVars,
+        TiltedPhoques::Set<TiltedPhoques::String>& aSharedNames);
 
     const TiltedPhoques::Vector<TiltedPhoques::String> TokenizeBehaviorSig(const TiltedPhoques::String& acSignature) const;
     const AnimationGraphDescriptor* ConstructModdedDescriptor(

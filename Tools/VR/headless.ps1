@@ -16,7 +16,7 @@
 #   - The client connecting by itself five seconds after a load (%LOCALAPPDATA%\SkyrimTogetherVR\connect.txt).
 #
 # 'down' closes SteamVR by force, because it ignores a polite close.
-# It never touches MO2.
+# It never touches the player's own Mod Organizer; it closes only one of this instance that a rig run started with --multiple.
 
 param(
     [Parameter(Position = 0)][ValidateSet('up', 'down', 'status')][string]$Action = 'status',
@@ -199,6 +199,25 @@ function Wait-Until([scriptblock]$test, [int]$seconds, [string]$what, [switch]$N
         Start-Sleep -Milliseconds 1500
     }
     throw "Timed out after $seconds s waiting for $what."
+}
+
+# Mod Organizer runs once per PC: a second start hands its shortcut to the first one started without --multiple, the only one that takes shortcuts.
+# The Mod Organizers running, each with whether it is this instance's and whether it was started with --multiple.
+function Get-Mo2Processes {
+    $ownPath = [IO.Path]::GetFullPath($mo2)
+    Get-CimInstance Win32_Process -Filter "Name='ModOrganizer.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject]@{ Id = $_.ProcessId; Own = [bool]($_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $ownPath); Multiple = [bool]($_.CommandLine -match '--multiple') }
+    }
+}
+
+# One of this instance started with --multiple is a rig run's (a player never starts it that way): it takes no shortcut, and beside the player's own it would run the instance twice.
+# Closed politely, and by force after 15 s.
+function Close-RigMo2 {
+    $rigMo2 = @(Get-Mo2Processes | Where-Object { $_.Own -and $_.Multiple })
+    if ($rigMo2.Count -eq 0) { return }
+    foreach ($entry in $rigMo2) { $process = Get-Process -Id $entry.Id -ErrorAction SilentlyContinue; if ($process) { $process.CloseMainWindow() | Out-Null } }
+    try { Wait-Until { -not ($rigMo2 | Where-Object { Get-Process -Id $_.Id -ErrorAction SilentlyContinue }) } 15 "the rig's Mod Organizer to close" }
+    catch { $rigMo2 | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } }
 }
 
 # The rig's frame rate: SteamVR's null headset draws into a desktop window, so the game runs at the monitors' refresh
@@ -390,6 +409,7 @@ function Stop-Everything {
     }
 
     if ($state -and $state.startedServer) { Get-Process urSovngardeServer, SkyrimTogetherServer -ErrorAction SilentlyContinue | Stop-Process -Force }
+    if (-not (Test-Running $gamePattern)) { Close-RigMo2 }
 
     Restore-Saves
     if (-not (Test-Running $gamePattern)) { Restore-Connect }
@@ -484,12 +504,17 @@ try {
         Start-Sleep -Seconds 4
     }
 
+    # The player's own Mod Organizer is used as it is; with only another instance's running (the flat rig's), this one starts beside it.
+    Close-RigMo2
+    $mo2Running = @(Get-Mo2Processes)
+    $ownPrimary = @($mo2Running | Where-Object { $_.Own -and -not $_.Multiple })
+    $mo2Options = if ($mo2Running.Count -gt 0 -and $ownPrimary.Count -eq 0) { '--multiple ' } else { '' }
     if ($Twin) {
         $python = (Get-Command python).Source
         $anchor = Join-Path $PSScriptRoot 'two-games-anchor.py'
-        Start-Process -FilePath $mo2 -ArgumentList "run `"$python`" -a `"$anchor`""
+        Start-Process -FilePath $mo2 -ArgumentList "${mo2Options}run `"$python`" -a `"$anchor`""
     }
-    else { Start-Process -FilePath $mo2 -ArgumentList "`"moshortcut://:$mo2Shortcut`"" }
+    else { Start-Process -FilePath $mo2 -ArgumentList "${mo2Options}`"moshortcut://:$mo2Shortcut`"" }
     Wait-Until { Get-Health } 180 'DevBench to answer (the game to start)'
 
     Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } $MenuTimeout 'the main menu' -NeedsGame
@@ -522,7 +547,10 @@ try {
         Wait-Until { -not ((Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Loading Menu') } $LoadTimeout 'the start cell to load' -NeedsGame
         Start-Sleep -Seconds 5
         if ($StartCell -eq 'Tamriel 34 -9') {
-            $y = (Invoke-Tool 'papyrus' @{ action = 'call'; script = 'ObjectReference'; function = 'GetPositionY'; self = @{ form = '0x14' } }).returned
+            # With -AutoConnect the connection lands about now, and DevBench can drop a request while the game takes it in.
+            $script:startY = $null
+            Wait-Until { $script:startY = (Invoke-Tool 'papyrus' @{ action = 'call'; script = 'ObjectReference'; function = 'GetPositionY'; self = @{ form = '0x14' } }).returned; $null -ne $script:startY } 60 'the player position' -NeedsGame
+            $y = $script:startY
             if ([math]::Abs($y + 32896) -gt 600) { throw "The player is not at the start: y $y, wanted about -32896." }
         }
         Write-Host "Player put at the start: $StartCell"

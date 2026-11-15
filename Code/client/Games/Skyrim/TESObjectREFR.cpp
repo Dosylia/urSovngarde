@@ -354,8 +354,15 @@ void TESObjectREFR::LoadAnimationVariables(const AnimationVariables& aVariables)
             if (!pVariableSet)
                 return;
 
+            // A sender whose list is not as long as ours has another behaviour mod, or none: only the original graph's slots mean the same there.
+            // An empty or short list (a damaged message, a sender without a descriptor) leaves the slots it does not have as they are.
+            const auto cApplied = [](const size_t acSent, const size_t acOurs, const uint32_t acShared) { return acSent == acOurs ? acOurs : std::min({static_cast<size_t>(acShared), acOurs, acSent}); };
+            const size_t cBooleans = cApplied(aVariables.Booleans.size(), pDescriptor->BooleanLookUpTable.size(), pDescriptor->SharedBooleans);
+            const size_t cFloats = cApplied(aVariables.Floats.size(), pDescriptor->FloatLookupTable.size(), pDescriptor->SharedFloats);
+            const size_t cIntegers = cApplied(aVariables.Integers.size(), pDescriptor->IntegerLookupTable.size(), pDescriptor->SharedIntegers);
+
             // Never write into a variable whose word is an index: a wrong descriptor would make a synced value an index Havok follows later.
-            for (size_t i = 0; i < pDescriptor->BooleanLookUpTable.size(); ++i)
+            for (size_t i = 0; i < cBooleans; ++i)
             {
                 const auto idx = pDescriptor->BooleanLookUpTable[i];
 
@@ -365,7 +372,7 @@ void TESObjectREFR::LoadAnimationVariables(const AnimationVariables& aVariables)
                 }
             }
 
-            for (size_t i = 0; i < pDescriptor->FloatLookupTable.size(); ++i)
+            for (size_t i = 0; i < cFloats; ++i)
             {
                 const auto idx = pDescriptor->FloatLookupTable[i];
 
@@ -373,7 +380,7 @@ void TESObjectREFR::LoadAnimationVariables(const AnimationVariables& aVariables)
                     *reinterpret_cast<float*>(&pVariableSet->data[idx]) = aVariables.Floats.size() > i ? aVariables.Floats[i] : 0.f;
             }
 
-            for (size_t i = 0; i < pDescriptor->IntegerLookupTable.size(); ++i)
+            for (size_t i = 0; i < cIntegers; ++i)
             {
                 const auto idx = pDescriptor->IntegerLookupTable[i];
 

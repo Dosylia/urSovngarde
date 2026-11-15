@@ -15,9 +15,7 @@
 #include <PlayerCharacter.h>
 #include <World.h>
 
-#ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
-#endif
 
 namespace
 {
@@ -564,6 +562,8 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         }
     }
 
+    // A VR player's arms, hands and weapons (VRBodySync::OnFrameEnd).
+    // Off on flat for now: posed there, the copy's spine gets a rotation the renderer refuses and the whole body is not drawn.
 #ifdef SKYRIMVR
     VRBodySync::SetRemotePose(apActor, vrPose);
 #endif

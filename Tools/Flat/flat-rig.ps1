@@ -10,8 +10,8 @@
 # Its mods: the Script Extender for the game's version, the Address Library for that version, DevBench, and SkyrimTogether.esp.
 # DevBench answers on port 8922 there (its config.json), so this game can run beside the VR rig, which uses 8921.
 # Its executable "Skyrim Together" starts tools\Skyrim Together\SkyrimTogether.exe; deploy-flat-client.ps1 puts each build there.
-# The flat client connects to 127.0.0.1:10578 when F6 is pressed at the Windows level, as on the VR rig.
-# With both rigs up, that F6 reaches both games.
+# The flat client connects to 127.0.0.1:10578 when F6 is pressed at the Windows level with its window in front.
+# The VR game takes F6 whatever window is in front, so with both rigs: this one first, then headless.ps1 up -AutoConnect, which presses no F6.
 
 param(
     [Parameter(Position = 0)][ValidateSet('up', 'down', 'status')][string]$Action = 'status',
@@ -82,6 +82,46 @@ function Get-Connected {
     return $false
 }
 
+# The game's message boxes pause it; DevBench reads the open one and presses one of its buttons.
+# Loading a save with mods asks whether to go on without achievements: Yes.
+# A new game asks whether to turn Survival Mode on: No.
+# Returns the answer given, or null when no box is open, the box is not one of those, its answer is not in -Allowed, or DevBench did not answer.
+function Answer-MessageBox([string[]]$Allowed = @('Yes', 'No')) {
+    try {
+        $box = Invoke-Tool 'menu' @{ action = 'describe' }
+        if (-not $box.messageBoxOpen) { return $null }
+        $answer = if ($box.bodyText -match 'Mods are currently loaded') { 'Yes' } elseif ($box.bodyText -match 'Survival') { 'No' } else { $null }
+        if ($answer -and $Allowed -notcontains $answer) { return $null }
+        $index = if ($answer) { [array]::IndexOf([string[]]$box.buttons, $answer) } else { -1 }
+        if ($index -lt 0) { Write-Host "A message box the rig does not know: $($box.bodyText)" -ForegroundColor Yellow; return $null }
+        Invoke-Tool 'menu' @{ action = 'accept'; index = $index } | Out-Null
+        Write-Host "Answered $answer to: $($box.bodyText)"
+        return $answer
+    }
+    catch { return $null }
+}
+
+# Mod Organizer runs once per PC: a second start hands its shortcut to the first one started without --multiple, the only one that takes shortcuts.
+# The Mod Organizers running, each with whether it is this instance's and whether it was started with --multiple.
+function Get-Mo2Processes {
+    $own = [IO.Path]::GetFullPath($mo2)
+    Get-CimInstance Win32_Process -Filter "Name='ModOrganizer.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject]@{
+            Id       = $_.ProcessId
+            Own      = [bool]($_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $own)
+            Multiple = [bool]($_.CommandLine -match '--multiple')
+        }
+    }
+}
+
+# Closes them politely, and by force after 15 s.
+function Close-Mo2([object[]]$processes) {
+    if (-not $processes) { return }
+    foreach ($entry in $processes) { $process = Get-Process -Id $entry.Id -ErrorAction SilentlyContinue; if ($process) { $process.CloseMainWindow() | Out-Null } }
+    try { Wait-Until { -not ($processes | Where-Object { Get-Process -Id $_.Id -ErrorAction SilentlyContinue }) } 15 'Mod Organizer to close' }
+    catch { $processes | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } }
+}
+
 function Show-Status {
     $h = Get-Health
     '{0} | {1} | connected {2} | server {3}' -f `
@@ -146,6 +186,8 @@ function Stop-Everything {
     if ($state -and $state.startedServer -and -not (Test-Running '^(urSovngarde|SkyrimVR)$')) {
         Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match $serverPattern } | Stop-Process -Force
     }
+    # This instance's Mod Organizer is closed too: while it runs, a player's own Mod Organizer started by hand hands itself to it.
+    Close-Mo2 @(Get-Mo2Processes | Where-Object { $_.Own })
     Remove-Item $stateFile -ErrorAction SilentlyContinue
 }
 
@@ -163,7 +205,13 @@ if (-not $NoConnect -and -not (Test-Running $serverPattern)) {
 @{ startedServer = $startedServer } | ConvertTo-Json | Set-Content -LiteralPath $stateFile
 
 try {
-    Start-Process -FilePath $mo2 -ArgumentList '"moshortcut://:Skyrim Together"'
+    # One of this instance started with --multiple takes no shortcut, so it is closed first; only the rig starts one that way.
+    # With another instance's running (the VR game's) and none of this one taking shortcuts, this one starts beside it.
+    Close-Mo2 @(Get-Mo2Processes | Where-Object { $_.Own -and $_.Multiple })
+    $mo2Running = @(Get-Mo2Processes)
+    $ownPrimary = @($mo2Running | Where-Object { $_.Own -and -not $_.Multiple })
+    $mo2Options = if ($mo2Running.Count -gt 0 -and $ownPrimary.Count -eq 0) { '--multiple ' } else { '' }
+    Start-Process -FilePath $mo2 -ArgumentList "${mo2Options}`"moshortcut://:Skyrim Together`""
     Wait-Until { Test-Running $gamePattern } 120 'the game to start'
     Wait-Until { Get-Health } $MenuTimeout 'DevBench to answer (the game to start)' -NeedsGame
     Wait-Until { (Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'Main Menu' } $MenuTimeout 'the main menu' -NeedsGame
@@ -173,7 +221,7 @@ try {
 
     if ($Save) {
         Invoke-Tool 'game' @{ action = 'load'; name = $Save } | Out-Null
-        Wait-Until { $h = Get-Health; $h -and $h.lastLifecycle -eq 'postLoadGame' } $LoadTimeout 'the save to load' -NeedsGame
+        Wait-Until { Answer-MessageBox -Allowed 'Yes' | Out-Null; $h = Get-Health; $h -and $h.lastLifecycle -eq 'postLoadGame' } $LoadTimeout 'the save to load' -NeedsGame
     } else {
         try { Invoke-Tool 'console' @{ action = 'exec'; command = $StartCommand } | Out-Null } catch { Write-Host "The start command gave no answer yet: $($_.Exception.Message)" }
         Start-Sleep -Seconds 5
@@ -181,21 +229,19 @@ try {
     }
     Start-Sleep -Seconds 5
 
-    # A new game asks whether to turn Survival Mode on, in a message box that pauses it: the answer is No.
-    # DevBench's keyboard does not reach the flat game's menus, so the keys go in at the Windows level.
-    foreach ($attempt in 1..5) {
-        if (-not ((Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'MessageBoxMenu')) { break }
-        if (Set-GameFocus) {
-            Send-Key 0x27
-            Send-Key 0x0D
-            Write-Host 'Answered No to a message box.'
-        }
-        Start-Sleep -Seconds 2
+    # A new game asks about Survival Mode some seconds after it has loaded, and a save made before the answer asks again.
+    $answeredSurvival = $false
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        if ((Answer-MessageBox) -eq 'No') { $answeredSurvival = $true; break }
+        Start-Sleep -Seconds 1
     }
-    if ((Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'MessageBoxMenu') { throw 'A message box stayed open and pauses the game.' }
+    # An answer is queued for the game's next frame, so the box closes a moment later.
+    try { Wait-Until { -not ((Invoke-Tool 'menu' @{ action = 'list' }).openMenus -contains 'MessageBoxMenu') } 10 'the message box to close' -NeedsGame }
+    catch { if (-not (Test-Running $gamePattern)) { throw }; throw 'A message box stayed open and pauses the game.' }
 
-    # Made once, after a new game's question is answered: the next starts load it.
-    if (-not $Save) {
+    # Made after a new game's question is answered, before any connection, so the next starts load it without the question.
+    if (-not $Save -or ($Save -eq $startSave -and $answeredSurvival)) {
         try { Invoke-Tool 'console' @{ action = 'exec'; command = "save $startSave" } | Out-Null; Start-Sleep -Seconds 4; Write-Host "Saved the rig's start as $startSave." }
         catch { Write-Host "The start save was not made: $($_.Exception.Message)" -ForegroundColor Yellow }
     }

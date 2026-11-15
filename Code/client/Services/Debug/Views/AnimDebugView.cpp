@@ -155,18 +155,24 @@ void DebugService::DrawAnimDebugView()
                 for (size_t i = 0; i < pDescriptor->BooleanLookUpTable.size(); ++i)
                 {
                     const auto idx = pDescriptor->BooleanLookUpTable[i];
+                    if (idx >= pVariableSet->size)
+                        continue;
                     bools[s_varMap[idx]] = *reinterpret_cast<bool*>(&pVariableSet->data[idx]);
                 }
 
                 for (size_t i = 0; i < pDescriptor->FloatLookupTable.size(); ++i)
                 {
                     const auto idx = pDescriptor->FloatLookupTable[i];
+                    if (idx >= pVariableSet->size)
+                        continue;
                     floats[s_varMap[idx]] = *reinterpret_cast<float*>(&pVariableSet->data[idx]);
                 }
 
                 for (size_t i = 0; i < pDescriptor->IntegerLookupTable.size(); ++i)
                 {
                     const auto idx = pDescriptor->IntegerLookupTable[i];
+                    if (idx >= pVariableSet->size)
+                        continue;
                     ints[s_varMap[idx]] = *reinterpret_cast<int*>(&pVariableSet->data[idx]);
                 }
 

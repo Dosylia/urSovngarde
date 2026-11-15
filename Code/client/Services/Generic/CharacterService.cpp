@@ -95,10 +95,7 @@
 #include <Games/TES.h>
 #include <AI/AIProcess.h>
 #include <Games/Skyrim/Interface/UI.h>
-#ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
-
-#endif
 
 namespace
 {
@@ -1475,9 +1472,7 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
     if (m_world.orphan(cId))
         m_world.destroy(cId);
 
-#ifdef SKYRIMVR
     VRBodySync::ClearRemotePose(acEvent.FormId);
-#endif
 
     spdlog::info("Actor removed, form id: {:X}", acEvent.FormId);
 }
@@ -2573,10 +2568,8 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         // LocalComponent is installed only after canonical reconciliation is complete.
         pActor->GetExtension()->SetRemote(false);
         InterpolationSystem::Forget(pActor->formID);
-#ifdef SKYRIMVR
         // Its last owner's bones stop here: left in place, they would hold the body in that pose.
         VRBodySync::ClearRemotePose(pActor->formID);
-#endif
         spdlog::info("Gained ownership of actor {:X} (form {:X}) at epoch {}", acMessage.ServerId, pActor ? pActor->formID : 0, acMessage.OwnershipEpoch);
         if (standInFor)
             spdlog::info("Hand-off of {:X} (server id {:X}) taken on the copy standing in for reference {:X} here", pActor->formID, acMessage.ServerId, standInFor);
@@ -2883,9 +2876,7 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
                 if (acMessage.Gone && !cDeadAtOwner)
                     Takeover::NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
                 pActor->GetExtension()->SetRemote(false);
-#ifdef SKYRIMVR
                 VRBodySync::ClearRemotePose(formId);
-#endif
             }
         }
 
