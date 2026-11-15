@@ -169,7 +169,21 @@ bool SpoofOwnModule(HMODULE aModule, LPWSTR alpFilename, DWORD aSize, DWORD& aRe
     if (!IsMyModule(aModule) || !launcher::GetLaunchContext() || !launcher::GetLaunchContext()->GetLoaded())
         return false;
 
-    StringCchCopyW(alpFilename, aSize, launcher::GetLaunchContext()->exePath.c_str());
+    // As the system's function does, a path that does not fit is cut, and the buffer's size comes back with ERROR_INSUFFICIENT_BUFFER.
+    if (aSize == 0)
+    {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        aResult = 0;
+        return true;
+    }
+
+    if (StringCchCopyW(alpFilename, aSize, launcher::GetLaunchContext()->exePath.c_str()) == STRSAFE_E_INSUFFICIENT_BUFFER)
+    {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        aResult = aSize;
+        return true;
+    }
+
     aResult = static_cast<DWORD>(std::wcslen(alpFilename));
     return true;
 }
@@ -231,7 +245,8 @@ DWORD WINAPI TP_GetModuleFileNameA(HMODULE aModule, char* alpFileName, DWORD aBu
     RtlInitUnicodeString(&source, pBuffer);
 
     // convert using the proper OS function
-    ANSI_STRING dest{.Length = static_cast<USHORT>(result), .MaximumLength = static_cast<USHORT>(aBufferSize), .Buffer = alpFileName};
+    // A string's length is 16 bits, so a larger buffer counts as the most it can hold.
+    ANSI_STRING dest{.Length = static_cast<USHORT>(result), .MaximumLength = static_cast<USHORT>(aBufferSize > 0xFFFF ? 0xFFFF : aBufferSize), .Buffer = alpFileName};
     if (RtlUnicodeStringToAnsiString(&dest, &source, FALSE) != 0)
         return 0;
 
