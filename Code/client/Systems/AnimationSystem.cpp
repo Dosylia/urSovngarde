@@ -18,6 +18,7 @@
 
 #include <Components.h>
 #include <World.h>
+#include <Takeover.h>
 
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
@@ -144,6 +145,10 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
                          apActor->formID, cpOutcome, (cOwnStateBefore >> 21) & 0xF, (cOwnStateBefore >> 25) & 0x7,
                          apActor->GetActorValue(ActorValueInfo::kHealth), (first.State1 >> 21) & 0xF);
         }
+
+        // TEMPORARY: kept to show what state an NPC copy's graph was left in.
+        if (!cPlayerCopy)
+            Takeover::NoteReplay(apActor->formID, first.EventName.c_str(), result != 0);
 
         // TEMPORARY diagnostic for remote NPCs sliding while the game refuses most of their moveStart and turnStop replays.
         // For one refused replay per 10 s, it logs everything the refusal could depend on. Remove once understood.

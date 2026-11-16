@@ -147,9 +147,12 @@ his scene never finishes. Use an alternate start, or connect after the intro.
   If not: `SlideDiag`, `Ghost: reference X was enabled again`.
 - **A follower out of an inn.** One player takes a follower out of an inn while the other stays inside. Her copy goes with her for the player left inside, and that player's own reference is as it was.
   If not: `Follower: <id> (server id <id>) is player <n>'s, far from here`, `Ghost: reference`.
-- **An NPC handed over mid-walk (needs the next build).** Stay in a town with people walking about, and let one of you go through a
-  door and come back: that hands NPCs over. No NPC stands with one leg forward, rocking, on either screen, and none walks on the spot
-  or slides. Say which screen if one does. If not: `Takeover: NPC X was moving as a copy here`, `TakeoverDiag:`, `SwimDiag: own NPC`.
+- **An NPC handed over mid-walk (needs the build with the action trails).** Stay in a town with people walking about, and let the party
+  leader go through a door or away and come back: about 10 s after the leader arrives, its game takes the NPCs over. Watch the walkers on the
+  leader's screen. When one slides (body moving, legs still), note the time, the NPC's name and whose screen, and say so.
+  Then read, in that player's log and the other's: `TakeoverDiag: NPC X gained, its last replays as a copy:`, `TakeoverDiag: NPC X, what this
+  game's AI performed on it in the 6 s after the gain:`, `TakeoverDiag: copy X, its last replays 5 s after its first:` (each action `+` taken,
+  `-` refused), and `Takeover: NPC X was moving as a copy here`.
 - **A weapon taken by hand off a body the other game runs (needs the next build).** Do it with the other player watching, holding the same
   kind of weapon if you can. They see the item once, in your hand, and it goes when you stow it or lies where you let it fall. It
   is gone from the body, and their own weapon stays in their hand.
@@ -264,7 +267,17 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       - Left alone: the skills and map menus still send no pose, so the copy plays its animation there.
       - Open, cause unknown, not a menu: the copy's hand can jump 12 to 18 units at any time on the rig, menu shut or held (2 and 5 of about 22 samples shut on two runs of the fixed build, 1 of 22 unfixed).
         `ReachHands` corrects at most 15 units, so a body that sways across that limit may flip between corrected and not. Not seen in play as such.
-- [!] **An NPC taken over while it walks** (play session 2026-10-31 07:55 on c382599)
+- [!] **An NPC taken over while it walks** (play session 2026-10-31 07:55 on c382599; again 2026-11-15 15:55, Ahlam 1A6A5 on player 1)
+      - 2026-11-15/16, two real games on player 2's PC (toolbox `tools/two-games-takeover.py`, measured by legs against travel): about 1 in 5 NPCs
+        gained mid-walk whose new AI walks them on slides on the new owner's screen; NPCs a game ran from the start never slid (about 25).
+        The engine sends the walk start only once (`ActionMoveStart` from the movement message handler at SkyrimVR.exe+0x60B7C0), so a start
+        refused while the NPC was a copy never comes again. Kinds seen in the action trails: the copy's last replay a stop; a frozen turn-to-walk
+        blend (`CyclicFreeze`); a motion-driven idle; and graphs that took `moveStart` as copies yet refuse every turn and start after the gain.
+        Nothing sent to the graph fixed them (`moveStart` at once or retried for 6 s, `IdleForceDefaultState` then `moveStart`, which turned a
+        walker into a slider, `CyclicCrossBlend`). Cause not known. New copies also slid about 1 in 10, refusing their first replays.
+        A copy-side `moveStart` while the owner walks seemed to help (0 of 5) but the rig game crashed twice in the AI movement code with it
+        (SkyrimVR.exe+0x115bc08 and +0x115dc27, `MovementControllerAI`), so it is not used. The next build carries only the TEMPORARY action
+        trails, for a play session (see the next-session item "An NPC handed over mid-walk").
       Players saw NPCs frozen, sliding, and swimming on snow. All three reports were on player 1, just after that game gained the NPC:
       claims at 08:08:28 and 08:08:53, a leader assignment at 08:11:38. That session had 117 gains in 22 min, against 43 in 25 on
       10-30. Nothing in c382599 was found that causes it: `VR_HISTORY.md` has the same symptom around 10-04. Nothing resets a graph

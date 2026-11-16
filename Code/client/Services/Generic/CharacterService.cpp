@@ -2874,7 +2874,11 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
             else if (pActor)
             {
                 if (acMessage.Gone && !cDeadAtOwner)
+                {
                     Takeover::NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
+                    // TEMPORARY: the action trail of an NPC gained because its owner left.
+                    Takeover::LogTrailAtGain(pActor, " (its owner left)");
+                }
                 pActor->GetExtension()->SetRemote(false);
                 VRBodySync::ClearRemotePose(formId);
             }

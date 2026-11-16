@@ -13,6 +13,7 @@
 #include <Misc/BSFixedString.h>
 
 #include <World.h>
+#include <Takeover.h>
 
 #include <mutex>
 
@@ -110,6 +111,8 @@ uint8_t TP_MAKE_THISCALL(HookPerformAction, ActorMediator, TESActionData* apActi
         pActor->SaveAnimationVariables(action.Variables);
 
         const auto res = TiltedPhoques::ThisCall(RealPerformAction, apThis, apAction);
+        // TEMPORARY: what this game's AI performs on an NPC it just gained.
+        Takeover::NoteOwnAction(action.ActorId, apAction->eventName.AsAscii(), res != 0);
 
         // spdlog::debug("Action event name: {}, target name: {}", apAction->eventName.AsAscii(), apAction->targetEventName.AsAscii());
 
