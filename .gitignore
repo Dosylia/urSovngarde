@@ -84,6 +84,7 @@ Artifacts/logs**
 Package/
 
 distrib/
+distrib-se/
 distrib_debug/
 distrib_releasedbg/
 

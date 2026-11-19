@@ -59,7 +59,8 @@ local function build_launcher()
 end
 
 target("SkyrimImmersiveLauncher")
-    set_basename("SkyrimTogether")
+    -- The flat client carries the mod's name; SkyrimTogether.exe is upstream's program.
+    set_basename("urSovngardeSE")
     add_defines("TARGET_PREFIX=\"st\"")
     add_deps("SkyrimTogetherClient")
     add_ldflags("/WHOLEARCHIVE:SkyrimTogetherClient", { force = true })

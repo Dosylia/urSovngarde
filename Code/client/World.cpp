@@ -6,6 +6,7 @@
 
 #include <Services/DiscoveryService.h>
 #include <Services/InputService.h>
+#include <Services/MenuService.h>
 #include <Services/TransportService.h>
 #include <Services/RunnerService.h>
 #include <Services/ImguiService.h>
@@ -50,6 +51,7 @@ World::World()
     ctx().emplace<DiscoveryService>(*this, m_dispatcher);
     ctx().emplace<OverlayService>(*this, m_transport, m_dispatcher);
     ctx().emplace<InputService>(ctx().at<OverlayService>());
+    ctx().emplace<MenuService>(*this, m_dispatcher);
     ctx().emplace<CharacterService>(*this, m_dispatcher, m_transport);
     ctx().emplace<DebugService>(m_dispatcher, *this, m_transport, ctx().at<ImguiService>());
     ctx().emplace<PapyrusService>(m_dispatcher);
@@ -72,11 +74,9 @@ World::World()
     ctx().emplace<VoiceService>(*this, m_dispatcher);
     ctx().emplace<PlayerMarkerService>(*this, m_dispatcher);
     ctx().emplace<ReviveService>(*this, m_dispatcher, m_transport);
-#ifdef SKYRIMVR
     ctx().emplace<VRConnectService>(*this, m_dispatcher, m_transport);
     ctx().emplace<LauncherLinkService>(*this, m_dispatcher);
     ctx().emplace<SteamFriendsService>(*this, m_dispatcher, m_transport);
-#endif
 
     BehaviorVar::Get()->Init();
 }

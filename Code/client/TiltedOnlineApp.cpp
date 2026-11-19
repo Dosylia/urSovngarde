@@ -7,6 +7,7 @@
 #include <WindowsHook.hpp>
 
 #include <PluginCalls.h>
+#include <Games/Skyrim/BSInput/GameInputHold.h>
 #include <World.h>
 #include <ScriptExtender.h>
 
@@ -309,6 +310,7 @@ void TiltedOnlineApp::Update()
 #else
     InstallInputFocusCheck();
 #endif
+    GameInputHold::Install();
 
     World::Get().Update();
     RunPluginCalls();

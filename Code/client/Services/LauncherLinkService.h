@@ -1,16 +1,14 @@
 #pragma once
 
-#ifdef SKYRIMVR
-
 #include <filesystem>
 
 struct World;
 struct UpdateEvent;
 
 /**
- * @brief Lets the dashboard join friends through the urSovngarde launcher, which holds the codes and the relay tunnel.
+ * @brief Lets the menu join friends through the urSovngarde launcher, which holds the codes and the relay tunnel.
  *
- * Two files sit beside connect.txt in %LOCALAPPDATA%\SkyrimTogetherVR, each with one writer.
+ * Two files sit beside connect.txt in the player's folder (ConnectFile::PlayerFolder), each with one writer.
  * launcher.json is the launcher's: its code while hosting, the friends hosting, and its answer to the last request.
  * It goes to the page as it is, and the page reads it.
  * launcher-request.json is ours: a join the page asks for.
@@ -40,5 +38,3 @@ private:
 
     entt::scoped_connection m_updateConnection;
 };
-
-#endif

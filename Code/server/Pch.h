@@ -27,6 +27,7 @@
 #include <spdlog/spdlog.h>
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <base/VectorFormat.h>
 #include <BuildInfo.h>
 
 #include <StringCache.h>

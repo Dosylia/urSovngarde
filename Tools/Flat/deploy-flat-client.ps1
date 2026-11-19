@@ -18,15 +18,16 @@ if (-not $root -or -not (Test-Path (Join-Path $root 'ModOrganizer.exe'))) {
 $destination = Join-Path $root 'tools\Skyrim Together'
 if (-not (Test-Path $destination)) { New-Item -ItemType Directory -Path $destination | Out-Null }
 
-if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'SkyrimTogether' }) {
+# The flat client was SkyrimTogether.exe, upstream's name, before it became urSovngardeSE.exe.
+if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in 'urSovngardeSE', 'SkyrimTogether' }) {
     Write-Host 'The flat game is running; its files are in use. Not copied.' -ForegroundColor Yellow
     exit 2
 }
 
-$exe = Join-Path $release 'SkyrimTogether.exe'
+$exe = Join-Path $release 'urSovngardeSE.exe'
 if (-not (Test-Path $exe)) { throw "No flat client in ${release}: build first." }
 $size = (Get-Item $exe).Length
-if ($size -lt $MinimumBytes) { throw "SkyrimTogether.exe is $size bytes, smaller than a real build: a cut link." }
+if ($size -lt $MinimumBytes) { throw "urSovngardeSE.exe is $size bytes, smaller than a real build: a cut link." }
 
 # The build's version string inside the binary says the file is whole; the longest match, as a cut piece of it can be there too.
 # It must be the server's version as well, so the client and the server were built together.
@@ -40,13 +41,23 @@ $version = Get-BuildVersion $exe
 if (-not $version) { throw "No version string inside ${exe}: it is not a complete binary." }
 $server = Join-Path $release 'STServer.dll'
 if ((Test-Path $server) -and (Get-BuildVersion $server) -ne $version) {
-    throw "SkyrimTogether.exe is $version but STServer.dll is $(Get-BuildVersion $server): build again."
+    throw "urSovngardeSE.exe is $version but STServer.dll is $(Get-BuildVersion $server): build again."
 }
 
-foreach ($name in @('SkyrimTogether.exe', 'SkyrimTogether.pdb', 'TPProcess.exe', 'EarlyLoad.dll')) {
+. (Join-Path $PSScriptRoot '..\VR\binary-check.ps1')
+foreach ($name in @('urSovngardeSE.exe', 'TPProcess.exe', 'EarlyLoad.dll')) {
+    $source = Join-Path $release $name
+    if (Test-Path $source) { Assert-CompleteBinary $source }
+}
+foreach ($name in @('urSovngardeSE.exe', 'urSovngardeSE.pdb', 'TPProcess.exe', 'EarlyLoad.dll')) {
     $source = Join-Path $release $name
     if (Test-Path $source) { Copy-Item $source (Join-Path $destination $name) -Force }
 }
-$hash = (Get-FileHash (Join-Path $destination 'SkyrimTogether.exe') -Algorithm SHA256).Hash.Substring(0, 16)
+# A client under the old name would still start from an old shortcut; it goes, so only this build can run.
+foreach ($old in 'SkyrimTogether.exe', 'SkyrimTogether.pdb') {
+    $path = Join-Path $destination $old
+    if (Test-Path $path) { Remove-Item $path -Force }
+}
+$hash = (Get-FileHash (Join-Path $destination 'urSovngardeSE.exe') -Algorithm SHA256).Hash.Substring(0, 16)
 Write-Host "Deployed $version to $destination"
 Write-Host "  $size bytes, sha256 $hash..."

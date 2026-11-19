@@ -1,22 +1,43 @@
 # Packages an urSovngarde release zip: client tools folder, server, game files and the guide.
 #   powershell -ExecutionPolicy Bypass -File Tools\VR\make-release.ps1
 #   ... -ListOnly    shows which files of the client folder would go in, and stops (works on an uncommitted tree)
+#   ... -Flat -ClientFolder <flat tools folder>    flat Skyrim's package: urSovngarde-SE-<version>.zip and -update.zip
+#   ... -AllowDirty  packages an uncommitted build, for a local test install only; never published
 param(
-    [string]$ClientFolder = 'E:\FUS\tools\Skyrim Together VR',
+    [string]$ClientFolder = '',
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$OutputFolder = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'build\release'),
-    [switch]$ListOnly
+    [switch]$ListOnly,
+    [switch]$Flat,
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = 'Stop'
+# Flat Skyrim's package needs its own client folder: the default is a VR one.
+if ($Flat -and -not $ClientFolder) { throw 'With -Flat, name the flat client folder: -ClientFolder <folder>.' }
+# Without -ClientFolder, the VR tools folder of the FUS install, found as deploy-client.ps1 finds it.
+if (-not $ClientFolder) {
+    $fusRoot = $env:SKYRIM_FUS_ROOT
+    if (-not $fusRoot) {
+        $fusRoot = @('C:\FUS', 'E:\FUS') | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'ModOrganizer.exe') } | Select-Object -First 1
+    }
+    if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT or -ClientFolder.' }
+    $ClientFolder = Join-Path $fusRoot 'tools\Skyrim Together VR'
+    Write-Host "Client folder: $ClientFolder"
+}
 
 # What of the client folder goes into a release: the tools folder as it runs, minus anything local to one PC.
 # A linker .map and a stray .zip (such as a behaviours zip left in the folder) are never part of the client.
 # The programs' old names (before 2026-10-09) and the build's own files are left out too: those come from the build.
 # Nor anything set aside before a change: `.old-*`, or `.before-*` (`UI.before-logo`, a whole old menu, 2026-10-09).
-$skip = @('logs', 'cache', 'SkyrimTogetherVR.exe', 'SkyrimTogetherVR.pdb', 'urSovngarde.exe', 'urSovngarde.pdb', 'EarlyLoad.dll')
+# A program or script set aside under any other name keeps its extension in the middle (`urSovngarde.exe.red-20261017-1204`).
+# A folder of the client never has a dot in its name, so one that has is a set-aside copy too.
+$skip = @('logs', 'cache', 'SkyrimTogetherVR.exe', 'SkyrimTogetherVR.pdb', 'urSovngarde.exe', 'urSovngarde.pdb', 'urSovngardeSE.exe', 'urSovngardeSE.pdb',
+    'SkyrimTogether.exe', 'SkyrimTogether.pdb', 'EarlyLoad.dll')
 $clientFiles = @(Get-ChildItem $ClientFolder | Where-Object {
     $skip -notcontains $_.Name -and
+    -not ($_.PSIsContainer -and $_.Name -match '\.') -and
+    $_.Name -notmatch '\.(exe|pdb|dll|ps1|bat)\.' -and
     $_.Name -notmatch '\.old|\.before-|\.running|^crash_.*\.dmp$|\.threaddiag\.|\.map$|\.zip$'
 })
 if ($ListOnly) {
@@ -34,12 +55,17 @@ if (-not $version -or $version -like 'unknown*') { throw "No build version found
 
 # A release built from a clean, tagged tree is the standalone package anyone can install; "dirty" in the
 # version means uncommitted changes, and such a build must not be handed out.
-if ($version -like '*dirty*') { throw "The build is from an uncommitted tree ($version); commit and build again before releasing." }
+if ($version -like '*dirty*' -and -not $AllowDirty) { throw "The build is from an uncommitted tree ($version); commit and build again before releasing." }
 # The files players download carry the mod's name (urSovngarde-v1.9.0.zip, -update.zip, -server.zip), and so does everything inside.
 # The programs are urSovngarde.exe and urSovngardeServer.exe, the folders "urSovngarde" and "urSovngarde mod".
 # SkyrimTogether.esp keeps its name: saves record their plugins by name.
 # The launcher reads both layouts.
-$name = "urSovngarde-$version"
+# Flat Skyrim's package carries SE in its name and folders, so the launcher tells the two apart by name and by contents.
+# Its full zip must stay smaller than VR's: launchers before cross-play take the biggest zip (release.yml checks it).
+$exeBase = if ($Flat) { 'urSovngardeSE' } else { 'urSovngarde' }
+$toolsFolderName = if ($Flat) { 'urSovngarde SE' } else { 'urSovngarde' }
+$modFolderName = if ($Flat) { 'urSovngarde SE mod' } else { 'urSovngarde mod' }
+$name = if ($Flat) { "urSovngarde-SE-$version" } else { "urSovngarde-$version" }
 $standaloneName = $name
 $staging = Join-Path $OutputFolder $name
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
@@ -47,11 +73,12 @@ New-Item -ItemType Directory -Force $staging | Out-Null
 
 # Client: the tools folder as it runs, minus anything local to one PC. The exe comes from the build, so a
 # release never ships a stale client.
-$client = Join-Path $staging 'urSovngarde'
+$client = Join-Path $staging $toolsFolderName
 New-Item -ItemType Directory -Force $client | Out-Null
 $clientFiles | ForEach-Object { Copy-Item $_.FullName (Join-Path $client $_.Name) -Recurse }
-Copy-Item (Join-Path $buildFolder 'urSovngarde.exe') $client -Force
-Copy-Item (Join-Path $buildFolder 'urSovngarde.pdb') $client -Force
+Copy-Item (Join-Path $buildFolder "$exeBase.exe") $client -Force
+# Flat Skyrim's pdb is bigger than VR's, and its full zip must stay the smaller one; the pdb goes in its update zip.
+if (-not $Flat) { Copy-Item (Join-Path $buildFolder "$exeBase.pdb") $client -Force }
 Copy-Item (Join-Path $buildFolder 'TPProcess.exe') $client -Force
 Copy-Item (Join-Path $buildFolder 'EarlyLoad.dll') $client -Force
 Copy-Item (Join-Path $PSScriptRoot 'collect-logs.*') $client
@@ -73,7 +100,7 @@ Copy-Item (Join-Path $PSScriptRoot 'STServer.default.ini') (Join-Path $server 'c
 Copy-Item (Join-Path $PSScriptRoot 'host-server.*') $server
 
 # Game files, installed as an MO2 mod.
-Copy-Item (Join-Path $RepoRoot 'GameFiles\Skyrim') (Join-Path $staging 'urSovngarde mod') -Recurse
+Copy-Item (Join-Path $RepoRoot 'GameFiles\Skyrim') (Join-Path $staging $modFolderName) -Recurse
 
 # Never VR_MULTIPLAYER_GUIDE.md: it carries the host's public IP, PC name and router settings.
 Copy-Item (Join-Path $PSScriptRoot 'README-release.md') (Join-Path $staging 'README.md')
@@ -118,10 +145,13 @@ if (Test-Path $updateZip) { Remove-Item $updateZip -Force }
 $bridge = Join-Path $OutputFolder "$name-update-bridge"
 if (Test-Path $bridge) { Remove-Item $bridge -Recurse -Force }
 New-Item -ItemType Directory -Force $bridge | Out-Null
-Copy-Item (Join-Path $buildFolder 'urSovngarde.exe') $bridge
-Copy-Item (Join-Path $buildFolder 'urSovngarde.pdb') $bridge
-Copy-Item (Join-Path $buildFolder 'urSovngarde.exe') (Join-Path $bridge 'SkyrimTogetherVR.exe')
-Copy-Item (Join-Path $buildFolder 'urSovngarde.pdb') (Join-Path $bridge 'SkyrimTogetherVR.pdb')
+Copy-Item (Join-Path $buildFolder "$exeBase.exe") $bridge
+Copy-Item (Join-Path $buildFolder "$exeBase.pdb") $bridge
+# Flat Skyrim's client never had another name.
+if (-not $Flat) {
+    Copy-Item (Join-Path $buildFolder 'urSovngarde.exe') (Join-Path $bridge 'SkyrimTogetherVR.exe')
+    Copy-Item (Join-Path $buildFolder 'urSovngarde.pdb') (Join-Path $bridge 'SkyrimTogetherVR.pdb')
+}
 # update.ps1 places only the program files it knows, so these three stay in the zip.
 Add-Licence $bridge
 Compress-Archive -Path (Join-Path $bridge '*') -DestinationPath $updateZip
@@ -129,11 +159,14 @@ Remove-Item $bridge -Recurse -Force
 
 # The server on its own, for whoever hosts (on a machine without the game too): the whole server folder, without
 # the 165 MB full zip.
+# One server zip serves both games: it is made with the VR package only.
 $serverZip = Join-Path $OutputFolder "$name-server.zip"
-if (Test-Path $serverZip) { Remove-Item $serverZip -Force }
-Compress-Archive -Path (Join-Path $server '*') -DestinationPath $serverZip
+if (-not $Flat) {
+    if (Test-Path $serverZip) { Remove-Item $serverZip -Force }
+    Compress-Archive -Path (Join-Path $server '*') -DestinationPath $serverZip
+}
 
 Write-Host ("Standalone:    {0} ({1:N0} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
 Write-Host ("Client update: {0} ({1:N1} MB)" -f $updateZip, ((Get-Item $updateZip).Length / 1MB))
-Write-Host ("Server:        {0} ({1:N1} MB)" -f $serverZip, ((Get-Item $serverZip).Length / 1MB))
+if (-not $Flat) { Write-Host ("Server:        {0} ({1:N1} MB)" -f $serverZip, ((Get-Item $serverZip).Length / 1MB)) }
 Write-Host 'Before publishing: Tools\VR\scan-release.ps1 scans these on VirusTotal and writes the checksums to post with them.'

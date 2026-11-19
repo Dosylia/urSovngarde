@@ -329,8 +329,7 @@ void PlayerMarkerService::FollowServerPosition(Slot& aSlot, size_t aIndex, const
 
     aSlot.pMarker->MoveTo(pCell, ToNiPoint(acPosition));
     if (aSlot.Parked)
-        spdlog::info("Player markers: {:X} follows player {} ({}) to ({:.0f}, {:.0f}, {:.0f}) in cell {:X}", aSlot.pMarker->formID, aSlot.PlayerId, aSlot.Text.c_str(), acPosition.x,
-                     acPosition.y, acPosition.z, pCell->formID);
+        spdlog::info("Player markers: {:X} follows player {} ({}) to ({:.0f}) in cell {:X}", aSlot.pMarker->formID, aSlot.PlayerId, aSlot.Text.c_str(), acPosition, pCell->formID);
     aSlot.Parked = false;
     aSlot.CellId = acCellId;
     aSlot.BodyCellId = 0;
@@ -349,8 +348,7 @@ void PlayerMarkerService::FollowBody(Slot& aSlot, Actor* apActor) noexcept
 
     aSlot.pMarker->MoveTo(pCell, ToNiPoint(cBody));
     if (aSlot.Parked)
-        spdlog::info("Player markers: {:X} follows player {} ({}), whose body is here, to ({:.0f}, {:.0f}, {:.0f})", aSlot.pMarker->formID, aSlot.PlayerId, aSlot.Text.c_str(), cBody.x,
-                     cBody.y, cBody.z);
+        spdlog::info("Player markers: {:X} follows player {} ({}), whose body is here, to ({:.0f})", aSlot.pMarker->formID, aSlot.PlayerId, aSlot.Text.c_str(), cBody);
     aSlot.Parked = false;
     aSlot.CellId = GameId{};
     aSlot.BodyCellId = pCell->formID;

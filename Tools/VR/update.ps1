@@ -1,8 +1,8 @@
 # Applies an urSovngarde update zip without closing Mod Organizer 2 or the server window's folder.
-# Keep this next to urSovngarde.exe (update.bat does the rest). Drag the update zip onto update.bat,
+# Keep this next to urSovngarde.exe, or flat Skyrim's urSovngardeSE.exe (update.bat does the rest). Drag the update zip onto update.bat,
 # or run:  update.bat "path\to\urSovngarde-...-update.zip"
 #
-# Client files (urSovngarde.exe, urSovngarde.pdb) go into this folder. Server files (urSovngardeServer.exe, its
+# Client files (urSovngarde.exe, urSovngarde.pdb; flat Skyrim's urSovngardeSE.exe, urSovngardeSE.pdb) go into this folder. Server files (urSovngardeServer.exe, its
 # .manifest, STServer.dll) go into the folder that holds the server: this one, a "Server" or "urSovngarde Server"
 # folder next to it, or -ServerFolder.
 #
@@ -25,7 +25,7 @@ if (-not (Test-Path $Zip)) {
     Write-Host "Zip not found: $Zip"
     exit 1
 }
-if (Get-Process urSovngarde, SkyrimTogetherVR, SkyrimVR -ErrorAction SilentlyContinue) {
+if (Get-Process urSovngarde, SkyrimTogetherVR, SkyrimVR, urSovngardeSE, SkyrimSE -ErrorAction SilentlyContinue) {
     Write-Host "The game is running. Close it, then run the update again."
     exit 1
 }
@@ -39,6 +39,9 @@ if ($ServerFolder -eq '') {
 }
 
 $clientFiles = 'urSovngarde.exe', 'urSovngarde.pdb'
+# Flat Skyrim's client, placed only in a folder that holds it: each game's update goes to its own tools folder.
+$flatClientFiles = 'urSovngardeSE.exe', 'urSovngardeSE.pdb'
+$isFlatFolder = (Test-Path (Join-Path $ClientFolder 'urSovngardeSE.exe')) -and -not (Test-Path (Join-Path $ClientFolder 'urSovngarde.exe'))
 $legacyClientFiles = 'SkyrimTogetherVR.exe', 'SkyrimTogetherVR.pdb'
 $serverFiles = 'urSovngardeServer.exe', 'urSovngardeServer.exe.manifest', 'STServer.dll'
 $legacyServerFiles = 'SkyrimTogetherServer.exe', 'SkyrimTogetherServer.exe.manifest'
@@ -68,7 +71,12 @@ $found = Get-ChildItem $temp -Recurse -File
 $done = 0
 foreach ($file in $found) {
     $legacy = ($legacyClientFiles + $legacyServerFiles) -contains $file.Name
-    if ($clientFiles -contains $file.Name -or $legacyClientFiles -contains $file.Name) {
+    if ($flatClientFiles -contains $file.Name) {
+        if (-not $isFlatFolder) { Write-Host "  $($file.Name) is flat Skyrim's client and this folder holds the VR one; skipped."; continue }
+        Replace-File $file.FullName $ClientFolder
+        $done++
+    } elseif ($clientFiles -contains $file.Name -or $legacyClientFiles -contains $file.Name) {
+        if ($isFlatFolder) { Write-Host "  $($file.Name) is the VR client and this folder holds flat Skyrim's; skipped."; continue }
         if ($legacy -and -not (Test-Path (Join-Path $ClientFolder $file.Name))) { continue }
         Replace-File $file.FullName $ClientFolder
         $done++

@@ -263,7 +263,8 @@ void PartyService::OnPartyKick(const PacketEvent<PartyKickRequest>& acPacket) no
         {
             spdlog::debug("[PartyService]: Kicking player {} from party", pKick->GetId());
             RemovePlayerFromParty(pKick);
-            BroadcastPlayerList(pKick);
+            // The kicked player is still on the server, so everyone's list keeps them, with the game they play.
+            BroadcastPlayerList();
         }
     }
 }
@@ -478,6 +479,8 @@ void PartyService::BroadcastPlayerList(Player* apPlayer) const noexcept
                 continue;
 
             playerList.Players[pPlayer->GetId()] = pPlayer->GetUsername();
+            if (pPlayer->IsFlat())
+                playerList.FlatPlayers.push_back(pPlayer->GetId());
         }
 
         pSelf->Send(playerList);

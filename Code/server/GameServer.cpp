@@ -1045,6 +1045,7 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         pPlayer->SetModIds(playerModsIds);
         pPlayer->SetLevel(acRequest->Level);
         pPlayer->SetHiddenFromPublicPage(acRequest->HideFromPublicPage);
+        pPlayer->SetFlat(acRequest->IsFlat);
 
         // this event is shit, needs to be fixed, i know
         auto [canceled, reason] = m_pWorld->GetScriptService().HandlePlayerJoin(aConnectionId);
@@ -1059,7 +1060,8 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         serverResponse.PlayerId = pPlayer->GetId();
 
         auto modList = PrettyPrintModList(acRequest->UserMods.ModList);
-        spdlog::info("New player '{}' [{:x}] connected with {} mods\n\t: {}", pPlayer->GetUsername().c_str(), aConnectionId, acRequest->UserMods.ModList.size(), modList.c_str());
+        spdlog::info("New player '{}' [{:x}] connected with {} mods, playing {}\n\t: {}", pPlayer->GetUsername().c_str(), aConnectionId, acRequest->UserMods.ModList.size(),
+                     acRequest->IsFlat ? "flat Skyrim" : "Skyrim VR", modList.c_str());
 
         serverResponse.Settings = GetSettings();
 

@@ -11,6 +11,8 @@ struct OverlayApp;
 struct RenderSystemD3D11;
 struct D3D11RenderProvider;
 struct VRDashboard;
+struct VRPage;
+struct VRPanel;
 struct FormIdComponent;
 struct World;
 struct Actor;
@@ -58,6 +60,8 @@ struct OverlayService
 
     void SetActive(bool aActive) noexcept;
     [[nodiscard]] bool GetActive() const noexcept;
+    // Where the page is shown (MenuService), held and sent to the page like the active state.
+    void SetSurface(const char* acpSurface) noexcept;
 
     void SetInGame(bool aInGame) noexcept;
     [[nodiscard]] bool GetInGame() const noexcept;
@@ -98,7 +102,9 @@ private:
     CefRefPtr<OverlayApp> m_pOverlay{nullptr};
     TiltedPhoques::UniquePtr<D3D11RenderProvider> m_pProvider;
 #ifdef SKYRIMVR
+    TiltedPhoques::UniquePtr<VRPage> m_pVRPage;
     TiltedPhoques::UniquePtr<VRDashboard> m_pVRDashboard;
+    TiltedPhoques::UniquePtr<VRPanel> m_pVRPanel;
     bool m_vrOverlayAttempted = false;
 #endif
 
@@ -110,10 +116,12 @@ private:
     TiltedPhoques::Map<uint32_t, float> m_playerHealth;
 
     bool m_active = false;
+    std::string m_surface;
     bool m_inGame = false;
     // What the page has actually been told. The page loads asynchronously and drops calls made before then; see PushUiState.
     bool m_sentActive = false;
     bool m_sentInGame = false;
+    std::string m_sentSurface;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;

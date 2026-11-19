@@ -50,6 +50,13 @@ if (-not $Path) {
         $Path += Join-Path $staging "urSovngarde\$helper.bat"
         $Path += Join-Path $staging "urSovngarde\$helper.ps1"
     }
+    # Flat Skyrim's package, when make-release.ps1 -Flat made one for this build.
+    $flatLabel = "urSovngarde-SE-$((Get-Content $versionFile -Raw).Trim())"
+    if (Test-Path (Join-Path $ReleaseFolder "$flatLabel.zip")) {
+        $Path += Join-Path $ReleaseFolder "$flatLabel.zip"
+        $Path += Join-Path $ReleaseFolder "$flatLabel-update.zip"
+        $Path += Join-Path $ReleaseFolder "$flatLabel\urSovngarde SE\urSovngardeSE.exe"
+    }
     $Path += Join-Path $staging 'Server\host-server.bat'
     $Path += Join-Path $staging 'Server\host-server.ps1'
     $missing = @($Path | Where-Object { -not (Test-Path $_) })

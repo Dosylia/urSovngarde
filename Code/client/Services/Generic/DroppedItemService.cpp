@@ -20,6 +20,8 @@
 #include <Messages/NotifyWorldObjectMove.h>
 #include <Events/UpdateEvent.h>
 #include <NetImmerse/NiTransform.h>
+#include <NetImmerse/NiGlm.h>
+#include <ReadableMemory.h>
 
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
@@ -107,15 +109,16 @@ glm::vec3 RotationOf(const TESObjectREFR* apRef) noexcept
     return {apRef->rotation.x, apRef->rotation.y, apRef->rotation.z};
 }
 
-//! The rotation of a 3D's world transform, which follows physics like WorldPositionOf.
+/**
+ * Find how an item's 3D is turned in the world, which follows physics like WorldPositionOf.
+ *
+ * @param apNode The item's 3D.
+ * @return Its rotation in the game's world.
+ */
 glm::mat3 WorldTurnOf(const NiNode* apNode) noexcept
 {
     const auto& world = *reinterpret_cast<const NiTransform*>(reinterpret_cast<const uint8_t*>(apNode) + 0x7C);
-    glm::mat3 turn(1.f);
-    for (int row = 0; row < 3; ++row)
-        for (int column = 0; column < 3; ++column)
-            turn[row][column] = world.rotate.data[row][column];
-    return turn;
+    return ToGlm(world.rotate);
 }
 
 //! The angle in radians of the turn from one rotation to another.
@@ -127,16 +130,6 @@ float AngleBetween(const glm::mat3& acFrom, const glm::mat3& acTo) noexcept
         for (int column = 0; column < 3; ++column)
             trace += acFrom[row][column] * acTo[row][column];
     return std::acos(std::clamp((trace - 1.f) * 0.5f, -1.f, 1.f));
-}
-
-bool IsMemoryReadable(const void* apAddress, const size_t aBytes) noexcept
-{
-    MEMORY_BASIC_INFORMATION info{};
-    if (!apAddress || !VirtualQuery(apAddress, &info, sizeof(info)))
-        return false;
-    if (info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
-        return false;
-    return reinterpret_cast<uintptr_t>(apAddress) + aBytes <= reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
 }
 
 // The game's ExtraDroppedItemList, as CommonLibSSE has it: the BSExtraData header, then a BSSimpleList of handles.
@@ -533,13 +526,13 @@ void DroppedItemService::AnnounceOldDrops() noexcept
     bool listFound = false;
     for (BSExtraData* pExtra = pPlayer->extraData.data; pExtra && guard < 512; pExtra = pExtra->next, ++guard)
     {
-        if (!IsMemoryReadable(pExtra, sizeof(BSExtraData)) || !Cast<ExtraDroppedItemList>(pExtra))
+        if (!ReadableMemory::IsReadable(pExtra, sizeof(BSExtraData)) || !Cast<ExtraDroppedItemList>(pExtra))
             continue;
         listFound = true;
 
         const auto* pList = reinterpret_cast<const DroppedItemListView*>(pExtra);
         const DroppedItemNode* pNode = &pList->Head;
-        for (uint32_t n = 0; pNode && n < 1024 && IsMemoryReadable(pNode, sizeof(DroppedItemNode)); ++n, pNode = pNode->Next)
+        for (uint32_t n = 0; pNode && n < 1024 && ReadableMemory::IsReadable(pNode, sizeof(DroppedItemNode)); ++n, pNode = pNode->Next)
         {
             if (!pNode->Handle)
                 continue;
@@ -656,7 +649,7 @@ void DroppedItemService::OnUpdate(const UpdateEvent&) noexcept
             // Still for long enough to call it put down. The server keeps this place for anyone who comes later.
             motion.Moving = false;
             send(true);
-            spdlog::info("DroppedItem: {} came to rest at ({:.0f}, {:.0f}, {:.0f})", id, position.x, position.y, position.z);
+            spdlog::info("DroppedItem: {} came to rest at ({:.0f})", id, position);
         }
     }
 
@@ -859,7 +852,7 @@ void DroppedItemService::UpdateWorldObjects(const std::chrono::steady_clock::tim
             motion.LastRotation = rotation;
             motion.LastTurn = turn;
             send(pRef, cFormId, position, rotation, true);
-            spdlog::info("WorldObject: {:X} came to rest at ({:.0f}, {:.0f}, {:.0f})", cFormId, position.x, position.y, position.z);
+            spdlog::info("WorldObject: {:X} came to rest at ({:.0f})", cFormId, position);
         }
     }
 

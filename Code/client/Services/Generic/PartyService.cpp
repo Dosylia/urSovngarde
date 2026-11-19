@@ -1,4 +1,5 @@
 #include <Services/PartyService.h>
+#include <Services/PvpRules.h>
 #include <PerfScope.h>
 
 #include <Services/TransportService.h>
@@ -99,6 +100,9 @@ void PartyService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
     PerfScope perfScope("PartyService::OnUpdate");
 
+    // Each frame, so another player's copy is marked before it can hit or be hit.
+    PvpRules::MarkOtherGameCopies(m_world);
+
     const auto cCurrentTick = m_transport.GetClock().GetCurrentTick();
     if (m_nextUpdate > cCurrentTick)
         return;
@@ -166,11 +170,14 @@ void PartyService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
     ForgetPartyValues();
     m_invitations.clear();
     m_nextUpdate = 0;
+    // Another server numbers its players afresh.
+    m_flatPlayers.clear();
 }
 
 void PartyService::OnPlayerList(const NotifyPlayerList& acPlayerList) noexcept
 {
     m_players = acPlayerList.Players;
+    m_flatPlayers = acPlayerList.FlatPlayers;
 }
 
 void PartyService::OnPartyInfo(const NotifyPartyInfo& acPartyInfo) noexcept

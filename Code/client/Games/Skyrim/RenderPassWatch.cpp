@@ -2,6 +2,7 @@
 
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Interface/UI.h>
+#include <ReadableMemory.h>
 #include <Interface/Menus/MapMenu.h>
 #include <PatchCheck.h>
 #include <Games/Skyrim/GameStack.h>
@@ -45,21 +46,20 @@ size_t SlotOf(const void* apPass) noexcept
     return (reinterpret_cast<uintptr_t>(apPass) >> 4) & (std::size(s_lastInserts) - 1);
 }
 
-using GameStack::Readable;
 using GameStack::Where;
 
 std::string GeometryName(const uint8_t* apPass) noexcept
 {
-    if (!Readable(apPass + kPassGeometry, 8))
+    if (!ReadableMemory::IsReadable(apPass + kPassGeometry, 8))
         return "?";
     const auto* pGeometry = *reinterpret_cast<const uint8_t* const*>(apPass + kPassGeometry);
-    if (!Readable(pGeometry + kObjectName, 8))
+    if (!ReadableMemory::IsReadable(pGeometry + kObjectName, 8))
         return "?";
     const char* pName = *reinterpret_cast<const char* const*>(pGeometry + kObjectName);
-    if (!Readable(pName, 1))
+    if (!ReadableMemory::IsReadable(pName, 1))
         return "?";
     char name[64]{};
-    for (size_t i = 0; i + 1 < sizeof(name) && Readable(pName + i, 1) && pName[i]; ++i)
+    for (size_t i = 0; i + 1 < sizeof(name) && ReadableMemory::IsReadable(pName + i, 1) && pName[i]; ++i)
         name[i] = pName[i];
     return name;
 }

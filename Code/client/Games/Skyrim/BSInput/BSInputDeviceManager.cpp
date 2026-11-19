@@ -1,15 +1,33 @@
 #include <BSGraphics/BSGraphicsRenderer.h>
 #include <PatchCheck.h>
+#include <Services/MenuService.h>
+#include <World.h>
 
 struct BSInputDeviceManager;
 
 void (*BSInputDeviceManager_PollInputDevices)(BSInputDeviceManager*, float) = nullptr;
 
+// A flat game the test rig started (Tools/Flat/flat-rig.ps1 sets this for it) takes the rig's injected keys with its window in the background.
+// So no test needs the game in front, where it would take the mouse and keyboard of whoever uses the PC.
+// Meanwhile the real keyboard and mouse are not read at all (MenuService), as the game reads them in the background otherwise.
+// A gamepad is still read.
+bool s_testRigGame = false;
+bool s_rigGameInFront = true;
+
 void Hook_BSInputDeviceManager_PollInputDevices(BSInputDeviceManager* inputDeviceMgr, float afDelta)
 {
     // Null on VR, where Hook_Renderer_Init is off.
     auto* pWindow = BSGraphics::GetMainWindow();
-    if (pWindow && !pWindow->IsForeground())
+    const bool cInFront = !pWindow || pWindow->IsForeground();
+    if (s_testRigGame)
+    {
+        if (cInFront != s_rigGameInFront && entt::locator<World>::has_value())
+        {
+            s_rigGameInFront = cInFront;
+            World::Get().ctx().at<MenuService>().SetRigGameInBackground(!cInFront);
+        }
+    }
+    else if (!cInFront)
         return;
 
     BSInputDeviceManager_PollInputDevices(inputDeviceMgr, afDelta);
@@ -53,6 +71,10 @@ void InstallInputFocusCheck() noexcept
         spdlog::error("Input: the device poll at {} could not be hooked; keys are read with the window in the background too", fmt::ptr(pPoll));
         return;
     }
-    spdlog::info("Input: keys are read only while the game window is in front{}", cOtherHook);
+    s_testRigGame = std::getenv("URSOVNGARDE_TEST_RIG") != nullptr;
+    if (s_testRigGame)
+        spdlog::info("Input: a test rig game; the rig's keys are read with the window in the background, the real keyboard and mouse only in front{}", cOtherHook);
+    else
+        spdlog::info("Input: keys are read only while the game window is in front{}", cOtherHook);
 }
 #endif

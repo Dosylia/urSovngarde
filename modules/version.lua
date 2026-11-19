@@ -50,6 +50,40 @@ function main (target)
 					table.insert(statusArgs, pattern)
 				end
 				local uncommitted = os.iorunv(git, diffArgs) .. os.iorunv(git, statusArgs)
+				-- New files count by their contents too: git status gives only their names, and two builds of different new code
+				-- would otherwise claim the same version.
+				-- A file gone or locked between the listing and its hash costs only the contents: its name is already in the status above.
+				local untrackedArgs = {"-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "--", "."}
+				for _, pattern in ipairs(exclude) do
+					table.insert(untrackedArgs, pattern)
+				end
+				try
+				{
+					function ()
+						local newFiles = {}
+						for line in os.iorunv(git, untrackedArgs):gmatch("[^\r\n]+") do
+							if os.isfile(line) then
+								table.insert(newFiles, line)
+							end
+						end
+						table.sort(newFiles)
+						local contents = ""
+						for first = 1, #newFiles, 60 do
+							local args = {"hash-object", "--"}
+							for i = first, math.min(first + 59, #newFiles) do
+								table.insert(args, newFiles[i])
+							end
+							contents = contents .. os.iorunv(git, args)
+						end
+						uncommitted = uncommitted .. contents
+					end,
+					catch
+					{
+						function (err)
+							print(string.format("New files left out of the version: %s", err))
+						end
+					}
+				}
 				if uncommitted:trim() ~= "" then
 					local tmp = os.tmpfile()
 					io.writefile(tmp, uncommitted)
@@ -67,7 +101,7 @@ function main (target)
 				-- Contents, not history: each file is hashed by git (which also evens out line endings between a
 				-- Windows and a Linux checkout), and the list of path-and-hash pairs is folded in order. Committed,
 				-- staged or neither makes no difference.
-				local listed = os.iorunv(git, {"ls-files", "-co", "--exclude-standard", "--", "Code/encoding"})
+				local listed = os.iorunv(git, {"-c", "core.quotePath=false", "ls-files", "-co", "--exclude-standard", "--", "Code/encoding"})
 				local paths = {}
 				for line in listed:gmatch("[^\r\n]+") do
 					if os.isfile(line) then

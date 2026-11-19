@@ -1,0 +1,18 @@
+<div *ngIf="shown" class="app-keyboard" [class.at-top]="atTop" (mousedown)="$event.preventDefault()">
+  <div class="app-keyboard-echo">{{ echo }}</div>
+  <div *ngFor="let row of rows" class="app-keyboard-row">
+    <button *ngFor="let key of row" class="app-keyboard-key" [attr.data-key]="key" (mousedown)="press($event); type(key)">
+      {{ label(key) }}
+    </button>
+  </div>
+  <div class="app-keyboard-row">
+    <button class="app-keyboard-key wide" data-key="shift" [class.on]="shift" [class.locked]="capsLock" (mousedown)="press($event); toggleShift()">⇧</button>
+    <button class="app-keyboard-key wide" data-key="symbols" [class.on]="showSymbols" (mousedown)="press($event); toggleSymbols()">
+      {{ showSymbols ? 'abc' : '#+=' }}
+    </button>
+    <button class="app-keyboard-key space" data-key="space" (mousedown)="press($event); space()"></button>
+    <button class="app-keyboard-key wide" data-key="backspace" (mousedown)="press($event); backspace()">⌫</button>
+    <button class="app-keyboard-key wide" data-key="enter" (mousedown)="press($event); enter()">⏎</button>
+    <button class="app-keyboard-key wide" data-key="close" (mousedown)="press($event); close()">✕</button>
+  </div>
+</div>

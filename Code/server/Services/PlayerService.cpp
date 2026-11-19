@@ -28,6 +28,7 @@ constexpr uint32_t kHealthValue = 24;
 #include <Messages/NotifyPlayerCellChanged.h>
 #include <Messages/RequestNpcPlugins.h>
 #include <Messages/NotifyNpcPluginsDiffer.h>
+#include <PluginRules.h>
 #include <Messages/NotifyPlayerName.h>
 #include <Services/PartyService.h>
 
@@ -389,6 +390,9 @@ void PlayerService::OnNpcPlugins(const PacketEvent<RequestNpcPlugins>& acMessage
 
         Vector<String> onlyHere = OnlyIn(pPlayer->GetNpcPlugins(), pOther->GetNpcPlugins());
         Vector<String> onlyThere = OnlyIn(pOther->GetNpcPlugins(), pPlayer->GetNpcPlugins());
+
+        // Between a flat and a VR player, each game's own plugins are no mod difference: the other game cannot have them.
+        const PluginRules::LeftOut leftOut = PluginRules::FilterForPair(onlyHere, pPlayer->IsFlat(), onlyThere, pOther->IsFlat());
         if (onlyHere.empty() && onlyThere.empty())
             continue;
 
@@ -403,6 +407,12 @@ void PlayerService::OnNpcPlugins(const PacketEvent<RequestNpcPlugins>& acMessage
         spdlog::warn("NpcPlugins: '{}' and '{}' do not have the same plugins adding or changing NPCs; only '{}' has {} ({}); only '{}' has {} ({})", pPlayer->GetUsername().c_str(),
                      pOther->GetUsername().c_str(), pPlayer->GetUsername().c_str(), onlyHere.size(), PluginList::Joined(onlyHere).c_str(), pOther->GetUsername().c_str(), onlyThere.size(),
                      PluginList::Joined(onlyThere).c_str());
+        if (!leftOut.Here.empty() || !leftOut.There.empty())
+        {
+            const auto names = [](const Vector<String>& acList) { return acList.empty() ? std::string("none") : std::string(PluginList::Joined(acList).c_str()); };
+            spdlog::info("NpcPlugins: '{}' and '{}' play different games; left out as their games' own plugins: {} for '{}', {} for '{}'", pPlayer->GetUsername().c_str(),
+                         pOther->GetUsername().c_str(), names(leftOut.Here), pPlayer->GetUsername().c_str(), names(leftOut.There), pOther->GetUsername().c_str());
+        }
 
         NotifyNpcPluginsDiffer toPlayer{};
         toPlayer.Username = pOther->GetUsername();

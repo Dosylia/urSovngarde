@@ -54,16 +54,6 @@ bool CheckGameUnwindTable() noexcept
 
 namespace GameStack
 {
-bool Readable(const void* apAddress, const size_t aBytes) noexcept
-{
-    MEMORY_BASIC_INFORMATION info{};
-    if (!apAddress || !VirtualQuery(apAddress, &info, sizeof(info)))
-        return false;
-    if (info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
-        return false;
-    return reinterpret_cast<uintptr_t>(apAddress) + aBytes <= reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-}
-
 std::string Where(const void* apAddress) noexcept
 {
     HMODULE module = nullptr;

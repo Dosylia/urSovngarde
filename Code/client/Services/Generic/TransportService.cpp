@@ -205,6 +205,12 @@ void TransportService::OnConnected()
 
     request.Level = pPlayer->GetLevel();
 
+#ifdef SKYRIMVR
+    request.IsFlat = false;
+#else
+    request.IsFlat = true;
+#endif
+
     request.HideFromPublicPage = IsHiddenFromPublicPage();
     if (request.HideFromPublicPage)
         spdlog::info("Hidden from the public server page (launcher setting)");

@@ -3,113 +3,160 @@
 #ifdef SKYRIMVR
 
 #include <Systems/VRDashboard.h>
+#include <Systems/VRPage.h>
+#include <Systems/PageInput.h>
 
 #include <Services/OverlayService.h>
+#include <Services/MenuService.h>
+#include <Games/Skyrim/VRRuntime.h>
+#include <World.h>
+#include <SafeRelease.h>
 
 #include <OverlayClient.hpp>
-#include <OverlayRenderHandler.hpp>
 
 #include <openvr/openvr.h>
 
 #include <d3d11.h>
 #include <dxgi.h>
 
-#include <fstream>
-
 namespace
 {
-// CEF paints into the dashboard's shared frame buffer.
-// Everything touching D3D11 or OpenVR happens in VRDashboard::Update on the main thread.
-struct DashboardRenderHandler final : TiltedPhoques::OverlayRenderHandler
+// The tab icon's size in pixels, and its background colour, red, green, blue.
+constexpr int32_t kIconSize = 64;
+constexpr uint8_t kIconBackgroundRgb[3]{24, 21, 18};
+
+/**
+ * Draw the tab's icon, so it needs no image file: two gold diamond rings on a dark square with its corners cut off.
+ * It stays readable at the dashboard's thumbnail size.
+ *
+ * @return The icon, kIconSize pixels square, RGBA.
+ */
+std::vector<uint8_t> DrawTabIcon() noexcept
 {
-    explicit DashboardRenderHandler(VRDashboard& aDashboard)
-        : m_dashboard(aDashboard)
+    constexpr float kCentre = (kIconSize - 1) / 2.f;
+    std::vector<uint8_t> icon(static_cast<size_t>(kIconSize) * kIconSize * 4);
+    for (int32_t y = 0; y < kIconSize; ++y)
     {
-        SetVisible(true);
+        for (int32_t x = 0; x < kIconSize; ++x)
+        {
+            // Distances from the centre: along both axes added up, which draws diamonds, and the larger of the two, which draws a square.
+            const float cAcross = static_cast<float>(x) - kCentre;
+            const float cDown = static_cast<float>(y) - kCentre;
+            const float cDiamond = std::abs(cAcross) + std::abs(cDown);
+            const float cSquare = std::max(std::abs(cAcross), std::abs(cDown));
+
+            const bool cOuterRing = cDiamond <= 26.f && cDiamond > 21.f;
+            const bool cInnerRing = cDiamond <= 13.f && cDiamond > 9.f;
+            const uint8_t* pColour = cOuterRing || cInnerRing ? VRPage::kGoldRgb : kIconBackgroundRgb;
+
+            uint8_t* pPixel = icon.data() + (static_cast<size_t>(y) * kIconSize + x) * 4;
+            pPixel[0] = pColour[0];
+            pPixel[1] = pColour[1];
+            pPixel[2] = pColour[2];
+            // The square's corners are cut off.
+            pPixel[3] = cSquare > 30.f ? 0 : 255;
+        }
     }
-
-    void Create() override {}
-    void Render() override {}
-    void Reset() override {}
-
-    void GetViewRect(CefRefPtr<CefBrowser>, CefRect& aRect) override { aRect = CefRect(0, 0, VRDashboard::kWidth, VRDashboard::kHeight); }
-
-    void OnPaint(CefRefPtr<CefBrowser>, PaintElementType aType, const RectList&, const void* apBuffer, int aWidth, int aHeight) override
-    {
-        static std::atomic<bool> s_loggedFirstPaint = false;
-        if (!s_loggedFirstPaint.exchange(true))
-            spdlog::info("VRDashboard: first page paint, type {}, {}x{}", static_cast<int>(aType), aWidth, aHeight);
-
-        if (aType != PET_VIEW || aWidth != VRDashboard::kWidth || aHeight != VRDashboard::kHeight)
-            return;
-
-        auto& frame = m_dashboard.GetFrame();
-        std::scoped_lock lock(frame.Lock);
-        std::memcpy(frame.Pixels.data(), apBuffer, frame.Pixels.size());
-        frame.Dirty = true;
-    }
-
-    void OnVirtualKeyboardRequested(CefRefPtr<CefBrowser>, TextInputMode aInputMode) override { m_dashboard.RequestKeyboard(aInputMode != CEF_TEXT_INPUT_MODE_NONE); }
-
-    IMPLEMENT_REFCOUNTING(DashboardRenderHandler);
-
-private:
-    VRDashboard& m_dashboard;
-};
-
-void SafeRelease(IUnknown*& apObject) noexcept
-{
-    if (apObject)
-    {
-        apObject->Release();
-        apObject = nullptr;
-    }
+    return icon;
 }
 } // namespace
 
-VRDashboard::VRDashboard() noexcept
-{
-    m_frame.Pixels.resize(static_cast<size_t>(kWidth) * kHeight * 4);
-}
-
+/**
+ * Remove the tab from SteamVR and release our graphics device and picture.
+ */
 VRDashboard::~VRDashboard()
 {
     if (m_pOverlay && m_handle)
         m_pOverlay->DestroyOverlay(m_handle);
 
-    SafeRelease(reinterpret_cast<IUnknown*&>(m_pTexture));
-    SafeRelease(reinterpret_cast<IUnknown*&>(m_pContext));
-    SafeRelease(reinterpret_cast<IUnknown*&>(m_pDevice));
+    SafeRelease(m_pTexture);
+    SafeRelease(m_pContext);
+    SafeRelease(m_pDevice);
 }
 
-TiltedPhoques::OverlayRenderHandler* VRDashboard::Create()
+/**
+ * Keep the tab going: set it up once SteamVR is ready, send it new pictures of the page, and pass its input to the page.
+ * Main thread, every frame.
+ *
+ * @param aOverlay The overlay service, which owns the page's browser.
+ * @param aPage The menu page as pictures.
+ */
+void VRDashboard::Update(OverlayService& aOverlay, VRPage& aPage) noexcept
 {
-    return new DashboardRenderHandler(*this);
+    if (m_failed)
+        return;
+    if (!m_initialized && !TryToStart())
+        return;
+
+    ProcessEvents(aOverlay, aPage);
+    if (m_visible)
+        UploadFrame(aPage);
+    ForwardKeyboardRequest(aPage);
 }
 
-bool VRDashboard::InitializeOverlay() noexcept
+/**
+ * Set the tab up, trying again every 2 seconds while OpenVR comes up, and giving up after 10 tries.
+ *
+ * @return True once the tab is ready.
+ */
+bool VRDashboard::TryToStart() noexcept
 {
-    // The game has already initialized OpenVR through its own openvr_api.dll.
-    // Asking that DLL for the interfaces shares the game's session; a second copy of the library would not reach SteamVR.
-    HMODULE hOpenVR = GetModuleHandleW(L"openvr_api.dll");
-    if (!hOpenVR)
-        return false;
-
-    using TGetGenericInterface = void*(const char*, vr::EVRInitError*);
-    auto* pGetInterface = reinterpret_cast<TGetGenericInterface*>(GetProcAddress(hOpenVR, "VR_GetGenericInterface"));
-    if (!pGetInterface)
-        return false;
-
-    vr::EVRInitError error = vr::VRInitError_None;
-    m_pSystem = static_cast<vr::IVRSystem*>(pGetInterface(vr::IVRSystem_Version, &error));
-    m_pOverlay = static_cast<vr::IVROverlay*>(pGetInterface(vr::IVROverlay_Version, &error));
-    if (!m_pSystem || !m_pOverlay)
+    // OpenComposite has no dashboard to put the menu on.
+    if (VRRuntime::IsOpenComposite())
     {
-        spdlog::warn("VRDashboard: OpenVR interfaces unavailable (error {})", static_cast<int>(error));
+        m_failed = true;
         return false;
     }
 
-    // The texture must be created on the adapter the headset is connected to.
+    // OpenVR can come up after the first frames.
+    const auto cNow = std::chrono::steady_clock::now();
+    if (cNow < m_nextStartAttempt)
+        return false;
+    m_nextStartAttempt = cNow + std::chrono::seconds(2);
+
+    m_initialized = InitializeOverlay();
+    if (!m_initialized && ++m_startAttempts >= 10)
+    {
+        spdlog::error("VRDashboard: giving up, the Skyrim Together menu is not available in the headset");
+        m_failed = true;
+    }
+    return m_initialized;
+}
+
+/**
+ * Set the tab up: SteamVR's parts, a graphics device on the headset's GPU, the shared picture, and the tab itself.
+ *
+ * @return True when everything was made.
+ */
+bool VRDashboard::InitializeOverlay() noexcept
+{
+    int error = 0;
+    m_pSystem = static_cast<vr::IVRSystem*>(VRRuntime::GetOpenVRInterface(vr::IVRSystem_Version, &error));
+    m_pOverlay = VRRuntime::GetOpenVROverlay();
+    if (!m_pSystem || !m_pOverlay)
+    {
+        spdlog::warn("VRDashboard: OpenVR interfaces unavailable (error {})", error);
+        return false;
+    }
+
+    if (!MakeDevice() || !MakeSharedPicture() || !CreateTab())
+        return false;
+
+    spdlog::info("VRDashboard: Skyrim Together dashboard overlay created");
+    return true;
+}
+
+/**
+ * Make our own graphics device, on the GPU the headset is connected to, as SteamVR needs the picture there.
+ *
+ * @return True when the device is there, made now or by an earlier try.
+ */
+bool VRDashboard::MakeDevice() noexcept
+{
+    // Made once: a later try after another step failed keeps it.
+    if (m_pDevice)
+        return true;
+
     int32_t adapterIndex = -1;
     m_pSystem->GetDXGIOutputInfo(&adapterIndex);
 
@@ -118,198 +165,113 @@ bool VRDashboard::InitializeOverlay() noexcept
     if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&pFactory))) && adapterIndex >= 0)
         pFactory->EnumAdapters1(adapterIndex, &pAdapter);
 
-    const HRESULT deviceResult = D3D11CreateDevice(pAdapter, pAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &m_pDevice, nullptr, &m_pContext);
+    // Without the headset's GPU, the default one.
+    const HRESULT cResult = D3D11CreateDevice(pAdapter, pAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &m_pDevice, nullptr, &m_pContext);
 
     if (pAdapter)
         pAdapter->Release();
     if (pFactory)
         pFactory->Release();
 
-    if (FAILED(deviceResult))
+    if (FAILED(cResult))
     {
-        spdlog::error("VRDashboard: D3D11CreateDevice failed ({:#x})", static_cast<uint32_t>(deviceResult));
+        spdlog::error("VRDashboard: D3D11CreateDevice failed ({:#x})", static_cast<uint32_t>(cResult));
         return false;
     }
+    return true;
+}
+
+/**
+ * Make the picture SteamVR shows in the tab, shared so SteamVR can open it from its own process.
+ *
+ * @return True when the picture is there, made now or by an earlier try.
+ */
+bool VRDashboard::MakeSharedPicture() noexcept
+{
+    // Made once: a later try after another step failed keeps it.
+    if (m_pTexture)
+        return true;
 
     D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = kWidth;
-    desc.Height = kHeight;
+    desc.Width = VRPage::kWidth;
+    desc.Height = VRPage::kHeight;
     desc.MipLevels = 1;
     desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // CEF paints BGRA
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // as the browser paints it
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED; // the SteamVR compositor opens it from its own process
+    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED; // SteamVR opens it from its own process
 
     if (FAILED(m_pDevice->CreateTexture2D(&desc, nullptr, &m_pTexture)))
     {
         spdlog::error("VRDashboard: could not create the overlay texture");
         return false;
     }
+    return true;
+}
 
-    const auto overlayError = m_pOverlay->CreateDashboardOverlay("skyrimtogether.menu", "urSovngarde", &m_handle, &m_thumbnailHandle);
-    if (overlayError != vr::VROverlayError_None)
+/**
+ * Create the dashboard tab, with its size, its mouse input, and its icon.
+ *
+ * @return True when SteamVR created the tab.
+ */
+bool VRDashboard::CreateTab() noexcept
+{
+    const auto cError = m_pOverlay->CreateDashboardOverlay("skyrimtogether.menu", "urSovngarde", &m_handle, &m_thumbnailHandle);
+    if (cError != vr::VROverlayError_None)
     {
-        spdlog::error("VRDashboard: CreateDashboardOverlay failed ({})", static_cast<int>(overlayError));
+        spdlog::error("VRDashboard: CreateDashboardOverlay failed ({})", static_cast<int>(cError));
         return false;
     }
 
     m_pOverlay->SetOverlayWidthInMeters(m_handle, 2.5f);
-    m_pOverlay->SetOverlayInputMethod(m_handle, vr::VROverlayInputMethod_Mouse);
 
-    const vr::HmdVector2_t mouseScale{{static_cast<float>(kWidth), static_cast<float>(kHeight)}};
-    m_pOverlay->SetOverlayMouseScale(m_handle, &mouseScale);
+    // SteamVR's laser works the tab like a mouse, in the page's own pixels.
+    m_pOverlay->SetOverlayInputMethod(m_handle, vr::VROverlayInputMethod_Mouse);
+    const vr::HmdVector2_t cMouseScale{{static_cast<float>(VRPage::kWidth), static_cast<float>(VRPage::kHeight)}};
+    m_pOverlay->SetOverlayMouseScale(m_handle, &cMouseScale);
     m_pOverlay->SetOverlayFlag(m_handle, vr::VROverlayFlags_SendVRSmoothScrollEvents, true);
 
-    // Tab icon, drawn here so it needs no image file.
-    // A gold diamond with a dark centre on a dark rounded square, readable at the dashboard's thumbnail size.
-    constexpr int32_t kIconSize = 64;
-    std::vector<uint8_t> icon(static_cast<size_t>(kIconSize) * kIconSize * 4);
-    for (int32_t y = 0; y < kIconSize; ++y)
-    {
-        for (int32_t x = 0; x < kIconSize; ++x)
-        {
-            const float cx = static_cast<float>(x) - 31.5f;
-            const float cy = static_cast<float>(y) - 31.5f;
-            const float diamond = std::abs(cx) + std::abs(cy); // L1 distance from the centre
-            const float corner = std::max(std::abs(cx), std::abs(cy));
-
-            uint8_t r = 24, g = 21, b = 18, a = 255; // dark panel
-            if (corner > 30.f)
-                a = 0; // rounded off corners
-            if (diamond <= 26.f && diamond > 21.f)
-            {
-                r = 200; // gold ring
-                g = 169;
-                b = 110;
-            }
-            else if (diamond <= 13.f && diamond > 9.f)
-            {
-                r = 200; // inner ring
-                g = 169;
-                b = 110;
-            }
-
-            uint8_t* pPixel = icon.data() + (static_cast<size_t>(y) * kIconSize + x) * 4;
-            pPixel[0] = r;
-            pPixel[1] = g;
-            pPixel[2] = b;
-            pPixel[3] = a;
-        }
-    }
+    std::vector<uint8_t> icon = DrawTabIcon();
     m_pOverlay->SetOverlayRaw(m_thumbnailHandle, icon.data(), kIconSize, kIconSize, 4);
-
-    spdlog::info("VRDashboard: Skyrim Together dashboard overlay created");
     return true;
 }
 
-void VRDashboard::Update(OverlayService& aOverlay) noexcept
+/**
+ * Send SteamVR the newest picture of the page, when there is one it has not had.
+ *
+ * @param aPage The menu page as pictures.
+ */
+void VRDashboard::UploadFrame(VRPage& aPage) noexcept
 {
-    if (m_failed)
+    uint32_t contentPercent = 0;
+    if (!aPage.CopyOverPanelIfNewer(m_pictureVersion, m_pixels, contentPercent))
         return;
 
-    if (!m_initialized)
-    {
-        // OpenVR can come up after the first frames; try a few times before giving up.
-        static int s_attempts = 0;
-        static std::chrono::steady_clock::time_point s_nextAttempt;
-        const auto now = std::chrono::steady_clock::now();
-        if (now < s_nextAttempt)
-            return;
-
-        s_nextAttempt = now + std::chrono::seconds(2);
-        m_initialized = InitializeOverlay();
-        if (!m_initialized && ++s_attempts >= 10)
-        {
-            spdlog::error("VRDashboard: giving up, the Skyrim Together menu is not available in the headset");
-            m_failed = true;
-        }
-        if (!m_initialized)
-            return;
-    }
-
-    ProcessEvents(aOverlay);
-
-    // The page only renders while the dashboard tab is open, to save frame time.
-    if (OverlayApp* pApp = aOverlay.GetOverlayApp())
-    {
-        const auto pBrowser = pApp->GetClient() ? pApp->GetClient()->GetBrowser() : nullptr;
-        if (pBrowser && pBrowser->GetHost() && m_browserHidden == m_visible)
-        {
-            m_browserHidden = !m_visible;
-            pBrowser->GetHost()->WasHidden(m_browserHidden);
-
-            // The page is the flat-screen UI at 1600x900, so on a 2.5 m panel its menu is a small box in one corner.
-            // Chrome zoom scales everything on it; each level is x1.2, so 3 is about 173%.
-            static bool s_zoomed = false;
-            if (m_visible && !s_zoomed)
-            {
-                s_zoomed = true;
-                constexpr double kZoomLevel = 3.0;
-                pBrowser->GetHost()->SetZoomLevel(kZoomLevel);
-                spdlog::info("VRDashboard: page zoom level set to {}", kZoomLevel);
-            }
-        }
-    }
-
-    if (m_visible)
-    {
-        UploadFrame();
-    }
-
-    const int keyboardRequest = m_keyboardRequest.exchange(0);
-    if (keyboardRequest == 1)
-        m_pOverlay->ShowKeyboardForOverlay(m_handle, vr::k_EGamepadTextInputModeNormal, vr::k_EGamepadTextInputLineModeSingleLine, vr::KeyboardFlag_Minimal, "Skyrim Together", 256, "", 0);
-    else if (keyboardRequest == 2)
-        m_pOverlay->HideKeyboard();
-}
-
-void VRDashboard::UploadFrame() noexcept
-{
-    constexpr uint8_t kBackground[3]{24, 21, 18}; // BGR, dark panel behind the page
-
-    size_t visiblePixels = 0;
-    {
-        std::scoped_lock lock(m_frame.Lock);
-        if (!m_frame.Dirty)
-            return;
-
-        // CEF paints premultiplied BGRA, and the UI is made to sit over the game, so most of the page is transparent.
-        // The dashboard would show that as an empty tab: blend it over an opaque panel instead.
-        m_opaquePixels.resize(m_frame.Pixels.size());
-        const uint8_t* pSource = m_frame.Pixels.data();
-        uint8_t* pTarget = m_opaquePixels.data();
-        for (size_t i = 0; i < m_frame.Pixels.size(); i += 4)
-        {
-            const uint32_t alpha = pSource[i + 3];
-            const uint32_t inverse = 255 - alpha;
-            for (int c = 0; c < 3; ++c)
-                pTarget[i + c] = static_cast<uint8_t>(std::min<uint32_t>(255, pSource[i + c] + (kBackground[c] * inverse + 127) / 255));
-            pTarget[i + 3] = 255;
-            visiblePixels += alpha != 0;
-        }
-
-        m_pContext->UpdateSubresource(m_pTexture, 0, nullptr, m_opaquePixels.data(), kWidth * 4, 0);
-        m_frame.Dirty = false;
-    }
+    m_pContext->UpdateSubresource(m_pTexture, 0, nullptr, m_pixels.data(), VRPage::kWidth * 4, 0);
 
     // Nothing ever presents on this device, so without a flush the upload stays queued and SteamVR reads a blank texture.
     // Flush so the pixels are on the GPU before the compositor opens it.
     m_pContext->Flush();
 
     vr::Texture_t texture{m_pTexture, vr::TextureType_DirectX, vr::ColorSpace_Auto};
-    const auto error = m_pOverlay->SetOverlayTexture(m_handle, &texture);
+    const auto cError = m_pOverlay->SetOverlayTexture(m_handle, &texture);
 
     if (m_logNextUpload)
     {
         m_logNextUpload = false;
-        spdlog::info("VRDashboard: page frame sent to SteamVR (result {}), {}% of the page has content", static_cast<int>(error),
-                     visiblePixels * 100 / (static_cast<size_t>(kWidth) * kHeight));
+        spdlog::info("VRDashboard: page frame sent to SteamVR (result {}), {}% of the page has content", static_cast<int>(cError), contentPercent);
     }
 }
 
-void VRDashboard::ProcessEvents(OverlayService& aOverlay) noexcept
+/**
+ * Pass the tab's events to the page and the menu: mouse, scroll, typed text, and the tab being opened or closed.
+ *
+ * @param aOverlay The overlay service, which owns the page's browser.
+ * @param aPage The menu page as pictures.
+ */
+void VRDashboard::ProcessEvents(OverlayService& aOverlay, VRPage& aPage) noexcept
 {
     OverlayApp* pApp = aOverlay.GetOverlayApp();
 
@@ -323,76 +285,56 @@ void VRDashboard::ProcessEvents(OverlayService& aOverlay) noexcept
         case vr::VREvent_MouseButtonUp:
         {
             // OpenVR mouse coordinates start at the bottom left, the page's at the top left.
-            m_mouseX = static_cast<uint16_t>(std::clamp(event.data.mouse.x, 0.f, static_cast<float>(kWidth - 1)));
-            m_mouseY = static_cast<uint16_t>(std::clamp(kHeight - event.data.mouse.y, 0.f, static_cast<float>(kHeight - 1)));
-
-            if (!pApp)
-                break;
+            m_mouseX = static_cast<uint16_t>(std::clamp(event.data.mouse.x, 0.f, static_cast<float>(VRPage::kWidth - 1)));
+            m_mouseY = static_cast<uint16_t>(std::clamp(VRPage::kHeight - event.data.mouse.y, 0.f, static_cast<float>(VRPage::kHeight - 1)));
 
             if (event.eventType == vr::VREvent_MouseMove)
             {
-                pApp->InjectMouseMove(m_mouseX, m_mouseY, 0);
+                PageInput::MouseMove(pApp, m_mouseX, m_mouseY);
+                break;
             }
+            const auto cButton = event.data.mouse.button == vr::VRMouseButton_Right ? PageInput::Button::kRight : PageInput::Button::kLeft;
+            if (event.eventType == vr::VREvent_MouseButtonUp)
+                PageInput::MouseUp(pApp, m_mouseX, m_mouseY, cButton);
             else
-            {
-                const auto button = event.data.mouse.button == vr::VRMouseButton_Right ? MBT_RIGHT : MBT_LEFT;
-                pApp->InjectMouseButton(m_mouseX, m_mouseY, button, event.eventType == vr::VREvent_MouseButtonUp, 0);
-            }
+                PageInput::MouseDown(pApp, m_mouseX, m_mouseY, cButton);
             break;
         }
-        case vr::VREvent_ScrollSmooth:
-            if (pApp)
-                pApp->InjectMouseWheel(m_mouseX, m_mouseY, static_cast<int16_t>(event.data.scroll.ydelta * 120.f), 0);
-            break;
+        // OpenVR scrolls in notches, the page in wheel units.
+        case vr::VREvent_ScrollSmooth: PageInput::MouseWheel(pApp, m_mouseX, m_mouseY, static_cast<int16_t>(event.data.scroll.ydelta * PageInput::kWheelNotch)); break;
         case vr::VREvent_KeyboardCharInput:
-            if (pApp)
-                InjectText(*pApp, event.data.keyboard.cNewInput);
+            PageInput::Text(pApp, event.data.keyboard.cNewInput, strnlen(event.data.keyboard.cNewInput, sizeof(event.data.keyboard.cNewInput)));
             break;
         case vr::VREvent_OverlayShown:
-        {
             spdlog::info("VRDashboard: tab opened (in game: {})", aOverlay.GetInGame());
             m_visible = true;
             m_logNextUpload = true;
-            aOverlay.SetActive(true);
-            // CEF may not repaint an unchanged page when it is shown again: resend the last frame.
-            std::scoped_lock lock(m_frame.Lock);
-            m_frame.Dirty = true;
+            aPage.SetShownBy(VRPage::kDashboard, true);
+            World::Get().ctx().at<MenuService>().Open(MenuSurface::kDashboard);
             break;
-        }
         case vr::VREvent_OverlayHidden:
             m_visible = false;
-            aOverlay.SetActive(false);
+            aPage.SetShownBy(VRPage::kDashboard, false);
+            World::Get().ctx().at<MenuService>().CloseOn(MenuSurface::kDashboard);
             break;
         default: break;
         }
     }
 }
 
-void VRDashboard::InjectText(OverlayApp& aApp, const char* acpUtf8) noexcept
+/**
+ * Show SteamVR's keyboard when a text field on the page asks for one while the tab is open, and hide it when asked.
+ *
+ * @param aPage The menu page, which holds the field's request.
+ */
+void VRDashboard::ForwardKeyboardRequest(VRPage& aPage) noexcept
 {
-    char utf8[9]{};
-    std::memcpy(utf8, acpUtf8, 8);
-
-    wchar_t text[9]{};
-    const int count = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, text, 9);
-
-    for (int i = 0; i < count && text[i]; ++i)
-    {
-        const wchar_t character = text[i];
-
-        // Editing keys arrive as control characters and need real key presses.
-        if (character == L'\b' || character == L'\n' || character == L'\r')
-        {
-            const uint16_t key = character == L'\b' ? VK_BACK : VK_RETURN;
-            aApp.InjectKey(KEYEVENT_RAWKEYDOWN, 0, key, 0);
-            if (key == VK_RETURN)
-                aApp.InjectKey(KEYEVENT_CHAR, 0, L'\r', 0);
-            aApp.InjectKey(KEYEVENT_KEYUP, 0, key, 0);
-            continue;
-        }
-
-        aApp.InjectKey(KEYEVENT_CHAR, 0, static_cast<uint16_t>(character), 0);
-    }
+    // SteamVR's keyboard belongs to the tab; a request while the tab is closed is dropped, as the in-game panel uses the page's own keyboard.
+    const VRPage::KeyboardRequest cRequest = aPage.TakeKeyboardRequest();
+    if (cRequest == VRPage::KeyboardRequest::kShow && m_visible)
+        m_pOverlay->ShowKeyboardForOverlay(m_handle, vr::k_EGamepadTextInputModeNormal, vr::k_EGamepadTextInputLineModeSingleLine, vr::KeyboardFlag_Minimal, "Skyrim Together", 256, "", 0);
+    else if (cRequest == VRPage::KeyboardRequest::kHide)
+        m_pOverlay->HideKeyboard();
 }
 
 #endif

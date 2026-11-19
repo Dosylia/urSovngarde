@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef SKYRIMVR
-
 #include <Services/SteamJoin.h>
 
 #include <atomic>
@@ -16,7 +14,8 @@ struct TransportService;
  *
  * It uses the game's own steam_api64.dll, as the voice chat does: no launcher and no hub.
  * This game's rich presence holds a SteamJoin share: the server it is on, or, when it hosts, the networks its server is reached on.
- * Friends in Skyrim VR showing one, or the launcher's code, go to the menu every few seconds.
+ * Friends in the same game (Skyrim VR, or flat Skyrim) showing one, or the launcher's code, go to the menu every few seconds.
+ * Steam shares rich presence only within one game, so a flat and a VR player join each other through the launcher's codes.
  * While sharing is on, the address the internet sees comes from a public STUN server, asked when hosting or when a friend hosts.
  */
 struct SteamFriendsService
@@ -66,5 +65,3 @@ private:
 
     entt::scoped_connection m_updateConnection;
 };
-
-#endif

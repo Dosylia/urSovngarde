@@ -177,29 +177,17 @@ void DebugService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
         m_showDebugStuff = !m_showDebugStuff;
     }
 
-    // F6 connects and disconnects. On VR it is the only way to connect, so it is in every build there.
-#if defined(SKYRIMVR) || !IS_MASTER
+    // F6 connects to the server connect.txt names, and disconnects, in every build of both games.
     if (GetAsyncKeyState(VK_F6))
     {
         if (!s_f6Pressed)
         {
             s_f6Pressed = true;
-
-#ifdef SKYRIMVR
-            // VR has no connect UI: VRConnectService reads the server from connect.txt.
             m_world.ctx().at<VRConnectService>().Toggle();
-#else
-            static char s_address[256] = "127.0.0.1:10578";
-            if (!m_transport.IsOnline())
-                m_transport.Connect(s_address);
-            else
-                m_transport.Close();
-#endif
         }
     }
     else
         s_f6Pressed = false;
-#endif
 
 #if (!IS_MASTER)
     if (GetAsyncKeyState(VK_F7))

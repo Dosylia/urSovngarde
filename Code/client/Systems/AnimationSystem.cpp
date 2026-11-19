@@ -310,10 +310,9 @@ void NoteBodyJump(const Actor* apActor, const glm::vec3& acSent, const bool aFro
     if (cJump > 300.f)
     {
         const auto* pPlayer = PlayerCharacter::Get();
-        spdlog::info("CorpseDiag: own body {:X} sent {:.0f} units from its last report, from ({:.0f}, {:.0f}, {:.0f}) to ({:.0f}, {:.0f}, {:.0f}), read from its {}; "
-                     "reference at ({:.0f}, {:.0f}, {:.0f}) in cell {:X}, attached {}, player at ({:.0f}, {:.0f}, {:.0f})",
-                     apActor->formID, cJump, it->second.x, it->second.y, it->second.z, acSent.x, acSent.y, acSent.z, aFromRoot ? "3D root" : "reference", apActor->position.x,
-                     apActor->position.y, apActor->position.z, apActor->parentCell ? apActor->parentCell->formID : 0, apActor->parentCell && apActor->parentCell->IsAttached(),
+        spdlog::info("CorpseDiag: own body {:X} sent {:.0f} units from its last report, from ({:.0f}) to ({:.0f}), read from its {}; "
+                     "reference at ({:.0f}) in cell {:X}, attached {}, player at ({:.0f}, {:.0f}, {:.0f})",
+                     apActor->formID, cJump, it->second, acSent, aFromRoot ? "3D root" : "reference", apActor->position, apActor->parentCell ? apActor->parentCell->formID : 0, apActor->parentCell && apActor->parentCell->IsAttached(),
                      pPlayer ? pPlayer->position.x : 0.f, pPlayer ? pPlayer->position.y : 0.f, pPlayer ? pPlayer->position.z : 0.f);
     }
     it->second = acSent;

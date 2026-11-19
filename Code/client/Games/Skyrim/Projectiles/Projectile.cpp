@@ -8,6 +8,7 @@
 #include <Events/ProjectileLaunchedEvent.h>
 #include <Games/Skyrim/Forms/TESObjectCELL.h>
 #include <Forms/SpellItem.h>
+#include <ReadableMemory.h>
 #include <PatchCheck.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VRBodySync.h>
@@ -52,10 +53,7 @@ static uint32_t ValidFormId(const void* apForm) noexcept
         return 0;
 
 #ifdef SKYRIMVR
-    MEMORY_BASIC_INFORMATION info{};
-    if (!VirtualQuery(apForm, &info, sizeof(info)) || info.State != MEM_COMMIT || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
-        return 0;
-    if (static_cast<const uint8_t*>(apForm) + sizeof(TESForm) > static_cast<const uint8_t*>(info.BaseAddress) + info.RegionSize)
+    if (!ReadableMemory::IsReadable(apForm, sizeof(TESForm)))
         return 0;
 #endif
 

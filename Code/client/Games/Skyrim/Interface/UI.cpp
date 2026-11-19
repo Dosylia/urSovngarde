@@ -1,4 +1,5 @@
 #include <Games/Skyrim/Interface/IMenu.h>
+#include <ReadableMemory.h>
 #include <Games/Skyrim/Interface/UI.h>
 #include <Misc/BSFixedString.h>
 #include <TiltedOnlinePCH.h>
@@ -85,22 +86,6 @@ static void UnfreezeMenu(IMenu* apEntry)
     if (apEntry->FreezesFramePause())
         apEntry->ClearFlag(IMenu::kFreezeFramePause);
 }
-
-// Whether a memory range is committed and readable, so a guessed pointer is checked before it is read.
-namespace
-{
-bool ReadableBytes(const void* apAddress, const size_t aBytes) noexcept
-{
-    if (!apAddress)
-        return false;
-    MEMORY_BASIC_INFORMATION info{};
-    if (!VirtualQuery(apAddress, &info, sizeof(info)))
-        return false;
-    if (info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
-        return false;
-    return reinterpret_cast<uintptr_t>(apAddress) + aBytes <= reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-}
-} // namespace
 
 static constexpr const char* kAllowList[] = {
     "TweenMenu",     "MagicMenu",     "InventoryMenu",
@@ -459,7 +444,7 @@ void UIMessageQueue__AddMessage(void* a1, const BSFixedString* a2, UIMessage::UI
     }
     // The game pointing its enemy meter (WSEnemyMeters) at someone: HUDData type 0xB with a non-zero actor handle at +0x28.
     // Remembered so the other player's meter never steals a real enemy's.
-    if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "WSEnemyMeters") == 0 && a3 == UIMessage::kUpdate && a4 && !s_sendingEnemyMeter && ReadableBytes(a4, 0x30) &&
+    if (a2 && a2->AsAscii() && strcmp(a2->AsAscii(), "WSEnemyMeters") == 0 && a3 == UIMessage::kUpdate && a4 && !s_sendingEnemyMeter && ReadableMemory::IsReadable(a4, 0x30) &&
         *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(a4) + 0x10) == 0xB && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(a4) + 0x28) != 0)
         s_lastGameEnemyMeterTargetAt = std::chrono::steady_clock::now();
 

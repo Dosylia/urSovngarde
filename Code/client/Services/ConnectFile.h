@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <istream>
 #include <string>
@@ -8,6 +10,20 @@
 // A player has their own, and a mod can ship the same file, which is how a mod list comes with its server.
 namespace ConnectFile
 {
+// The player's own folder in %LOCALAPPDATA%, for this file and the launcher's files.
+// One per game, so a flat and a VR game on one PC never read each other's.
+#ifdef SKYRIMVR
+constexpr const char* kFolderName = "SkyrimTogetherVR";
+#else
+constexpr const char* kFolderName = "SkyrimTogetherSE";
+#endif
+
+inline std::filesystem::path PlayerFolder()
+{
+    const char* cpLocalAppData = std::getenv("LOCALAPPDATA");
+    return std::filesystem::path(cpLocalAppData ? cpLocalAppData : "") / kFolderName;
+}
+
 struct Contents
 {
     std::string Address;
@@ -74,7 +90,7 @@ inline bool Parse(std::istream& aText, Contents& aContents)
 
 // The player's file comes first whenever it names a server.
 // Every join from the launcher writes it, a friend's code as a local tunnel, and a mod's file must not send that join elsewhere.
-inline bool Load(const std::string& acPlayerFile, const std::string& acModFile, Contents& aContents)
+inline bool Load(const std::filesystem::path& acPlayerFile, const std::filesystem::path& acModFile, Contents& aContents)
 {
     std::ifstream playerFile(acPlayerFile);
     if (playerFile && Parse(playerFile, aContents))

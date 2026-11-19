@@ -567,11 +567,9 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         }
     }
 
-    // A VR player's arms, hands and weapons (VRBodySync::OnFrameEnd).
-    // Off on flat for now: posed there, the copy's spine gets a rotation the renderer refuses and the whole body is not drawn.
-#ifdef SKYRIMVR
+    // A VR player's arms, hands and weapons (VRBodySync::OnFrameEnd), in VR builds and on flat screens.
+    // On flat only another player's copy is posed; an NPC body's pose stays unused there.
     VRBodySync::SetRemotePose(apActor, vrPose);
-#endif
 
     if (!apActor)
         return;
@@ -881,8 +879,8 @@ void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationCompone
             if (now >= s_nextLog)
             {
                 s_nextLog = now + std::chrono::seconds(10);
-                spdlog::info("JumpDiag: a buffered point was {:.0f} units from the one before it, at ({:.0f}, {:.0f}, {:.0f}); dropped the buffer so the actor arrives instead of flying. {} since the last line.",
-                             jump, acPoint.Position.x, acPoint.Position.y, acPoint.Position.z, s_since);
+                spdlog::info("JumpDiag: a buffered point was {:.0f} units from the one before it, at ({:.0f}); dropped the buffer so the actor arrives instead of flying. {} since the last line.",
+                             jump, acPoint.Position, s_since);
                 s_since = 0;
             }
         }

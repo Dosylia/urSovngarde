@@ -31,6 +31,8 @@ struct PartyService
     //! The party's players within 50 m of this one, this one included: what enemies are scaled to (GameplayFormulas::PartyEnemyHealth).
     [[nodiscard]] uint32_t GetPlayersNearby() const noexcept { return m_playersNearby; }
     const Map<uint32_t, String>& GetPlayers() const noexcept { return m_players; }
+    //! Whether another player plays flat Skyrim rather than Skyrim VR, as the server's player list says.
+    [[nodiscard]] bool IsFlatPlayer(uint32_t aPlayerId) const noexcept { return std::find(m_flatPlayers.begin(), m_flatPlayers.end(), aPlayerId) != m_flatPlayers.end(); }
     Map<uint32_t, uint64_t>& GetInvitations() noexcept { return m_invitations; }
 
     void CreateParty() const noexcept;
@@ -57,6 +59,7 @@ private:
     void SetPlayersNearby(uint32_t aPlayers) noexcept;
 
     Map<uint32_t, String> m_players;
+    Vector<uint32_t> m_flatPlayers;
     Map<uint32_t, uint64_t> m_invitations;
     uint64_t m_nextUpdate{0};
 

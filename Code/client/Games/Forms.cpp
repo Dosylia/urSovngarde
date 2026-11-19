@@ -9,6 +9,7 @@
 #include <SaveLoad.h>
 #include <Games/Overrides.h>
 #include <CrashHandler.h>
+#include <ModuleImage.h>
 
 // Returns the first word at this address, or 0 if reading it faults.
 // The caller wraps it in CrashGuard so the crash handler treats a fault in here as expected.
@@ -45,19 +46,13 @@ bool IsLiveGameObject(const TESForm* apForm) noexcept
     if (!apForm)
         return false;
 
-    static const auto s_image = []
-    {
-        const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-        const auto* pDos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-        const auto* pNt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + pDos->e_lfanew);
-        return std::pair<uintptr_t, uintptr_t>{base, base + pNt->OptionalHeader.SizeOfImage};
-    }();
+    static const ModuleImage::Range s_image = ModuleImage::RangeOf(GetModuleHandleW(nullptr));
 
     CrashGuard::Enter();
     const uintptr_t vtable = ReadFirstWord(apForm);
     CrashGuard::Leave();
 
-    return vtable >= s_image.first && vtable < s_image.second;
+    return vtable >= s_image.Begin && vtable < s_image.End;
 }
 
 // Whether what a lookup gave for this id is that form.

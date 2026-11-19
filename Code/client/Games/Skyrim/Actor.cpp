@@ -74,6 +74,8 @@
 #include <ModCompat/BehaviorVar.h>
 #include <PerfScope.h>
 #include <Services/PvpProjectiles.h>
+#include <Services/PvpRules.h>
+#include <FiniteVector.h>
 
 namespace
 {
@@ -1397,10 +1399,10 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
 
     if (pExHittee->IsLocalPlayer())
     {
-        if (!World::Get().GetServerSettings().PvpEnabled)
+        // Another player's hit here, a replayed arrow included, counts only between players who may fight.
         {
             const ActorExtension* pHitterExtension = apHitter ? apHitter->GetExtension() : nullptr;
-            if (pHitterExtension && pHitterExtension->IsRemotePlayer())
+            if (pHitterExtension && pHitterExtension->IsRemotePlayer() && !PvpRules::IsAllowedWithCopy(apHitter))
                 return false;
         }
 
@@ -1447,7 +1449,7 @@ bool TP_MAKE_THISCALL(HookDamageActor, Actor, float aDamage, Actor* apHitter, bo
         // With PvP on, the hit is sent as a health change, which the other side applies to its own player (floored at zero).
         // Only this player's own hits are sent: the other game already handles what its own NPCs do, so forwarding those doubles them.
         const ActorExtension* pPvpHitterExtension = apHitter ? apHitter->GetExtension() : nullptr;
-        if (World::Get().GetServerSettings().PvpEnabled && realDamage > 0.f && pPvpHitterExtension && pPvpHitterExtension->IsLocalPlayer())
+        if (PvpRules::IsAllowedWithCopy(apThis) && realDamage > 0.f && pPvpHitterExtension && pPvpHitterExtension->IsLocalPlayer())
         {
 #ifdef SKYRIMVR
             // The other player's sword is a body in this world (VRBodySync), and PLANCK counts a swing into any such body as a hit.
@@ -1973,9 +1975,8 @@ static TMovementDirection* RealMovementDirection = nullptr;
 
 static void HookMovementDirection(const MovementTarget* apTarget, const NiPoint3* apPosition, const NiPoint3* apAngles, float aHeight, NiPoint3* apDirection)
 {
-    const auto cFinite = [](const NiPoint3& acPoint) { return std::isfinite(acPoint.x) && std::isfinite(acPoint.y) && std::isfinite(acPoint.z); };
     const bool cPlace = apTarget->Kind == 2 || apTarget->Kind == 3;
-    if (!cPlace || (cFinite(apTarget->Position) && cFinite(*apPosition)))
+    if (!cPlace || (IsFiniteVector(apTarget->Position) && IsFiniteVector(*apPosition)))
     {
         RealMovementDirection(apTarget, apPosition, apAngles, aHeight, apDirection);
         return;
@@ -1988,8 +1989,7 @@ static void HookMovementDirection(const MovementTarget* apTarget, const NiPoint3
 
     static std::atomic<uint64_t> s_next{0};
     if (SecondPassed(s_next))
-        spdlog::warn("NonFinite: a movement target at ({}, {}, {}) for the actor at ({}, {}, {}), facing ({:.2f}, {:.2f}), not followed", apTarget->Position.x,
-                     apTarget->Position.y, apTarget->Position.z, apPosition->x, apPosition->y, apPosition->z, apAngles->x, apAngles->z);
+        spdlog::warn("NonFinite: a movement target at ({}) for the actor at ({}), facing ({:.2f}, {:.2f}), not followed", apTarget->Position, *apPosition, apAngles->x, apAngles->z);
 }
 
 static void HookNonFiniteGuards() noexcept

@@ -47,6 +47,8 @@ struct BotOptions
     std::optional<glm::vec2> Start; // where to look for the host first; else read from HostLog
     std::string HostLog;            // the host's tp_client.log, for the position guess
     float Spacing = 200.f;          // spawn this far from the host (game units)
+    //! Tell the server this bot plays flat Skyrim, so games apply the rules between a flat and a VR player to it.
+    bool Flat = false;
     //! The worldspace to look in, as the game's form id (Solstheim is 0x02000800 in a load order where
     //! Dragonborn.esm is index 2). Empty means Tamriel, which is where this used to be nailed down: the bot
     //! could not see a host anywhere else, and 2026-09-24 was spent discovering that rather than testing.

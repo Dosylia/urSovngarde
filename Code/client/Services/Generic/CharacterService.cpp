@@ -881,8 +881,8 @@ void NoteDownedTravel(uint32_t aFormId) noexcept
     if (cMoved > 30.f && cNow - it->second.SaidAt > 5s)
     {
         it.value().SaidAt = cNow;
-        spdlog::info("DownedTravel: own NPC {:X} moved {:.0f} units in {} ms while down (life state {}, knock state {}), now at ({:.0f}, {:.0f}, {:.0f})", aFormId, cMoved,
-                     std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count(), cLife, cKnock, cAt.x, cAt.y, cAt.z);
+        spdlog::info("DownedTravel: own NPC {:X} moved {:.0f} units in {} ms while down (life state {}, knock state {}), now at ({:.0f})", aFormId, cMoved,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(cNow - it->second.Since).count(), cLife, cKnock, cAt);
     }
     it.value().From = cAt;
     it.value().Since = cNow;
@@ -1941,12 +1941,12 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
             {
                 DiscoveryService::NoteMovedHere(pActor->formID);
                 pActor->MoveTo(pOutdoors, acMessage.Position);
-                spdlog::info("Assignment: {:X} left this place with its owner (world space {:X}, position ({:.0f}, {:.0f}, {:.0f}))", pActor->formID,
-                             acMessage.WorldSpaceId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+                spdlog::info("Assignment: {:X} left this place with its owner (world space {:X}, position ({:.0f}))", pActor->formID,
+                             acMessage.WorldSpaceId.BaseId, acMessage.Position);
             }
             else
-                spdlog::info("Assignment: {:X} not moved to its owner's place, beyond the loaded area here (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))",
-                             pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+                spdlog::info("Assignment: {:X} not moved to its owner's place, beyond the loaded area here (world space {:X}, cell {:X}, position ({:.0f}))",
+                             pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position);
         }
         else
             MoveActor(pActor, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position);
@@ -2025,11 +2025,11 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
                     {
                         const glm::vec3 wanted{acMessage.Position.x, acMessage.Position.y, acMessage.Position.z};
                         if (newestTick == 0)
-                            spdlog::info("Character {:X} had no update yet and the server has re-sent it; moving the copy to where the server says ({:.0f}, {:.0f}, {:.0f})",
-                                         acMessage.ServerId, wanted.x, wanted.y, wanted.z);
+                            spdlog::info("Character {:X} had no update yet and the server has re-sent it; moving the copy to where the server says ({:.0f})",
+                                         acMessage.ServerId, wanted);
                         else
-                            spdlog::info("Character {:X} was {} ms without an update and the server has re-sent it; moving the copy to where the server says ({:.0f}, {:.0f}, {:.0f})",
-                                         acMessage.ServerId, currentTick - newestTick, wanted.x, wanted.y, wanted.z);
+                            spdlog::info("Character {:X} was {} ms without an update and the server has re-sent it; moving the copy to where the server says ({:.0f})",
+                                         acMessage.ServerId, currentTick - newestTick, wanted);
 
                         // The buffered points predate the silence and would drag the copy back through where it was.
                         pInterpolation->TimePoints.clear();
@@ -3324,9 +3324,9 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     const bool cActorLoaded = IsActorLoadedHere(pActor);
     if (!cPlaceLoaded && (!cActorLoaded || acMessage.WorldSpaceId))
     {
-        spdlog::info("Teleport of actor {:X} not made: {} (world space {:X}, cell {:X}, position ({:.0f}, {:.0f}, {:.0f}))", pActor->formID,
+        spdlog::info("Teleport of actor {:X} not made: {} (world space {:X}, cell {:X}, position ({:.0f}))", pActor->formID,
                      cActorLoaded ? "it goes out beyond the loaded area here" : "it is not loaded here, nor is the place it goes to", acMessage.WorldSpaceId.BaseId,
-                     acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+                     acMessage.CellId.BaseId, acMessage.Position);
         // Only from an interior, to a world this game has: the assignment moves nothing else, and a copy left here unmoved would stand frozen.
         const auto* pTargetWorld = Cast<TESWorldSpace>(TESForm::GetById(modSystem.GetGameId(acMessage.WorldSpaceId)));
         if (cActorLoaded && !pActor->GetWorldSpace() && pTargetWorld && pTargetWorld->GetPersistentCell())
@@ -3339,8 +3339,8 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     }
 
     if (MoveActor(pActor, acMessage.WorldSpaceId, acMessage.CellId, acMessage.Position))
-        spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId,
-                     acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+        spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({})", pActor->formID, acMessage.WorldSpaceId.BaseId,
+                     acMessage.CellId.BaseId, acMessage.Position);
 }
 
 void CharacterService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
@@ -3378,7 +3378,7 @@ bool CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
 
     if (!pCell)
     {
-        spdlog::error(__FUNCTION__ ": failed to fetch cell to teleport, actor: {:X}, worldspace: {:X}, cell: {:X}, position: {}, {}, {}", apActor->formID, acWorldSpaceId.BaseId, acCellId.BaseId, acPosition.x, acPosition.y, acPosition.z);
+        spdlog::error(__FUNCTION__ ": failed to fetch cell to teleport, actor: {:X}, worldspace: {:X}, cell: {:X}, position: {}", apActor->formID, acWorldSpaceId.BaseId, acCellId.BaseId, acPosition);
         return false;
     }
 
@@ -3899,8 +3899,8 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
         else
             spdlog::info(
                 "Transferring ownership of local actor, server id: {:X}, epoch: {}, worldspace: {:X}, cell: {:X}, position: "
-                "({}, {}, {})",
-                request.ServerId, request.OwnershipEpoch, request.WorldSpaceId.BaseId, request.CellId.BaseId, request.Position.x, request.Position.y, request.Position.z);
+                "({})",
+                request.ServerId, request.OwnershipEpoch, request.WorldSpaceId.BaseId, request.CellId.BaseId, request.Position);
 
         m_transport.Send(request);
 
@@ -4384,8 +4384,7 @@ void CharacterService::RunLocalUpdates() const noexcept
                 s_holdSent = cHold;
                 s_holdSentAt = now;
                 spdlog::info("ArrowNocked: sent this player's arrow {}{}", cNocked ? "on the string" : cHold.InHand ? "in the hand" : "gone",
-                             cHold.InHand ? fmt::format(" ({} hand, its head at ({:.0f}, {:.0f}, {:.0f}) in the hand bone's space)", cHold.Side ? "right" : "left", cHold.Offset.x,
-                                                        cHold.Offset.y, cHold.Offset.z)
+                             cHold.InHand ? fmt::format(" ({} hand, its head at ({:.0f}) in the hand bone's space)", cHold.Side ? "right" : "left", cHold.Offset)
                                           : std::string());
             }
         }
@@ -5296,9 +5295,9 @@ void CharacterService::SendClashes() noexcept
         request.Speed = clash.Speed;
         request.Tick = cTick;
         m_transport.Send(request);
-        spdlog::info("Clash: our {} ({:.0f} units from its HIGGS body) met the {} weapon of {:X} (server {}) at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units a second; felt{} here, sent",
+        spdlog::info("Clash: our {} ({:.0f} units from its HIGGS body) met the {} weapon of {:X} (server {}) at ({:.0f}), {:.0f} units a second; felt{} here, sent",
                      clash.OwnSide == 0 ? "left hand" : clash.OwnSide == 1 ? "right hand" : "hand or weapon", clash.HandDistance, clash.Side ? "right" : "left", clash.FormId, request.OtherId,
-                     clash.Point.x, clash.Point.y, clash.Point.z, clash.Speed, clash.Heard ? " and heard" : "");
+                     clash.Point, clash.Speed, clash.Heard ? " and heard" : "");
     }
 #endif
 }
@@ -5311,9 +5310,9 @@ void CharacterService::OnNotifyClash(const NotifyClash& acMessage) const noexcep
     const bool cOurs = it && view.get<LocalComponent>(*it).Id == acMessage.OtherId;
     const glm::vec3 point(acMessage.Point);
     const int64_t cAgo = static_cast<int64_t>(m_transport.GetClock().GetCurrentTick()) - static_cast<int64_t>(acMessage.Tick);
-    spdlog::info("Clash from server {}: their {} met {} {} weapon at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units a second, {} ms ago", acMessage.FromId,
+    spdlog::info("Clash from server {}: their {} met {} {} weapon at ({:.0f}), {:.0f} units a second, {} ms ago", acMessage.FromId,
                  acMessage.OwnSide == 0 ? "left hand" : acMessage.OwnSide == 1 ? "right hand" : "hand or weapon", cOurs ? "our" : fmt::format("{}'s", acMessage.OtherId),
-                 acMessage.OtherSide ? "right" : "left", point.x, point.y, point.z, acMessage.Speed, cAgo);
+                 acMessage.OtherSide ? "right" : "left", point, acMessage.Speed, cAgo);
 #ifdef SKYRIMVR
     // Heard by everyone near it, felt by the one whose weapon it was.
     const bool cHeard = VRBodySync::PlayClashSound(point);

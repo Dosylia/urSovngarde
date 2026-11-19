@@ -12,6 +12,8 @@ target("TPTests")
     add_files("../client/Systems/PlaybackClock.cpp")
     -- Who may revive whom (ReviveRules): plain values in and out.
     add_files("../server/ReviveRules.cpp")
+    -- Which plugin differences between two players are worth a warning (PluginRules): plain values in and out.
+    add_files("../server/PluginRules.cpp")
     -- The shared clock, for the hours a sleep adds.
     add_files("../common/DateTime.cpp")
     -- Where a Steam friend's server is reached from: plain values in and out.

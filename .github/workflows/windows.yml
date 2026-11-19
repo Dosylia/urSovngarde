@@ -139,8 +139,8 @@ jobs:
             - name: Remove unnecessary build files, keep .pdb
               if: ${{ inputs.upload-build-for-next-job }}
               run: |
-                  mv str-build/SkyrimTogetherReborn/SkyrimTogether.pdb str-pdb/
-                  mv str-build/SkyrimTogetherReborn/SkyrimTogetherServer.pdb str-pdb/
+                  mv str-build/SkyrimTogetherReborn/urSovngardeSE.pdb str-pdb/
+                  mv str-build/SkyrimTogetherReborn/urSovngardeServer.pdb str-pdb/
                   rm -f str-build/SkyrimTogetherReborn/*.pdb str-build/SkyrimTogetherReborn/*.lib str-build/SkyrimTogetherReborn/*.exp
                   rm -f str-build/SkyrimTogetherReborn/*Tests.exe
 

@@ -80,6 +80,7 @@ jobs:
       - name: Build the client, the server and the menu's process
         run: |
           xmake build SkyrimImmersiveLauncherVR
+          xmake build SkyrimImmersiveLauncher
           xmake build SkyrimServerRunner
           xmake build TPProcess
 
@@ -134,6 +135,17 @@ jobs:
         shell: pwsh
         run: ./Tools/VR/make-release.ps1 -ClientFolder distrib/bin
 
+      # Flat Skyrim's client, beside VR's: the same browser files and menu, its own program and folders.
+      - name: Gather flat Skyrim's run-time files
+        run: |
+          xmake install -o distrib-se SkyrimTogetherClient
+          xmake install -o distrib-se TPProcess
+          cp -r Code/skyrim_ui/dist/UI distrib-se/bin/
+
+      - name: Package flat Skyrim's release
+        shell: pwsh
+        run: ./Tools/VR/make-release.ps1 -Flat -ClientFolder distrib-se/bin
+
       - uses: actions/upload-artifact@v7
         with:
           name: urSovngarde-release
@@ -171,6 +183,16 @@ jobs:
           for suffix in "" "-update" "-server"; do
             test -f "release-files/urSovngarde-${GITHUB_REF_NAME}${suffix}.zip"
           done
+          for suffix in "" "-update"; do
+            test -f "release-files/urSovngarde-SE-${GITHUB_REF_NAME}${suffix}.zip"
+          done
+          # Launchers before cross-play take the biggest full zip, so flat Skyrim's must stay smaller than VR's.
+          vr_size=$(stat -c %s "release-files/urSovngarde-${GITHUB_REF_NAME}.zip")
+          se_size=$(stat -c %s "release-files/urSovngarde-SE-${GITHUB_REF_NAME}.zip")
+          if [ "$se_size" -ge "$vr_size" ]; then
+            echo "Flat Skyrim's zip ($se_size bytes) is not smaller than VR's ($vr_size bytes): older launchers would download it."
+            exit 1
+          fi
           for arch in amd64 arm64; do
             archive="release-files/urSovngardeServer-${GITHUB_REF_NAME#v}-linux-${arch}.tar.gz"
             tar -tzf "$archive" | grep -Eq '(^|/)urSovngardeServer$'

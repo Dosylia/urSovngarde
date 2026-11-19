@@ -103,8 +103,7 @@ NiPoint3 PlayerCharacter::RespawnPlayer(TESObjectCELL* apSafePointCell, const Ni
     if (apSafePointCell)
     {
         const char* cpSafeEditorId = apSafePointCell->GetFormEditorID();
-        spdlog::info("RespawnPlayer: at the safe point in cell {:X} '{}', ({:.0f}, {:.0f}, {:.0f})", apSafePointCell->formID, cpSafeEditorId ? cpSafeEditorId : "", acSafePoint.x,
-                     acSafePoint.y, acSafePoint.z);
+        spdlog::info("RespawnPlayer: at the safe point in cell {:X} '{}', ({:.0f})", apSafePointCell->formID, cpSafeEditorId ? cpSafeEditorId : "", acSafePoint);
         MoveTo(apSafePointCell, acSafePoint);
         SetNoBleedoutRecovery(true);
         return acSafePoint;

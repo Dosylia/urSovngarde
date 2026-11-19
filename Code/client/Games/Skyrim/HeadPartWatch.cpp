@@ -2,6 +2,7 @@
 
 #ifdef SKYRIMVR
 #include <CrashHandler.h>
+#include <ReadableMemory.h>
 #include <Games/Skyrim/GameStack.h>
 #include <Games/Skyrim/HeadPartWatch.h>
 #include <Games/Skyrim/Interface/UI.h>
@@ -117,7 +118,7 @@ void* GeometryOf(void* apChild) noexcept
 std::string TextAt(const char* apText) noexcept
 {
     char text[64]{};
-    for (size_t i = 0; apText && i + 1 < sizeof(text) && GameStack::Readable(apText + i, 1) && apText[i]; ++i)
+    for (size_t i = 0; apText && i + 1 < sizeof(text) && ReadableMemory::IsReadable(apText + i, 1) && apText[i]; ++i)
         text[i] = apText[i];
     return text;
 }
@@ -127,7 +128,7 @@ std::string TextAt(const char* apText) noexcept
 std::string ClassOf(const void* apVTable) noexcept
 {
     const void* pLocator = nullptr;
-    if (!apVTable || !SafeRead(static_cast<const void* const*>(apVTable) - 1, pLocator) || !GameStack::Readable(pLocator, 0x18))
+    if (!apVTable || !SafeRead(static_cast<const void* const*>(apVTable) - 1, pLocator) || !ReadableMemory::IsReadable(pLocator, 0x18))
         return {};
     const auto* pFields = static_cast<const uint32_t*>(pLocator);
     // x64 locators hold their own offset from the module, so the module is found without knowing which one it is.

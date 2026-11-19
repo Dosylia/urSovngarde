@@ -221,8 +221,8 @@ void ReviveService::OnSafePoint(const PacketEvent<SafePointRequest>& acMessage) 
     point.WorldSpaceId = cPacket.WorldSpaceId;
     point.Position = cPacket.Position;
     spdlog::info(
-        "Revive: player {} '{}' has a new safe point in cell {:X}:{:X} (worldspace {:X}:{:X}) at ({:.0f}, {:.0f}, {:.0f})", pPlayer->GetId(), pPlayer->GetUsername().c_str(),
-        cPacket.CellId.ModId, cPacket.CellId.BaseId, cPacket.WorldSpaceId.ModId, cPacket.WorldSpaceId.BaseId, cPacket.Position.x, cPacket.Position.y, cPacket.Position.z);
+        "Revive: player {} '{}' has a new safe point in cell {:X}:{:X} (worldspace {:X}:{:X}) at ({:.0f})", pPlayer->GetId(), pPlayer->GetUsername().c_str(),
+        cPacket.CellId.ModId, cPacket.CellId.BaseId, cPacket.WorldSpaceId.ModId, cPacket.WorldSpaceId.BaseId, cPacket.Position);
 }
 
 void ReviveService::OnPlayerRespawn(const PacketEvent<PlayerRespawnRequest>& acMessage) noexcept

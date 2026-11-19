@@ -77,6 +77,10 @@ export class RootComponent implements OnInit {
   menuOpen$ = this.client.openingMenuChange.asObservable();
   inGame$ = this.client.inGameStateChange.asObservable();
   active$ = this.client.activationStateChange.asObservable();
+  // Where the open menu is shown, for styles that differ per surface; null while closed.
+  openSurface$ = combineLatest([this.active$, this.client.surfaceChange]).pipe(
+    map(([active, surface]) => (active && surface ? surface : null)),
+  );
   connectionInProgress$ = this.client.isConnectionInProgressChange.asObservable();
   version$ = this.client.versionSet.asObservable();
   hasError$ = this.errorService.error$.pipe(map(error => !!error));

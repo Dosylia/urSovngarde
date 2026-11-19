@@ -98,10 +98,9 @@ void DroppedItemService::OnAdd(const PacketEvent<RequestDroppedItemAdd>& acMessa
     const auto [it, inserted] = m_items.emplace(item.Id, item);
     Save();
 
-    spdlog::info("Dropped item {} registered: {:X}:{:X} x{} by player {:X}{}, cell {:X}, worldspace {:X}, at ({:.0f}, {:.0f}, {:.0f})", item.Id,
+    spdlog::info("Dropped item {} registered: {:X}:{:X} x{} by player {:X}{}, cell {:X}, worldspace {:X}, at ({:.0f})", item.Id,
                  item.Entry.BaseId.ModId, item.Entry.BaseId.BaseId, item.Entry.Count, acMessage.pPlayer->GetId(),
-                 message.Announcement ? " (announced from an earlier drop)" : "", item.CellId.BaseId, item.WorldSpaceId.BaseId, item.Position.x,
-                 item.Position.y, item.Position.z);
+                 message.Announcement ? " (announced from an earlier drop)" : "", item.CellId.BaseId, item.WorldSpaceId.BaseId, item.Position);
 
     // Sent to the dropper as well, so its client learns the item's id.
     const CellIdComponent cell = CellOf(it->second);

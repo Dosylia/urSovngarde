@@ -1,0 +1,78 @@
+@import 'env';
+
+// Along the bottom of the panel, or its top when the field is in the lower half, over the popups.
+// Sized in pixels, not rem: the page's text-size setting must not make the keys too small for a laser or too big for the panel.
+.app-keyboard {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  background: rgba(24, 21, 18, 0.96);
+  border: 1px solid rgba(200, 169, 110, 0.6);
+  border-radius: 8px;
+  font-family: $-font-default;
+
+  &.at-top {
+    top: 12px;
+    bottom: auto;
+  }
+}
+
+// What is typed, for a field the keyboard covers.
+.app-keyboard-echo {
+  min-height: 24px;
+  padding: 2px 8px;
+  color: #f0e6d2;
+  font-size: 18px;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid rgba(200, 169, 110, 0.35);
+}
+
+.app-keyboard-row {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+}
+
+.app-keyboard-key {
+  min-width: 38px;
+  height: 38px;
+  padding: 0 6px;
+  color: #f0e6d2;
+  font-size: 18px;
+  // The page's buttons are all capitals otherwise, and the keys must show what they type.
+  text-transform: none;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(200, 169, 110, 0.35);
+  border-radius: 5px;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(200, 169, 110, 0.3);
+  }
+
+  &.wide {
+    min-width: 56px;
+  }
+
+  &.space {
+    min-width: 190px;
+  }
+
+  &.on {
+    background: rgba(200, 169, 110, 0.5);
+  }
+
+  &.locked {
+    background: rgba(200, 169, 110, 0.8);
+    color: #181512;
+  }
+}

@@ -1,9 +1,10 @@
 """Joins a friend from the dashboard's "Join a friend" panel on the rig, with a stand-in launcher.
 
-    python Tools/VR/live-launcher-join.py
+    python Tools/VR/live-launcher-join.py           the VR game (headless.ps1 up)
+    python Tools/VR/live-launcher-join.py --flat    the flat game (Tools/Flat/flat-rig.ps1 up), alone on the PC
 
-The rig must be up and connected to its local server (headless.ps1 up).
-The script plays the launcher's side of the contract in %LOCALAPPDATA%\\SkyrimTogetherVR: it writes launcher.json with
+The rig must be up and connected to its local server.
+The script plays the launcher's side of the contract in the game's own folder (%LOCALAPPDATA%\\SkyrimTogetherVR, or SkyrimTogetherSE on flat): it writes launcher.json with
 no friends (the game reads Steam itself), answers the page's launcher-request.json, and writes connect.txt as the launcher does once a code
 is looked up. connect.txt then names the rig's own server by this PC's network address instead of 127.0.0.1, so the
 log shows the game read the new file, and the join is a real leave and connect.
@@ -12,7 +13,7 @@ The page is driven through its real buttons, over CEF's debugging port (127.0.0.
 Checks: the menu has the button; the panel offers a code field; Join sends the typed code; the game leaves its server
 and connects to what connect.txt names; the panel closes. Then a code no server has shows the panel's error, and the
 game stays on its server.
-The script removes the two launcher files at the end; headless.ps1 down puts connect.txt back.
+The script removes the two launcher files at the end; the rig's down (headless.ps1, or flat-rig.ps1 for --flat) puts connect.txt back.
 """
 import base64
 import json
@@ -32,8 +33,20 @@ CLIENT_DIR = next(
     (path for path in (os.path.join(FUS_ROOT, 'tools', name) for name in ('Skyrim Together VR', 'urSovngarde')) if os.path.isfile(os.path.join(path, 'urSovngarde.exe'))),
     os.path.join(FUS_ROOT, 'tools', 'Skyrim Together VR'),
 )
+FLAT = '--flat' in sys.argv[1:]
+if FLAT:
+    # Both games open the page's debugging port, so the flat game runs alone for this test.
+    flat_root = os.environ.get('SKYRIM_FLAT_ROOT')
+    if not flat_root:
+        import winreg  # a user variable set after this shell started is only in the registry
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment') as key:
+                flat_root = winreg.QueryValueEx(key, 'SKYRIM_FLAT_ROOT')[0]
+        except OSError:
+            sys.exit('INVALID: no SKYRIM_FLAT_ROOT user variable naming the flat rig')
+    CLIENT_DIR = os.path.join(flat_root, 'tools', 'Skyrim Together')
 CLIENT_LOG = os.path.join(CLIENT_DIR, 'logs', 'tp_client.log')
-FOLDER = os.path.join(os.environ['LOCALAPPDATA'], 'SkyrimTogetherVR')
+FOLDER = os.path.join(os.environ['LOCALAPPDATA'], 'SkyrimTogetherSE' if FLAT else 'SkyrimTogetherVR')
 STATE = os.path.join(FOLDER, 'launcher.json')
 REQUEST = os.path.join(FOLDER, 'launcher-request.json')
 CONNECT = os.path.join(FOLDER, 'connect.txt')
@@ -225,7 +238,7 @@ def main():
             print('INVALID: a real launcher wrote launcher.json; close it before this test')
             return 2
     if not os.path.isfile(CONNECT):
-        print('INVALID: no connect.txt; bring the rig up with headless.ps1 up')
+        print('INVALID: no connect.txt; bring the rig up with ' + ('Tools/Flat/flat-rig.ps1 up' if FLAT else 'headless.ps1 up'))
         return 2
     with open(CONNECT, encoding='utf8') as handle:
         connect_lines = handle.read().splitlines()

@@ -92,7 +92,7 @@ function Hide-UserName([string]$Text) { $Text -replace '([\\/]Users[\\/])[^\\/\r
 $events = @()
 try {
     $events += @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000, 1001, 1002; StartTime = $since } -ErrorAction Stop |
-        Where-Object { $_.Message -match 'urSovngarde\.exe|SkyrimVR\.exe' })
+        Where-Object { $_.Message -match 'urSovngarde\.exe|SkyrimVR\.exe|urSovngardeSE\.exe|SkyrimSE\.exe' })
 } catch { }
 try {
     $events += @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 4101; StartTime = $since } -ErrorAction Stop)

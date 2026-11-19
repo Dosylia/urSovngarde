@@ -2,6 +2,7 @@
 
 #include <Camera/CameraView.h>
 #include <Games/Skyrim/Interface/Menus/HUDMenuUtils.h>
+#include <FiniteVector.h>
 
 namespace CameraView
 {
@@ -12,7 +13,7 @@ bool ShowsBody(const NiPoint3& acPoint, const float aMargin) noexcept
     NiPoint3 screen{};
     if (!HUDMenuUtils::WorldPtToScreenPt3(acPoint, screen))
         return false;
-    if (!std::isfinite(screen.x) || !std::isfinite(screen.y) || !std::isfinite(screen.z) || screen.z < 0.f)
+    if (!IsFiniteVector(screen) || screen.z < 0.f)
         return false;
     return screen.x > -aMargin && screen.x < 1.f + aMargin && screen.y > -aMargin && screen.y < 1.f + aMargin;
 }

@@ -787,8 +787,7 @@ void PlayerService::RecordSafePoint() noexcept
     m_ownSafePoint.WorldSpaceId = request.WorldSpaceId;
     m_ownSafePoint.Position = pPlayer->position;
     const char* cpEditorId = pCell->GetFormEditorID();
-    spdlog::info("PlayerService: safe point in cell {:X} '{}' at ({:.0f}, {:.0f}, {:.0f})", pCell->formID, cpEditorId ? cpEditorId : "", pPlayer->position.x, pPlayer->position.y,
-                 pPlayer->position.z);
+    spdlog::info("PlayerService: safe point in cell {:X} '{}' at ({:.0f})", pCell->formID, cpEditorId ? cpEditorId : "", pPlayer->position);
 }
 
 void PlayerService::StandUp(const uint32_t aReviverId) noexcept

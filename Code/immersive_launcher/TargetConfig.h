@@ -21,7 +21,7 @@ struct TargetConfig
 static constexpr TargetConfig CurrentTarget{ L"Skyrim Special Edition", 489830, 0x40000000 };
 #define TARGET_NAME L"SkyrimSE"
 #define TARGET_NAME_A "SkyrimSE"
-#define PRODUCT_NAME L"Skyrim Together"
+#define PRODUCT_NAME L"urSovngarde"
 #define SHORT_NAME L"Skyrim Special Edition"
 #else
 // The game load buffer is 80MB (SkyrimVR.exe is ~60MB) instead of SE's 1GB.

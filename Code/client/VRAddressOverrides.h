@@ -3142,7 +3142,11 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     // Read from the running game: its player reset (0x1406cb6b3) takes this lock with BSSpinLock::Lock (SE 12210), then empties the list at +0xAE8.
     { 9000013u, 0x2fffe50u },
 
-    // BSOpenVRControllerDevice's vtable, which tells the game's VR controller devices apart (VRHaptics::GripsHeld).
+    // BSOpenVRControllerDevice's vtable, which tells the game's VR controller devices apart (VRControllers' IsControllerDevice).
     // CommonLibVR's Offsets_VTABLE.h: VTABLE_BSOpenVRControllerDevice.
     { 9000014u, 0x17e87c0u },
+
+    // The input poll's call that hands the polled events to the game's listeners (SE 67315 and AE 68617 +0x7B; VR poll 0xc519e0 +0x81).
+    // SKSE VR hooks the same call. Read from the game image: rcx is the device manager, rdx the address of the event list's head.
+    { 9000015u, 0x0c51a61u },
 };

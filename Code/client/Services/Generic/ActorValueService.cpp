@@ -20,6 +20,7 @@
 #include <PlayerCharacter.h>
 #include <Games/Skyrim/DeathCause.h>
 #include <Services/PvpProjectiles.h>
+#include <Services/PvpRules.h>
 
 #include <Messages/NotifyActorValueChanges.h>
 #include <Messages/RequestActorValueChanges.h>
@@ -567,6 +568,20 @@ void ActorValueService::RunHeldHits() noexcept
 
 void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcast& acMessage) noexcept
 {
+    // Another player's hit on this player counts only between players who may fight.
+    if (acMessage.DeltaHealth < 0.f && acMessage.AttackerPlayerId && !PvpRules::IsAllowedWithPlayer(acMessage.AttackerPlayerId) &&
+        Utils::GetByServerId<Actor>(acMessage.Id) == PlayerCharacter::Get())
+    {
+        static std::chrono::steady_clock::time_point s_nextSaid{};
+        if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextSaid)
+        {
+            s_nextSaid = cNow + std::chrono::seconds(5);
+            spdlog::info("PvP: a hit of {:.0f} from player {} not taken: the two may not fight here (PvP off, or one plays flat Skyrim and the other VR)", -acMessage.DeltaHealth,
+                         acMessage.AttackerPlayerId);
+        }
+        return;
+    }
+
 #ifdef SKYRIMVR
     // Another player's hit on this player waits for the defender's rule (RunHeldHits).
     // A spell's hit has no tick and goes straight on: no weapon can block it, and it is not an arrow's.

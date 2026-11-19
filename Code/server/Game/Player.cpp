@@ -31,6 +31,7 @@ Player::Player(Player&& aRhs) noexcept
     , m_standing{aRhs.m_standing}
     , m_place{std::exchange(aRhs.m_place, {})}
     , m_hiddenFromPublicPage{aRhs.m_hiddenFromPublicPage}
+    , m_flat{aRhs.m_flat}
 {
 }
 

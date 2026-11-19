@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <SaveLoad.h>
+#include <ReadableMemory.h>
 
 // TEMPORARY: logs every save load request with its file and caller.
 // It looks for what sends a connected player to the main menu; this client never loads a save itself.
@@ -66,19 +67,9 @@ std::string CaptureStack() noexcept
     return frames;
 }
 
-bool Readable(const void* apAddress, const size_t aBytes) noexcept
-{
-    MEMORY_BASIC_INFORMATION info{};
-    if (!apAddress || !VirtualQuery(apAddress, &info, sizeof(info)))
-        return false;
-    if (info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
-        return false;
-    return reinterpret_cast<uintptr_t>(apAddress) + aBytes <= reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-}
-
 std::string FirstWords(const void* apObject, const int aCount) noexcept
 {
-    if (!Readable(apObject, aCount * 8))
+    if (!ReadableMemory::IsReadable(apObject, aCount * 8))
         return "(unreadable)";
     std::string words;
     const uint64_t* pWords = static_cast<const uint64_t*>(apObject);

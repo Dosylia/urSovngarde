@@ -11,6 +11,8 @@
 #include <Systems/RenderSystemD3D11.h>
 #ifdef SKYRIMVR
 #include <Systems/VRDashboard.h>
+#include <Systems/VRPage.h>
+#include <Systems/VRPanel.h>
 #endif
 
 #include <World.h>
@@ -156,8 +158,11 @@ void OverlayService::CreateVR() noexcept
         return;
     m_vrOverlayAttempted = true;
 
+    // The page renders offscreen; the presenters (the SteamVR dashboard, the panel inside the game) show its pictures.
+    m_pVRPage = TiltedPhoques::MakeUnique<VRPage>();
     m_pVRDashboard = TiltedPhoques::MakeUnique<VRDashboard>();
-    CreateOverlay(m_pVRDashboard.get());
+    m_pVRPanel = TiltedPhoques::MakeUnique<VRPanel>();
+    CreateOverlay(m_pVRPage.get());
 }
 #endif
 
@@ -204,8 +209,13 @@ void OverlayService::Render() noexcept
     m_pOverlay->GetClient()->Render();
 
 #ifdef SKYRIMVR
-    if (m_pVRDashboard)
-        m_pVRDashboard->Update(*this);
+    // The presenters first, which say whether they show the page; then the page, told whether it is seen.
+    if (m_pVRPage && m_pVRDashboard)
+        m_pVRDashboard->Update(*this, *m_pVRPage);
+    if (m_pVRPage && m_pVRPanel)
+        m_pVRPanel->Update(*this, *m_pVRPage);
+    if (m_pVRPage)
+        m_pVRPage->Update(*this);
 #endif
 }
 
@@ -259,6 +269,12 @@ bool OverlayService::GetActive() const noexcept
     return m_active;
 }
 
+void OverlayService::SetSurface(const char* acpSurface) noexcept
+{
+    m_surface = acpSurface;
+    PushUiState();
+}
+
 void OverlayService::SetInGame(bool aInGame) noexcept
 {
     if (!m_pOverlay)
@@ -309,6 +325,15 @@ void OverlayService::PushUiState() noexcept
         {
             m_pOverlay->ExecuteAsync("exitGame");
         }
+    }
+
+    // Before activate, so the page fits its controls to where it is shown as it opens.
+    if (m_sentSurface != m_surface)
+    {
+        m_sentSurface = m_surface;
+        auto pArguments = CefListValue::Create();
+        pArguments->SetString(0, m_surface);
+        m_pOverlay->ExecuteAsync("setSurface", pArguments);
     }
 
     if (m_sentActive != m_active)
@@ -398,9 +423,7 @@ void OverlayService::OnUpdate(const UpdateEvent&) noexcept
 
 void OverlayService::OnConnectedEvent(const ConnectedEvent& acEvent) noexcept
 {
-#ifdef SKYRIMVR
     Utils::ShowHudMessage("urSovngarde: connected (build " BUILD_COMMIT ")");
-#endif
     if (!m_pOverlay)
         return;
 
@@ -415,7 +438,7 @@ void OverlayService::OnDisconnectedEvent(const DisconnectedEvent&) noexcept
 {
     m_playerHealth.clear();
 
-    // On VR the disconnection message comes from VRConnectService, which knows whether it will reconnect.
+    // The disconnection message comes from VRConnectService, which knows whether it will reconnect.
     if (!m_pOverlay)
         return;
 

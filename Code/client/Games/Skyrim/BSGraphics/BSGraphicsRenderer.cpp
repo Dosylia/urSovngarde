@@ -10,6 +10,7 @@
 #include <Games/Skyrim/VRBodySync.h>
 #ifdef SKYRIMVR
 #include <PatchCheck.h>
+#include <Services/ConnectFile.h>
 #endif
 
 // shared resource by launcher
@@ -90,8 +91,7 @@ void Hook_StopTimer(int type)
 static TiltedPhoques::Initializer s_secondGameInTest(
     []()
     {
-        const char* cLocalAppData = std::getenv("LOCALAPPDATA");
-        if (!cLocalAppData || !std::filesystem::exists(std::filesystem::path(cLocalAppData) / "SkyrimTogetherVR" / "two-games.on"))
+        if (!std::filesystem::exists(ConnectFile::PlayerFolder() / "two-games.on"))
             return;
 
         auto* pCall = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + 0x5B5969;

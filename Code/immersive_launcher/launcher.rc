@@ -28,10 +28,10 @@ BEGIN
             VALUE "InternalName", "urSovngarde"
             VALUE "OriginalFilename", "urSovngarde.exe"
 #else
-            VALUE "ProductName", "Skyrim Together"
-            VALUE "FileDescription", "Skyrim Together (Skyrim co-op)"
-            VALUE "InternalName", "SkyrimTogether"
-            VALUE "OriginalFilename", "SkyrimTogether.exe"
+            VALUE "ProductName", "urSovngarde"
+            VALUE "FileDescription", "urSovngarde (Skyrim Special Edition co-op)"
+            VALUE "InternalName", "urSovngardeSE"
+            VALUE "OriginalFilename", "urSovngardeSE.exe"
 #endif
             VALUE "FileVersion", BUILD_FILEVERSION
             VALUE "ProductVersion",	BUILD_BRANCH "@" BUILD_COMMIT

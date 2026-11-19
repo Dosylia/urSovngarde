@@ -40,6 +40,7 @@ extern void* RipAllocateN(size_t blockLength);
 #include <entt/entt.hpp>
 #include <spdlog/spdlog.h>
 #include <glm/glm.hpp>
+#include <base/VectorFormat.h>
 #include <glm/gtx/norm.hpp>
 
 #include <any>

@@ -2,6 +2,7 @@
 
 #include <Services/InputService.h>
 #include <Services/OverlayService.h>
+#include <Services/MenuService.h>
 
 #include <OverlayApp.hpp>
 
@@ -97,20 +98,6 @@ bool IsDisableKey(int aKey) noexcept
     return aKey == VK_ESCAPE;
 }
 
-void SetUIActive(OverlayService& aOverlay, auto apRenderer, bool aActive)
-{
-    TiltedPhoques::DInputHook::Get().SetEnabled(aActive);
-    aOverlay.SetActive(aActive);
-
-    // enterGame is not resent here: OverlayService::PushUiState sends it once the page has loaded.
-
-    apRenderer->SetCursorVisible(aActive);
-
-    // This is to disable the Windows cursor
-    while (ShowCursor(FALSE) >= 0)
-        ;
-}
-
 void ProcessKeyboard(uint16_t aKey, uint16_t aScanCode, cef_key_event_type_t aType, bool aE0, bool aE1)
 {
     if (aType != KEYEVENT_CHAR)
@@ -193,13 +180,9 @@ void ProcessKeyboard(uint16_t aKey, uint16_t aScanCode, cef_key_event_type_t aTy
 
     if (aType != KEYEVENT_CHAR && (IsToggleKey(aKey) || (IsDisableKey(aKey) && active)))
     {
-        if (!overlay.GetInGame())
+        if (overlay.GetInGame() && aType == KEYEVENT_KEYUP)
         {
-            TiltedPhoques::DInputHook::Get().SetEnabled(false);
-        }
-        else if (aType == KEYEVENT_KEYUP)
-        {
-            SetUIActive(overlay, pRenderer, !active);
+            World::Get().ctx().at<MenuService>().Toggle(MenuSurface::kScreen);
         }
     }
     else if (active)
@@ -414,9 +397,7 @@ LRESULT CALLBACK InputService::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
     // When player tabs in, force the UI state
     else if (uMsg == WM_SETFOCUS && s_pOverlay->GetActive())
     {
-        TiltedPhoques::DInputHook::Get().SetEnabled(true);
-        s_pOverlay->SetActive(true);
-        pRenderer->SetCursorVisible(true);
+        World::Get().ctx().at<MenuService>().Refresh();
     }
     else if (uMsg == WM_INPUTLANGCHANGE)
     {

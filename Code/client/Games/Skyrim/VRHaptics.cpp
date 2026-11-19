@@ -1,6 +1,8 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Games/Skyrim/VRHaptics.h>
+#include <Games/Skyrim/VRRuntime.h>
+#include <Games/Skyrim/VRControllers.h>
 
 #ifdef SKYRIMVR
 
@@ -12,8 +14,6 @@ namespace
 {
 using namespace std::chrono_literals;
 
-// The game has already brought OpenVR up through its own openvr_api.dll, and asking that DLL shares the game's session.
-// A second copy of the DLL would not be connected to SteamVR.
 vr::IVRSystem* GetVRSystem() noexcept
 {
     static vr::IVRSystem* s_pSystem = nullptr;
@@ -33,17 +33,7 @@ vr::IVRSystem* GetVRSystem() noexcept
     if (now >= s_giveUpAt)
         return nullptr;
 
-    HMODULE hOpenVR = GetModuleHandleW(L"openvr_api.dll");
-    if (!hOpenVR)
-        return nullptr;
-
-    using TGetGenericInterface = void*(const char*, vr::EVRInitError*);
-    auto* pGetInterface = reinterpret_cast<TGetGenericInterface*>(GetProcAddress(hOpenVR, "VR_GetGenericInterface"));
-    if (!pGetInterface)
-        return nullptr;
-
-    vr::EVRInitError error = vr::VRInitError_None;
-    s_pSystem = static_cast<vr::IVRSystem*>(pGetInterface(vr::IVRSystem_Version, &error));
+    s_pSystem = VRRuntime::GetOpenVRSystem();
     return s_pSystem;
 }
 } // namespace
@@ -71,9 +61,6 @@ bool Pulse(const bool aRightHand, uint16_t aDurationMicroSec) noexcept
 
 Grips GripsHeld() noexcept
 {
-    // The grip button, or Axis2, which Oculus Touch controllers report for the grip.
-    constexpr uint64_t cGripMask = (1ull << vr::k_EButton_Grip) | (1ull << vr::k_EButton_Axis2);
-
     Grips grips{};
 
     if (vr::IVRSystem* pSystem = GetVRSystem())
@@ -82,29 +69,12 @@ Grips GripsHeld() noexcept
         {
             const vr::TrackedDeviceIndex_t cDevice = pSystem->GetTrackedDeviceIndexForControllerRole(cRole);
             vr::VRControllerState_t state{};
-            if (cDevice != vr::k_unTrackedDeviceIndexInvalid && pSystem->GetControllerState(cDevice, &state, sizeof(state)) && (state.ulButtonPressed & cGripMask) != 0)
+            if (cDevice != vr::k_unTrackedDeviceIndexInvalid && pSystem->GetControllerState(cDevice, &state, sizeof(state)) && VRControllers::IsGripPressed(state.ulButtonPressed))
                 ++grips.OpenVR;
         }
     }
 
-    // BSInputDeviceManager keeps its devices in a list at 0x60; slots 3 to 8 are the VR controllers, two per headset type.
-    // Only a BSOpenVRControllerDevice (known by its vtable) is read: its last poll's state sits at 0xC0.
-    POINTER_SKYRIMSE(const uint8_t*, s_inputDeviceManager, 516574, 516574);
-    POINTER_SKYRIMSE(void, s_controllerVtable, 9000014, 9000014);
-    const uintptr_t cControllerVtable = reinterpret_cast<uintptr_t>(s_controllerVtable.GetPtr());
-    const uint8_t* const* ppManager = s_inputDeviceManager.Get();
-    if (const uint8_t* pManager = ppManager && cControllerVtable ? *ppManager : nullptr)
-    {
-        for (int slot = 3; slot <= 8; ++slot)
-        {
-            const uint8_t* pDevice = *reinterpret_cast<const uint8_t* const*>(pManager + 0x60 + slot * sizeof(void*));
-            if (!pDevice || *reinterpret_cast<const uintptr_t*>(pDevice) != cControllerVtable)
-                continue;
-            const auto& cState = *reinterpret_cast<const vr::VRControllerState_t*>(pDevice + 0xC0);
-            if ((cState.ulButtonPressed & cGripMask) != 0)
-                ++grips.Game;
-        }
-    }
+    grips.Game = VRControllers::GripsHeld();
 
     return grips;
 }

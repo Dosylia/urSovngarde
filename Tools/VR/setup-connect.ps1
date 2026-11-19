@@ -1,7 +1,9 @@
-# Writes %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt, the server the game connects to on its own.
+# Writes connect.txt, the server the game connects to on its own: %LOCALAPPDATA%\SkyrimTogetherVR for Skyrim VR,
+# %LOCALAPPDATA%\SkyrimTogetherSE beside flat Skyrim's urSovngardeSE.exe.
 $ErrorActionPreference = 'Stop'
 
-$folder = Join-Path $env:LOCALAPPDATA 'SkyrimTogetherVR'
+$gameFolder = if (Test-Path (Join-Path $PSScriptRoot 'urSovngardeSE.exe')) { 'SkyrimTogetherSE' } else { 'SkyrimTogetherVR' }
+$folder = Join-Path $env:LOCALAPPDATA $gameFolder
 $file = Join-Path $folder 'connect.txt'
 New-Item -ItemType Directory -Force $folder | Out-Null
 

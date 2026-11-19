@@ -1,6 +1,6 @@
 // STBot: a headless Skyrim Together player driven by a script. See Bot.h and VR_TODO.md section 6.1.
 //
-//   STBot <script> [--server host:port] [--password X] [--name X] [--x N --y N] [--hostlog path] [--spacing N]
+//   STBot <script> [--server host:port] [--password X] [--name X] [--x N --y N] [--hostlog path] [--spacing N] [--flat]
 //
 // The script is one command per line, '#' starts a comment:
 //   log <text>                      print
@@ -168,6 +168,10 @@ int main(int argc, char** argv)
         {
             options.Standalone = true;
         }
+        else if (arg == "--flat")
+        {
+            options.Flat = true;
+        }
         else if (arg == "--max-runtime" && next(value))
         {
             options.MaxRuntime = std::strtof(value.c_str(), nullptr);
@@ -200,7 +204,7 @@ int main(int argc, char** argv)
 
     if (scriptPath.empty())
     {
-        spdlog::error("Usage: STBot <script> [--server host:port] [--password X] [--name X] [--x N --y N] [--hostlog path] [--spacing N] [--version]");
+        spdlog::error("Usage: STBot <script> [--server host:port] [--password X] [--name X] [--x N --y N] [--hostlog path] [--spacing N] [--flat] [--version]");
         return 2;
     }
 

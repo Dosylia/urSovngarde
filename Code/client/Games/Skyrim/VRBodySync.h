@@ -133,12 +133,22 @@ bool CopySpellAim(uint32_t aFormId, float& aZAngle, float& aXAngle) noexcept;
 //! A cheap fingerprint of the local transforms of the first nodes below an actor's 3D root; 0 when the actor has no 3D.
 //! Equal fingerprints across frames on a moving body mean its animation graph is not advancing.
 uint64_t SkeletonMotionFingerprint(Actor* apActor) noexcept;
-//! Angle in degrees between where the headset points and a world position, to tell whether the player is looking at it.
-//! 0 is dead centre; -1 when the headset node cannot be read on this build.
+/**
+ * Work out how far a position is from where the player is looking, to tell whether they are looking at it.
+ *
+ * @param acPosition A position in the game's world.
+ * @return The angle in degrees, 0 dead centre; -1 without the headset's node; 180, straight behind, when its numbers are broken.
+ */
 float HeadsetAngleTo(const NiPoint3& acPosition) noexcept;
 
-//! Where the headset is in the world and where it faces, for placing other players' voices.
-//! False when the headset node cannot be read on this build.
+/**
+ * Find where the player's head is and which way it faces, to place other players' voices around it.
+ *
+ * @param aPosition Set to where the head is in the game's world.
+ * @param aForward Set to which way it faces.
+ * @param aRight Set to which way is its right.
+ * @return False when the headset cannot be read; the three values are then left as they were.
+ */
 bool HeadsetPose(glm::vec3& aPosition, glm::vec3& aForward, glm::vec3& aRight) noexcept;
 
 //! Whether the game has moved the VR rig away from the player, as the world map does (to its camera, ~107000 units).

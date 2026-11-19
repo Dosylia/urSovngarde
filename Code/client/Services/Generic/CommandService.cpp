@@ -36,7 +36,7 @@ void CommandService::OnSetTimeCommand(const SetTimeCommandEvent& acEvent) const 
 
 void CommandService::OnTeleportCommandResponse(const TeleportCommandResponse& acMessage) noexcept
 {
-    spdlog::info("TeleportCommandResponse: {:X}:{:X} at position {}, {}, {}", acMessage.CellId.ModId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+    spdlog::info("TeleportCommandResponse: {:X}:{:X} at position {}", acMessage.CellId.ModId, acMessage.CellId.BaseId, acMessage.Position);
     auto& modSystem = m_world.GetModSystem();
 
     const uint32_t cellId = modSystem.GetGameId(acMessage.CellId);

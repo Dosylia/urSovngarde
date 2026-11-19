@@ -2,6 +2,7 @@
 
 #ifdef SKYRIMVR
 #include <CrashHandler.h>
+#include <ReadableMemory.h>
 #include <Games/Skyrim/BoneHold.h>
 #include <Games/Skyrim/EyeBoneWatch.h>
 #include <Games/Skyrim/GameStack.h>
@@ -59,7 +60,7 @@ template <class T> bool SafeRead(const void* apAddress, T& aOut) noexcept
 std::string TextAt(const char* apText) noexcept
 {
     char text[64]{};
-    for (size_t i = 0; apText && i + 1 < sizeof(text) && GameStack::Readable(apText + i, 1) && apText[i]; ++i)
+    for (size_t i = 0; apText && i + 1 < sizeof(text) && ReadableMemory::IsReadable(apText + i, 1) && apText[i]; ++i)
         text[i] = apText[i];
     return text;
 }

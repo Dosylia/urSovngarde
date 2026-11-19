@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef SKYRIMVR
-
 #include <optional>
 
 #include <Events/EventDispatcher.h>
@@ -14,9 +12,9 @@ struct DisconnectedEvent;
 struct ConnectionErrorEvent;
 
 /**
- * @brief Connects VR players without a keyboard or a menu.
+ * @brief Connects players without a keyboard or a menu: in VR, and on flat from the launcher.
  *
- * The server comes from %LOCALAPPDATA%\SkyrimTogetherVR\connect.txt: "address:port", then an optional password line.
+ * The server comes from connect.txt in the player's folder (ConnectFile::PlayerFolder): "address:port", then an optional password line.
  * When that file names no server, it comes from the same file in a mod: Data\SKSE\Plugins\urSovngarde\connect.txt.
  * A few seconds after a save is loaded the client connects on its own if the file says "autoconnect=on", and otherwise waits for F6.
  * A dropped connection is retried with a growing delay.
@@ -49,6 +47,8 @@ struct VRConnectService final : BSTEventSink<TESLoadGameEvent>
     // Its addresses come best first; one that does not answer gives way to the next.
     // connect.txt stays as it was, so the next game starts with the player's own server.
     void ConnectTo(const std::vector<std::string>& acAddresses, const std::string& acPassword) noexcept;
+    // A server picked in the menu's own connect form or server list, the same way: connect.txt stays as it was.
+    void ConnectToServer(const std::string& acAddress, const std::string& acPassword) noexcept;
     // The menu's Disconnect or Cancel: closes the connection or the attempt, and stops the retries.
     void Stop() noexcept;
 
@@ -79,9 +79,11 @@ private:
     TransportService& m_transport;
 
     State m_state{State::kIdle};
-    // A Steam friend's server, used instead of connect.txt while set, and its addresses still to try.
+    // A server picked in the menu (a Steam friend's, or one from its connect form), used instead of connect.txt while set.
+    // A friend's other addresses still to try.
     std::optional<Config> m_chosen;
     std::vector<std::string> m_chosenNext;
+    bool m_chosenIsFriend{false};
     bool m_autoConnectDone{false};
     uint32_t m_failedAttempts{0};
     std::chrono::steady_clock::time_point m_inGameSince{};
@@ -106,5 +108,3 @@ private:
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_connectionErrorConnection;
 };
-
-#endif

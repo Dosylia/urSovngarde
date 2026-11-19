@@ -15,6 +15,9 @@ declare namespace SkyrimTogetherTypes {
   /** UI deactivation callback */
   type DeactivateCallback = () => void;
 
+  /** Where the menu is shown: 'dashboard' (SteamVR's tab), 'panel' (inside the game, in VR) or 'screen' (over a flat game). */
+  type SurfaceCallback = (surface: string) => void;
+
   /** Player game entry callback */
   type EnterGameCallback = () => void;
 
@@ -118,6 +121,9 @@ interface SkyrimTogether {
     event: 'deactivate',
     callback: SkyrimTogetherTypes.DeactivateCallback,
   ): void;
+
+  /** Add listener to where the menu is shown, sent before it is activated there. */
+  on(event: 'setSurface', callback: SkyrimTogetherTypes.SurfaceCallback): void;
 
   /** Add listener to when the player enters a game. */
   on(event: 'enterGame', callback: SkyrimTogetherTypes.EnterGameCallback): void;
@@ -245,6 +251,9 @@ interface SkyrimTogether {
 
   /** Remove listener from when the UI is activated. */
   off(event: 'activate', callback?: SkyrimTogetherTypes.ActivateCallback): void;
+
+  /** Remove listener from where the menu is shown. */
+  off(event: 'setSurface', callback?: SkyrimTogetherTypes.SurfaceCallback): void;
 
   /** Remove listener from when the UI is deactivated. */
   off(

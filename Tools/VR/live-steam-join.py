@@ -88,7 +88,8 @@ def main():
             return 'retried'
         return text[start:].splitlines()[0].rsplit(' by ', 1)[1].strip()
     outcome = shared.wait(rejoined, 40)
-    check('the join leaves the server and connects at once, by the home network', outcome == 'lan', outcome or 'nothing within 40 s')
+    # The first address the join tries is the home network's; others after it ("lan, then vlan") were never needed when no retry shows.
+    check('the join leaves the server and connects at once, by the home network', bool(outcome) and outcome.split(',')[0] == 'lan', outcome or 'nothing within 40 s')
 
     find_button = "Array.from(document.querySelectorAll('.app-root-menu button')).find(b => b.textContent.includes('Join a friend'))"
     page.evaluate(f'{find_button}?.click()')

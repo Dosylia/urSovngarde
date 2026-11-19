@@ -1,7 +1,5 @@
 #include <TiltedOnlinePCH.h>
 
-#ifdef SKYRIMVR
-
 #include <Services/SteamFriendsService.h>
 #include <Services/JsonText.h>
 #include <Services/OverlayService.h>
@@ -36,7 +34,11 @@ constexpr auto kNetworksEvery = 30s;
 constexpr auto kRequestEvery = 30s;
 constexpr auto kResendFriendsEvery = 30s;
 constexpr auto kPublicAgainAfter = 5min;
-constexpr uint32_t kSkyrimVrApp = 611670;
+#ifdef SKYRIMVR
+constexpr uint32_t kGameApp = 611670;
+#else
+constexpr uint32_t kGameApp = 489830;
+#endif
 constexpr int kImmediateFriends = 0x04;
 constexpr size_t kMaxFriends = 50;
 constexpr ULONG kAddressFamilyV6 = 23; // AF_INET6, which the first sockets API leaves out
@@ -474,7 +476,7 @@ void SteamFriendsService::SendFriends(const std::chrono::steady_clock::time_poin
     {
         const uint64_t cId = m_steam->GetFriendByIndex(m_steam->Friends, i, kImmediateFriends);
         FriendGameInfo game{};
-        if (!m_steam->GetFriendGamePlayed(m_steam->Friends, cId, &game) || (game.GameId & 0xFFFFFF) != kSkyrimVrApp || (game.GameId >> 24 & 0xFF) != 0)
+        if (!m_steam->GetFriendGamePlayed(m_steam->Friends, cId, &game) || (game.GameId & 0xFFFFFF) != kGameApp || (game.GameId >> 24 & 0xFF) != 0)
             continue;
         if (cRequest)
             m_steam->RequestFriendRichPresence(m_steam->Friends, cId);
@@ -543,5 +545,3 @@ void SteamFriendsService::SendToPage(const char* apEvent, const std::string& acT
     pArguments->SetString(0, acText);
     pApp->ExecuteAsync(apEvent, pArguments);
 }
-
-#endif

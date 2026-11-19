@@ -6,11 +6,10 @@
 #include <Services/OverlayClient.h>
 #include <Services/TransportService.h>
 #include <Services/VoiceService.h>
-#ifdef SKYRIMVR
 #include <Services/VRConnectService.h>
+#include <Services/MenuService.h>
 #include <Services/LauncherLinkService.h>
 #include <Services/SteamFriendsService.h>
-#endif
 
 #include <Messages/SendChatMessageRequest.h>
 #include <Messages/TeleportRequest.h>
@@ -109,7 +108,6 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             const bool cMuted = eventArgs->GetBool(1);
             World::Get().GetRunner().Queue([cPlayerId, cMuted]() { World::Get().ctx().at<VoiceService>().SetPlayerMuted(cPlayerId, cMuted); });
         }
-#ifdef SKYRIMVR
         else if (eventName == "launcherJoin")
         {
             const std::string cRequest = eventArgs->GetString(0);
@@ -139,7 +137,6 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             const std::string cText = std::string(eventArgs->GetString(0)).substr(0, 200);
             World::Get().GetRunner().Queue([cText]() { Utils::ShowHudMessage(TiltedPhoques::String(("urSovngarde: " + cText).c_str())); });
         }
-#endif
 
         return true;
     }
@@ -156,30 +153,25 @@ void OverlayClient::ProcessConnectMessage(CefRefPtr<CefListValue> aEventArgs)
     }
 
     uint16_t port = aEventArgs->GetInt(1) ? aEventArgs->GetInt(1) : 10578;
-    World::Get().GetTransport().SetServerPassword(aEventArgs->GetString(2));
+    const std::string cPassword = aEventArgs->GetString(2);
+    const std::string cEndpoint = baseIp + ":" + std::to_string(port);
 
-    std::string endpoint = baseIp + ":" + std::to_string(port);
-
-    World::Get().GetRunner().Queue([endpoint] { World::Get().GetTransport().Connect(endpoint); });
+    // Through the connect service, which then reconnects to this server after a drop or another character's save, not to connect.txt's.
+    World::Get().GetRunner().Queue([cEndpoint, cPassword] { World::Get().ctx().at<VRConnectService>().ConnectToServer(cEndpoint, cPassword); });
 }
 
 void OverlayClient::ProcessDisconnectMessage()
 {
-#ifdef SKYRIMVR
     // Closing the transport directly looks like a dropped line to the connect service, which then reconnects.
     // Stop() marks the disconnect as chosen, whether the game was online, connecting or waiting to retry.
     World::Get().GetRunner().Queue([]() { World::Get().ctx().at<VRConnectService>().Stop(); });
-#else
-    World::Get().GetRunner().Queue([]() { World::Get().GetTransport().Close(); });
-#endif
 }
 
 void OverlayClient::ProcessRevealPlayersMessage()
 {
-#ifndef SKYRIMVR
-    SetUIVisible(false);
-#endif
-    // On VR the menu stays: it says the players glow once it is closed, when the game runs again.
+    // A flat screen's menu closes so the player sees the glow.
+    // In VR the menu stays: it says the players glow once it is closed.
+    World::Get().GetRunner().Queue([]() { World::Get().ctx().at<MenuService>().CloseOn(MenuSurface::kScreen); });
     // The effect goes on actors, so it starts on the game's thread, not CEF's.
     World::Get().GetRunner().Queue([]() { World::Get().GetMagicService().StartRevealingOtherPlayers(); });
 }
@@ -220,13 +212,3 @@ void OverlayClient::ProcessToggleDebugUI()
     World::Get().GetDebugService().m_showDebugStuff = !World::Get().GetDebugService().m_showDebugStuff;
 }
 
-void OverlayClient::SetUIVisible(bool aVisible) noexcept
-{
-    auto pRenderer = GetOverlayRenderHandler();
-    if (!pRenderer)
-        return;
-
-    TiltedPhoques::DInputHook::Get().SetEnabled(aVisible);
-    World::Get().GetOverlayService().SetActive(aVisible);
-    pRenderer->SetCursorVisible(aVisible);
-}

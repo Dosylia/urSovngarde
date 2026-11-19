@@ -2,6 +2,7 @@
 
 #include <Games/Skyrim/VRBodySync.h>
 #include <Games/Skyrim/VRHaptics.h>
+#include <Games/Skyrim/VRControllers.h>
 #include <Games/Skyrim/GameSound.h>
 
 #include <Actor.h>
@@ -13,10 +14,13 @@
 #include <Forms/TESObjectARMO.h>
 #include <NetImmerse/NiNode.h>
 #include <NetImmerse/NiTransform.h>
+#include <NetImmerse/NiGlm.h>
 
 #include <glm/gtc/quaternion.hpp>
 
 #include <PerfScope.h>
+#include <ReadableMemory.h>
+#include <FiniteVector.h>
 #ifndef SKYRIMVR
 #include <Camera/CameraView.h>
 #endif
@@ -52,9 +56,15 @@ constexpr uint32_t kWorldBoundOffset = 0xE4;
 constexpr uint32_t kVTableGetRttiSlot = 2; // NiObject::GetRTTI
 constexpr uint32_t kVTableAsNodeSlot = 3;  // NiObject::AsNode
 
-// BSFlattenedBoneTree, as measured on SkyrimVR 1.4.15 by TiltedEvolutionVR.
-// The skeleton keeps a flat array of every bone; flattened-away bones (fingers, face) only exist there.
+// BSFlattenedBoneTree: the skeleton keeps a flat array of every bone; flattened-away bones (fingers, face) only exist there.
+#ifdef SKYRIMVR
+// As measured on SkyrimVR 1.4.15 by TiltedEvolutionVR.
 constexpr uint32_t kTreeBoneArray = 0x158;
+#else
+// As measured on 1.7.104, where the count sits just before the array.
+constexpr uint32_t kTreeBoneArray = 0x130;
+constexpr uint32_t kTreeBoneCount = 0x128;
+#endif
 constexpr uint32_t kBoneEntrySize = 0x80;
 constexpr uint32_t kBoneEntryLocal = 0x00;
 constexpr uint32_t kBoneEntryWorld = 0x34;
@@ -98,69 +108,24 @@ const char* GetName(void* apObject) noexcept
     return At<const char*>(apObject, kNameOffset);
 }
 
+/**
+ * Find the node one entry of a raw bone array points to.
+ *
+ * @param apEntry The bone's entry, as the game keeps it.
+ * @return The bone's node, or null when the bone was flattened away.
+ */
+void* NodeOfEntry(const uint8_t* apEntry) noexcept
+{
+    void* pNode = nullptr;
+    std::memcpy(&pNode, apEntry + kBoneEntryNode, sizeof(pNode));
+    return pNode;
+}
+
 void* AsNode(void* apObject) noexcept
 {
     using TAsNode = void*(__fastcall*)(void*);
     auto** ppVTable = *static_cast<void***>(apObject);
     return static_cast<TAsNode>(ppVTable[kVTableAsNodeSlot])(apObject);
-}
-
-// Regions VirtualQuery has already found readable, kept while a ReadableRegionScope is open on this thread.
-// VirtualQuery is slow in a big process, and checking a bone array asks about hundreds of entries in the same regions.
-// Kept for one scope only, since a region can be released at any time.
-struct ReadableRegion
-{
-    uintptr_t Begin = 0;
-    uintptr_t End = 0;
-};
-thread_local std::array<ReadableRegion, 16>* t_pReadableRegions = nullptr;
-thread_local size_t t_nextReadableRegion = 0;
-
-struct ReadableRegionScope
-{
-    std::array<ReadableRegion, 16> Regions{};
-    std::array<ReadableRegion, 16>* pOuter = nullptr;
-
-    ReadableRegionScope() noexcept
-        : pOuter(t_pReadableRegions)
-    {
-        if (!pOuter)
-            t_pReadableRegions = &Regions;
-    }
-    ~ReadableRegionScope()
-    {
-        if (!pOuter)
-            t_pReadableRegions = nullptr;
-    }
-};
-
-// Only used while resolving a skeleton, never per frame: VirtualQuery is a system call.
-bool IsReadable(const void* apPointer, size_t aSize) noexcept
-{
-    if (!apPointer)
-        return false;
-
-    const auto cBegin = reinterpret_cast<uintptr_t>(apPointer);
-    if (t_pReadableRegions)
-        for (const ReadableRegion& region : *t_pReadableRegions)
-            if (cBegin >= region.Begin && cBegin + aSize <= region.End)
-                return true;
-
-    MEMORY_BASIC_INFORMATION info{};
-    if (!VirtualQuery(apPointer, &info, sizeof(info)) || info.State != MEM_COMMIT || (info.Protect & PAGE_GUARD))
-        return false;
-
-    constexpr DWORD cReadable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
-    if (!(info.Protect & cReadable))
-        return false;
-
-    if (t_pReadableRegions)
-    {
-        const auto cRegionBegin = reinterpret_cast<uintptr_t>(info.BaseAddress);
-        (*t_pReadableRegions)[t_nextReadableRegion++ % t_pReadableRegions->size()] = ReadableRegion{cRegionBegin, cRegionBegin + info.RegionSize};
-    }
-
-    return reinterpret_cast<uintptr_t>(apPointer) + aSize <= reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
 }
 
 // Breadth-first search for the shallowest node with this name.
@@ -301,39 +266,6 @@ bool FullBodyTrackingActive() noexcept
     if (active)
         s_module = matched;
     return active;
-}
-
-// NiMatrix3 is row-major (data[row][col]), glm is column-major.
-glm::mat3 ToGlm(const NiMatrix3& acMatrix) noexcept
-{
-    glm::mat3 result{};
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            result[c][r] = acMatrix.data[r][c];
-    return result;
-}
-
-NiMatrix3 FromGlm(const glm::mat3& acMatrix) noexcept
-{
-    NiMatrix3 result{};
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            result.data[r][c] = acMatrix[c][r];
-    return result;
-}
-
-glm::vec3 ToGlm(const NiPoint3& acPoint) noexcept
-{
-    return {acPoint.x, acPoint.y, acPoint.z};
-}
-
-NiPoint3 FromGlm(const glm::vec3& acPoint) noexcept
-{
-    NiPoint3 result{};
-    result.x = acPoint.x;
-    result.y = acPoint.y;
-    result.z = acPoint.z;
-    return result;
 }
 
 // Defined further down, with the rig.
@@ -563,7 +495,7 @@ struct RigBone
     {
         if (pNode && *static_cast<void**>(pNode) != NodeVTable)
             return false;
-        return !pEntry || *reinterpret_cast<void**>(pEntry + kBoneEntryNode) == EntryNode;
+        return !pEntry || NodeOfEntry(pEntry) == EntryNode;
     }
 
     [[nodiscard]] bool ChildrenUnchanged() const noexcept
@@ -603,11 +535,18 @@ RigBone MakeRigBone(void* apNode, uint8_t* apEntry) noexcept
         bone.ChildFingerprint = ChildFingerprintOf(bone.pChildOwner);
     }
     if (apEntry)
-        bone.EntryNode = *reinterpret_cast<void**>(apEntry + kBoneEntryNode);
+        bone.EntryNode = NodeOfEntry(apEntry);
     return bone;
 }
 
-// The skeleton of one remote player, resolved once per 3D.
+// The two-sided finger arrays (Fingers, FingersFound) hold the left hand first, then the right.
+// Not VRPose::kLeftHand and kRightHand, which are the hand bones' places in the skeleton.
+constexpr size_t kLeftSide = 0;
+constexpr size_t kRightSide = 1;
+
+/**
+ * The skeleton of one remote player, resolved once per 3D.
+ */
 struct Rig
 {
     void* pRoot = nullptr;
@@ -637,52 +576,80 @@ struct Rig
 
 std::unordered_map<uint32_t, Rig> s_rigs; // frame end only
 
+/**
+ * Find the node one bone of a raw bone array points to.
+ *
+ * @param apArray The bone array, as the game keeps it.
+ * @param aIndex Which bone, counted from 0.
+ * @return The bone's node, or null when the bone has none.
+ */
+void* GetBoneNode(const uint8_t* apArray, uint32_t aIndex) noexcept
+{
+    return NodeOfEntry(apArray + static_cast<size_t>(aIndex) * kBoneEntrySize);
+}
+
+/**
+ * Check if a bone array really holds as many bones as its count says, before reading through it.
+ * The count must be between 1 and kMaxBones, the whole array readable, and every bone's node readable or absent.
+ *
+ * @param apArray The bone array, as the game keeps it.
+ * @param aCount How many bones the game says it holds.
+ * @return True when the array can be read safely with that count.
+ */
+bool IsPlausibleBoneCount(const uint8_t* apArray, uint32_t aCount) noexcept
+{
+    if (aCount == 0 || aCount > kMaxBones)
+        return false;
+
+    const size_t arraySize = static_cast<size_t>(aCount) * kBoneEntrySize;
+    if (!ReadableMemory::IsReadable(apArray, arraySize))
+        return false;
+
+    for (uint32_t i = 0; i < aCount; ++i)
+    {
+        void* pNode = GetBoneNode(apArray, i);
+        if (pNode && !ReadableMemory::IsReadable(pNode, kNiAVObjectSize))
+            return false;
+    }
+    return true;
+}
+
 uint8_t* GetBoneArray(void* apTree, uint32_t& aOutCount) noexcept
 {
-#ifndef SKYRIMVR
-    // Its offsets were measured on VR only; on flat a wrong guess would be written to, so the flattened bones keep the animation.
+    ReadableMemory::CacheScope regions; // a few hundred readability questions, almost all about the same few regions
     aOutCount = 0;
-    return nullptr;
-#else
-    ReadableRegionScope regions; // a few hundred readability questions, almost all about the same few regions
-    aOutCount = 0;
-    if (!apTree || !IsReadable(static_cast<uint8_t*>(apTree) + kTreeBoneArray, sizeof(void*)))
+    if (!apTree || !ReadableMemory::IsReadable(static_cast<uint8_t*>(apTree) + kTreeBoneArray, sizeof(void*)))
         return nullptr;
 
     auto* pArray = At<uint8_t*>(apTree, kTreeBoneArray);
-    if (!IsReadable(pArray, kBoneEntrySize))
+    if (!ReadableMemory::IsReadable(pArray, kBoneEntrySize))
         return nullptr;
 
+#ifdef SKYRIMVR
     // The count sits near the array pointer at an offset that is not measured.
-    // A candidate is accepted only when every entry is readable and points at a readable node or none.
     for (uint32_t offset = kChildrenOffset + 0x18; offset <= kTreeBoneArray + 0x20; offset += sizeof(uint32_t))
     {
         const uint32_t candidate = At<uint32_t>(apTree, offset);
-        if (candidate == 0 || candidate > kMaxBones || !IsReadable(pArray, static_cast<size_t>(candidate) * kBoneEntrySize))
-            continue;
-
-        bool plausible = true;
-        for (uint32_t i = 0; i < candidate && plausible; ++i)
-        {
-            void* pNode = *reinterpret_cast<void**>(pArray + i * kBoneEntrySize + kBoneEntryNode);
-            plausible = !pNode || IsReadable(pNode, kNiAVObjectSize);
-        }
-
-        if (plausible)
+        if (IsPlausibleBoneCount(pArray, candidate))
         {
             aOutCount = candidate;
             return pArray;
         }
     }
-
     return nullptr;
+#else
+    const uint32_t count = At<uint32_t>(apTree, kTreeBoneCount);
+    if (!IsPlausibleBoneCount(pArray, count))
+        return nullptr;
+    aOutCount = count;
+    return pArray;
 #endif
 }
 
 uint8_t* FindBoneEntry(uint8_t* apArray, uint32_t aCount, void* apNode) noexcept
 {
     for (uint32_t i = 0; apArray && i < aCount; ++i)
-        if (*reinterpret_cast<void**>(apArray + i * kBoneEntrySize + kBoneEntryNode) == apNode)
+        if (GetBoneNode(apArray, i) == apNode)
             return apArray + i * kBoneEntrySize;
     return nullptr;
 }
@@ -722,7 +689,7 @@ bool ResolveRig(void* apRoot, Rig& aRig, bool aLog = true) noexcept
 
     std::unordered_map<void*, uint8_t*> entryByNode;
     for (uint32_t i = 0; i < count; ++i)
-        if (void* pNode = *reinterpret_cast<void**>(pArray + i * kBoneEntrySize + kBoneEntryNode))
+        if (void* pNode = GetBoneNode(pArray, i))
             entryByNode.emplace(pNode, pArray + i * kBoneEntrySize);
 
     const auto entryFor = [&entryByNode](void* apNode) -> uint8_t*
@@ -766,7 +733,7 @@ bool ResolveRig(void* apRoot, Rig& aRig, bool aLog = true) noexcept
                     break;
                 if (pArray + static_cast<uint32_t>(walk) * kBoneEntrySize == pBoneEntry)
                 {
-                    descendants.push_back(MakeRigBone(*reinterpret_cast<void**>(pEntry + kBoneEntryNode), pEntry));
+                    descendants.push_back(MakeRigBone(NodeOfEntry(pEntry), pEntry));
                     break;
                 }
             }
@@ -809,10 +776,11 @@ bool ResolveRig(void* apRoot, Rig& aRig, bool aLog = true) noexcept
             aRig.AttachBelow[side].push_back(MakeRigBone(pNode, entryFor(pNode)));
     }
 
-    aRig.FingersFound[0] = FindFingers(arrayInfo, aRig.Bones[VRPose::kLeftHand].pEntry, aRig.Fingers[0]);
-    aRig.FingersFound[1] = FindFingers(arrayInfo, aRig.Bones[VRPose::kRightHand].pEntry, aRig.Fingers[1]);
-    if (aLog && (!aRig.FingersFound[0] || !aRig.FingersFound[1]))
-        spdlog::warn("VRBodySync: finger bones not found by shape under root {} (left {}, right {}); the hands stay on the animation pose", apRoot, aRig.FingersFound[0], aRig.FingersFound[1]);
+    aRig.FingersFound[kLeftSide] = FindFingers(arrayInfo, aRig.Bones[VRPose::kLeftHand].pEntry, aRig.Fingers[kLeftSide]);
+    aRig.FingersFound[kRightSide] = FindFingers(arrayInfo, aRig.Bones[VRPose::kRightHand].pEntry, aRig.Fingers[kRightSide]);
+    if (aLog && (!aRig.FingersFound[kLeftSide] || !aRig.FingersFound[kRightSide]))
+        spdlog::warn("VRBodySync: finger bones not found by shape under root {} (left {}, right {}); the hands stay on the animation pose", apRoot,
+                     aRig.FingersFound[kLeftSide], aRig.FingersFound[kRightSide]);
     aRig.Valid = true;
     return true;
 }
@@ -860,34 +828,16 @@ bool ResolveRig(void* apRoot, Rig& aRig, bool aLog = true) noexcept
     return true;
 }
 
-// The headset's world transform, or null when this build's PlayerCharacter does not carry it where we look.
-const NiTransform* HeadsetTransform() noexcept
-{
-    static int s_hmdState = 0; // 0 unchecked, 1 valid, -1 not the headset node on this build
-    PlayerCharacter* pPlayer = PlayerCharacter::Get();
-    if (!pPlayer || s_hmdState < 0)
-        return nullptr;
-
-    void* pHmd = At<void*>(pPlayer, kHmdNodeOffset);
-    if (s_hmdState == 0)
-    {
-        const char* pName = IsReadable(pHmd, kNiAVObjectSize) ? GetName(pHmd) : nullptr;
-        s_hmdState = pName && IsReadable(pName, 8) && std::strcmp(pName, "HmdNode") == 0 ? 1 : -1;
-        if (s_hmdState < 0)
-        {
-            spdlog::warn("VRBodySync: PlayerCharacter+0x{:X} isn't the headset node, remote players are posed even out of view", kHmdNodeOffset);
-            return nullptr;
-        }
-    }
-    if (!pHmd)
-        return nullptr;
-    return &At<NiTransform>(pHmd, kWorldOffset);
-}
-
-// Posing an actor the renderer has culled can tear its skin into black strips, so only actors in front of the headset are posed.
-// A sphere around the chest is tested against a 50 degree cone, widened by the angle the sphere covers.
-// An actor close by therefore counts as visible whatever the angle.
-// aMarginDegrees widens the cone further, for an actor already in view.
+/**
+ * Check if an actor is in front of the player's headset, so it can be posed.
+ * Posing an actor the renderer has culled can tear its skin into black strips, so only actors in front of the headset are posed.
+ * A sphere around the chest is tested against a 50 degree cone, widened by the angle the sphere covers.
+ * An actor close by therefore counts as visible whatever the angle.
+ *
+ * @param acChest The actor's chest in the game's world.
+ * @param aMarginDegrees How many degrees wider the cone is, for an actor already in view.
+ * @return True when it is in view; always true without the headset's node, and false when the headset's numbers are broken.
+ */
 bool IsInView(const glm::vec3& acChest, const float aMarginDegrees = 0.f) noexcept
 {
 #ifndef SKYRIMVR
@@ -897,18 +847,17 @@ bool IsInView(const glm::vec3& acChest, const float aMarginDegrees = 0.f) noexce
     const float cHalfAngle = (50.f + aMarginDegrees) * glm::pi<float>() / 180.f;
     constexpr float cBodyRadius = 100.f;
 
-    const NiTransform* pHmdTransform = HeadsetTransform();
-    if (!pHmdTransform)
+    // Without the headset's node every actor is posed; with broken numbers in it, none counts as in view.
+    if (!VRControllers::HeadsetTransform())
         return true;
-    const NiTransform& hmd = *pHmdTransform;
-    const glm::vec3 toChest = acChest - ToGlm(hmd.translate);
-    const float distance = glm::length(toChest);
+    const auto cHead = VRControllers::HeadSpaceNow();
+    if (!cHead)
+        return false;
+    const float distance = glm::distance(acChest, cHead->Position);
     if (distance <= cBodyRadius)
         return true;
 
-    const glm::vec3 forward = ToGlm(hmd.rotate)[1]; // Skyrim: X right, Y forward, Z up
-    const float offAxis = std::acos(glm::clamp(glm::dot(forward, toChest / distance), -1.f, 1.f));
-    return offAxis < cHalfAngle + std::asin(cBodyRadius / distance);
+    return cHead->AngleFromGaze(acChest) < cHalfAngle + std::asin(cBodyRadius / distance);
 #endif
 }
 
@@ -943,20 +892,36 @@ bool IsRenderableTransform(const NiTransform& acTransform) noexcept
     }
     if (!std::isfinite(acTransform.scale) || acTransform.scale < 0.05f || acTransform.scale > 20.f)
         return false;
-    return std::isfinite(acTransform.translate.x) && std::isfinite(acTransform.translate.y) && std::isfinite(acTransform.translate.z);
+    return IsFiniteVector(acTransform.translate);
 }
 
-// Whether the root and the upper-body bones we write are still usable by the renderer.
-// False means this body is, or is about to be, undrawable and must be left alone.
-bool IsBodyUsable(const Rig& acRig) noexcept
+// The bone IsBodyUsable found unusable, for its log line.
+struct UnusableBone
 {
-    if (!acRig.pRoot || !IsRenderableTransform(At<NiTransform>(acRig.pRoot, kWorldOffset)))
+    const char* Name = nullptr;
+    NiTransform World{};
+};
+
+// Whether the root and the upper-body bones we write are still usable by the renderer.
+// False means this body is, or is about to be, undrawable and must be left alone; aOut then names the first bone that is not.
+bool IsBodyUsable(const Rig& acRig, UnusableBone& aOut) noexcept
+{
+    if (!acRig.pRoot)
         return false;
+    const NiTransform& rootWorld = At<NiTransform>(acRig.pRoot, kWorldOffset);
+    if (!IsRenderableTransform(rootWorld))
+    {
+        aOut = {"the root", rootWorld};
+        return false;
+    }
     for (uint32_t i = 0; i < VRPose::kUpperBoneCount; ++i)
     {
         const RigBone& bone = acRig.Bones[i];
         if ((bone.pNode || bone.pEntry) && !IsRenderableTransform(bone.World()))
+        {
+            aOut = {kBoneNames[i], bone.World()};
             return false;
+        }
     }
     return true;
 }
@@ -969,7 +934,7 @@ void* SceneTopOf(void* apNode) noexcept
     for (uint32_t depth = 0; pWalk && depth < 64; ++depth)
     {
         void* pParent = At<void*>(pWalk, kParentOffset);
-        if (!pParent || !IsReadable(pParent, kNiAVObjectSize))
+        if (!pParent || !ReadableMemory::IsReadable(pParent, kNiAVObjectSize))
             break;
         pWalk = pParent;
     }
@@ -1020,7 +985,7 @@ void ShiftTree(void* apRoot, const glm::vec3& acWorldOffset) noexcept
         for (uint32_t i = 0; i < count && i < kMaxBones; ++i)
         {
             uint8_t* pEntry = pArray + static_cast<size_t>(i) * kBoneEntrySize;
-            if (At<void*>(pEntry, kBoneEntryNode))
+            if (NodeOfEntry(pEntry))
                 continue; // already shifted above, through its node
             NiTransform& world = At<NiTransform>(pEntry, kBoneEntryWorld);
             world.translate = FromGlm(ToGlm(world.translate) + acWorldOffset);
@@ -1140,10 +1105,10 @@ void PoseActor(const Rig& acRig, const RemotePose& acPose, const glm::vec3& acWo
     if (acPose.HasFingers)
     {
         constexpr size_t cPerHand = VRPose::kFingersPerHand * VRPose::kBonesPerFinger;
-        if (acRig.FingersFound[0])
-            WriteFingerRotations(acRig.Fingers[0], acRig.Bones[VRPose::kLeftHand].World(), acPose.Fingers.data());
-        if (acRig.FingersFound[1])
-            WriteFingerRotations(acRig.Fingers[1], acRig.Bones[VRPose::kRightHand].World(), acPose.Fingers.data() + cPerHand);
+        if (acRig.FingersFound[kLeftSide])
+            WriteFingerRotations(acRig.Fingers[kLeftSide], acRig.Bones[VRPose::kLeftHand].World(), acPose.Fingers.data());
+        if (acRig.FingersFound[kRightSide])
+            WriteFingerRotations(acRig.Fingers[kRightSide], acRig.Bones[VRPose::kRightHand].World(), acPose.Fingers.data() + cPerHand);
     }
 }
 
@@ -1407,7 +1372,7 @@ NiBoundRead ReadWorldBound(void* apObject, const glm::vec3& acGrip) noexcept
     // Anything outside this is not a bound but whatever else lives at that offset.
     if (!std::isfinite(radius) || radius < 4.f || radius > 300.f)
         return out;
-    if (!std::isfinite(centre.x) || !std::isfinite(centre.y) || !std::isfinite(centre.z))
+    if (!IsFiniteVector(centre))
         return out;
     if (glm::distance(centre, acGrip) > 400.f)
         return out;
@@ -1615,16 +1580,16 @@ constexpr uint32_t kMotionTypeOffset = 0x160;     // hkpEntity::motion.type
 // The Havok body behind a node, or null. Every pointer is checked before it is followed: this runs once per copy.
 uint8_t* HavokBodyOf(void* apNode) noexcept
 {
-    if (!apNode || !IsReadable(static_cast<uint8_t*>(apNode) + kCollisionObjectOffset, sizeof(void*)))
+    if (!apNode || !ReadableMemory::IsReadable(static_cast<uint8_t*>(apNode) + kCollisionObjectOffset, sizeof(void*)))
         return nullptr;
     void* pCollision = At<void*>(apNode, kCollisionObjectOffset);
-    if (!pCollision || !IsReadable(pCollision, 0x28))
+    if (!pCollision || !ReadableMemory::IsReadable(pCollision, 0x28))
         return nullptr;
     void* pBody = At<void*>(pCollision, kCollisionBodyOffset);
-    if (!pBody || !IsReadable(pBody, 0x18))
+    if (!pBody || !ReadableMemory::IsReadable(pBody, 0x18))
         return nullptr;
     auto* pHavok = At<uint8_t*>(pBody, kHavokBodyOffset);
-    if (!pHavok || !IsReadable(pHavok, kMotionTypeOffset + 1))
+    if (!pHavok || !ReadableMemory::IsReadable(pHavok, kMotionTypeOffset + 1))
         return nullptr;
     return pHavok;
 }
@@ -1643,7 +1608,7 @@ std::string DescribeHavokBody(const char* acpWhat, void* apNode, const uint8_t* 
 {
     const uint32_t filter = At<uint32_t>(const_cast<uint8_t*>(apHavok), kFilterInfoOffset);
     const char* pName = GetName(apNode);
-    return fmt::format("{} '{}': layer {}, group {}, collision {}, motion type {}, {}", acpWhat, pName && IsReadable(pName, 1) ? pName : "?", filter & 0x7F, filter >> 16,
+    return fmt::format("{} '{}': layer {}, group {}, collision {}, motion type {}, {}", acpWhat, pName && ReadableMemory::IsReadable(pName, 1) ? pName : "?", filter & 0x7F, filter >> 16,
                        (filter & (1u << 14)) ? "off" : "on", At<uint8_t>(const_cast<uint8_t*>(apHavok), kMotionTypeOffset),
                        At<void*>(const_cast<uint8_t*>(apHavok), kHkWorldOffset) ? "in the world" : "not in the world");
 }
@@ -1926,24 +1891,24 @@ void ForgetWeaponTarget(const uint8_t* apHavok) noexcept
 
 const char* RttiNameOf(void* apObject) noexcept
 {
-    if (!apObject || !IsReadable(apObject, sizeof(void*)))
+    if (!apObject || !ReadableMemory::IsReadable(apObject, sizeof(void*)))
         return nullptr;
     auto** ppVTable = *static_cast<void***>(apObject);
-    if (!ppVTable || !IsReadable(ppVTable + kVTableGetRttiSlot, sizeof(void*)))
+    if (!ppVTable || !ReadableMemory::IsReadable(ppVTable + kVTableGetRttiSlot, sizeof(void*)))
         return nullptr;
     using TGetRtti = const char**(__fastcall*)(void*);
     const char** ppRtti = static_cast<TGetRtti>(ppVTable[kVTableGetRttiSlot])(apObject);
-    return ppRtti && IsReadable(ppRtti, sizeof(void*)) && ppRtti[0] && IsReadable(ppRtti[0], 1) ? ppRtti[0] : nullptr;
+    return ppRtti && ReadableMemory::IsReadable(ppRtti, sizeof(void*)) && ppRtti[0] && ReadableMemory::IsReadable(ppRtti[0], 1) ? ppRtti[0] : nullptr;
 }
 
 // The bhkWorld that owns a Havok world, checked by its RTTI name because the caller takes its lock.
 void* BhkWorldOf(void* apHkpWorld) noexcept
 {
-    if (!apHkpWorld || !IsReadable(static_cast<uint8_t*>(apHkpWorld) + kBhkWorldOfHkpWorldOffset, sizeof(void*)))
+    if (!apHkpWorld || !ReadableMemory::IsReadable(static_cast<uint8_t*>(apHkpWorld) + kBhkWorldOfHkpWorldOffset, sizeof(void*)))
         return nullptr;
     void* pWorld = At<void*>(apHkpWorld, kBhkWorldOfHkpWorldOffset);
     const char* pName = RttiNameOf(pWorld);
-    if (!pName || std::strncmp(pName, "bhkWorld", 8) != 0 || !IsReadable(static_cast<uint8_t*>(pWorld) + kWorldLockOffset, 8))
+    if (!pName || std::strncmp(pName, "bhkWorld", 8) != 0 || !ReadableMemory::IsReadable(static_cast<uint8_t*>(pWorld) + kWorldLockOffset, 8))
         return nullptr;
     return pWorld;
 }
@@ -2200,7 +2165,7 @@ void UpdateWeaponBodies(const uint32_t aFormId, Actor* apActor, const Rig& acRig
             body.pBhkWorld = pBhkWorld;
             const char* pWrapperClass = RttiNameOf(body.pWrapper);
             body.IsT = pWrapperClass && std::strcmp(pWrapperClass, "bhkRigidBodyT") == 0;
-            if (!pWrapperClass || (std::strcmp(pWrapperClass, "bhkRigidBody") != 0 && !body.IsT) || !IsReadable(pHavok, kBodyQuaternionOffset + 0x10))
+            if (!pWrapperClass || (std::strcmp(pWrapperClass, "bhkRigidBody") != 0 && !body.IsT) || !ReadableMemory::IsReadable(pHavok, kBodyQuaternionOffset + 0x10))
             {
                 if (s_saidBusy.insert(key).second)
                     spdlog::warn("VRWeaponBody: actor {:X} {} weapon's body is a {}, not a rigid body; left out", aFormId, side ? "right" : "left", pWrapperClass ? pWrapperClass : "?");
@@ -2240,8 +2205,8 @@ void UpdateWeaponBodies(const uint32_t aFormId, Actor* apActor, const Rig& acRig
             // Computed from the target: between steps the game moves the body to where its animation holds the sword.
             const float* pCentreLocal = reinterpret_cast<const float*>(body.pHavok + kBodyTransformOffset + 0x80);
             const glm::vec3 centre = wanted + glm::mat3_cast(target) * (glm::vec3{pCentreLocal[0], pCentreLocal[1], pCentreLocal[2]} / havokScale);
-            spdlog::info("VRWeaponBody: actor {:X} {} weapon body {:.1f} units from where the weapon is drawn; its centre of mass at ({:.1f}, {:.1f}, {:.1f})", aFormId,
-                         side ? "right" : "left", glm::length(BodyPosition(body.pHavok, havokScale) - wanted), centre.x, centre.y, centre.z);
+            spdlog::info("VRWeaponBody: actor {:X} {} weapon body {:.1f} units from where the weapon is drawn; its centre of mass at ({:.1f})", aFormId,
+                         side ? "right" : "left", glm::length(BodyPosition(body.pHavok, havokScale) - wanted), centre);
         }
     }
 }
@@ -2311,7 +2276,7 @@ void AddPendingBodies() noexcept
         if (ShouldLogWeaponBody(pending.Key, true))
             spdlog::info("VRWeaponBody: actor {:X} {} weapon '{}' ({}) is a body in the world now: layer {}, group {}, motion type {}; placed, it reads {:.1f} units from where it was put; "
                          "hkpRigidBody at {}",
-                         pending.FormId, pending.Side ? "right" : "left", pName && IsReadable(pName, 1) ? pName : "?", pClass ? pClass : "?", filter & 0x7F, filter >> 16,
+                         pending.FormId, pending.Side ? "right" : "left", pName && ReadableMemory::IsReadable(pName, 1) ? pName : "?", pClass ? pClass : "?", filter & 0x7F, filter >> 16,
                          At<uint8_t>(pHavok, kMotionTypeOffset), placedOff, fmt::ptr(pHavok));
     }
     s_pendingWeaponBodies.clear();
@@ -2526,14 +2491,14 @@ void RecordDrawnPose(const uint32_t aFormId, Actor* apActor, const Rig& acRig) n
         link.pCharacter = CharacterOf(apActor);
         void* pSetup = link.pCharacter ? At<void*>(link.pCharacter, kCharacterSetupOffset) : nullptr;
         void* pSkeleton = pSetup ? At<void*>(pSetup, kSetupAnimationSkeleton) : nullptr;
-        if (!pSkeleton || !IsReadable(static_cast<uint8_t*>(pSkeleton) + kSkeletonBones, 0x10))
+        if (!pSkeleton || !ReadableMemory::IsReadable(static_cast<uint8_t*>(pSkeleton) + kSkeletonBones, 0x10))
         {
             link.pCharacter = nullptr;
             return;
         }
         const int32_t count = At<int32_t>(pSkeleton, kSkeletonBones + 0x8);
         const uint8_t* pBones = At<uint8_t*>(pSkeleton, kSkeletonBones);
-        if (count <= 0 || count > 512 || !pBones || !IsReadable(pBones, static_cast<size_t>(count) * 0x10))
+        if (count <= 0 || count > 512 || !pBones || !ReadableMemory::IsReadable(pBones, static_cast<size_t>(count) * 0x10))
         {
             link.pCharacter = nullptr;
             return;
@@ -2542,7 +2507,7 @@ void RecordDrawnPose(const uint32_t aFormId, Actor* apActor, const Rig& acRig) n
         for (int32_t i = 0; i < count; ++i)
         {
             const auto* pName = reinterpret_cast<const char*>(*reinterpret_cast<const uintptr_t*>(pBones + i * 0x10) & ~uintptr_t{1});
-            if (pName && IsReadable(pName, 2))
+            if (pName && ReadableMemory::IsReadable(pName, 2))
                 link.BoneNodes[i] = FindShallowest(acRig.pRoot, pName);
         }
     }
@@ -2682,9 +2647,9 @@ bool PutDrawnPoseIntoTrack(void* apDriver, void* apGeneratorOutput, std::vector<
     if (scale == 0.f)
     {
         if (s_saidUnits.insert(drawn.FormId).second)
-            spdlog::warn("VRRagdoll: actor {:X}: its ragdoll's model-to-world ({:.1f}, {:.1f}, {:.1f}) is not where the copy is ({:.1f}, {:.1f}, {:.1f}) in either unit; "
+            spdlog::warn("VRRagdoll: actor {:X}: its ragdoll's model-to-world ({:.1f}) is not where the copy is ({:.1f}) in either unit; "
                          "left to its animation",
-                         drawn.FormId, worldFromModel.Translation.x, worldFromModel.Translation.y, worldFromModel.Translation.z, drawn.ActorAt.x, drawn.ActorAt.y, drawn.ActorAt.z);
+                         drawn.FormId, worldFromModel.Translation, drawn.ActorAt);
         return false;
     }
 
@@ -2705,7 +2670,7 @@ bool PutDrawnPoseIntoTrack(void* apDriver, void* apGeneratorOutput, std::vector<
         QsPose drawnWorld{glm::normalize(glm::quat_cast(ToGlm(world.rotate))), ToGlm(world.translate) * scale, world.scale};
         QsPose target = Compose(modelFromWorld, drawnWorld);
         const QsPose local = Compose(Inverse(parentModel), target);
-        if (!std::isfinite(local.Translation.x) || !std::isfinite(local.Translation.y) || !std::isfinite(local.Translation.z) || !std::isfinite(local.Rotation.w))
+        if (!IsFiniteVector(local.Translation) || !std::isfinite(local.Rotation.w))
         {
             model[i] = Compose(parentModel, ReadQs(pLocal));
             continue;
@@ -2876,10 +2841,9 @@ void ProcessWeaponContacts() noexcept
             continue;
         lastSaid = cNow;
         const glm::vec3 point = havokScale > 0.f ? contact.Point / havokScale : glm::vec3{};
-        spdlog::info("VRWeaponBody: actor {:X} {} weapon touches a body on layer {} (group {}, motion type {}{}) at ({:.1f}, {:.1f}, {:.1f}); {} contacts so far",
+        spdlog::info("VRWeaponBody: actor {:X} {} weapon touches a body on layer {} (group {}, motion type {}{}) at ({:.1f}); {} contacts so far",
                      static_cast<uint32_t>(key >> 1), (key & 1) ? "right" : "left", contact.Filters[other] & 0x7F, contact.Filters[other] >> 16, contact.MotionTypes[other],
-                     contact.HiggsKind[other] == 1 ? ", one of the player's HIGGS bodies" : contact.HiggsKind[other] == 2 ? ", held by the player's HIGGS hand" : "", point.x, point.y,
-                     point.z, s_total);
+                     contact.HiggsKind[other] == 1 ? ", one of the player's HIGGS bodies" : contact.HiggsKind[other] == 2 ? ", held by the player's HIGGS hand" : "", point, s_total);
     }
 }
 
@@ -3011,11 +2975,6 @@ Blade BladeAt(const BladeExtent& acExtent) noexcept
 {
     const NiTransform& world = At<NiTransform>(acExtent.pNode, kWorldOffset);
     return Blade{ToGlm(world.translate), glm::normalize(ToGlm(world.rotate)[1]), acExtent.Length};
-}
-
-bool IsFinite(const glm::vec3& acValue) noexcept
-{
-    return std::isfinite(acValue.x) && std::isfinite(acValue.y) && std::isfinite(acValue.z);
 }
 
 // Which side of his blade ours is on: the sign of our blade's direction against the plane through our grip and his blade.
@@ -3606,7 +3565,7 @@ void OnFrameEnd() noexcept
                 continue;
 
             const glm::vec3 wanted{pose.RootPosition[0], pose.RootPosition[1], pose.RootPosition[2]};
-            if (!std::isfinite(wanted.x) || !std::isfinite(wanted.y) || !std::isfinite(wanted.z))
+            if (!IsFiniteVector(wanted))
                 continue;
 
             const glm::vec3 offset = wanted - ToGlm(At<NiTransform>(pRoot, kWorldOffset).translate);
@@ -3650,7 +3609,7 @@ void OnFrameEnd() noexcept
         // A live copy is checked where it is drawn (DrawnChest).
         const glm::vec3 cBonesChest = ToGlm(rig.Bones[VRPose::kSpine2].World().translate);
         glm::vec3 viewPoint = isBody ? cBonesChest : DrawnChest(pRoot, pose);
-        if (isBody && pose.HasRootPosition && std::isfinite(pose.RootPosition.x) && std::isfinite(pose.RootPosition.y) && std::isfinite(pose.RootPosition.z))
+        if (isBody && pose.HasRootPosition && IsFiniteVector(pose.RootPosition))
             viewPoint += pose.RootPosition - ToGlm(At<NiTransform>(pRoot, kWorldOffset).translate);
         // Once in view, a copy stays posed until it is 10 degrees past the cone's edge.
         // Without that margin, a copy at the edge is posed and let go at each small turn of the head.
@@ -3676,16 +3635,29 @@ void OnFrameEnd() noexcept
         // A body whose bones are no longer usable is not drawn, and writing our transforms into it keeps it that way.
         // So it is let go: the game's animation rewrites those bones within a frame and the body comes back.
         // Logged once every ten seconds per actor.
-        if (!IsBodyUsable(rig))
+        UnusableBone unusable;
+        if (!IsBodyUsable(rig, unusable))
         {
             static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_nextComplaint;
             auto& next = s_nextComplaint[formId];
             if (now >= next)
             {
                 next = now + std::chrono::seconds(10);
-                const NiTransform& spine = rig.Bones[VRPose::kSpine2].World();
-                spdlog::warn("VRBodySync: actor {:X} has a bone the renderer cannot use (spine scale {:.3f}, rotation row {:.4f}); not posing it until the game puts it right",
-                             formId, spine.scale, glm::length(ToGlm(spine.rotate)[0]));
+                const auto& world = unusable.World;
+                const glm::mat3 rotation = ToGlm(world.rotate);
+                // A real rotation's columns are all 1 long.
+                const glm::vec3 columnLengths(glm::length(rotation[0]), glm::length(rotation[1]), glm::length(rotation[2]));
+                const char* boneName = unusable.Name ? unusable.Name : "none";
+
+                spdlog::warn("VRBodySync: actor {:X} has a bone the renderer cannot use "
+                             "({}: scale {:.3f}, "
+                             "rotation column lengths ({:.4f}), "
+                             "at ({:.1f})); "
+                             "not posing it until the game puts it right",
+                             formId,
+                             boneName, world.scale,
+                             columnLengths,
+                             world.translate);
             }
             whyNotPosed("a bone the renderer cannot use");
             if (pCount)
@@ -3701,7 +3673,7 @@ void OnFrameEnd() noexcept
         if (pose.HasRootPosition)
         {
             const glm::vec3& wanted = pose.RootPosition;
-            if (std::isfinite(wanted.x) && std::isfinite(wanted.y) && std::isfinite(wanted.z))
+            if (IsFiniteVector(wanted))
             {
                 NiTransform& rootWorld = At<NiTransform>(pRoot, kWorldOffset);
                 worldOffset = wanted - ToGlm(rootWorld.translate);
@@ -3740,7 +3712,7 @@ void OnFrameEnd() noexcept
                     delta = rootRotation * local;
                 }
                 // A hip a body-length away from where this copy has it is a bad read, not a crouch.
-                if (std::isfinite(delta.x) && std::isfinite(delta.y) && std::isfinite(delta.z) && glm::dot(delta, delta) < 256.f * 256.f)
+                if (IsFiniteVector(delta) && glm::dot(delta, delta) < 256.f * 256.f)
                     worldOffset += delta;
             }
         }
@@ -3751,6 +3723,13 @@ void OnFrameEnd() noexcept
         PoseActor(rig, pose, worldOffset);
         if (pCount)
             ++pCount->Posed;
+        // Confirm in the log the first time this copy's fingers are posed.
+        // Without it, "fingers worked" and "finger code never ran" look the same: both are just the absence of a warning.
+        const bool leftFound = rig.FingersFound[kLeftSide];
+        const bool rightFound = rig.FingersFound[kRightSide];
+        static std::unordered_set<uint32_t> s_fingersLogged;
+        if (pose.HasFingers && (leftFound || rightFound) && s_fingersLogged.insert(formId).second)
+            spdlog::info("VRBodySync: actor {:X} fingers posed (left {}, right {})", formId, leftFound, rightFound);
         switchCount.Posed = true;
         ReachHands(rig, pose);
         PlaceWeapons(rig, pose);
@@ -3772,9 +3751,8 @@ void OnFrameEnd() noexcept
                 nextWeaponLog = now + std::chrono::seconds(5);
                 const NiTransform& weapon = rig.Attach[1].World();
                 const glm::mat3 axes = ToGlm(weapon.rotate);
-                spdlog::info("PhysicsProbe: actor {:X} right weapon drawn at ({:.1f}, {:.1f}, {:.1f}); its x axis ({:.2f}, {:.2f}, {:.2f}), y ({:.2f}, {:.2f}, {:.2f}), z ({:.2f}, {:.2f}, {:.2f})",
-                             formId, weapon.translate.x, weapon.translate.y, weapon.translate.z, axes[0].x, axes[0].y, axes[0].z, axes[1].x, axes[1].y, axes[1].z, axes[2].x,
-                             axes[2].y, axes[2].z);
+                spdlog::info("PhysicsProbe: actor {:X} right weapon drawn at ({:.1f}); its x axis ({:.2f}), y ({:.2f}), z ({:.2f})",
+                             formId, weapon.translate, axes[0], axes[1], axes[2]);
             }
         }
 
@@ -3796,9 +3774,8 @@ void OnFrameEnd() noexcept
                 spdlog::info("VRBodySync: actor {:X} body -- reference z {:.0f}, 3D root z {:.0f}, head {:.0f} above the root, knock state {}", formId, pActor->position.z, rootAt.z,
                              rig.Bones[VRPose::kHead].pNode || rig.Bones[VRPose::kHead].pEntry ? ToGlm(rig.Bones[VRPose::kHead].World().translate).z - rootAt.z : 0.f,
                              (pActor->actorState.flags1 >> 25) & 0x7);
-                spdlog::info("VRBodySync: actor {:X} hands -- owner L({:.1f}, {:.1f}, {:.1f}) R({:.1f}, {:.1f}, {:.1f}); copy L({:.1f}, {:.1f}, {:.1f}) R({:.1f}, {:.1f}, {:.1f})", formId,
-                             pose.HandOffsets[0].x, pose.HandOffsets[0].y, pose.HandOffsets[0].z, pose.HandOffsets[1].x, pose.HandOffsets[1].y, pose.HandOffsets[1].z, copyLeft.x, copyLeft.y,
-                             copyLeft.z, copyRight.x, copyRight.y, copyRight.z);
+                spdlog::info("VRBodySync: actor {:X} hands -- owner L({:.1f}) R({:.1f}); copy L({:.1f}) R({:.1f})", formId,
+                             pose.HandOffsets[0], pose.HandOffsets[1], copyLeft, copyRight);
             }
         }
     }
@@ -3809,32 +3786,44 @@ void OnFrameEnd() noexcept
 #endif
 }
 
+/**
+ * Work out how far a position is from where the player is looking, to tell whether they are looking at it.
+ *
+ * @param acPosition A position in the game's world.
+ * @return The angle in degrees, 0 dead centre; -1 without the headset's node; 180, straight behind, when its numbers are broken.
+ */
 float HeadsetAngleTo(const NiPoint3& acPosition) noexcept
 {
-    const NiTransform* pHmdTransform = HeadsetTransform();
-    if (!pHmdTransform)
+    if (!VRControllers::HeadsetTransform())
         return -1.f;
+    // Broken numbers count as looking away, so nothing is taken as looked at.
+    const auto cHead = VRControllers::HeadSpaceNow();
+    if (!cHead)
+        return 180.f;
 
-    const glm::vec3 toTarget = ToGlm(acPosition) - ToGlm(pHmdTransform->translate);
-    const float distance = glm::length(toTarget);
-    if (distance < 1.f)
+    // Closer than a game unit, the head is on the point: it counts as looked at.
+    if (glm::distance(ToGlm(acPosition), cHead->Position) < 1.f)
         return 0.f;
-
-    const glm::vec3 forward = ToGlm(pHmdTransform->rotate)[1]; // Skyrim: X right, Y forward, Z up
-    const float offAxis = std::acos(glm::clamp(glm::dot(forward, toTarget / distance), -1.f, 1.f));
-    return offAxis * 180.f / glm::pi<float>();
+    return glm::degrees(cHead->AngleFromGaze(ToGlm(acPosition)));
 }
 
+/**
+ * Find where the player's head is and which way it faces, to place other players' voices around it.
+ *
+ * @param aPosition Set to where the head is in the game's world.
+ * @param aForward Set to which way it faces.
+ * @param aRight Set to which way is its right.
+ * @return False when the headset cannot be read; the three values are then left as they were.
+ */
 bool HeadsetPose(glm::vec3& aPosition, glm::vec3& aForward, glm::vec3& aRight) noexcept
 {
-    const NiTransform* pHmdTransform = HeadsetTransform();
-    if (!pHmdTransform)
+    const auto cHead = VRControllers::HeadSpaceNow();
+    if (!cHead)
         return false;
 
-    const glm::mat3 rotation = ToGlm(pHmdTransform->rotate); // Skyrim: X right, Y forward, Z up
-    aPosition = ToGlm(pHmdTransform->translate);
-    aForward = rotation[1];
-    aRight = rotation[0];
+    aPosition = cHead->Position;
+    aForward = cHead->Ahead();
+    aRight = cHead->Right();
     return true;
 }
 
@@ -3843,7 +3832,7 @@ bool IsRigParked(const PlayerCharacter* apPlayer) noexcept
     // Measured: 5 units with the map shut, 107116 the frame after it opened. A play space is a room, so 200 is generous.
     constexpr float cMaxPlaySpace = 200.f;
 
-    const NiTransform* pHmdTransform = HeadsetTransform();
+    const NiTransform* pHmdTransform = VRControllers::HeadsetTransform();
     if (!apPlayer || !pHmdTransform)
         return false;
 
@@ -3855,7 +3844,7 @@ std::string DescribeBody(Actor* apActor) noexcept
 {
     // Every parent and bone is checked with IsReadable, so the answers are cached for this one description.
     // Uncached, one description costs 10 to 80 ms.
-    ReadableRegionScope regions;
+    ReadableMemory::CacheScope regions;
     void* pRoot = apActor ? apActor->GetNiNode() : nullptr;
     if (!pRoot)
         return "no 3D";
@@ -3874,11 +3863,11 @@ std::string DescribeBody(Actor* apActor) noexcept
     while (depth < 64)
     {
         void* pParent = At<void*>(pWalk, kParentOffset);
-        if (!pParent || !IsReadable(pParent, kNiAVObjectSize))
+        if (!pParent || !ReadableMemory::IsReadable(pParent, kNiAVObjectSize))
             break;
         pWalk = pParent;
         ++depth;
-        if (const char* pName = GetName(pWalk); pName && IsReadable(pName, 2))
+        if (const char* pName = GetName(pWalk); pName && ReadableMemory::IsReadable(pName, 2))
             pTopName = pName;
     }
     // The player is always drawn, so whatever tree the player hangs from is the one the world draws.
@@ -3942,7 +3931,7 @@ std::string DescribeBody(Actor* apActor) noexcept
     std::string playerWords;
     const auto dumpFloats = [](void* apNode, std::string& aOut)
     {
-        if (!apNode || !IsReadable(apNode, 0x170))
+        if (!apNode || !ReadableMemory::IsReadable(apNode, 0x170))
         {
             aOut = "unreadable";
             return;
@@ -3979,8 +3968,8 @@ void* FirstPersonHand(PlayerCharacter* apPlayer, const size_t aSide) noexcept
 
     if (s_state[aSide] == 0)
     {
-        const char* pName = IsReadable(pHand, kNiAVObjectSize) ? GetName(pHand) : nullptr;
-        const bool cReadable = pName && IsReadable(pName, 8);
+        const char* pName = ReadableMemory::IsReadable(pHand, kNiAVObjectSize) ? GetName(pHand) : nullptr;
+        const bool cReadable = pName && ReadableMemory::IsReadable(pName, 8);
         s_state[aSide] = cReadable && std::strcmp(pName, kHandNames[aSide]) == 0 ? 1 : -1;
         s_name[aSide] = pName;
         if (s_state[aSide] < 0)
@@ -4083,7 +4072,7 @@ void RecordCopyBlades(const uint32_t aFormId, Actor* apActor, const std::array<B
         if (!acExtents[side].pNode)
             continue;
         const CopyBlade blade{(static_cast<uint64_t>(aFormId) << 1) | side, BladeAt(acExtents[side])};
-        if (!IsFinite(blade.Segment.Grip) || !IsFinite(blade.Segment.Axis))
+        if (!IsFiniteVector(blade.Segment.Grip) || !IsFiniteVector(blade.Segment.Axis))
             continue;
         s_copyBlades.push_back(blade);
     }
@@ -4233,7 +4222,7 @@ void StopLocalBlades(const std::chrono::steady_clock::time_point aNow) noexcept
             }
         }
         const Blade ours = BladeAt(stop.Extent);
-        if (!IsFinite(ours.Grip) || !IsFinite(ours.Axis))
+        if (!IsFiniteVector(ours.Grip) || !IsFiniteVector(ours.Axis))
         {
             ReleaseBladeStop(side, stop, "the weapon's transform is not usable", aNow);
             continue;
@@ -4263,10 +4252,9 @@ void StopLocalBlades(const std::chrono::steady_clock::time_point aNow) noexcept
                     {
                         s_nextNotHeld = aNow + std::chrono::milliseconds(250);
                         spdlog::info("BladeStop: our {} blade crossed the line of {:X}'s {} blade, not held: {} ({:.0f} along ours of {:.0f}, {:.0f} along his of {:.0f}; ours "
-                                     "from ({:.0f}, {:.0f}, {:.0f}) along ({:.2f}, {:.2f}, {:.2f}), his from ({:.0f}, {:.0f}, {:.0f}) along ({:.2f}, {:.2f}, {:.2f}))",
+                                     "from ({:.0f}) along ({:.2f}), his from ({:.0f}) along ({:.2f}))",
                                      side ? "right" : "left", static_cast<uint32_t>(his.Key >> 1), his.Key & 1 ? "right" : "left", pNotHeld, t, ours.Length, v,
-                                     his.Segment.Length, ours.Grip.x, ours.Grip.y, ours.Grip.z, ours.Axis.x, ours.Axis.y, ours.Axis.z, his.Segment.Grip.x,
-                                     his.Segment.Grip.y, his.Segment.Grip.z, his.Segment.Axis.x, his.Segment.Axis.y, his.Segment.Axis.z);
+                                     his.Segment.Length, ours.Grip, ours.Axis, his.Segment.Grip, his.Segment.Axis);
                     }
                     continue;
                 }
@@ -4277,8 +4265,8 @@ void StopLocalBlades(const std::chrono::steady_clock::time_point aNow) noexcept
                 stop.Frames = 0;
                 stop.NotDrawnAnew = 0;
                 const glm::vec3 at = his.Segment.Grip + his.Segment.Axis * v;
-                spdlog::info("BladeStop: our {} blade met {:X}'s {} blade at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units from our grip and {:.0f} from his; held on this side of it",
-                             side ? "right" : "left", static_cast<uint32_t>(his.Key >> 1), his.Key & 1 ? "right" : "left", at.x, at.y, at.z, t, v);
+                spdlog::info("BladeStop: our {} blade met {:X}'s {} blade at ({:.0f}), {:.0f} units from our grip and {:.0f} from his; held on this side of it",
+                             side ? "right" : "left", static_cast<uint32_t>(his.Key >> 1), his.Key & 1 ? "right" : "left", at, t, v);
             }
             stop.LastSide.swap(stop.Sides);
         }
@@ -4359,7 +4347,7 @@ bool IsBladeStoppedAt(const uint32_t aCopyFormId, const glm::vec3& acPoint) noex
 {
     const auto cNow = std::chrono::steady_clock::now();
     // No point to go by (none written, or not a number): any blade resting on his counts.
-    const bool cNoPoint = !IsFinite(acPoint) || glm::dot(acPoint, acPoint) < 1.f;
+    const bool cNoPoint = !IsFiniteVector(acPoint) || glm::dot(acPoint, acPoint) < 1.f;
     std::lock_guard lock(s_sharedStopsLock);
     for (const SharedStop& stop : s_sharedStops)
         if (stop.On == aCopyFormId && cNow < stop.DropHitsUntil && (cNoPoint || DistanceToBlade(acPoint, stop.Real) <= 20.f))
@@ -4542,7 +4530,7 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     // A player would see the move as a jump, so it waits until they see neither end of it.
     // Not a body whose owner's bones just stopped: the player sees it where its owner left it, and its ragdoll must be there too.
     const bool cJustPosed = cPosedAt && cNow - *cPosedAt < std::chrono::seconds(10);
-    if (!cJustPosed && HeadsetTransform() && (IsInView(cRagdollRoot) || IsInView(acWanted)))
+    if (!cJustPosed && VRControllers::HeadsetTransform() && (IsInView(cRagdollRoot) || IsInView(acWanted)))
     {
         if (!placed.SaidInView)
             spdlog::info("CorpseDiag: {:X}'s ragdoll lies {:.0f} units from where its owner's corpse is, in the player's view; it waits until the player looks away",
@@ -4597,8 +4585,8 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     placed.SayAfter = true;
     ++placed.Streak;
     spdlog::info("CorpseDiag: {:X}'s ragdoll lay {:.0f} units from where its owner's corpse is; moved there ({} bodies); "
-                 "from ({:.0f}, {:.0f}, {:.0f}) to ({:.0f}, {:.0f}, {:.0f}); its cell {:X}, attached {}",
-                 apActor->formID, cApart, moved, cRagdollRoot.x, cRagdollRoot.y, cRagdollRoot.z, acWanted.x, acWanted.y, acWanted.z,
+                 "from ({:.0f}) to ({:.0f}); its cell {:X}, attached {}",
+                 apActor->formID, cApart, moved, cRagdollRoot, acWanted,
                  apActor->parentCell ? apActor->parentCell->formID : 0, apActor->parentCell && apActor->parentCell->IsAttached());
     return moved > 0;
 }
@@ -4642,7 +4630,7 @@ std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, siz
 // The VR nodes (bow aim, arrow snap and hold) hang below PlayerWorldNode, found up from the headset node.
 void* LocalWorldNode(PlayerCharacter* apPlayer) noexcept
 {
-    if (!apPlayer || !HeadsetTransform())
+    if (!apPlayer || !VRControllers::HeadsetTransform())
         return nullptr;
     void* pNode = At<void*>(apPlayer, kHmdNodeOffset);
     for (int depth = 0; pNode && depth < 16; ++depth, pNode = At<void*>(pNode, kParentOffset))
@@ -4889,7 +4877,7 @@ bool PlayClashSparks(const glm::vec3& acPoint) noexcept
     if (const auto cNow = std::chrono::steady_clock::now(); cNow >= s_nextSaid)
     {
         s_nextSaid = cNow + std::chrono::seconds(5);
-        spdlog::info("Clash: sparks at ({:.0f}, {:.0f}, {:.0f}){}", acPoint.x, acPoint.y, acPoint.z, cSpawned ? "" : " not shown (the game made no effect)");
+        spdlog::info("Clash: sparks at ({:.0f}){}", acPoint, cSpawned ? "" : " not shown (the game made no effect)");
     }
     return cSpawned;
 }
@@ -4966,7 +4954,7 @@ void CaptureWeapons(PlayerCharacter* apPlayer, void* apRoot, const BoneNodes& ac
         const glm::vec3 at = inverseHand * (ToGlm(grip.translate) - ToGlm(hand.translate)) / std::max(hand.scale, 0.05f);
         // The first-person hand is the controller; the body's hand is where VRIK got the arm to.
         // More than 40 units apart means the arm did not reach, and the grip means nothing for the copy.
-        if (!std::isfinite(at.x) || !std::isfinite(at.y) || !std::isfinite(at.z) || glm::length(at) > 40.f)
+        if (!IsFiniteVector(at) || glm::length(at) > 40.f)
             continue;
 
         held[side] = true;
@@ -5055,7 +5043,7 @@ void CaptureArrowHold(PlayerCharacter* apPlayer, const BoneNodes& acNodes, const
         hold.Offset = cInverseHand * (ToGlm(model.translate) - ToGlm(hand.translate)) / std::max(hand.scale, 0.05f);
         hold.Rotation = glm::normalize(glm::quat_cast(cInverseHand * ToGlm(model.rotate)));
         // The head lies about an arrow's length from the hand; farther, the body's hand did not reach the controller.
-        return std::isfinite(hold.Offset.x) && std::isfinite(hold.Offset.y) && std::isfinite(hold.Offset.z) && glm::length(hold.Offset) < 150.f;
+        return IsFiniteVector(hold.Offset) && glm::length(hold.Offset) < 150.f;
     };
     hold.InHand = cFound();
     std::scoped_lock lock(s_arrowHoldLock);
@@ -5345,13 +5333,13 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
         const BoneArrayInfo arrayInfo = ResolveBoneArray(pRoot, nodes, false);
         const uint8_t* pLeftHand = FindBoneEntry(arrayInfo.pArray, arrayInfo.Count, nodes[VRPose::kLeftHand]);
         const uint8_t* pRightHand = FindBoneEntry(arrayInfo.pArray, arrayInfo.Count, nodes[VRPose::kRightHand]);
-        s_local.FingersFound[0] = FindFingers(arrayInfo, pLeftHand, s_local.Fingers[0]);
-        s_local.FingersFound[1] = FindFingers(arrayInfo, pRightHand, s_local.Fingers[1]);
+        s_local.FingersFound[kLeftSide] = FindFingers(arrayInfo, pLeftHand, s_local.Fingers[kLeftSide]);
+        s_local.FingersFound[kRightSide] = FindFingers(arrayInfo, pRightHand, s_local.Fingers[kRightSide]);
         static bool s_fingersNoted = false;
-        if (!s_fingersNoted && !(s_local.FingersFound[0] && s_local.FingersFound[1]))
+        if (!s_fingersNoted && !(s_local.FingersFound[kLeftSide] && s_local.FingersFound[kRightSide]))
         {
             s_fingersNoted = true;
-            spdlog::warn("VRBodySync: local finger bones not found (left {}, right {}); the fingers are not sent", s_local.FingersFound[0], s_local.FingersFound[1]);
+            spdlog::warn("VRBodySync: local finger bones not found (left {}, right {}); the fingers are not sent", s_local.FingersFound[kLeftSide], s_local.FingersFound[kRightSide]);
         }
         for (uint32_t i = 0; i < VRPose::kBoneCount; ++i)
         {
@@ -5398,7 +5386,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
         // The head bone points about 13 degrees below the face, so its pitch is the headset's less 13, between 70 down and 60 up.
         if (i == VRPose::kHead)
         {
-            if (const NiTransform* pHeadset = HeadsetTransform())
+            if (const NiTransform* pHeadset = VRControllers::HeadsetTransform())
             {
                 const auto yawOf = [](const glm::mat3& acRotate)
                 {
@@ -5469,7 +5457,7 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
         const glm::vec3 offset = inverseRoot * (pelvis - ToGlm(rootWorld.translate));
         // A body is a couple of hundred units tall, so anything farther is a bone read mid-update.
         // Sending it would throw the copy across the room.
-        if (std::isfinite(offset.x) && std::isfinite(offset.y) && std::isfinite(offset.z) && glm::dot(offset, offset) < 512.f * 512.f)
+        if (IsFiniteVector(offset) && glm::dot(offset, offset) < 512.f * 512.f)
         {
             aOutPose.HasHips = true;
             aOutPose.HipOffset[0] = offset.x;
@@ -5483,14 +5471,14 @@ bool CaptureLocalPose(PlayerCharacter* apPlayer, VRPose& aOutPose, float& aOutHe
 
     // Fingers: sent only when both hands' bones are known, and only when they changed or kKeptFieldsResend has passed.
     aOutPose.HasFingers = false;
-    if (s_local.FingersFound[0] && s_local.FingersFound[1])
+    if (s_local.FingersFound[kLeftSide] && s_local.FingersFound[kRightSide])
     {
         static std::array<Quaternion_NetQuantize, VRPose::kFingerBoneCount> s_lastSent{};
         static std::chrono::steady_clock::time_point s_lastSentAt{};
         constexpr size_t cPerHand = VRPose::kFingersPerHand * VRPose::kBonesPerFinger;
         std::array<glm::quat, VRPose::kFingerBoneCount> rotations{};
-        ReadFingerRotations(s_local.Fingers[0], ToGlm(At<NiTransform>(nodes[VRPose::kLeftHand], kWorldOffset).rotate), rotations.data());
-        ReadFingerRotations(s_local.Fingers[1], ToGlm(At<NiTransform>(nodes[VRPose::kRightHand], kWorldOffset).rotate), rotations.data() + cPerHand);
+        ReadFingerRotations(s_local.Fingers[kLeftSide], ToGlm(At<NiTransform>(nodes[VRPose::kLeftHand], kWorldOffset).rotate), rotations.data());
+        ReadFingerRotations(s_local.Fingers[kRightSide], ToGlm(At<NiTransform>(nodes[VRPose::kRightHand], kWorldOffset).rotate), rotations.data() + cPerHand);
         std::array<Quaternion_NetQuantize, VRPose::kFingerBoneCount> quantized{};
         for (size_t i = 0; i < VRPose::kFingerBoneCount; ++i)
             quantized[i] = rotations[i];

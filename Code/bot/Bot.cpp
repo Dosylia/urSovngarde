@@ -89,6 +89,7 @@
 #include <TiltedCore/ViewBuffer.hpp>
 
 #include <spdlog/spdlog.h>
+#include <base/VectorFormat.h>
 
 #include <algorithm>
 #include <cctype>
@@ -528,6 +529,7 @@ void Bot::SendAuthentication() noexcept
     request.Protocol = BUILD_PROTOCOL;
     request.Username = m_options.Name.c_str();
     request.Level = 1;
+    request.IsFlat = m_options.Flat;
 
     Mods::Entry skyrim{};
     skyrim.Filename = "Skyrim.esm";
@@ -644,9 +646,9 @@ void Bot::Assign() noexcept
     SendMsg(request);
 
     if (pHost)
-        spdlog::info("Asked for a character at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units from player {}", m_position.x, m_position.y, m_position.z, m_options.Spacing, pHost->PlayerId);
+        spdlog::info("Asked for a character at ({:.0f}), {:.0f} units from player {}", m_position, m_options.Spacing, pHost->PlayerId);
     else
-        spdlog::info("Asked for a character at ({:.0f}, {:.0f}, {:.0f}), standalone", m_position.x, m_position.y, m_position.z);
+        spdlog::info("Asked for a character at ({:.0f}), standalone", m_position);
     m_phase = Phase::Assigning;
     m_phaseStart = Clock::now();
 }
@@ -755,7 +757,7 @@ void Bot::FollowHostIntoCell(const GameId& acCell, const GameId& acWorldSpace) n
         EnterInteriorCellRequest enter{};
         enter.CellId = acCell;
         SendMsg(enter);
-        spdlog::info("Host went into interior cell {:X}:{:X}; following to ({:.0f}, {:.0f}, {:.0f})", acCell.ModId, acCell.BaseId, m_position.x, m_position.y, m_position.z);
+        spdlog::info("Host went into interior cell {:X}:{:X}; following to ({:.0f})", acCell.ModId, acCell.BaseId, m_position);
     }
     else
     {
@@ -1112,8 +1114,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             actor.LastChange = Clock::now();
         }
 
-        spdlog::info("Player character {:X} of player {} '{}' at ({:.0f}, {:.0f}, {:.0f}), health {:.0f}{}", message.ServerId, message.PlayerId, pPlayer->Name, pPlayer->Position.x, pPlayer->Position.y,
-                     pPlayer->Position.z, pPlayer->Health, message.IsDead ? ", dead" : "");
+        spdlog::info("Player character {:X} of player {} '{}' at ({:.0f}), health {:.0f}{}", message.ServerId, message.PlayerId, pPlayer->Name, pPlayer->Position, pPlayer->Health, message.IsDead ? ", dead" : "");
         Record(Collect::Spawn, fmt::format("spawn {:X} health {:.1f}{}", message.ServerId, pPlayer->Health, message.IsDead ? " dead" : ""));
         return;
     }
@@ -1359,8 +1360,8 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         }
         if (cNew)
         {
-            spdlog::info("Dropped item {} is {:X}:{:X} x{} in cell {:X} at ({:.0f}, {:.0f}, {:.0f})", message.Id, message.Item.BaseId.ModId, message.Item.BaseId.BaseId,
-                         message.Item.Count, message.CellId.BaseId, message.Position.x, message.Position.y, message.Position.z);
+            spdlog::info("Dropped item {} is {:X}:{:X} x{} in cell {:X} at ({:.0f})", message.Id, message.Item.BaseId.ModId, message.Item.BaseId.BaseId,
+                         message.Item.Count, message.CellId.BaseId, message.Position);
             Record(Collect::Spawn, fmt::format("drop {} {:X}", message.Id, message.Item.BaseId.BaseId));
         }
         return;
@@ -1374,7 +1375,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             if (entry.PlayerId == m_playerId)
                 continue;
             if (m_whereabouts++ == 0)
-                spdlog::info("Whereabouts: player {} at ({:.0f}, {:.0f}, {:.0f}) in cell {:X}, place '{}'", entry.PlayerId, entry.Position.x, entry.Position.y, entry.Position.z,
+                spdlog::info("Whereabouts: player {} at ({:.0f}) in cell {:X}, place '{}'", entry.PlayerId, entry.Position,
                              entry.CellId.BaseId, entry.Place.c_str());
             break;
         }
@@ -1399,9 +1400,8 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
             m_firstClashTick = message.Tick;
         const glm::vec3 cPoint(message.Point);
         const int64_t cAgo = static_cast<int64_t>(GetClock().GetCurrentTick()) - static_cast<int64_t>(message.Tick);
-        spdlog::info("Clash from {}: its {} met the {} weapon of {} at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units a second, {} ms ago", message.FromId,
-                     message.OwnSide == 0 ? "left hand" : message.OwnSide == 1 ? "right hand" : "hand", message.OtherSide ? "right" : "left", message.OtherId, cPoint.x, cPoint.y,
-                     cPoint.z, message.Speed, cAgo);
+        spdlog::info("Clash from {}: its {} met the {} weapon of {} at ({:.0f}), {:.0f} units a second, {} ms ago", message.FromId,
+                     message.OwnSide == 0 ? "left hand" : message.OwnSide == 1 ? "right hand" : "hand", message.OtherSide ? "right" : "left", message.OtherId, cPoint, message.Speed, cAgo);
         Record(Collect::Movement, fmt::format("clash from {} on {}", message.FromId, message.OtherId));
         return;
     }
@@ -1412,7 +1412,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         ++m_dropMoves;
         const glm::vec3 cPlace(message.Position);
         m_dropPlaces[message.Id] = cPlace;
-        spdlog::info("Dropped item {} moved to ({:.0f}, {:.0f}, {:.0f}){}", message.Id, cPlace.x, cPlace.y, cPlace.z, message.AtRest ? ", at rest" : "");
+        spdlog::info("Dropped item {} moved to ({:.0f}){}", message.Id, cPlace, message.AtRest ? ", at rest" : "");
         Record(Collect::Spawn, fmt::format("drop {} moved{}", message.Id, message.AtRest ? " rest" : ""));
         return;
     }
@@ -1460,7 +1460,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         if (message.ObjectId.ModId == m_skyrimModId)
             ++m_objectMovesOf[message.ObjectId.BaseId];
         const glm::vec3 cPlace(message.Position);
-        spdlog::info("World object {:X}:{:X} moved to ({:.0f}, {:.0f}, {:.0f}){}", message.ObjectId.ModId, message.ObjectId.BaseId, cPlace.x, cPlace.y, cPlace.z,
+        spdlog::info("World object {:X}:{:X} moved to ({:.0f}){}", message.ObjectId.ModId, message.ObjectId.BaseId, cPlace,
                      message.Taken ? ", taken" : message.AtRest ? ", at rest" : "");
         return;
     }
@@ -1470,8 +1470,8 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         // What a game said of its player's arrow: on the string, in a hand (and where it sits there), or gone.
         const auto& message = static_cast<const NotifyArrowNocked&>(acMessage);
         spdlog::info("Arrow of {}: {}{}", message.ServerId, message.Nocked ? "on the string" : message.InHand ? "in the hand" : "gone",
-                     message.InHand ? fmt::format(" ({} hand, its head at ({:.0f}, {:.0f}, {:.0f}), {:.0f} units from the hand bone)", message.HandSide ? "right" : "left",
-                                                  message.HandOffset.x, message.HandOffset.y, message.HandOffset.z, glm::length(message.HandOffset))
+                     message.InHand ? fmt::format(" ({} hand, its head at ({:.0f}), {:.0f} units from the hand bone)", message.HandSide ? "right" : "left",
+                                                  message.HandOffset, glm::length(message.HandOffset))
                                     : std::string());
         return;
     }
@@ -1648,7 +1648,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         if (message.Change == NotifyDownedState::kDied || message.Change == NotifyDownedState::kPartyFallen || message.Change == NotifyDownedState::kRespawned)
             m_respawnPoints[message.PlayerId] = message.HasRespawnPoint ? std::optional<glm::vec3>(message.RespawnPosition) : std::nullopt;
         spdlog::info("Player {} is {} (revived by {}, {} s left, respawn point {})", message.PlayerId, pName, message.ReviverId, message.SecondsLeft,
-                     message.HasRespawnPoint ? fmt::format("({:.0f}, {:.0f}, {:.0f})", message.RespawnPosition.x, message.RespawnPosition.y, message.RespawnPosition.z) : "none");
+                     message.HasRespawnPoint ? fmt::format("({:.0f})", message.RespawnPosition) : "none");
         return;
     }
 
@@ -1870,7 +1870,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         {
             const float distance = arg(0, 70.f);
             m_position = pHost->Position + glm::vec3(std::sin(pHost->Rotation.y), std::cos(pHost->Rotation.y), 0.f) * distance;
-            spdlog::info("[script] {:.0f} units in front of the host, at ({:.0f}, {:.0f}, {:.0f})", distance, m_position.x, m_position.y, m_position.z);
+            spdlog::info("[script] {:.0f} units in front of the host, at ({:.0f})", distance, m_position);
         }
         else
             spdlog::error("[script] infront: no host known");
@@ -1895,7 +1895,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             return true;
         }
         m_positionMarks[pActor->ServerId] = pActor->Position;
-        spdlog::info("[script] marked {:X} at ({:.0f}, {:.0f}, {:.0f})", pActor->ServerId, pActor->Position.x, pActor->Position.y, pActor->Position.z);
+        spdlog::info("[script] marked {:X} at ({:.0f})", pActor->ServerId, pActor->Position);
         return true;
     }
 
@@ -2178,7 +2178,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (!asNpc)
                 m_lastReplayedPose = {};
             const auto updates = std::count_if(m_capture.begin(), m_capture.end(), [](const CapturedUpdate& acEntry) { return acEntry.HasUpdate; });
-            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}, {:.0f}, {:.0f}){}{}", updates, m_replayTarget, times, m_replayBase.x, m_replayBase.y, m_replayBase.z,
+            spdlog::info("Replaying {} updates as {:X}, {} time(s), from ({:.0f}){}{}", updates, m_replayTarget, times, m_replayBase,
                          noActions ? ", without their actions" : "", skipped.empty() ? std::string() : ", without its " + skipped);
         }
         if (m_replayTarget == kNoId)
@@ -2517,7 +2517,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.Scale = 1.f;
         request.AutoAim = true;
         SendMsg(request);
-        spdlog::info("[script] projectile {:X} of spell {:X} launched from ({:.0f}, {:.0f}, {:.0f}), the host {:.0f} units away {}", projectile, spell, cFrom.x, cFrom.y, cFrom.z,
+        spdlog::info("[script] projectile {:X} of spell {:X} launched from ({:.0f}), the host {:.0f} units away {}", projectile, spell, cFrom,
                      glm::length(cWay), cHow);
         return true;
     }
@@ -2743,7 +2743,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         SendMsg(request);
         m_pendingDropBase = request.Item.BaseId;
 
-        spdlog::info("[script] dropped {:X} at ({:.0f}, {:.0f}, {:.0f}) in cell {:X}", request.Item.BaseId.BaseId, m_position.x, m_position.y, m_position.z, m_cell.BaseId);
+        spdlog::info("[script] dropped {:X} at ({:.0f}) in cell {:X}", request.Item.BaseId.BaseId, m_position, m_cell.BaseId);
         return true;
     }
 
@@ -2859,7 +2859,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         }
         // Reliable, unlike a stream of movement: this one step is all the test sends, and no later one would make it good.
         SendMsg(message);
-        spdlog::info("[script] NPC {:X} moved to ({:.0f}, {:.0f}, {:.0f})", npcId, m_npcPosition.x, m_npcPosition.y, m_npcPosition.z);
+        spdlog::info("[script] NPC {:X} moved to ({:.0f})", npcId, m_npcPosition);
         return true;
     }
 
@@ -3090,7 +3090,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
         request.Position = place;
         request.AtRest = args[3] == "rest";
         SendMsg(request);
-        spdlog::info("[script] moved dropped item {} to ({:.0f}, {:.0f}, {:.0f}){}", id, place.x, place.y, place.z, request.AtRest ? ", put down" : ", still held");
+        spdlog::info("[script] moved dropped item {} to ({:.0f}){}", id, place, request.AtRest ? ", put down" : ", still held");
         return true;
     }
 
@@ -3260,8 +3260,7 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
             if (args.size() > 4 && ParseFloat(args[2], x) && ParseFloat(args[3], y) && ParseFloat(args[4], z))
                 request.HandOffset = glm::vec3{x, y, z};
             SendMsg(request);
-            spdlog::info("[script] arrow in the {} hand, its head at ({:.0f}, {:.0f}, {:.0f})", request.HandSide ? "right" : "left", request.HandOffset.x, request.HandOffset.y,
-                         request.HandOffset.z);
+            spdlog::info("[script] arrow in the {} hand, its head at ({:.0f})", request.HandSide ? "right" : "left", request.HandOffset);
             return true;
         }
         request.Nocked = args.empty() || args[0] != "off";

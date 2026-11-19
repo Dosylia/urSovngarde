@@ -20,6 +20,9 @@ export class ClientService implements OnDestroy {
   /** Activation state change. */
   public activationStateChange = new BehaviorSubject(false);
 
+  /** Where the menu is shown: 'dashboard', 'panel' or 'screen'; empty until the game says. */
+  public surfaceChange = new BehaviorSubject<string>('');
+
   /** InGame state change. */
   public inGameStateChange = new BehaviorSubject(!environment.game);
 
@@ -118,6 +121,7 @@ export class ClientService implements OnDestroy {
     skyrimtogether.on('init', this.onInit.bind(this));
     skyrimtogether.on('activate', this.onActivate.bind(this));
     skyrimtogether.on('deactivate', this.onDeactivate.bind(this));
+    skyrimtogether.on('setSurface', this.onSetSurface.bind(this));
     skyrimtogether.on('enterGame', this.onEnterGame.bind(this));
     skyrimtogether.on('exitGame', this.onExitGame.bind(this));
     skyrimtogether.on('openingMenu', this.onOpeningMenu.bind(this));
@@ -160,6 +164,7 @@ export class ClientService implements OnDestroy {
     skyrimtogether.off('init');
     skyrimtogether.off('activate');
     skyrimtogether.off('deactivate');
+    skyrimtogether.off('setSurface');
     skyrimtogether.off('enterGame');
     skyrimtogether.off('exitGame');
     skyrimtogether.off('openingMenu');
@@ -336,6 +341,15 @@ export class ClientService implements OnDestroy {
   private onDeactivate(): void {
     this.zone.run(() => {
       this.activationStateChange.next(false);
+    });
+  }
+
+  /**
+   * Called with where the menu is shown, before it is activated there.
+   */
+  private onSetSurface(surface: string): void {
+    this.zone.run(() => {
+      this.surfaceChange.next(surface);
     });
   }
 

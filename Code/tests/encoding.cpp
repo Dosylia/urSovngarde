@@ -346,6 +346,7 @@ TEST_CASE("Packets", "[encoding.packets]")
         sendMessage.Version = "v1.8.1-104-g9da1af5c-dirty.f8f11b7";
         sendMessage.Protocol = "0a1b2c3d";
         sendMessage.HideFromPublicPage = true;
+        sendMessage.IsFlat = true;
         sendMessage.UserMods.ModList.push_back({"Hello", 42});
         sendMessage.UserMods.ModList.push_back({"Hi", 14});
         sendMessage.UserMods.ModList.push_back({"Test", 8});
@@ -630,6 +631,27 @@ TEST_CASE("Packets", "[encoding.packets]")
             REQUIRE(pMessage);
             REQUIRE(*CastUnique<NotifyNpcPluginsDiffer>(std::move(pMessage)) == sendMessage);
         }
+    }
+
+    SECTION("NotifyPlayerList with its flat players")
+    {
+        NotifyPlayerList sendMessage;
+        sendMessage.Players[1] = "player 1";
+        sendMessage.Players[2] = "player 2";
+        sendMessage.Players[7] = "player 3";
+        sendMessage.FlatPlayers = {2, 7};
+
+        uint8_t storage[1 << 12];
+        Buffer buffer(storage, sizeof(storage));
+        Buffer::Writer writer(&buffer);
+        sendMessage.Serialize(writer);
+
+        Buffer::Reader reader(&buffer);
+        const ServerMessageFactory factory;
+        auto pMessage = factory.Extract(reader);
+
+        REQUIRE(pMessage);
+        REQUIRE(*CastUnique<NotifyPlayerList>(std::move(pMessage)) == sendMessage);
     }
 
     SECTION("RequestRespawn with a look and a name, and NotifyPlayerName")

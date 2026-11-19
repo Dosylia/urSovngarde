@@ -51,6 +51,9 @@ struct Player
     void SetPlace(String aPlace) noexcept { m_place = std::move(aPlace); }
     [[nodiscard]] bool IsHiddenFromPublicPage() const noexcept { return m_hiddenFromPublicPage; }
     void SetHiddenFromPublicPage(bool aHidden) noexcept { m_hiddenFromPublicPage = aHidden; }
+    // Whether the player plays flat Skyrim rather than Skyrim VR, as its game said when connecting.
+    [[nodiscard]] bool IsFlat() const noexcept { return m_flat; }
+    void SetFlat(bool aFlat) noexcept { m_flat = aFlat; }
 
     void Send(const ServerMessage& acServerMessage, TiltedPhoques::EPacketFlags aFlags = TiltedPhoques::kReliable) const;
     // For voice: a lost packet is a short gap, never a delay behind a resend.
@@ -94,5 +97,6 @@ private:
     std::chrono::steady_clock::time_point m_lastCellEnterAt{};
     String m_place;
     bool m_hiddenFromPublicPage{false};
+    bool m_flat{false};
     bool m_voiceEnabled{false};
 };

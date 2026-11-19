@@ -5,6 +5,7 @@
 #ifdef SKYRIMVR
 
 #include <Games/Skyrim/BannerPicture.h>
+#include <Games/Skyrim/VRRuntime.h>
 
 #include <immersive_launcher/launcher.h>
 #include <openvr/openvr.h>
@@ -33,21 +34,12 @@ constexpr auto kFadeOut = 1200ms;
 // A meter not shown again for this long fades out, so one its plugin forgot does not stay for the session.
 constexpr auto kMeterStale = 10s;
 
-// The game has already brought OpenVR up through its own openvr_api.dll; asking that DLL shares the game's session.
+// None under OpenComposite: the banners are not shown there.
 vr::IVROverlay* GetOverlay() noexcept
 {
     static vr::IVROverlay* s_pOverlay = nullptr;
-    if (s_pOverlay)
-        return s_pOverlay;
-    HMODULE hOpenVR = GetModuleHandleW(L"openvr_api.dll");
-    if (!hOpenVR)
-        return nullptr;
-    using TGetGenericInterface = void*(const char*, vr::EVRInitError*);
-    auto* pGetInterface = reinterpret_cast<TGetGenericInterface*>(GetProcAddress(hOpenVR, "VR_GetGenericInterface"));
-    if (!pGetInterface)
-        return nullptr;
-    vr::EVRInitError error = vr::VRInitError_None;
-    s_pOverlay = static_cast<vr::IVROverlay*>(pGetInterface(vr::IVROverlay_Version, &error));
+    if (!s_pOverlay)
+        s_pOverlay = VRRuntime::GetOpenVROverlay();
     return s_pOverlay;
 }
 

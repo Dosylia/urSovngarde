@@ -91,6 +91,8 @@ Copy-Item $pdb (Join-Path $Destination 'urSovngarde.pdb') -Force
 # The menu's browser helper is a client binary too; it goes when it changed, with one fallback as above.
 $helper = Join-Path $release 'TPProcess.exe'
 $liveHelper = Join-Path $Destination 'TPProcess.exe'
+. (Join-Path $PSScriptRoot 'binary-check.ps1')
+if (Test-Path $helper) { Assert-CompleteBinary $helper }
 if ((Test-Path $helper) -and (-not (Test-Path $liveHelper) -or (Get-FileHash $helper).Hash -ne (Get-FileHash $liveHelper).Hash)) {
     # A fallback whose helper still runs (one a crashed game left behind) cannot be deleted: it stays, and the deploy goes on.
     Get-ChildItem -Path $Destination -Filter 'TPProcess.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue

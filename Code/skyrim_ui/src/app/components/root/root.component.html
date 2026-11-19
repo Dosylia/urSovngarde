@@ -13,6 +13,7 @@
   <div
     [@controls]="active$ | async"
     class="app-root-controls"
+    [attr.data-surface]="openSurface$ | async"
     [class.background-element]="view$ | async"
   >
     <div class="app-root-top">
@@ -232,4 +233,6 @@
 
     <app-error (closeAll)="closeView()"></app-error>
   </div>
+
+  <app-keyboard></app-keyboard>
 </ng-container>

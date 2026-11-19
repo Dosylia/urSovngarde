@@ -1,7 +1,5 @@
 #include <TiltedOnlinePCH.h>
 
-#ifdef SKYRIMVR
-
 #include <Services/VRConnectService.h>
 #include <Services/ConnectFile.h>
 #include <Services/TransportService.h>
@@ -25,6 +23,14 @@ namespace
 constexpr auto kAutoConnectDelay = 5s;    // after a save is loaded, so the cell has settled, before the install checks and the connection or the F6 hint
 constexpr auto kAttemptTimeout = 30s;     // an attempt that never reports back is abandoned
 constexpr std::array<std::chrono::seconds, 5> kRetryDelays{5s, 10s, 20s, 30s, 60s};
+#ifdef SKYRIMVR
+constexpr const char* kScriptExtender = "SKSE VR";
+constexpr const char* kNoServerHint = "urSovngarde: no server set, join from the urSovngarde launcher";
+#else
+constexpr const char* kScriptExtender = "SKSE";
+// A flat player also picks a server in the menu.
+constexpr const char* kNoServerHint = "urSovngarde: no server set, pick one in the menu (F2) or join from the urSovngarde launcher";
+#endif
 
 // The name the server knows this player by: TransportService sends it when connecting.
 TiltedPhoques::String PlayerName() noexcept
@@ -37,12 +43,9 @@ TiltedPhoques::String PlayerName() noexcept
 
 bool VRConnectService::LoadConfig(Config& aConfig) noexcept
 {
-    char localAppData[MAX_PATH] = "";
-    GetEnvironmentVariableA("LOCALAPPDATA", localAppData, sizeof(localAppData));
-
     // The working directory is the game's, so under Mod Organizer this path shows the mods.
     ConnectFile::Contents contents;
-    if (!ConnectFile::Load(std::string(localAppData) + "\\SkyrimTogetherVR\\connect.txt", "Data\\SKSE\\Plugins\\urSovngarde\\connect.txt", contents))
+    if (!ConnectFile::Load(ConnectFile::PlayerFolder() / "connect.txt", "Data\\SKSE\\Plugins\\urSovngarde\\connect.txt", contents))
         return false;
 
     aConfig.Address = contents.Address.c_str();
@@ -118,6 +121,16 @@ void VRConnectService::ConnectTo(const std::vector<std::string>& acAddresses, co
     spdlog::info("VRConnectService: joining a Steam friend's server, asked for in the menu");
     m_chosen = Config{acAddresses.front().c_str(), acPassword.c_str(), false};
     m_chosenNext.assign(acAddresses.begin() + 1, acAddresses.end());
+    m_chosenIsFriend = true;
+    ReconnectNow();
+}
+
+void VRConnectService::ConnectToServer(const std::string& acAddress, const std::string& acPassword) noexcept
+{
+    spdlog::info("VRConnectService: joining the server chosen in the menu");
+    m_chosen = Config{acAddress.c_str(), acPassword.c_str(), false};
+    m_chosenNext.clear();
+    m_chosenIsFriend = false;
     ReconnectNow();
 }
 
@@ -138,8 +151,8 @@ bool VRConnectService::CheckInstall() noexcept
 
     if (!IsScriptExtenderLoaded())
     {
-        spdlog::error("VRConnectService: SKSE VR is not loaded");
-        Utils::ShowHudMessage("urSovngarde: SKSE VR is not loaded, check the SKSE VR install");
+        spdlog::error("VRConnectService: {} is not loaded", kScriptExtender);
+        Utils::ShowHudMessage(fmt::format("urSovngarde: {0} is not loaded, check the {0} install", kScriptExtender).c_str());
     }
 
     auto* pGrids = INISettingCollection::Get()->GetSetting("uGridsToLoad:General");
@@ -174,17 +187,18 @@ void VRConnectService::StartAttempt() noexcept
         config = *m_chosen;
     else if (!LoadConfig(config))
     {
-        spdlog::warn("VRConnectService: no server in %LOCALAPPDATA%\\SkyrimTogetherVR\\connect.txt or Data\\SKSE\\Plugins\\urSovngarde\\connect.txt");
-        Utils::ShowHudMessage("urSovngarde: no server set, join from the urSovngarde launcher");
+        // The folder by name only: its full path holds the Windows user name, and logs end up in crash reports.
+        spdlog::warn("VRConnectService: no server in %LOCALAPPDATA%\\{}\\connect.txt or Data\\SKSE\\Plugins\\urSovngarde\\connect.txt", ConnectFile::kFolderName);
+        Utils::ShowHudMessage(kNoServerHint);
         m_state = State::kIdle;
         return;
     }
 
-    // A Steam friend's address stays off the HUD and out of the log: both can end up on a stream or in a crash report.
+    // A server picked in the menu stays off the HUD and out of the log: it can be a friend's home, and both can end up on a stream or in a crash report.
     if (m_chosen)
     {
-        spdlog::info("VRConnectService: connecting to a Steam friend's server (attempt {})", m_failedAttempts + 1);
-        Utils::ShowHudMessage("urSovngarde: connecting to your friend's server");
+        spdlog::info("VRConnectService: connecting to {} (attempt {})", m_chosenIsFriend ? "a Steam friend's server" : "the server chosen in the menu", m_failedAttempts + 1);
+        Utils::ShowHudMessage(m_chosenIsFriend ? "urSovngarde: connecting to your friend's server" : "urSovngarde: connecting to the server you chose");
     }
     else
     {
@@ -273,7 +287,9 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
             Config config;
             if (!LoadConfig(config))
             {
+#ifdef SKYRIMVR
                 Utils::ShowHudMessage("urSovngarde: no server set, join from the urSovngarde launcher or run setup-connect.bat in the mod's folder");
+#endif
                 return;
             }
             if (!config.AutoConnect)
@@ -393,5 +409,3 @@ void VRConnectService::OnConnectionError(const ConnectionErrorEvent&) noexcept
     m_chosen.reset();
     m_chosenNext.clear();
 }
-
-#endif

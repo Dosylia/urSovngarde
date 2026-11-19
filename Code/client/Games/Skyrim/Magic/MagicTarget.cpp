@@ -14,6 +14,7 @@
 #include <Events/HitEvent.h>
 
 #include <Games/ActorExtension.h>
+#include <Services/PvpRules.h>
 #include <Games/Overrides.h>
 #include <Games/References.h>
 #include <PlayerCharacter.h>
@@ -177,13 +178,13 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
         {
             // A spell's damage runs on the copy as it does on an NPC, with the caster's perks and its burn.
             // Each of its hits goes to the other game as a health change (Actor::HookDamageActor), and the copy's health stays as it is.
-            if (World::Get().GetServerSettings().PvpEnabled && MagicTarget::IsCast(arData.pSpell) && DamagesHealth(arData.pEffectItem))
+            if (PvpRules::IsAllowedWithCopy(pTargetActor) && MagicTarget::IsCast(arData.pSpell) && DamagesHealth(arData.pEffectItem))
                 return TiltedPhoques::ThisCall(RealAddTarget, apThis, arData);
 
             // A damaging spell on the other player is sent as a health change, like a sword hit (Actor::HookDamageActor).
             // Only the caster's game reliably knows it landed. It is not applied locally: the other side owns that body.
             // Only an instant effect that damages health, not the spell's other effects: damage-over-time and concentration effects tick on their own.
-            if (World::Get().GetServerSettings().PvpEnabled && DamagesHealth(arData.pEffectItem) && arData.pEffectItem->data.iDuration == 0 && arData.fMagnitude > 0.f)
+            if (PvpRules::IsAllowedWithCopy(pTargetActor) && DamagesHealth(arData.pEffectItem) && arData.pEffectItem->data.iDuration == 0 && arData.fMagnitude > 0.f)
             {
                 // The caster's perks (Augmented Flames and the like) adjust an effect only as it is made (AdjustForPerks), as on an NPC.
                 // So the effect is made on the copy to take their factor, and left with no magnitude there (live-pvp-spell-perks).
@@ -236,7 +237,7 @@ bool TP_MAKE_THISCALL(HookAddTarget, MagicTarget, MagicTarget::AddTargetData& ar
             ActorExtension* pCasterExtension = arData.pCaster->GetExtension();
             if (pCasterExtension->IsRemotePlayer())
             {
-                if (!World::Get().GetServerSettings().PvpEnabled)
+                if (!PvpRules::IsAllowedWithCopy(arData.pCaster))
                     return false;
 
                 // Heal and buff spells are already synced by the caster.

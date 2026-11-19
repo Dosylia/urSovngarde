@@ -1,8 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
-#ifdef SKYRIMVR
-
 #include <Services/LauncherLinkService.h>
+#include <Services/ConnectFile.h>
 #include <Services/JsonText.h>
 #include <Services/OverlayService.h>
 #include <OverlayApp.hpp>
@@ -26,10 +25,8 @@ bool IsNumber(const std::string& acText)
 
 LauncherLinkService::LauncherLinkService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
+    , m_folder(ConnectFile::PlayerFolder())
 {
-    char localAppData[MAX_PATH] = "";
-    GetEnvironmentVariableA("LOCALAPPDATA", localAppData, sizeof(localAppData));
-    m_folder = std::filesystem::path(localAppData) / "SkyrimTogetherVR";
 
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&LauncherLinkService::OnUpdate>(this);
 }
@@ -131,5 +128,3 @@ void LauncherLinkService::SendState(const std::string& acText) const noexcept
     pArguments->SetString(0, acText);
     pApp->ExecuteAsync("launcherState", pArguments);
 }
-
-#endif

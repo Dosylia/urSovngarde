@@ -37,6 +37,11 @@ bool ActorExtension::IsHiddenHere() const noexcept
     return onlineFlags & kHiddenHere;
 }
 
+bool ActorExtension::IsOtherGame() const noexcept
+{
+    return onlineFlags & kOtherGame;
+}
+
 void ActorExtension::SetRemote(bool aSet) noexcept
 {
     if (aSet)
@@ -67,4 +72,16 @@ void ActorExtension::SetHiddenHere(bool aSet) noexcept
         onlineFlags |= kHiddenHere;
     else
         onlineFlags &= ~kHiddenHere;
+}
+
+/**
+ * Sets the "OtherGame" flag for the actor.
+ * @param aSet The value to set the flag to.
+ */
+void ActorExtension::SetOtherGame(bool aSet) noexcept
+{
+    if (aSet)
+        onlineFlags |= kOtherGame;
+    else
+        onlineFlags &= ~kOtherGame;
 }
