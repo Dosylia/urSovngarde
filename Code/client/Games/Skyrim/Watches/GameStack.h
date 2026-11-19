@@ -4,8 +4,6 @@
 // Stacks and addresses for the watches' log lines, through game and plugin frames alike.
 namespace GameStack
 {
-//! "module+offset", or the bare address outside any module.
-std::string Where(const void* apAddress) noexcept;
 //! Whether the game's unwind table reads as one; without it stacks stop at the first game frame.
 bool Ready() noexcept;
 //! The return addresses from the caller's caller up.

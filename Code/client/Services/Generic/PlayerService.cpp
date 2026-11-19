@@ -46,9 +46,9 @@
 #include <Interface/UI.h>
 #include <Services/PartyService.h>
 #include <Games/Skyrim/VR/VRHaptics.h>
-#include <Games/Skyrim/VR/VRBanner.h>
-#include <Games/Skyrim/DeathCause.h>
-#include <Games/Skyrim/DeathSentence.h>
+#include <UI/Banner/VRBanner.h>
+#include <UI/Banner/DeathCause.h>
+#include <UI/Banner/DeathSentence.h>
 #include <Components.h>
 #include <Forms/TESQuest.h>
 

@@ -6,6 +6,7 @@
 #include <Interface/Menus/MapMenu.h>
 #include <Helpers/PatchCheck.h>
 #include <Games/Skyrim/Watches/GameStack.h>
+#include <Helpers/ModuleImage.h>
 
 #include <cstring>
 #include <intrin.h>
@@ -46,7 +47,7 @@ size_t SlotOf(const void* apPass) noexcept
     return (reinterpret_cast<uintptr_t>(apPass) >> 4) & (std::size(s_lastInserts) - 1);
 }
 
-using GameStack::Where;
+using ModuleImage::Where;
 
 std::string GeometryName(const uint8_t* apPass) noexcept
 {

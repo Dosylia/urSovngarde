@@ -24,7 +24,7 @@ target("TPTests")
         -- SmallDump.h (client) writes minidumps.
         add_syslinks("dbghelp")
         -- The VR banner's pictures are drawn with GDI, in the game's fonts read from its zlib-compressed font library.
-        add_files("../client/Games/Skyrim/VR/BannerPicture.cpp")
+        add_files("../client/UI/Banner/BannerPicture.cpp")
         add_syslinks("gdi32", "user32")
         add_packages("zlib")
     else

@@ -1,6 +1,6 @@
 #include <catch2/catch.hpp>
 
-#include <Games/Skyrim/VR/BannerPicture.h>
+#include <UI/Banner/BannerPicture.h>
 
 #include <chrono>
 #include <cstdlib>

@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <SaveLoad.h>
+#include <Helpers/ModuleImage.h>
 #include <Helpers/ReadableMemory.h>
 
 // TEMPORARY: logs every save load request with its file and caller.
@@ -10,20 +11,9 @@ static TSaveLoadManagerLoad* RealSaveLoadManagerLoad = nullptr;
 
 bool TP_MAKE_THISCALL(HookSaveLoadManagerLoad, BGSSaveLoadManager, const char* apFileName, bool aCheckForMods, bool aUnk)
 {
-    char caller[160] = "?";
-    HMODULE hModule = nullptr;
-    void* pReturn = _ReturnAddress();
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(pReturn), &hModule) && hModule)
-    {
-        char name[MAX_PATH] = {};
-        GetModuleFileNameA(hModule, name, sizeof(name));
-        const char* pBase = strrchr(name, 92);
-        _snprintf_s(caller, sizeof(caller), _TRUNCATE, "%s+0x%llx", pBase ? pBase + 1 : name, static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(pReturn) - reinterpret_cast<uintptr_t>(hModule)));
-    }
-    else
-        _snprintf_s(caller, sizeof(caller), _TRUNCATE, "SkyrimVR.exe+0x%llx", static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(pReturn) - 0x140000000ull));
-
-    spdlog::info("SaveLoad: load requested for '{}' (check mods {}, flag {}) from {}", apFileName ? apFileName : "(null)", aCheckForMods, aUnk, caller);
+    // Who asked for the load: the game itself, or a plugin.
+    const std::string cCaller = ModuleImage::Where(_ReturnAddress());
+    spdlog::info("SaveLoad: load requested for '{}' (check mods {}, flag {}) from {}", apFileName ? apFileName : "(null)", aCheckForMods, aUnk, cCaller);
     const bool result = TiltedPhoques::ThisCall(RealSaveLoadManagerLoad, apThis, apFileName, aCheckForMods, aUnk);
     spdlog::info("SaveLoad: load of '{}' returned {}", apFileName ? apFileName : "(null)", result);
     return result;

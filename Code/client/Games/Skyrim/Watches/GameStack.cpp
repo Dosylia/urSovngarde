@@ -2,6 +2,7 @@
 
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Watches/GameStack.h>
+#include <Helpers/ModuleImage.h>
 #include <CrashHandler.h>
 
 namespace
@@ -54,20 +55,6 @@ bool CheckGameUnwindTable() noexcept
 
 namespace GameStack
 {
-std::string Where(const void* apAddress) noexcept
-{
-    HMODULE module = nullptr;
-    if (apAddress && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(apAddress), &module))
-    {
-        wchar_t path[MAX_PATH]{};
-        GetModuleFileNameW(module, path, MAX_PATH);
-        const std::wstring cPath(path);
-        const std::wstring cName = cPath.substr(cPath.find_last_of(L"\\/") + 1);
-        return fmt::format("{}+{:#x}", std::string(cName.begin(), cName.end()), reinterpret_cast<uintptr_t>(apAddress) - reinterpret_cast<uintptr_t>(module));
-    }
-    return fmt::format("{}", apAddress);
-}
-
 bool Ready() noexcept
 {
     static const bool s_ready = CheckGameUnwindTable();
@@ -126,7 +113,7 @@ std::string Describe(void* const* apFrames, const USHORT aDepth) noexcept
 {
     std::string stack;
     for (USHORT i = 0; i < aDepth; ++i)
-        stack += (i ? " < " : "") + Where(apFrames[i]);
+        stack += (i ? " < " : "") + ModuleImage::Where(apFrames[i]);
     return stack;
 }
 } // namespace GameStack

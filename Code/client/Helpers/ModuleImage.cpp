@@ -26,6 +26,22 @@ const IMAGE_NT_HEADERS* MainHeaderOf(const HMODULE ahModule) noexcept
         return nullptr;
     return pMainHeader;
 }
+
+/**
+ * Read a loaded program or DLL's file name, without its folder.
+ *
+ * @param ahModule The loaded program or DLL.
+ * @return Its file name, such as "SkyrimVR.exe".
+ */
+std::string FileNameOf(const HMODULE ahModule) noexcept
+{
+    wchar_t path[MAX_PATH]{};
+    GetModuleFileNameW(ahModule, path, MAX_PATH);
+    const std::wstring_view cPath(path);
+    const std::wstring_view cName = cPath.substr(cPath.find_last_of(L"\\/") + 1);
+    // The game's and the plugins' file names are plain letters: each wide character is kept as one byte.
+    return std::string(cName.begin(), cName.end());
+}
 } // namespace
 
 namespace ModuleImage
@@ -88,5 +104,48 @@ std::string_view BytesOf(const HMODULE ahModule, const IMAGE_SECTION_HEADER& acS
     // In memory a section takes its loaded size; some tools leave that 0 and only give its size in the file.
     const size_t cSize = acSection.Misc.VirtualSize ? acSection.Misc.VirtualSize : acSection.SizeOfRawData;
     return {pStart, cSize};
+}
+
+/**
+ * Find the program or DLL an address belongs to.
+ * The game's own code is in none Windows knows of: the launcher loads the game itself.
+ *
+ * @param apAddress An address in memory, usually in code.
+ * @return The program or DLL, or null when the address is in none.
+ */
+HMODULE ModuleOf(const void* apAddress) noexcept
+{
+    HMODULE hModule = nullptr;
+    // Asked by address, and without holding the module loaded: it is only looked up.
+    if (!apAddress || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(apAddress), &hModule))
+        return nullptr;
+    return hModule;
+}
+
+/**
+ * Name the program or DLL an address belongs to, for the log.
+ * Only its file name: a full path can hold the Windows user name.
+ *
+ * @param apAddress An address in memory, usually in code.
+ * @return The file name, such as "SkyrimVR.exe", or "no module" when the address is in none.
+ */
+std::string NameOf(const void* apAddress) noexcept
+{
+    const HMODULE cModule = ModuleOf(apAddress);
+    return cModule ? FileNameOf(cModule) : "no module";
+}
+
+/**
+ * Write where an address is, for the log, as "module+offset", such as "SkyrimVR.exe+0x5f2a10".
+ *
+ * @param apAddress An address in memory, usually in code.
+ * @return The program or DLL's file name and the offset into it, or the bare address when it is in none.
+ */
+std::string Where(const void* apAddress) noexcept
+{
+    const HMODULE cModule = ModuleOf(apAddress);
+    if (!cModule)
+        return fmt::format("{}", apAddress);
+    return fmt::format("{}+{:#x}", FileNameOf(cModule), reinterpret_cast<uintptr_t>(apAddress) - reinterpret_cast<uintptr_t>(cModule));
 }
 } // namespace ModuleImage

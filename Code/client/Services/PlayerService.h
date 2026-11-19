@@ -2,7 +2,7 @@
 
 #include <Structs/GameId.h>
 #include <Events/EventDispatcher.h>
-#include <Games/Skyrim/DeathSentence.h>
+#include <UI/Banner/DeathSentence.h>
 #include <Games/Skyrim/GameSound.h>
 
 struct World;

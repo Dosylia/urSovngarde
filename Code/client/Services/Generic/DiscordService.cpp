@@ -162,7 +162,8 @@ bool DiscordService::Init()
     DiscordCreateParams params{};
     DiscordCreateParamsSetDefault(&params); // initialize version fields
 
-    params.client_id = 739600151277994076; //"Skyrim Together"
+    // urSovngarde's Discord application: Discord shows its name and its "logo" picture as what the player is playing.
+    params.client_id = 1573090644795072522;
 
     params.flags = DiscordCreateFlags_NoRequireDiscord;
     params.event_data = this; // this is our userpointer

@@ -81,6 +81,12 @@ private:
     bool CreateTab() noexcept;
 
     /**
+     * Give the tab urSovngarde's icon, the same picture as the players' launcher, built into urSovngarde.exe.
+     * Without it the tab still works, with SteamVR's own default icon.
+     */
+    void SetTabIcon() noexcept;
+
+    /**
      * Send SteamVR the newest picture of the page, when there is one it has not had.
      *
      * @param aPage The menu page as pictures.

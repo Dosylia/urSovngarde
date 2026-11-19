@@ -18,7 +18,7 @@
 #include <Events/HealthChangeEvent.h>
 #include <Events/ClashEvent.h>
 #include <PlayerCharacter.h>
-#include <Games/Skyrim/DeathCause.h>
+#include <UI/Banner/DeathCause.h>
 #include <Services/PvpProjectiles.h>
 #include <Services/PvpRules.h>
 

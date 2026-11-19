@@ -80,6 +80,8 @@ int StartUp(int argc, char** argv)
 
 #if (!IS_MASTER)
     TiltedPhoques::Debug::CreateConsole();
+    // The library names the console after itself; players see the mod's name instead.
+    SetConsoleTitleW(L"urSovngarde Console");
 #endif
 
     SetMaxstdio();

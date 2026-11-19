@@ -25,7 +25,7 @@ struct VRPage final : TiltedPhoques::OverlayApp::RenderProvider
 
     // The dark panel colour behind the page, red, green, blue: the SteamVR tab and the in-game panel both use it.
     static constexpr uint8_t kPanelRgb[3]{18, 21, 24};
-    // The menu's gold, red, green, blue: the tab's icon, and the laser and its dot on the in-game panel.
+    // The menu's gold, red, green, blue: the laser and its dot on the in-game panel.
     static constexpr uint8_t kGoldRgb[3]{200, 169, 110};
 
     /**

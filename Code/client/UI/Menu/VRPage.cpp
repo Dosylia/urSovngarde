@@ -2,7 +2,7 @@
 
 #ifdef SKYRIMVR
 
-#include <Systems/VRPage.h>
+#include <UI/Menu/VRPage.h>
 
 #include <Services/OverlayService.h>
 

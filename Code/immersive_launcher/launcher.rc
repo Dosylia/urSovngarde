@@ -46,4 +46,6 @@ END
 
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "resources/launcher.manifest"
 
-102 ICON "resources/st.ico"
+// The urSovngarde icon, the same picture as the players' launcher: the exe's icon, and as a PNG the SteamVR menu tab's.
+102 ICON "resources/ursovngarde.ico"
+URSOVNGARDE_ICON RCDATA "resources/ursovngarde.png"

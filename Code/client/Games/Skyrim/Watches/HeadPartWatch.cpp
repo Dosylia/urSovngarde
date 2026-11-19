@@ -2,6 +2,7 @@
 
 #ifdef SKYRIMVR
 #include <CrashHandler.h>
+#include <Helpers/ModuleImage.h>
 #include <Helpers/ReadableMemory.h>
 #include <Games/Skyrim/Watches/GameStack.h>
 #include <Games/Skyrim/Watches/HeadPartWatch.h>
@@ -199,7 +200,7 @@ void HookClass(void** apVTable, const std::string& acClass) noexcept
     s_hookedCount.store(cHooked + 1, std::memory_order_release);
     apVTable[0] = reinterpret_cast<void*>(&HookDestructor);
     VirtualProtect(&apVTable[0], sizeof(void*), oldProtect, &oldProtect);
-    spdlog::info("HeadPartWatch: the destruction of {} ({}) is watched", acClass, GameStack::Where(apVTable));
+    spdlog::info("HeadPartWatch: the destruction of {} ({}) is watched", acClass, ModuleImage::Where(apVTable));
 }
 
 bool CharacterCreationOpen() noexcept
@@ -334,7 +335,7 @@ void Update() noexcept
             SafeRead(static_cast<const uint64_t*>(cPart.pProperty) + w, words[w]);
         spdlog::error("HeadPartWatch: the player's '{}' ({}) holds shader property {} whose memory holds no shader property now: it begins {:X} ({}, {}), "
                       "then {:X}; at +0x60 {:X}; {}",
-                      TextAt(cPart.pName), fmt::ptr(cPart.pGeometry), fmt::ptr(cPart.pProperty), words[0], GameStack::Where(pVTable),
+                      TextAt(cPart.pName), fmt::ptr(cPart.pGeometry), fmt::ptr(cPart.pProperty), words[0], ModuleImage::Where(pVTable),
                       cClass.empty() ? std::string("no class") : cClass, words[1], words[0x60 / 8], Context());
     }
 

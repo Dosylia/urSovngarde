@@ -1,6 +1,6 @@
 #include <catch2/catch.hpp>
 
-#include <Games/Skyrim/DeathSentence.h>
+#include <UI/Banner/DeathSentence.h>
 
 using DeathSentence::Cause;
 using DeathSentence::Describe;

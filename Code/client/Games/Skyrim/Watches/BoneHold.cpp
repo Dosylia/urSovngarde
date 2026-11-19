@@ -2,6 +2,7 @@
 
 #ifdef SKYRIMVR
 #include <CrashHandler.h>
+#include <Helpers/ModuleImage.h>
 #include <Helpers/ReadableMemory.h>
 #include <Games/Skyrim/Watches/BoneHold.h>
 #include <Games/Skyrim/Watches/GameStack.h>
@@ -554,14 +555,14 @@ void UpdateWatch() noexcept
         size_t shown = 0;
         for (const uint64_t cValue : cHit.Stack)
         {
-            const std::string cWhere = cValue > 0x10000 ? GameStack::Where(reinterpret_cast<void*>(cValue)) : std::string();
+            const std::string cWhere = cValue > 0x10000 ? ModuleImage::Where(reinterpret_cast<void*>(cValue)) : std::string();
             if (cWhere.find(".dll+") == std::string::npos && cWhere.find(".exe+") == std::string::npos)
                 continue;
             stack += (shown++ ? ", " : "") + cWhere;
             if (shown == 8)
                 break;
         }
-        spdlog::error("    write {} came from {} on thread {} (main thread {}); code addresses on its stack: {}", i + 1, GameStack::Where(reinterpret_cast<void*>(cHit.Rip)),
+        spdlog::error("    write {} came from {} on thread {} (main thread {}); code addresses on its stack: {}", i + 1, ModuleImage::Where(reinterpret_cast<void*>(cHit.Rip)),
                       cHit.Thread, GameMainThreadId(), stack.empty() ? "none" : stack);
     }
     // The animation's pose-to-node loop holds the bone table it walks in r14.
@@ -660,7 +661,7 @@ void HookFromALoadedActor(const BSFixedString& acName) noexcept
         pVTable[0] = reinterpret_cast<void*>(&HookDestructor);
         VirtualProtect(&pVTable[0], sizeof(void*), oldProtect, &oldProtect);
         spdlog::info("EyeBoneWatch: the destruction of {} ({}) is watched for a node freed while its parent still holds it (found on {:X}'s eye bone); freed named nodes are held {} ms, the player's own {} s",
-                     ClassOf(pVTable), GameStack::Where(pVTable), pRefr->formID, kHoldFor.count(), kPlayerHoldFor.count());
+                     ClassOf(pVTable), ModuleImage::Where(pVTable), pRefr->formID, kHoldFor.count(), kPlayerHoldFor.count());
         return;
     }
 }
@@ -677,7 +678,7 @@ std::string Describe(const Late& acLate) noexcept
                            acLate.WorldChanged ? "world" : "", acLate.Local[0], acLate.Local[1], acLate.Local[2], acLate.Local[3], acLate.Local[4], acLate.Local[5],
                            acLate.Local[6], acLate.Local[7], acLate.Local[8], acLate.Local[9], acLate.Local[10], acLate.Local[11]);
     return fmt::format("{} '{}' ({}) was called through its class table {} ms after its free, from {} on thread {} (main thread {}) in frame {}", cpWhose, acLate.Name,
-                       fmt::ptr(acLate.pNode), acLate.AfterMs, GameStack::Where(acLate.pCaller), acLate.Thread, GameMainThreadId(), acLate.Frame);
+                       fmt::ptr(acLate.pNode), acLate.AfterMs, ModuleImage::Where(acLate.pCaller), acLate.Thread, GameMainThreadId(), acLate.Frame);
 }
 } // namespace
 

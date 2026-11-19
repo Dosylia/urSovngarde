@@ -1,4 +1,4 @@
-#include <Games/Skyrim/VR/BannerPicture.h>
+#include <UI/Banner/BannerPicture.h>
 
 #include <Windows.h>
 #include <zlib.h>

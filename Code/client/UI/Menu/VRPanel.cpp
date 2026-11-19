@@ -2,10 +2,10 @@
 
 #ifdef SKYRIMVR
 
-#include <Systems/VRPanel.h>
-#include <Systems/VRPage.h>
-#include <Systems/VREyeDraw.h>
-#include <Systems/PageInput.h>
+#include <UI/Menu/VRPanel.h>
+#include <UI/Menu/VRPage.h>
+#include <UI/Menu/VREyeDraw.h>
+#include <UI/Menu/PageInput.h>
 
 #include <Services/MenuService.h>
 #include <Services/OverlayService.h>

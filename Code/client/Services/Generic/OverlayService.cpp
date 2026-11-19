@@ -10,9 +10,9 @@
 
 #include <Systems/RenderSystemD3D11.h>
 #ifdef SKYRIMVR
-#include <Systems/VRDashboard.h>
-#include <Systems/VRPage.h>
-#include <Systems/VRPanel.h>
+#include <UI/Menu/VRDashboard.h>
+#include <UI/Menu/VRPage.h>
+#include <UI/Menu/VRPanel.h>
 #endif
 
 #include <World.h>

@@ -2,14 +2,15 @@
 
 #ifdef SKYRIMVR
 
-#include <Systems/VRDashboard.h>
-#include <Systems/VRPage.h>
-#include <Systems/PageInput.h>
+#include <UI/Menu/VRDashboard.h>
+#include <UI/Menu/VRPage.h>
+#include <UI/Menu/PageInput.h>
 
 #include <Services/OverlayService.h>
 #include <Services/MenuService.h>
 #include <Games/Skyrim/VR/VRRuntime.h>
 #include <World.h>
+#include <Helpers/EmbeddedPicture.h>
 #include <Helpers/SafeRelease.h>
 
 #include <OverlayClient.hpp>
@@ -18,48 +19,6 @@
 
 #include <d3d11.h>
 #include <dxgi.h>
-
-namespace
-{
-// The tab icon's size in pixels, and its background colour, red, green, blue.
-constexpr int32_t kIconSize = 64;
-constexpr uint8_t kIconBackgroundRgb[3]{24, 21, 18};
-
-/**
- * Draw the tab's icon, so it needs no image file: two gold diamond rings on a dark square with its corners cut off.
- * It stays readable at the dashboard's thumbnail size.
- *
- * @return The icon, kIconSize pixels square, RGBA.
- */
-std::vector<uint8_t> DrawTabIcon() noexcept
-{
-    constexpr float kCentre = (kIconSize - 1) / 2.f;
-    std::vector<uint8_t> icon(static_cast<size_t>(kIconSize) * kIconSize * 4);
-    for (int32_t y = 0; y < kIconSize; ++y)
-    {
-        for (int32_t x = 0; x < kIconSize; ++x)
-        {
-            // Distances from the centre: along both axes added up, which draws diamonds, and the larger of the two, which draws a square.
-            const float cAcross = static_cast<float>(x) - kCentre;
-            const float cDown = static_cast<float>(y) - kCentre;
-            const float cDiamond = std::abs(cAcross) + std::abs(cDown);
-            const float cSquare = std::max(std::abs(cAcross), std::abs(cDown));
-
-            const bool cOuterRing = cDiamond <= 26.f && cDiamond > 21.f;
-            const bool cInnerRing = cDiamond <= 13.f && cDiamond > 9.f;
-            const uint8_t* pColour = cOuterRing || cInnerRing ? VRPage::kGoldRgb : kIconBackgroundRgb;
-
-            uint8_t* pPixel = icon.data() + (static_cast<size_t>(y) * kIconSize + x) * 4;
-            pPixel[0] = pColour[0];
-            pPixel[1] = pColour[1];
-            pPixel[2] = pColour[2];
-            // The square's corners are cut off.
-            pPixel[3] = cSquare > 30.f ? 0 : 255;
-        }
-    }
-    return icon;
-}
-} // namespace
 
 /**
  * Remove the tab from SteamVR and release our graphics device and picture.
@@ -233,9 +192,24 @@ bool VRDashboard::CreateTab() noexcept
     m_pOverlay->SetOverlayMouseScale(m_handle, &cMouseScale);
     m_pOverlay->SetOverlayFlag(m_handle, vr::VROverlayFlags_SendVRSmoothScrollEvents, true);
 
-    std::vector<uint8_t> icon = DrawTabIcon();
-    m_pOverlay->SetOverlayRaw(m_thumbnailHandle, icon.data(), kIconSize, kIconSize, 4);
+    SetTabIcon();
     return true;
+}
+
+/**
+ * Give the tab urSovngarde's icon, the same picture as the players' launcher, built into urSovngarde.exe.
+ * Without it the tab still works, with SteamVR's own default icon.
+ */
+void VRDashboard::SetTabIcon() noexcept
+{
+    std::optional<EmbeddedPicture::Picture> icon = EmbeddedPicture::Load(L"URSOVNGARDE_ICON");
+    if (!icon)
+    {
+        spdlog::warn("VRDashboard: the urSovngarde icon could not be read; the tab shows SteamVR's default icon");
+        return;
+    }
+    const auto cError = m_pOverlay->SetOverlayRaw(m_thumbnailHandle, icon->Rgba.data(), icon->Width, icon->Height, 4);
+    spdlog::info("VRDashboard: tab icon set, {}x{} (result {})", icon->Width, icon->Height, static_cast<int>(cError));
 }
 
 /**

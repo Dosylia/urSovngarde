@@ -2,8 +2,8 @@
 
 #ifdef SKYRIMVR
 
-#include <Systems/VREyeDraw.h>
-#include <Systems/VRPage.h>
+#include <UI/Menu/VREyeDraw.h>
+#include <UI/Menu/VRPage.h>
 
 #include <Games/Skyrim/VR/VRRuntime.h>
 #include <Games/Skyrim/VR/VRControllers.h>

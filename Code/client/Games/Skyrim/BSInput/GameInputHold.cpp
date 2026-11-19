@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Games/Skyrim/BSInput/GameInputHold.h>
+#include <Helpers/ModuleImage.h>
 #include <Helpers/PatchCheck.h>
 
 #include <algorithm>
@@ -173,24 +174,6 @@ void HookDispatch(void* apSource, InputEvent** appEvents)
         events[i]->pNext = events[i + 1];
     events[count - 1]->pNext = pRest;
 }
-
-/**
- * Name the program or DLL an address belongs to, for the log.
- * Only its file name: a full path can hold the Windows user name.
- *
- * @param apAddress An address in code.
- * @return The file name, or "no module" when the address is in none.
- */
-std::string ModuleOf(const void* apAddress)
-{
-    HMODULE hModule = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(apAddress), &hModule))
-        return "no module";
-    char path[MAX_PATH] = "";
-    GetModuleFileNameA(hModule, path, MAX_PATH);
-    const char* pName = std::strrchr(path, '\\');
-    return pName ? pName + 1 : path;
-}
 } // namespace
 
 namespace GameInputHold
@@ -225,7 +208,7 @@ void Install() noexcept
     // SKSE hooks the same call first: its hook is what this one calls, so its input sinks get what the game gets.
     s_dispatch = TiltedPhoques::GetCall<TDispatch*>(pCall);
     TiltedPhoques::PutCall(pCall, &HookDispatch);
-    spdlog::info("GameInputHold: installed on the input poll's hand-off to the game, before {}", ModuleOf(reinterpret_cast<const void*>(s_dispatch)));
+    spdlog::info("GameInputHold: installed on the input poll's hand-off to the game, before {}", ModuleImage::NameOf(reinterpret_cast<const void*>(s_dispatch)));
 }
 
 /**

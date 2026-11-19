@@ -2,7 +2,7 @@
 
 #ifdef SKYRIMVR
 
-#include <Systems/VREyeDraw.h>
+#include <UI/Menu/VREyeDraw.h>
 #include <Games/Skyrim/VR/VRControllers.h>
 
 #include <array>

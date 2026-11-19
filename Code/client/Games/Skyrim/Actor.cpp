@@ -76,6 +76,7 @@
 #include <Services/PvpProjectiles.h>
 #include <Services/PvpRules.h>
 #include <Helpers/FiniteVector.h>
+#include <Helpers/ModuleImage.h>
 
 namespace
 {
@@ -271,12 +272,7 @@ void LogSetPositionOwner() noexcept
         spdlog::info("ForcePosition: Character::SetPosition is the game's own; copies are moved with it");
         return;
     }
-    char path[MAX_PATH] = "?";
-    HMODULE hModule = nullptr;
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(pCurrent), &hModule) && hModule)
-        GetModuleFileNameA(hModule, path, MAX_PATH);
-    const char* pFile = std::strrchr(path, '\\');
-    spdlog::info("ForcePosition: Character::SetPosition is replaced by {}; copies are moved with the game's own instead", pFile ? pFile + 1 : path);
+    spdlog::info("ForcePosition: Character::SetPosition is replaced by {}; copies are moved with the game's own instead", ModuleImage::NameOf(pCurrent));
 }
 
 // Moves a Character with the game's own SetPosition, which a plugin watching for teleports does not see.

@@ -1,6 +1,6 @@
 #include <TiltedOnlinePCH.h>
 
-#include <Games/Skyrim/DeathCause.h>
+#include <UI/Banner/DeathCause.h>
 
 #include <Events/EventDispatcher.h>
 #include <Games/Events.h>

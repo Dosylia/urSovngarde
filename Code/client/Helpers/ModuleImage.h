@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 
 /**
@@ -53,4 +54,30 @@ bool IsDataSection(const IMAGE_SECTION_HEADER& acSection) noexcept;
  * @return The section's bytes in memory.
  */
 std::string_view BytesOf(HMODULE ahModule, const IMAGE_SECTION_HEADER& acSection) noexcept;
+
+/**
+ * Find the program or DLL an address belongs to.
+ * The game's own code is in none Windows knows of: the launcher loads the game itself.
+ *
+ * @param apAddress An address in memory, usually in code.
+ * @return The program or DLL, or null when the address is in none.
+ */
+HMODULE ModuleOf(const void* apAddress) noexcept;
+
+/**
+ * Name the program or DLL an address belongs to, for the log.
+ * Only its file name: a full path can hold the Windows user name.
+ *
+ * @param apAddress An address in memory, usually in code.
+ * @return The file name, such as "SkyrimVR.exe", or "no module" when the address is in none.
+ */
+std::string NameOf(const void* apAddress) noexcept;
+
+/**
+ * Write where an address is, for the log, as "module+offset", such as "SkyrimVR.exe+0x5f2a10".
+ *
+ * @param apAddress An address in memory, usually in code.
+ * @return The program or DLL's file name and the offset into it, or the bare address when it is in none.
+ */
+std::string Where(const void* apAddress) noexcept;
 } // namespace ModuleImage
