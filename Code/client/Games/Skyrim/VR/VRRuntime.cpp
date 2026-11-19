@@ -1,12 +1,12 @@
 #include <TiltedOnlinePCH.h>
 
-#include <Games/Skyrim/VRRuntime.h>
+#include <Games/Skyrim/VR/VRRuntime.h>
 
 #ifdef SKYRIMVR
 
 #include <openvr/openvr.h>
 #include <immersive_launcher/launcher.h>
-#include <ModuleImage.h>
+#include <Helpers/ModuleImage.h>
 
 #include <atomic>
 #include <optional>

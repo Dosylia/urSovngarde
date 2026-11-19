@@ -15,8 +15,8 @@
 #include <Games/Memory.h>
 #include <Combat/CombatController.h>
 #include <CrashHandler.h>
-#include <RecentModelChanges.h>
-#include <SceneLines.h>
+#include <Copies/RecentModelChanges.h>
+#include <Copies/SceneLines.h>
 
 #include <Events/HealthChangeEvent.h>
 #include <Events/InventoryChangeEvent.h>
@@ -25,7 +25,7 @@
 #include <Games/Misc/MenuTopicManager.h>
 #include <Events/HitEvent.h>
 #ifdef SKYRIMVR
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 #include <Services/ActorValueService.h>
 #include <Services/CalendarService.h>
 #endif
@@ -46,7 +46,7 @@
 #include <Games/Skyrim/Misc/InventoryEntry.h>
 #include <Games/Skyrim/ExtraData/ExtraCount.h>
 #include <Games/Misc/ActorKnowledge.h>
-#include <InventoryCompare.h>
+#include <Copies/InventoryCompare.h>
 
 #include <ExtraData/ExtraDataList.h>
 #include <ExtraData/ExtraCharge.h>
@@ -72,10 +72,10 @@
 #include <Forms/TESObjectARMO.h>
 
 #include <ModCompat/BehaviorVar.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 #include <Services/PvpProjectiles.h>
 #include <Services/PvpRules.h>
-#include <FiniteVector.h>
+#include <Helpers/FiniteVector.h>
 
 namespace
 {

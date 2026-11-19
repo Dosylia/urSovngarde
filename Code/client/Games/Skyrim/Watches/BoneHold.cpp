@@ -2,9 +2,9 @@
 
 #ifdef SKYRIMVR
 #include <CrashHandler.h>
-#include <ReadableMemory.h>
-#include <Games/Skyrim/BoneHold.h>
-#include <Games/Skyrim/GameStack.h>
+#include <Helpers/ReadableMemory.h>
+#include <Games/Skyrim/Watches/BoneHold.h>
+#include <Games/Skyrim/Watches/GameStack.h>
 #include <Games/Skyrim/Interface/UI.h>
 #include <Games/Memory.h>
 #include <Games/TES.h>

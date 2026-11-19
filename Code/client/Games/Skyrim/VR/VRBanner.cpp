@@ -1,11 +1,11 @@
 #include <TiltedOnlinePCH.h>
 
-#include <Games/Skyrim/VRBanner.h>
+#include <Games/Skyrim/VR/VRBanner.h>
 
 #ifdef SKYRIMVR
 
-#include <Games/Skyrim/BannerPicture.h>
-#include <Games/Skyrim/VRRuntime.h>
+#include <Games/Skyrim/VR/BannerPicture.h>
+#include <Games/Skyrim/VR/VRRuntime.h>
 
 #include <immersive_launcher/launcher.h>
 #include <openvr/openvr.h>

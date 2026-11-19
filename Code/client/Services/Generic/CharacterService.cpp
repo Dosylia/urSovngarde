@@ -1,8 +1,8 @@
 #include "Forms/TESObjectCELL.h"
-#include <PerfScope.h>
-#include <CopyRegistry.h>
-#include <Takeover.h>
-#include <PlayerLook.h>
+#include <Helpers/PerfScope.h>
+#include <Copies/CopyRegistry.h>
+#include <Copies/Takeover.h>
+#include <Copies/PlayerLook.h>
 #include "Forms/TESWorldSpace.h"
 #include "Services/PapyrusService.h"
 #include <Services/PartyService.h>
@@ -13,12 +13,12 @@
 #include <Services/TransportService.h>
 #include <Services/InventoryService.h>
 #include <Services/DiscoveryService.h>
-#include <RecentDeletes.h>
-#include <RecentModelChanges.h>
-#include <SceneLines.h>
+#include <Copies/RecentDeletes.h>
+#include <Copies/RecentModelChanges.h>
+#include <Copies/SceneLines.h>
 #include <CrashHandler.h>
 #include <unordered_set>
-#include <CopyRemovalPolicy.h>
+#include <Copies/CopyRemovalPolicy.h>
 
 #include <Games/References.h>
 #include <Games/Misc/SubtitleManager.h>
@@ -95,7 +95,7 @@
 #include <Games/TES.h>
 #include <AI/AIProcess.h>
 #include <Games/Skyrim/Interface/UI.h>
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 
 namespace
 {

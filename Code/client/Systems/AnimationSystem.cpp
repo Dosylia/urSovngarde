@@ -18,7 +18,7 @@
 
 #include <Components.h>
 #include <World.h>
-#include <Takeover.h>
+#include <Copies/Takeover.h>
 
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
@@ -26,7 +26,7 @@
 
 #ifdef SKYRIMVR
 #include <PlayerCharacter.h>
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 #include <Interface/UI.h>
 #include <BSAnimationGraphManager.h>
 #include <Structs/AnimationGraphDescriptorManager.h>

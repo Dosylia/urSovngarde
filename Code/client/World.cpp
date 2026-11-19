@@ -2,7 +2,7 @@
 
 #include "World.h"
 #include <CrashHandler.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <Services/DiscoveryService.h>
 #include <Services/InputService.h>

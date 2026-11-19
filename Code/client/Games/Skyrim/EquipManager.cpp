@@ -7,7 +7,7 @@
 #include <Events/EquipmentChangeEvent.h>
 
 #include <World.h>
-#include <RecentModelChanges.h>
+#include <Copies/RecentModelChanges.h>
 #ifdef SKYRIMVR
 #include <Services/CalendarService.h>
 #endif

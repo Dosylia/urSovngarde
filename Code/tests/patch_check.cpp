@@ -1,8 +1,8 @@
-// The checks a code patch makes before it writes over a game instruction (client/PatchCheck.h).
+// The checks a code patch makes before it writes over a game instruction (client/Helpers/PatchCheck.h).
 
 #include <catch2/catch.hpp>
 
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 
 #include <cstdint>
 #include <cstring>

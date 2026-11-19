@@ -2,10 +2,10 @@
 
 #ifdef SKYRIMVR
 #include <CrashHandler.h>
-#include <ReadableMemory.h>
-#include <Games/Skyrim/BoneHold.h>
-#include <Games/Skyrim/EyeBoneWatch.h>
-#include <Games/Skyrim/GameStack.h>
+#include <Helpers/ReadableMemory.h>
+#include <Games/Skyrim/Watches/BoneHold.h>
+#include <Games/Skyrim/Watches/EyeBoneWatch.h>
+#include <Games/Skyrim/Watches/GameStack.h>
 #include <Games/Skyrim/Interface/UI.h>
 
 // TEMPORARY: the game's eye tracking can find an actor's eye bone freed while it is still in the skeleton.

@@ -1,7 +1,7 @@
 
 #include <Services/TransportService.h>
 #include <steam/isteamnetworkingutils.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <Events/ConnectedEvent.h>
 #include <Events/ConnectionErrorEvent.h>

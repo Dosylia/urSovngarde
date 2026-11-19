@@ -1,7 +1,7 @@
 
 #include <Games/Skyrim/BSSystem/BSThread.h>
 #include <base/threading/ThreadUtils.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 
 namespace
 {

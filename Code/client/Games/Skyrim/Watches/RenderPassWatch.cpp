@@ -2,10 +2,10 @@
 
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Interface/UI.h>
-#include <ReadableMemory.h>
+#include <Helpers/ReadableMemory.h>
 #include <Interface/Menus/MapMenu.h>
-#include <PatchCheck.h>
-#include <Games/Skyrim/GameStack.h>
+#include <Helpers/PatchCheck.h>
+#include <Games/Skyrim/Watches/GameStack.h>
 
 #include <cstring>
 #include <intrin.h>

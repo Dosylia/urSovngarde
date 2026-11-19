@@ -8,10 +8,10 @@
 #include <Events/ProjectileLaunchedEvent.h>
 #include <Games/Skyrim/Forms/TESObjectCELL.h>
 #include <Forms/SpellItem.h>
-#include <ReadableMemory.h>
-#include <PatchCheck.h>
+#include <Helpers/ReadableMemory.h>
+#include <Helpers/PatchCheck.h>
 #ifdef SKYRIMVR
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 #include <PlayerCharacter.h>
 #include <atomic>
 #endif

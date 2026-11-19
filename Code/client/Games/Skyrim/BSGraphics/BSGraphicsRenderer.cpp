@@ -7,9 +7,9 @@
 #include "BSGraphics/BSGraphicsRenderer.h"
 #include "BSRandom/BSRandom.h"
 
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 #ifdef SKYRIMVR
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 #include <Services/ConnectFile.h>
 #endif
 

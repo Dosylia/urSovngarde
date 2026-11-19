@@ -1,7 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
-#include <Games/Skyrim/VRControllers.h>
-#include <FiniteVector.h>
+#include <Games/Skyrim/VR/VRControllers.h>
+#include <Helpers/FiniteVector.h>
 
 namespace VRControllers
 {
@@ -105,7 +105,7 @@ float HeadSpace::AngleFromGaze(const glm::vec3& acWorld) const noexcept
 #include <Games/Skyrim/NetImmerse/NiTransform.h>
 #include <Games/Skyrim/NetImmerse/NiGlm.h>
 #include <PlayerCharacter.h>
-#include <ReadableMemory.h>
+#include <Helpers/ReadableMemory.h>
 
 #include <openvr/openvr.h>
 

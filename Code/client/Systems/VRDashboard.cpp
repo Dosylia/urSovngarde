@@ -8,9 +8,9 @@
 
 #include <Services/OverlayService.h>
 #include <Services/MenuService.h>
-#include <Games/Skyrim/VRRuntime.h>
+#include <Games/Skyrim/VR/VRRuntime.h>
 #include <World.h>
-#include <SafeRelease.h>
+#include <Helpers/SafeRelease.h>
 
 #include <OverlayClient.hpp>
 

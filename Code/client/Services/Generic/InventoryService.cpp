@@ -1,9 +1,9 @@
 #include <Services/InventoryService.h>
 #include <Services/Generic/NpcEquipmentCheck.h>
 #include <Services/Generic/PlayerCopyWeapon.h>
-#include <EpochMiss.h>
-#include <PerfScope.h>
-#include <RecentModelChanges.h>
+#include <Copies/EpochMiss.h>
+#include <Helpers/PerfScope.h>
+#include <Copies/RecentModelChanges.h>
 
 #include <Messages/RequestObjectInventoryChanges.h>
 #include <Messages/NotifyObjectInventoryChanges.h>

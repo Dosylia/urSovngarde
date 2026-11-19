@@ -2,7 +2,7 @@
 
 #include <catch2/catch.hpp>
 
-#include <CopyRemovalPolicy.h>
+#include <Copies/CopyRemovalPolicy.h>
 
 #include <deque>
 

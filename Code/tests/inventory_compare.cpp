@@ -9,7 +9,7 @@
 
 #include <catch2/catch.hpp>
 
-#include <InventoryCompare.h>
+#include <Copies/InventoryCompare.h>
 
 namespace
 {

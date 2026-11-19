@@ -2,9 +2,9 @@
 
 #ifdef SKYRIMVR
 #include <CrashHandler.h>
-#include <ReadableMemory.h>
-#include <Games/Skyrim/GameStack.h>
-#include <Games/Skyrim/HeadPartWatch.h>
+#include <Helpers/ReadableMemory.h>
+#include <Games/Skyrim/Watches/GameStack.h>
+#include <Games/Skyrim/Watches/HeadPartWatch.h>
 #include <Games/Skyrim/Interface/UI.h>
 #include <NetImmerse/BSFaceGenNiNode.h>
 #include <PlayerCharacter.h>

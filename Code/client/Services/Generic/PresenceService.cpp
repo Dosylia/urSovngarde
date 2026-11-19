@@ -2,7 +2,7 @@
 
 #include <Services/PresenceService.h>
 
-#include <CopyRegistry.h>
+#include <Copies/CopyRegistry.h>
 #include <World.h>
 #include <Events/UpdateEvent.h>
 #include <Games/ActorExtension.h>

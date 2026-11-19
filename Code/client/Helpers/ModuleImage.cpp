@@ -1,6 +1,6 @@
 #include <TiltedOnlinePCH.h>
 
-#include <ModuleImage.h>
+#include <Helpers/ModuleImage.h>
 
 namespace
 {

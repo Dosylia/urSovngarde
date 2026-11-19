@@ -1,9 +1,9 @@
-﻿// The small crash dump (client/SmallDump.h), written of this test process: a real minidump, small enough for a
+﻿// The small crash dump (client/Helpers/SmallDump.h), written of this test process: a real minidump, small enough for a
 // report, and the folder pruned to the newest few.
 
 #include <catch2/catch.hpp>
 
-#include <SmallDump.h>
+#include <Helpers/SmallDump.h>
 
 #include <atomic>
 #include <fstream>

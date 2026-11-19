@@ -1,7 +1,7 @@
-#include <Games/Skyrim/VRBodySync.h>
-#include <Games/Skyrim/HeadPartWatch.h>
-#include <Games/Skyrim/BoneHold.h>
-#include <Games/Skyrim/EyeBoneWatch.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
+#include <Games/Skyrim/Watches/HeadPartWatch.h>
+#include <Games/Skyrim/Watches/BoneHold.h>
+#include <Games/Skyrim/Watches/EyeBoneWatch.h>
 #include <Services/CharacterService.h>
 #include <World.h>
 #include <TiltedOnlinePCH.h>
@@ -11,7 +11,7 @@
 #include <Interface/Menus/SkillsMenu.h>
 #include <Interface/Menus/MapMenu.h>
 #include <Interface/UI.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
 

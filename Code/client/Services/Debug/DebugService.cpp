@@ -1,5 +1,5 @@
 #include <BranchInfo.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <Havok/hkbStateMachine.h>
 #include <Structs/AnimationGraphDescriptorManager.h>

@@ -1,8 +1,8 @@
 #include <TiltedOnlinePCH.h>
 
-#include <Games/Skyrim/VRHaptics.h>
-#include <Games/Skyrim/VRRuntime.h>
-#include <Games/Skyrim/VRControllers.h>
+#include <Games/Skyrim/VR/VRHaptics.h>
+#include <Games/Skyrim/VR/VRRuntime.h>
+#include <Games/Skyrim/VR/VRControllers.h>
 
 #ifdef SKYRIMVR
 

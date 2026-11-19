@@ -13,7 +13,7 @@
 #include <Interface/UI.h>
 #include <Forms/TESNPC.h>
 #include <PlayerCharacter.h>
-#include <PlayerLook.h>
+#include <Copies/PlayerLook.h>
 #include <ScriptExtender.h>
 #include <Utils.h>
 #include <World.h>

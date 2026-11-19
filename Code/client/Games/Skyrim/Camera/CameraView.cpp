@@ -2,7 +2,7 @@
 
 #include <Camera/CameraView.h>
 #include <Games/Skyrim/Interface/Menus/HUDMenuUtils.h>
-#include <FiniteVector.h>
+#include <Helpers/FiniteVector.h>
 
 namespace CameraView
 {

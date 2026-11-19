@@ -10,7 +10,7 @@
 #include <Services/MenuService.h>
 #include <Services/OverlayService.h>
 
-#include <Games/Skyrim/VRControllers.h>
+#include <Games/Skyrim/VR/VRControllers.h>
 
 #include <World.h>
 #include <Utils.h>

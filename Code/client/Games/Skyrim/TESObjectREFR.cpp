@@ -14,7 +14,7 @@
 #include <Events/InventoryChangeEvent.h>
 #include <Events/DroppedItemEvents.h>
 #include <PlayerCharacter.h>
-#include <RecentModelChanges.h>
+#include <Copies/RecentModelChanges.h>
 #include <Events/ScriptAnimationEvent.h>
 #include <Events/LockChangeEvent.h>
 #include <Events/ReferenceEnableEvent.h>

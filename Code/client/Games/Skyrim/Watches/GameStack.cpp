@@ -1,7 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #ifdef SKYRIMVR
-#include <Games/Skyrim/GameStack.h>
+#include <Games/Skyrim/Watches/GameStack.h>
 #include <CrashHandler.h>
 
 namespace

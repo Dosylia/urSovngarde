@@ -3,7 +3,7 @@
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Interface/UI.h>
 #include <Games/Memory.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 #include <PlayerCharacter.h>
 
 #include <intrin.h>

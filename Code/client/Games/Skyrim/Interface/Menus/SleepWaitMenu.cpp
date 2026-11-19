@@ -9,7 +9,7 @@
 #include <AI/Movement/PlayerControls.h>
 #include <PlayerCharacter.h>
 #include <Services/CalendarService.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 
 namespace
 {

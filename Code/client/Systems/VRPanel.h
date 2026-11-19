@@ -3,7 +3,7 @@
 #ifdef SKYRIMVR
 
 #include <Systems/VREyeDraw.h>
-#include <Games/Skyrim/VRControllers.h>
+#include <Games/Skyrim/VR/VRControllers.h>
 
 #include <array>
 #include <chrono>

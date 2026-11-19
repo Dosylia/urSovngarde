@@ -4,7 +4,7 @@
 
 #include <World.h>
 #include <Games/ActorExtension.h>
-#include <Games/Skyrim/VRBanner.h>
+#include <Games/Skyrim/VR/VRBanner.h>
 #include <Services/ActorValueService.h>
 #include <Services/CalendarService.h>
 #include <Services/CharacterService.h>

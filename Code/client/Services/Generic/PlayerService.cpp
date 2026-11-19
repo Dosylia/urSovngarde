@@ -1,6 +1,6 @@
 #include <Services/PlayerService.h>
 #include <Structs/PluginList.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <World.h>
 
@@ -28,7 +28,7 @@
 #include <Messages/PlayerPlaceRequest.h>
 #include <Messages/RequestNpcPlugins.h>
 #include <Messages/NotifyNpcPluginsDiffer.h>
-#include <NpcPlugins.h>
+#include <Copies/NpcPlugins.h>
 #include <Services/OverlayService.h>
 
 #include <Structs/ServerSettings.h>
@@ -45,8 +45,8 @@
 #include <Forms/TESRace.h>
 #include <Interface/UI.h>
 #include <Services/PartyService.h>
-#include <Games/Skyrim/VRHaptics.h>
-#include <Games/Skyrim/VRBanner.h>
+#include <Games/Skyrim/VR/VRHaptics.h>
+#include <Games/Skyrim/VR/VRBanner.h>
 #include <Games/Skyrim/DeathCause.h>
 #include <Games/Skyrim/DeathSentence.h>
 #include <Components.h>

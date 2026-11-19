@@ -1,7 +1,7 @@
 #include <Services/CalendarService.h>
 #include <Services/SleepTimeSync.h>
 #include <Services/GameClockFrame.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <Events/DisconnectedEvent.h>
 #include <Events/UpdateEvent.h>

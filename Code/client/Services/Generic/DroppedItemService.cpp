@@ -21,7 +21,7 @@
 #include <Events/UpdateEvent.h>
 #include <NetImmerse/NiTransform.h>
 #include <NetImmerse/NiGlm.h>
-#include <ReadableMemory.h>
+#include <Helpers/ReadableMemory.h>
 
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>

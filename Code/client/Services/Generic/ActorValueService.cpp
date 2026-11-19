@@ -1,5 +1,5 @@
 #include <TiltedOnlinePCH.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <Services/ActorValueService.h>
 #include <Services/CombatService.h>
@@ -9,7 +9,7 @@
 #include <Games/References.h>
 #include <Components.h>
 #include <Systems/InterpolationSystem.h>
-#include <EpochMiss.h>
+#include <Copies/EpochMiss.h>
 
 #include <Events/UpdateEvent.h>
 #include <Events/ActorRemovedEvent.h>

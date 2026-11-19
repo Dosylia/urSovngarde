@@ -1,5 +1,5 @@
 #include <Games/Skyrim/Interface/IMenu.h>
-#include <ReadableMemory.h>
+#include <Helpers/ReadableMemory.h>
 #include <Games/Skyrim/Interface/UI.h>
 #include <Misc/BSFixedString.h>
 #include <TiltedOnlinePCH.h>
@@ -7,7 +7,7 @@
 
 #include <World.h>
 #include <CrashHandler.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 #include <Services/CalendarService.h>
 #include <Interface/Menus/SleepWaitMenu.h>
 #include <Interface/Menus/SkillsMenu.h>

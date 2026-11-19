@@ -1,8 +1,8 @@
 #include <TiltedOnlinePCH.h>
 
-#include <Games/Skyrim/VRBodySync.h>
-#include <Games/Skyrim/VRHaptics.h>
-#include <Games/Skyrim/VRControllers.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
+#include <Games/Skyrim/VR/VRHaptics.h>
+#include <Games/Skyrim/VR/VRControllers.h>
 #include <Games/Skyrim/GameSound.h>
 
 #include <Actor.h>
@@ -18,9 +18,9 @@
 
 #include <glm/gtc/quaternion.hpp>
 
-#include <PerfScope.h>
-#include <ReadableMemory.h>
-#include <FiniteVector.h>
+#include <Helpers/PerfScope.h>
+#include <Helpers/ReadableMemory.h>
+#include <Helpers/FiniteVector.h>
 #ifndef SKYRIMVR
 #include <Camera/CameraView.h>
 #endif

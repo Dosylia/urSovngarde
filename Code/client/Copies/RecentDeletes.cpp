@@ -1,7 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
-#include <RecentDeletes.h>
-#include <CopyRemovalPolicy.h>
+#include <Copies/RecentDeletes.h>
+#include <Copies/CopyRemovalPolicy.h>
 
 #include <chrono>
 

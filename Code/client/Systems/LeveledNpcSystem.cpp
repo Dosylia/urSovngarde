@@ -5,7 +5,7 @@
 #include <ExtraData/ExtraLeveledCreature.h>
 #include <Forms/TESNPC.h>
 #include <Misc/GarbageCollector.h>
-#include <RecentModelChanges.h>
+#include <Copies/RecentModelChanges.h>
 
 bool LeveledNpcSystem::IsLeveledNpcBase(const TESNPC* apBase) noexcept
 {

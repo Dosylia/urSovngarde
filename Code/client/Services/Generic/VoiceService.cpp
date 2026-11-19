@@ -3,7 +3,7 @@
 #include <Events/ConnectedEvent.h>
 #include <Events/DisconnectedEvent.h>
 #include <Events/UpdateEvent.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 #include <Services/OverlayService.h>
 #include <Services/PartyService.h>
 #include <Services/TransportService.h>
@@ -11,7 +11,7 @@
 #include <PlayerCharacter.h>
 #include <Forms/TESForm.h>
 #ifdef SKYRIMVR
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 #endif
 
 #include <Messages/NotifyVoiceData.h>

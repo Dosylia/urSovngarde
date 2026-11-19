@@ -5,9 +5,9 @@
 #include <Systems/VREyeDraw.h>
 #include <Systems/VRPage.h>
 
-#include <Games/Skyrim/VRRuntime.h>
-#include <Games/Skyrim/VRControllers.h>
-#include <SafeRelease.h>
+#include <Games/Skyrim/VR/VRRuntime.h>
+#include <Games/Skyrim/VR/VRControllers.h>
+#include <Helpers/SafeRelease.h>
 
 #include <openvr/openvr.h>
 

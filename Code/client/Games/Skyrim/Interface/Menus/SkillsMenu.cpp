@@ -3,7 +3,7 @@
 
 #ifdef SKYRIMVR
 #include <Games/Skyrim/Interface/UI.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 
 // VR draws the skill tree as a 3D model in the world scene (StatsMenu+0xC0, a BSFadeNode that fades out between 500
 // and 1000 units). Tree view moves it about 3000 units away. Paused, the fade update never runs; unpaused the model

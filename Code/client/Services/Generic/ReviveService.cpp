@@ -18,8 +18,8 @@
 #include <PlayerCharacter.h>
 
 #ifdef SKYRIMVR
-#include <Games/Skyrim/VRBodySync.h>
-#include <Games/Skyrim/VRHaptics.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
+#include <Games/Skyrim/VR/VRHaptics.h>
 #endif
 
 namespace

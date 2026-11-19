@@ -1,6 +1,6 @@
 #include <Services/PartyService.h>
 #include <Services/PvpRules.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <Services/TransportService.h>
 

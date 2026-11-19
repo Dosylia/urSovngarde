@@ -9,7 +9,7 @@
 #include <SaveLoad.h>
 #include <Games/Overrides.h>
 #include <CrashHandler.h>
-#include <ModuleImage.h>
+#include <Helpers/ModuleImage.h>
 
 // Returns the first word at this address, or 0 if reading it faults.
 // The caller wraps it in CrashGuard so the crash handler treats a fault in here as expected.

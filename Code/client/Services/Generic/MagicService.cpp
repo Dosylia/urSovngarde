@@ -1,10 +1,10 @@
 #include <Services/MagicService.h>
 #include <Services/OverlayService.h>
-#include <PerfScope.h>
+#include <Helpers/PerfScope.h>
 
 #include <World.h>
 #ifdef SKYRIMVR
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 #endif
 
 #include <Events/UpdateEvent.h>

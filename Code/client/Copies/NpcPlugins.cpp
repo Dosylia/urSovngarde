@@ -1,6 +1,6 @@
 #include <TiltedOnlinePCH.h>
 
-#include <NpcPlugins.h>
+#include <Copies/NpcPlugins.h>
 
 #include <Games/TES.h>
 #include <Forms/TESForm.h>

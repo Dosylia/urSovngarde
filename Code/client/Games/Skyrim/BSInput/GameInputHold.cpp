@@ -1,7 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Games/Skyrim/BSInput/GameInputHold.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 
 #include <algorithm>
 #include <array>

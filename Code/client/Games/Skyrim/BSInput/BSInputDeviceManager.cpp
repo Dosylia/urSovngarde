@@ -1,5 +1,5 @@
 #include <BSGraphics/BSGraphicsRenderer.h>
-#include <PatchCheck.h>
+#include <Helpers/PatchCheck.h>
 #include <Services/MenuService.h>
 #include <World.h>
 

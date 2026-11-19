@@ -15,7 +15,7 @@
 #include <PlayerCharacter.h>
 #include <World.h>
 
-#include <Games/Skyrim/VRBodySync.h>
+#include <Games/Skyrim/VR/VRBodySync.h>
 #include <Services/DiscoveryService.h>
 
 namespace
