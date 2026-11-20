@@ -75,6 +75,28 @@ struct SteamVoice
     TDecompressVoice Decompress = nullptr;
     TOptimalSampleRate OptimalSampleRate = nullptr;
 
+    /**
+     * Decompress one voice packet into a buffer, growing the buffer and trying once more when Steam says it is too small.
+     *
+     * @param apPacket The compressed packet.
+     * @param aPacketSize Its size in bytes.
+     * @param aBuffer Filled with the sound, 16-bit samples; grown when it is too small.
+     * @param aRate The sample rate to decompress at, in samples a second.
+     * @param aWritten Set to how many bytes of the buffer hold the sound.
+     * @return Steam's result: kVoiceOK when the sound is in the buffer.
+     */
+    int DecompressInto(const void* apPacket, const uint32_t aPacketSize, std::vector<uint8_t>& aBuffer, const uint32_t aRate, uint32_t& aWritten) const noexcept
+    {
+        aWritten = 0;
+        int result = Decompress(User, apPacket, aPacketSize, aBuffer.data(), static_cast<uint32_t>(aBuffer.size()), &aWritten, aRate);
+        if (result == kVoiceBufferTooSmall && aWritten > aBuffer.size())
+        {
+            aBuffer.resize(aWritten);
+            result = Decompress(User, apPacket, aPacketSize, aBuffer.data(), static_cast<uint32_t>(aBuffer.size()), &aWritten, aRate);
+        }
+        return result;
+    }
+
     // Empty when it fails; the reason is logged once.
     static SteamVoice& Get() noexcept
     {
@@ -381,13 +403,8 @@ void VoiceService::FinishRecording() noexcept
     for (const auto& packet : m_packets)
     {
         uint32_t written = 0;
-        int result = steam.Decompress(steam.User, packet.Bytes.data(), static_cast<uint32_t>(packet.Bytes.size()), decoded.data(), static_cast<uint32_t>(decoded.size()), &written, cRate);
-        if (result == kVoiceBufferTooSmall && written > decoded.size())
-        {
-            decoded.resize(written);
-            result = steam.Decompress(steam.User, packet.Bytes.data(), static_cast<uint32_t>(packet.Bytes.size()), decoded.data(), static_cast<uint32_t>(decoded.size()), &written, cRate);
-        }
-        if (result != kVoiceOK)
+        const int cResult = steam.DecompressInto(packet.Bytes.data(), static_cast<uint32_t>(packet.Bytes.size()), decoded, cRate, written);
+        if (cResult != kVoiceOK)
         {
             ++failures;
             continue;
@@ -673,13 +690,8 @@ void VoiceService::OnVoiceData(const NotifyVoiceData& acMessage) noexcept
     if (m_decodeBuffer.size() < 32 * 1024)
         m_decodeBuffer.resize(32 * 1024);
     uint32_t written = 0;
-    int result = steam.Decompress(steam.User, acMessage.Data.data(), static_cast<uint32_t>(acMessage.Data.size()), m_decodeBuffer.data(), static_cast<uint32_t>(m_decodeBuffer.size()), &written, m_sampleRate);
-    if (result == kVoiceBufferTooSmall && written > m_decodeBuffer.size())
-    {
-        m_decodeBuffer.resize(written);
-        result = steam.Decompress(steam.User, acMessage.Data.data(), static_cast<uint32_t>(acMessage.Data.size()), m_decodeBuffer.data(), static_cast<uint32_t>(m_decodeBuffer.size()), &written, m_sampleRate);
-    }
-    if (result != kVoiceOK || written < sizeof(int16_t))
+    const int cResult = steam.DecompressInto(acMessage.Data.data(), static_cast<uint32_t>(acMessage.Data.size()), m_decodeBuffer, m_sampleRate, written);
+    if (cResult != kVoiceOK || written < sizeof(int16_t))
         return;
 
     const auto* pSamples = reinterpret_cast<const int16_t*>(m_decodeBuffer.data());

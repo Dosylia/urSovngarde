@@ -1,4 +1,5 @@
 #include <TiltedOnlinePCH.h>
+#include <Helpers/Throttle.h>
 #include <Helpers/PerfScope.h>
 
 #include <Services/OverlayService.h>
@@ -30,10 +31,9 @@
 #include <Messages/NotifyPlayerLevel.h>
 #include <Messages/NotifyPlayerCellChanged.h>
 #include <Messages/NotifyTeleport.h>
+#include <Services/PlayerTeleport.h>
 #include <Messages/RequestPlayerHealthUpdate.h>
 #include <Messages/NotifyPlayerHealthUpdate.h>
-
-#include <Structs/GridCellCoords.h>
 
 #include <Events/ConnectedEvent.h>
 #include <Events/DisconnectedEvent.h>
@@ -387,9 +387,9 @@ void OverlayService::SetPlayerHealthPercentage(uint32_t aFormId) const noexcept
     float percentage = CalculateHealthPercentage(pActor);
 
     auto view = m_world.view<FormIdComponent, PlayerComponent>();
-    auto entityIt = std::find_if(view.begin(), view.end(), [view, aFormId](auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == aFormId; });
+    const auto entityIt = Utils::FindById<FormIdComponent>(view, aFormId);
 
-    if (entityIt == view.end())
+    if (!entityIt)
     {
         spdlog::error("{}: cannot find player entity for form id {:X}", __FUNCTION__, aFormId);
         return;
@@ -629,31 +629,14 @@ void OverlayService::OnPlayerCellChanged(const NotifyPlayerCellChanged& acMessag
     m_pOverlay->ExecuteAsync("setCell", pArguments);
 }
 
+/**
+ * Move the player to the player picked with the menu's teleport button, where the server says they are.
+ *
+ * @param acMessage The server's answer: the cell, the world space and the position.
+ */
 void OverlayService::OnNotifyTeleport(const NotifyTeleport& acMessage) noexcept
 {
-    auto& modSystem = m_world.GetModSystem();
-
-    const uint32_t cellId = modSystem.GetGameId(acMessage.CellId);
-    TESObjectCELL* pCell = Cast<TESObjectCELL>(TESForm::GetById(cellId));
-    if (!pCell)
-    {
-        const uint32_t worldSpaceId = modSystem.GetGameId(acMessage.WorldSpaceId);
-        TESWorldSpace* pWorldSpace = Cast<TESWorldSpace>(TESForm::GetById(worldSpaceId));
-        if (pWorldSpace)
-        {
-            GridCellCoords coordinates = GridCellCoords::CalculateGridCellCoords(acMessage.Position);
-            pCell = pWorldSpace->LoadCell(coordinates.X, coordinates.Y);
-        }
-
-        if (!pCell)
-        {
-            spdlog::error("Failed to fetch cell to teleport to.");
-            m_world.GetOverlayService().SendSystemMessage("Teleporting to player failed.");
-            return;
-        }
-    }
-
-    PlayerCharacter::Get()->MoveTo(pCell, acMessage.Position);
+    PlayerTeleport::MoveTo(m_world, acMessage.CellId, acMessage.WorldSpaceId, acMessage.Position);
 }
 
 void OverlayService::OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& acMessage) noexcept
@@ -710,14 +693,9 @@ void OverlayService::RunDebugDataUpdates() noexcept
     if (!m_pOverlay)
         return;
 
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(1000ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     auto internalStats = m_transport.GetStatistics();
     auto steamStats = m_transport.GetConnectionStatus();
@@ -740,14 +718,9 @@ void OverlayService::RunPlayerHealthUpdates() noexcept
     if (!m_transport.IsConnected() || !m_world.GetPartyService().IsInParty())
         return;
 
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 500ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(500ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     static float s_previousPercentage = -1.f;
 

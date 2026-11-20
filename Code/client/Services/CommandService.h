@@ -22,9 +22,11 @@ public:
 protected:
     void OnSetTimeCommand(const SetTimeCommandEvent&) const noexcept;
     /**
-     * @brief Processes result of teleport command.
+     * Move the player to the player the chat's teleport command named, where the server says they are.
+     *
+     * @param acMessage The server's answer: the cell, the world space and the position.
      */
-    void OnTeleportCommandResponse(const TeleportCommandResponse&) noexcept;
+    void OnTeleportCommandResponse(const TeleportCommandResponse& acMessage) noexcept;
 
 private:
     World& m_world;

@@ -1,4 +1,5 @@
 #include <Services/MagicService.h>
+#include <Helpers/Throttle.h>
 #include <Services/OverlayService.h>
 #include <Helpers/PerfScope.h>
 
@@ -180,9 +181,9 @@ void MagicService::OnSpellCastEvent(const SpellCastEvent& acEvent) const noexcep
     uint32_t formId = acEvent.pCaster->pCasterActor->formID;
 
     auto view = m_world.view<FormIdComponent, LocalComponent>();
-    const auto casterEntityIt = std::find_if(std::begin(view), std::end(view), [formId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == formId; });
+    const auto casterEntityIt = Utils::FindById<FormIdComponent>(view, formId);
 
-    if (casterEntityIt == std::end(view))
+    if (!casterEntityIt)
         return;
 
     auto& localComponent = view.get<LocalComponent>(*casterEntityIt);
@@ -202,9 +203,9 @@ void MagicService::OnSpellCastEvent(const SpellCastEvent& acEvent) const noexcep
     if (acEvent.DesiredTargetID != 0)
     {
         auto targetView = m_world.view<FormIdComponent>();
-        const auto targetEntityIt = std::find_if(std::begin(targetView), std::end(targetView), [id = acEvent.DesiredTargetID, targetView](entt::entity entity) { return targetView.get<FormIdComponent>(entity).Id == id; });
+        const auto targetEntityIt = Utils::FindById<FormIdComponent>(targetView, acEvent.DesiredTargetID);
 
-        if (targetEntityIt != std::end(targetView))
+        if (targetEntityIt)
         {
             auto desiredTargetIdRes = Utils::GetServerId(*targetEntityIt);
             if (desiredTargetIdRes.has_value())
@@ -224,9 +225,9 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     using CS = MagicSystem::CastingSource;
 
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.CasterId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = Utils::FindById<RemoteComponent>(remoteView, acMessage.CasterId);
 
-    if (remoteIt == std::end(remoteView))
+    if (!remoteIt)
     {
         spdlog::warn("Caster with remote id {:X} not found.", acMessage.CasterId);
         return;
@@ -356,9 +357,9 @@ void MagicService::OnInterruptCastEvent(const InterruptCastEvent& acEvent) const
     uint32_t formId = acEvent.CasterFormID;
 
     auto view = m_world.view<FormIdComponent, LocalComponent>();
-    const auto casterEntityIt = std::find_if(std::begin(view), std::end(view), [formId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == formId; });
+    const auto casterEntityIt = Utils::FindById<FormIdComponent>(view, formId);
 
-    if (casterEntityIt == std::end(view))
+    if (!casterEntityIt)
     {
         spdlog::warn("{}: could not find caster, form id {:X}", __FUNCTION__, formId);
         return;
@@ -384,9 +385,9 @@ void MagicService::OnNotifyInterruptCast(const NotifyInterruptCast& acMessage) c
     }
 
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.CasterId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = Utils::FindById<RemoteComponent>(remoteView, acMessage.CasterId);
 
-    if (remoteIt == std::end(remoteView))
+    if (!remoteIt)
     {
         spdlog::warn("Caster with remote id {:X} not found.", acMessage.CasterId);
         return;
@@ -449,9 +450,9 @@ void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept
     // Because it takes time to create Actors, the Caster or Target may not
     // exist on the server yet, or server may not have told us yet. Have to queue to compensate.
     auto view = m_world.view<FormIdComponent>();
-    const auto it = std::find_if(std::begin(view), std::end(view), [id = acEvent.TargetID, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto it = Utils::FindById<FormIdComponent>(view, acEvent.TargetID);
 
-    if (it == std::end(view))
+    if (!it)
     {
         MagicQueue::Spdlog("{}: server entity for target formID not found, formID: {:X}, queueing", __FUNCTION__, acEvent.TargetID);
         m_queuedEffects.push(MagicAddTargetEventQueue(acEvent));
@@ -470,9 +471,9 @@ void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept
 
     if (acEvent.CasterID)
     {
-        const auto casterIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.CasterID, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
+        const auto casterIt = Utils::FindById<FormIdComponent>(view, acEvent.CasterID);
 
-        if (casterIt == std::end(view))
+        if (!casterIt)
         {
             MagicQueue::Spdlog("{}: server entity for caster formID not found, formID: {:X}, queueing", __FUNCTION__, acEvent.CasterID);
             m_queuedEffects.push(MagicAddTargetEventQueue(acEvent));  
@@ -589,11 +590,9 @@ void MagicService::OnRemoveSpellEvent(const RemoveSpellEvent& acEvent) noexcept
     }
 
     auto view = m_world.view<FormIdComponent>();
-    const auto it = std::find_if(std::begin(view), std::end(view), [id = acEvent.TargetId, view](auto entity) {
-        return view.get<FormIdComponent>(entity).Id == id;
-    });
+    const auto it = Utils::FindById<FormIdComponent>(view, acEvent.TargetId);
 
-    if (it == std::end(view))
+    if (!it)
     {
         spdlog::warn("Form id not found for magic remove target, form id: {:X}", acEvent.TargetId);
         return;
@@ -646,14 +645,9 @@ void MagicService::OnNotifyRemoveSpell(const NotifyRemoveSpell& acMessage) noexc
 
 void MagicService::ApplyQueuedEffects() noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 100ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(100ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     // Search queued events
     while (!m_queuedEffects.empty())
@@ -673,9 +667,9 @@ void MagicService::ApplyQueuedEffects() noexcept
             // Process queued target events. If caster and target now have server IDs, this should work.
             // If they don't, stop processing the list until next iteration.
             auto view = m_world.view<FormIdComponent>();
-            const auto it = std::find_if(std::begin(view), std::end(view), [id = target.TargetID, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
+            const auto it = Utils::FindById<FormIdComponent>(view, target.TargetID);
 
-            if (it == std::end(view))
+            if (!it)
             {
                 spdlog::debug("{}: server entity for AddTargetEvent target formID still not found: caster {}({:X}), spell {:X}, effect {:X}, target {}({:X})",
                               __FUNCTION__, pCasterName, target.CasterID, target.SpellID, target.EffectID, pTargetName, target.TargetID);
@@ -693,9 +687,9 @@ void MagicService::ApplyQueuedEffects() noexcept
 
             if (target.CasterID)
             {
-                const auto casterIt = std::find_if(std::begin(view), std::end(view), [id = target.CasterID, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
+                const auto casterIt = Utils::FindById<FormIdComponent>(view, target.CasterID);
 
-                if (casterIt == std::end(view))
+                if (!casterIt)
                 {
                     spdlog::debug("{}: serverID for AddTargetEvent caster formID still not found: caster {}({:X}), spell {:X}, effect {:X}, target {}({:X})",
                                   __FUNCTION__, pCasterName, target.CasterID, target.SpellID, target.EffectID, pTargetName, target.TargetID);

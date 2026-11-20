@@ -278,9 +278,9 @@ entt::entity ObjectService::CreateObjectEntity(const uint32_t acFormId, const ui
 {
     const auto view = m_world.view<FormIdComponent, ObjectComponent>();
 
-    auto it = std::find_if(view.begin(), view.end(), [acServerId, view](entt::entity entity) { return view.get<ObjectComponent>(entity).Id == acServerId; });
+    const auto it = Utils::FindById<ObjectComponent>(view, acServerId);
 
-    if (it != view.end())
+    if (it)
         return *it;
 
     entt::entity entity = m_world.create();
@@ -336,9 +336,9 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     }
 
     auto view = m_world.view<FormIdComponent>();
-    const auto pEntity = std::find_if(std::begin(view), std::end(view), [id = acEvent.pActivator->formID, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    const auto pEntity = Utils::FindById<FormIdComponent>(view, acEvent.pActivator->formID);
 
-    if (pEntity == std::end(view))
+    if (!pEntity)
     {
         // spdlog::error("Activator entity not found for form id {:X}", acEvent.pActivator->formID);
         return;
@@ -500,8 +500,8 @@ void ObjectService::OnScriptDoorEvent(const ScriptDoorEvent& acEvent) noexcept
 
     // Sent as the player's use of the door: the other games set the door from that, and the server keeps its state.
     const auto view = m_world.view<FormIdComponent, LocalComponent>();
-    const auto cPlayer = std::find_if(std::begin(view), std::end(view), [view](entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == 0x14; });
-    if (cPlayer == std::end(view))
+    const auto cPlayer = Utils::FindById<FormIdComponent>(view, 0x14);
+    if (!cPlayer)
         return;
 
     request.ActivatorId = view.get<LocalComponent>(*cPlayer).Id;
@@ -643,9 +643,9 @@ BSTEventResult ObjectService::OnEvent(const TESActivateEvent* acEvent, const Eve
 #if ENVIRONMENT_DEBUG
     auto view = m_world.view<ObjectComponent>();
 
-    const auto itor = std::find_if(std::begin(view), std::end(view), [id = acEvent->object->formID, view](entt::entity entity) { return view.get<ObjectComponent>(entity).Id == id; });
+    const auto itor = Utils::FindById<ObjectComponent>(view, acEvent->object->formID);
 
-    if (itor == std::end(view))
+    if (!itor)
     {
         AddObjectComponent(acEvent->object);
     }

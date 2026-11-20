@@ -103,9 +103,8 @@ void CombatService::FightBack(Actor* apActor, const uint32_t aAttackerPlayerId, 
     }
 
     auto view = m_world.view<FormIdComponent, PlayerComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [view, aAttackerPlayerId](auto aEntity)
-                                 { return view.get<PlayerComponent>(aEntity).Id == aAttackerPlayerId; });
-    if (it == view.end())
+    const auto it = Utils::FindById<PlayerComponent>(view, aAttackerPlayerId);
+    if (!it)
         return;
 
     Actor* pAttacker = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(*it).Id));
@@ -217,9 +216,9 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
     ModSystem& modSystem = World::Get().GetModSystem();
 
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.ShooterID](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = Utils::FindById<RemoteComponent>(remoteView, acMessage.ShooterID);
 
-    if (remoteIt == std::end(remoteView))
+    if (!remoteIt)
     {
         spdlog::warn("Shooter with remote id {:X} not found.", acMessage.ShooterID);
         return;

@@ -15,15 +15,13 @@
 
 #include <Services/PapyrusService.h>
 #include <Services/TransportService.h>
-
-#include <Structs/GridCellCoords.h>
+#include <Services/CellLookup.h>
 
 #include <Actor.h>
 #include <PlayerCharacter.h>
 #include <ExtraData/ExtraData.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESQuest.h>
-#include <Forms/TESWorldSpace.h>
 #include <Games/Overrides.h>
 #include <Games/TES.h>
 
@@ -73,22 +71,6 @@ Actor* FindPlayerActor(World& aWorld, uint32_t aPlayerId) noexcept
             return Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(cEntity).Id));
     }
     return nullptr;
-}
-
-// The cell for a position: an interior by its id, outdoors the cell under it, loaded as "teleport to player" does.
-TESObjectCELL* ResolveCell(World& aWorld, const GameId& acWorldSpaceId, const GameId& acCellId, const glm::vec3& acPosition) noexcept
-{
-    auto& modSystem = aWorld.GetModSystem();
-    if (TESObjectCELL* pCell = Cast<TESObjectCELL>(TESForm::GetById(modSystem.GetGameId(acCellId))))
-        return pCell;
-
-    if (!acWorldSpaceId)
-        return nullptr;
-    TESWorldSpace* pWorldSpace = Cast<TESWorldSpace>(TESForm::GetById(modSystem.GetGameId(acWorldSpaceId)));
-    if (!pWorldSpace)
-        return nullptr;
-    const GridCellCoords cGrid = GridCellCoords::CalculateGridCellCoords(acPosition.x, acPosition.y);
-    return pWorldSpace->LoadCell(cGrid.X, cGrid.Y);
 }
 
 NiPoint3 ToNiPoint(const glm::vec3& acPosition) noexcept
@@ -323,7 +305,7 @@ void PlayerMarkerService::FollowServerPosition(Slot& aSlot, size_t aIndex, const
     if (!aSlot.Parked && aSlot.BodyCellId == 0 && aSlot.CellId == acCellId && glm::distance(aSlot.Position, acPosition) < kFollowDistance)
         return;
 
-    TESObjectCELL* pCell = ResolveCell(m_world, acWorldSpaceId, acCellId, acPosition);
+    TESObjectCELL* pCell = CellLookup::FindOrLoad(m_world, acCellId, acWorldSpaceId, acPosition);
     if (!pCell)
         return;
 

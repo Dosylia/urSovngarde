@@ -1,4 +1,5 @@
 #include "Forms/TESObjectCELL.h"
+#include <Helpers/Throttle.h>
 #include <Helpers/PerfScope.h>
 #include <Copies/CopyRegistry.h>
 #include <Copies/Takeover.h>
@@ -1980,9 +1981,9 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
     }
 
     auto remoteView = m_world.view<RemoteComponent>();
-    const auto remoteItor = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.ServerId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteItor = Utils::FindById<RemoteComponent>(remoteView, acMessage.ServerId);
 
-    if (remoteItor != std::end(remoteView))
+    if (remoteItor)
     {
         const entt::entity cExisting = *remoteItor;
         const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(cExisting);
@@ -2346,9 +2347,9 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
 
     for (const auto& [serverId, update] : acMessage.Updates)
     {
-        auto itor = std::find_if(std::begin(view), std::end(view), [serverId = serverId, view](entt::entity entity) { return view.get<RemoteComponent>(entity).Id == serverId; });
+        const auto itor = Utils::FindById<RemoteComponent>(view, serverId);
 
-        if (itor == std::end(view))
+        if (!itor)
             continue;
 
         auto& interpolationComponent = view.get<InterpolationComponent>(*itor);
@@ -2375,9 +2376,9 @@ void CharacterService::OnNotifyActionEvents(const NotifyActionEvents& acMessage)
 
     for (const auto& [serverId, actions] : acMessage.Actions)
     {
-        auto itor = std::find_if(std::begin(view), std::end(view), [serverId = serverId, view](entt::entity entity) { return view.get<RemoteComponent>(entity).Id == serverId; });
+        const auto itor = Utils::FindById<RemoteComponent>(view, serverId);
 
-        if (itor == std::end(view))
+        if (!itor)
             continue;
 
         auto& animationComponent = view.get<RemoteAnimationComponent>(*itor);
@@ -2428,9 +2429,9 @@ void CharacterService::OnFactionsChanges(const NotifyFactionsChanges& acEvent) c
 
     for (const auto& [id, factions] : acEvent.Changes)
     {
-        const auto itor = std::find_if(std::begin(view), std::end(view), [id = id, view](entt::entity entity) { return view.get<RemoteComponent>(entity).Id == id; });
+        const auto itor = Utils::FindById<RemoteComponent>(view, id);
 
-        if (itor == std::end(view))
+        if (!itor)
             continue;
 
         auto* const pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(*itor).Id));
@@ -2821,8 +2822,8 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
     if (acMessage.Gone)
     {
         const auto localView = m_world.view<LocalComponent>();
-        const auto localIt = std::find_if(std::begin(localView), std::end(localView), [id = acMessage.ServerId, localView](entt::entity entity) { return localView.get<LocalComponent>(entity).Id == id; });
-        if (localIt != std::end(localView))
+        const auto localIt = Utils::FindById<LocalComponent>(localView, acMessage.ServerId);
+        if (localIt)
         {
             const auto* pFormId = m_world.try_get<FormIdComponent>(*localIt);
             const uint32_t cFormId = pFormId ? pFormId->Id : 0;
@@ -2839,9 +2840,9 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
 
     auto view = m_world.view<RemoteComponent>();
 
-    const auto itor = std::find_if(std::begin(view), std::end(view), [id = acMessage.ServerId, view](entt::entity entity) { return view.get<RemoteComponent>(entity).Id == id; });
+    const auto itor = Utils::FindById<RemoteComponent>(view, acMessage.ServerId);
 
-    if (itor != std::end(view))
+    if (itor)
     {
         const entt::entity cEntity = *itor;
 
@@ -2926,9 +2927,9 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
 void CharacterService::OnNotifyRespawn(const NotifyRespawn& acMessage) const noexcept
 {
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
-    const auto entityIt = std::find_if(view.begin(), view.end(), [view, id = acMessage.ActorId](auto aEntity) { return view.get<RemoteComponent>(aEntity).Id == id; });
+    const auto entityIt = Utils::FindById<RemoteComponent>(view, acMessage.ActorId);
 
-    if (entityIt == view.end())
+    if (!entityIt)
     {
         spdlog::error("Actor to respawn not found in: {:X}", acMessage.ActorId);
         return;
@@ -3054,9 +3055,9 @@ void CharacterService::OnNotifyMount(const NotifyMount& acMessage) const noexcep
 {
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
 
-    const auto riderIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.RiderId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto riderIt = Utils::FindById<RemoteComponent>(remoteView, acMessage.RiderId);
 
-    if (riderIt == std::end(remoteView))
+    if (!riderIt)
     {
         spdlog::warn("Rider with remote id {:X} not found.", acMessage.RiderId);
         return;
@@ -3068,8 +3069,8 @@ void CharacterService::OnNotifyMount(const NotifyMount& acMessage) const noexcep
     if (!pRider)
         return;
 
-    const auto mountIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.MountId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
-    if (mountIt == std::end(remoteView))
+    const auto mountIt = Utils::FindById<RemoteComponent>(remoteView, acMessage.MountId);
+    if (!mountIt)
     {
         spdlog::warn("Cannot apply mount update because mount {:X} is unavailable", acMessage.MountId);
         return;
@@ -3118,9 +3119,9 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
 void CharacterService::OnNotifyNewPackage(const NotifyNewPackage& acMessage) const noexcept
 {
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.ActorId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = Utils::FindById<RemoteComponent>(remoteView, acMessage.ActorId);
 
-    if (remoteIt == std::end(remoteView))
+    if (!remoteIt)
     {
         spdlog::warn("Actor for package with remote id {:X} not found.", acMessage.ActorId);
         return;
@@ -4943,14 +4944,9 @@ void CharacterService::RunRemoteUpdates() noexcept
 
 void CharacterService::RunFactionsUpdates() const noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenSnapshots = 2000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenSnapshots)
+    static Throttle s_sendThrottle(2000ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     RequestFactionsChanges message;
 
@@ -5078,14 +5074,9 @@ void CharacterService::RunSpawnUpdates() const noexcept
 
 void CharacterService::RunExperienceUpdates() noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenSnapshots = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenSnapshots)
+    static Throttle s_sendThrottle(1000ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     if (m_cachedExperience == 0.f)
         return;
@@ -5326,8 +5317,8 @@ void CharacterService::OnNotifyClash(const NotifyClash& acMessage) const noexcep
 void CharacterService::OnNotifyArrowNocked(const NotifyArrowNocked& acMessage) const noexcept
 {
     auto view = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [&view, &acMessage](auto entity) { return view.get<RemoteComponent>(entity).Id == acMessage.ServerId; });
-    if (it == view.end())
+    const auto it = Utils::FindById<RemoteComponent>(view, acMessage.ServerId);
+    if (!it)
         return;
 
     Actor* pActor = Cast<Actor>(TESForm::GetById(view.get<FormIdComponent>(*it).Id));

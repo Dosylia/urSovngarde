@@ -49,16 +49,14 @@ void InstallInputFocusCheck() noexcept
     const VersionDbPtr<uint8_t> cPoll(68617);
     uint8_t* pPoll = cPoll.Get();
     const bool cOwn = PatchCheck::Is(pPoll, {0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18});
-    // Another plugin's hook: a relative jump (E9) or an indirect one (FF 25), which MinHook carries into its trampoline.
-    const bool cHooked = PatchCheck::Is(pPoll, {0xE9}) || PatchCheck::Is(pPoll, {0xFF, 0x25});
+    const bool cHooked = PatchCheck::IsHookJump(pPoll);
     if (!cOwn && !cHooked)
     {
         spdlog::error("Input: the device poll at {} is not the expected code ({}); keys are read with the window in the background too", fmt::ptr(pPoll), PatchCheck::Bytes(pPoll, 10));
         return;
     }
 
-    // Read before ours goes on: afterwards the first bytes are our own jump.
-    const std::string cOtherHook = cHooked ? fmt::format(" (on top of another plugin's hook: {})", PatchCheck::Bytes(pPoll, 6)) : std::string();
+    const std::string cOtherHook = PatchCheck::OtherHookNote(pPoll);
     uint8_t firstBytes[5]{};
     std::memcpy(firstBytes, pPoll, sizeof(firstBytes));
     BSInputDeviceManager_PollInputDevices = reinterpret_cast<decltype(BSInputDeviceManager_PollInputDevices)>(pPoll);

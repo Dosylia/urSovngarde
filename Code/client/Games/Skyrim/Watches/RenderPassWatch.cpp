@@ -601,14 +601,13 @@ void InstallDrawListCheck() noexcept
     const auto exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     auto* pDraw = reinterpret_cast<uint8_t*>(exe + kDrawList);
     const bool cOwn = PatchCheck::Is(pDraw, {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10});
-    // Another plugin's hook: a relative jump (E9) or an indirect one (FF 25), which MinHook carries into its trampoline.
-    const bool cHooked = PatchCheck::Is(pDraw, {0xE9}) || PatchCheck::Is(pDraw, {0xFF, 0x25});
+    const bool cHooked = PatchCheck::IsHookJump(pDraw);
     if (!cOwn && !cHooked)
     {
         spdlog::error("RenderPassWatch: the list draw at {} is not the expected code ({}); lists are not checked for loops", fmt::ptr(pDraw), PatchCheck::Bytes(pDraw, 10));
         return;
     }
-    const std::string cOtherHook = cHooked ? fmt::format(" (on top of another plugin's hook: {})", PatchCheck::Bytes(pDraw, 6)) : std::string();
+    const std::string cOtherHook = PatchCheck::OtherHookNote(pDraw);
     // MinHook writes a 5-byte jump at the start, so the hook is live only if those bytes changed.
     uint8_t firstBytes[5]{};
     std::memcpy(firstBytes, pDraw, sizeof(firstBytes));

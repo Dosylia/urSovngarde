@@ -2,12 +2,7 @@
 #include <Services/CommandService.h>
 #include <Services/TransportService.h>
 
-#include <Systems/ModSystem.h>
 #include <World.h>
-
-#include <Forms/TESObjectCELL.h>
-#include <Forms/TESWorldSpace.h>
-#include <PlayerCharacter.h>
 
 #include <Events/SetTimeCommandEvent.h>
 
@@ -15,7 +10,7 @@
 #include <Messages/TeleportCommandResponse.h>
 #include "Messages/SetTimeCommandRequest.h"
 
-#include <Structs/GridCellCoords.h>
+#include <Services/PlayerTeleport.h>
 
 CommandService::CommandService(World& aWorld, TransportService& aTransport, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
@@ -34,30 +29,13 @@ void CommandService::OnSetTimeCommand(const SetTimeCommandEvent& acEvent) const 
     m_transport.Send(request);
 }
 
+/**
+ * Move the player to the player the chat's teleport command named, where the server says they are.
+ *
+ * @param acMessage The server's answer: the cell, the world space and the position.
+ */
 void CommandService::OnTeleportCommandResponse(const TeleportCommandResponse& acMessage) noexcept
 {
     spdlog::info("TeleportCommandResponse: {:X}:{:X} at position {}", acMessage.CellId.ModId, acMessage.CellId.BaseId, acMessage.Position);
-    auto& modSystem = m_world.GetModSystem();
-
-    const uint32_t cellId = modSystem.GetGameId(acMessage.CellId);
-    TESObjectCELL* pCell = Cast<TESObjectCELL>(TESForm::GetById(cellId));
-    if (!pCell)
-    {
-        const uint32_t worldSpaceId = modSystem.GetGameId(acMessage.WorldSpaceId);
-        TESWorldSpace* pWorldSpace = Cast<TESWorldSpace>(TESForm::GetById(worldSpaceId));
-        if (pWorldSpace)
-        {
-            GridCellCoords coordinates = GridCellCoords::CalculateGridCellCoords(acMessage.Position);
-            pCell = pWorldSpace->LoadCell(coordinates.X, coordinates.Y);
-        }
-
-        if (!pCell)
-        {
-            spdlog::error("Failed to fetch cell to teleport to.");
-            m_world.GetOverlayService().SendSystemMessage("Teleporting to player failed.");
-            return;
-        }
-    }
-
-    PlayerCharacter::Get()->MoveTo(pCell, acMessage.Position);
+    PlayerTeleport::MoveTo(m_world, acMessage.CellId, acMessage.WorldSpaceId, acMessage.Position);
 }

@@ -70,4 +70,28 @@ inline std::string Bytes(const uint8_t* apAddress, size_t aCount)
     }
     return text;
 }
+
+/**
+ * Check if a function starts with another plugin's hook: a relative jump (E9) or an indirect one (FF 25).
+ * MinHook carries such a jump into its trampoline, so a hook of ours can go on top of it.
+ *
+ * @param apAddress The function's first byte, or null.
+ * @return True when it starts with one of those jumps.
+ */
+inline bool IsHookJump(const uint8_t* apAddress) noexcept
+{
+    return Is(apAddress, {0xE9}) || Is(apAddress, {0xFF, 0x25});
+}
+
+/**
+ * Describe another plugin's hook at a function's start, for the line that says ours went on.
+ * Read before our hook goes on: afterwards the first bytes are our own jump.
+ *
+ * @param apAddress The function's first byte, or null.
+ * @return " (on top of another plugin's hook: e9 ...)" with its first six bytes, or nothing when no such hook is there.
+ */
+inline std::string OtherHookNote(const uint8_t* apAddress)
+{
+    return IsHookJump(apAddress) ? " (on top of another plugin's hook: " + Bytes(apAddress, 6) + ")" : std::string();
+}
 } // namespace PatchCheck

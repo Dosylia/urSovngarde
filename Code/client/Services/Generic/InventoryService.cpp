@@ -1,4 +1,5 @@
 #include <Services/InventoryService.h>
+#include <Helpers/Throttle.h>
 #include <Services/Generic/NpcEquipmentCheck.h>
 #include <Services/Generic/PlayerCopyWeapon.h>
 #include <Copies/EpochMiss.h>
@@ -75,9 +76,9 @@ void InventoryService::OnInventoryChangeEvent(const InventoryChangeEvent& acEven
 
     auto view = m_world.view<FormIdComponent>();
 
-    const auto iter = std::find_if(std::begin(view), std::end(view), [view, formId = acEvent.FormId](auto entity) { return view.get<FormIdComponent>(entity).Id == formId; });
+    const auto iter = Utils::FindById<FormIdComponent>(view, acEvent.FormId);
 
-    if (iter == std::end(view))
+    if (!iter)
         return;
 
     uint32_t serverId = 0;
@@ -131,9 +132,9 @@ void InventoryService::OnEquipmentChangeEvent(const EquipmentChangeEvent& acEven
 
     auto view = m_world.view<FormIdComponent>();
 
-    const auto iter = std::find_if(std::begin(view), std::end(view), [view, formId = acEvent.ActorId](auto entity) { return view.get<FormIdComponent>(entity).Id == formId; });
+    const auto iter = Utils::FindById<FormIdComponent>(view, acEvent.ActorId);
 
-    if (iter == std::end(view))
+    if (!iter)
         return;
 
     const auto* pLocalComponent = m_world.try_get<LocalComponent>(*iter);
@@ -227,9 +228,8 @@ void InventoryService::OnNotifyInventoryChanges(const NotifyInventoryChanges& ac
         // A character here under another epoch is a missed update, not an unknown character: report it.
         if (!pActor)
         {
-            const auto byIdIt = std::find_if(remoteView.begin(), remoteView.end(), [remoteView, &acMessage](const entt::entity aEntity)
-            { return remoteView.get<RemoteComponent>(aEntity).Id == acMessage.ServerId; });
-            if (byIdIt != remoteView.end())
+            const auto byIdIt = Utils::FindById<RemoteComponent>(remoteView, acMessage.ServerId);
+            if (byIdIt)
                 ReportEpochMiss("an equipment change", acMessage.ServerId, acMessage.OwnershipEpoch, remoteView.get<RemoteComponent>(*byIdIt).OwnershipEpoch);
         }
 
@@ -401,14 +401,9 @@ void InventoryService::RunWeaponStateUpdates() noexcept
     if (!m_transport.IsConnected())
         return;
 
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 500ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(500ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     auto view = m_world.view<FormIdComponent, LocalComponent>();
 
@@ -440,17 +435,12 @@ void InventoryService::RunNakedNPCBugChecks() noexcept
     if (!m_transport.IsConnected())
         return;
 
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 1000ms;
-
     // How many times this has tried to dress each actor. See the give-up below.
     static TiltedPhoques::Map<uint32_t, uint32_t> s_resets;
 
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(1000ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     auto view = m_world.view<FormIdComponent>();
 
@@ -512,22 +502,17 @@ void InventoryService::RunEquipmentSnapshotUpdates() noexcept
     if (!m_transport.IsConnected())
         return;
 
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(1000ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     if (!pPlayer)
         return;
 
     auto view = m_world.view<FormIdComponent, LocalComponent>();
-    const auto it = std::find_if(view.begin(), view.end(), [view](auto entity) { return view.get<FormIdComponent>(entity).Id == 0x14; });
-    if (it == view.end())
+    const auto it = Utils::FindById<FormIdComponent>(view, 0x14);
+    if (!it)
         return;
 
     const uint32_t serverId = view.get<LocalComponent>(*it).Id;

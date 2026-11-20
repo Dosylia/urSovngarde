@@ -85,9 +85,9 @@ void Run(World& aWorld, const bool aConnected) noexcept
     for (auto it = s_wanted.begin(); it != s_wanted.end();)
     {
         const uint32_t cServerId = it->first;
-        const auto cEntity = std::find_if(view.begin(), view.end(), [&view, cServerId](const entt::entity aEntity) { return view.get<RemoteComponent>(aEntity).Id == cServerId; });
+        const auto cEntity = Utils::FindById<RemoteComponent>(view, cServerId);
         // No copy here (out of range): one made later takes its owner's state from the server.
-        if (cEntity == view.end())
+        if (!cEntity)
         {
             it = s_wanted.erase(it);
             continue;

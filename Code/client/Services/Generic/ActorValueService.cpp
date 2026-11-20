@@ -1,4 +1,5 @@
 #include <TiltedOnlinePCH.h>
+#include <Helpers/Throttle.h>
 #include <Helpers/PerfScope.h>
 
 #include <Services/ActorValueService.h>
@@ -152,18 +153,8 @@ void ActorValueService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcep
         return;
 
     auto view = m_world.view<FormIdComponent>();
-    const uint32_t formId = acEvent.FormId;
-
-    const auto it = std::find_if(
-        std::begin(view), std::end(view),
-        [view, formId](auto entity)
-        {
-            const auto& formIdComponent = view.get<FormIdComponent>(entity);
-
-            return formIdComponent.Id == formId;
-        });
-
-    if (it != std::end(view))
+    const auto it = Utils::FindById<FormIdComponent>(view, acEvent.FormId);
+    if (it)
         m_world.remove<ActorValuesComponent>(*it);
 }
 
@@ -402,14 +393,9 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
 
 void ActorValueService::RunSmallHealthUpdates() noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 250ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(250ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     if (!m_smallHealthChanges.empty())
     {
@@ -442,14 +428,9 @@ void ActorValueService::RunSmallHealthUpdates() noexcept
 
 void ActorValueService::RunDeathStateUpdates() noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 250ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(250ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     auto localView = m_world.view<FormIdComponent, LocalComponent>();
 
@@ -483,14 +464,9 @@ void ActorValueService::RunDeathStateUpdates() noexcept
 
 void ActorValueService::RunActorValuesUpdates() noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(1000ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     BroadcastActorValues();
 }
@@ -716,10 +692,9 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
 
     // Separated from the epoch test so a stale epoch can be told apart from a character we simply do not have.
-    const auto itor = std::find_if(std::begin(view), std::end(view), [&acMessage, view](entt::entity entity)
-    { return view.get<RemoteComponent>(entity).Id == acMessage.Id; });
+    const auto itor = Utils::FindById<RemoteComponent>(view, acMessage.Id);
 
-    if (itor != std::end(view))
+    if (itor)
     {
         const auto& remoteFound = view.get<RemoteComponent>(*itor);
         if (acMessage.OwnershipEpoch == 0 || remoteFound.OwnershipEpoch != acMessage.OwnershipEpoch)
@@ -729,7 +704,7 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
         }
     }
 
-    if (itor == std::end(view))
+    if (!itor)
         return;
 
     auto& formIdComponent = view.get<FormIdComponent>(*itor);
@@ -822,10 +797,9 @@ void ActorValueService::OnActorMaxValueChanges(const NotifyActorMaxValueChanges&
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
 
     // Separated from the epoch test so a stale epoch can be told apart from a character we simply do not have.
-    const auto it = std::find_if(std::begin(view), std::end(view), [&acMessage, view](entt::entity entity)
-    { return view.get<RemoteComponent>(entity).Id == acMessage.Id; });
+    const auto it = Utils::FindById<RemoteComponent>(view, acMessage.Id);
 
-    if (it != std::end(view))
+    if (it)
     {
         const auto& remoteFound = view.get<RemoteComponent>(*it);
         if (acMessage.OwnershipEpoch == 0 || remoteFound.OwnershipEpoch != acMessage.OwnershipEpoch)
@@ -835,7 +809,7 @@ void ActorValueService::OnActorMaxValueChanges(const NotifyActorMaxValueChanges&
         }
     }
 
-    if (it == std::end(view))
+    if (!it)
         return;
 
     auto& formIdComponent = view.get<FormIdComponent>(*it);
@@ -861,10 +835,9 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
     auto view = m_world.view<RemoteComponent>();
 
     // Separated from the epoch test so a stale epoch can be told apart from a character we simply do not have.
-    const auto it = std::find_if(std::begin(view), std::end(view), [&acMessage, view](entt::entity entity)
-    { return view.get<RemoteComponent>(entity).Id == acMessage.Id; });
+    const auto it = Utils::FindById<RemoteComponent>(view, acMessage.Id);
 
-    if (it != std::end(view))
+    if (it)
     {
         const auto& remoteFound = view.get<RemoteComponent>(*it);
         if (acMessage.OwnershipEpoch == 0 || remoteFound.OwnershipEpoch != acMessage.OwnershipEpoch)
@@ -886,7 +859,7 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         spdlog::info("Death sync: {} for server id {:X} arrived and was not applied: {}", acMessage.IsDead ? "a death" : "a revival", acMessage.Id, acpWhy);
     };
 
-    if (it == std::end(view))
+    if (!it)
     {
         say("no copy of that character here");
         return;

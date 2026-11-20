@@ -19,6 +19,23 @@
 static OverlayService* s_pOverlay = nullptr;
 static UINT s_currentACP = CP_ACP;
 
+/**
+ * Find the page's browser, once the overlay, its browser and its drawing are all up: the page takes input only then.
+ *
+ * @param apOverlay The overlay service, or null before the service starts or after it stops.
+ * @return The page's browser, or null while any of them is missing.
+ */
+static OverlayApp* ReadyOverlayApp(OverlayService* apOverlay) noexcept
+{
+    if (!apOverlay)
+        return nullptr;
+    OverlayApp* pApp = apOverlay->GetOverlayApp();
+    const auto pClient = pApp ? pApp->GetClient() : nullptr;
+    if (!pClient || !pClient->GetOverlayRenderHandler())
+        return nullptr;
+    return pApp;
+}
+
 void ForceKillAllInput()
 {
     MenuControls::GetInstance()->SetToggle(false);
@@ -98,6 +115,15 @@ bool IsDisableKey(int aKey) noexcept
     return aKey == VK_ESCAPE;
 }
 
+/**
+ * Handle a key on the flat screen: the menu key opens or closes the menu, and while the menu is open the page gets the key.
+ *
+ * @param aKey The key's Windows code.
+ * @param aScanCode The key's place on the keyboard.
+ * @param aType Pressed, released, or a typed character.
+ * @param aE0 True for the keys Windows marks as extended with E0, such as the right Ctrl.
+ * @param aE1 True for the keys Windows marks as extended with E1, such as Pause.
+ */
 void ProcessKeyboard(uint16_t aKey, uint16_t aScanCode, cef_key_event_type_t aType, bool aE0, bool aE1)
 {
     if (aType != KEYEVENT_CHAR)
@@ -158,22 +184,11 @@ void ProcessKeyboard(uint16_t aKey, uint16_t aScanCode, cef_key_event_type_t aTy
         }
     }
 
-    if (!s_pOverlay)
-        return;
-    auto& overlay = *s_pOverlay;
-
-    const auto pApp = overlay.GetOverlayApp();
+    OverlayService* pOverlay = s_pOverlay;
+    OverlayApp* pApp = ReadyOverlayApp(pOverlay);
     if (!pApp)
         return;
-
-    const auto pClient = pApp->GetClient();
-    if (!pClient)
-        return;
-
-    const auto pRenderer = pClient->GetOverlayRenderHandler();
-    if (!pRenderer)
-        return;
-
+    auto& overlay = *pOverlay;
     const auto active = overlay.GetActive();
 
     spdlog::debug("ProcessKey, type: {}, key: {}, active: {}", aType, aKey, active);
@@ -191,82 +206,49 @@ void ProcessKeyboard(uint16_t aKey, uint16_t aScanCode, cef_key_event_type_t aTy
     }
 }
 
+/**
+ * Move the page's mouse pointer while the menu is open on the flat screen.
+ *
+ * @param aX Across the game window, in pixels.
+ * @param aY Down the game window, in pixels.
+ */
 void ProcessMouseMove(uint16_t aX, uint16_t aY)
 {
-    if (!s_pOverlay)
-        return;
-    auto& overlay = *s_pOverlay;
-
-    const auto pApp = overlay.GetOverlayApp();
-    if (!pApp)
-        return;
-
-    const auto pClient = pApp->GetClient();
-    if (!pClient)
-        return;
-
-    const auto pRenderer = pClient->GetOverlayRenderHandler();
-    if (!pRenderer)
-        return;
-
-    const auto active = overlay.GetActive();
-
-    if (active)
-    {
+    OverlayService* pOverlay = s_pOverlay;
+    OverlayApp* pApp = ReadyOverlayApp(pOverlay);
+    if (pApp && pOverlay->GetActive())
         pApp->InjectMouseMove(aX, aY, GetCefModifiers(0));
-    }
 }
 
+/**
+ * Press or let go of a mouse button on the page while the menu is open on the flat screen.
+ *
+ * @param aX Across the game window, in pixels.
+ * @param aY Down the game window, in pixels.
+ * @param aButton Which button.
+ * @param aDown True when it is pressed, false when it is let go.
+ */
 void ProcessMouseButton(uint16_t aX, uint16_t aY, cef_mouse_button_type_t aButton, bool aDown)
 {
-    if (!s_pOverlay)
-        return;
-    auto& overlay = *s_pOverlay;
-
-    const auto pApp = overlay.GetOverlayApp();
-    if (!pApp)
-        return;
-
-    const auto pClient = pApp->GetClient();
-    if (!pClient)
-        return;
-
-    const auto pRenderer = pClient->GetOverlayRenderHandler();
-    if (!pRenderer)
-        return;
-
-    const auto active = overlay.GetActive();
-
-    if (active)
-    {
+    OverlayService* pOverlay = s_pOverlay;
+    OverlayApp* pApp = ReadyOverlayApp(pOverlay);
+    if (pApp && pOverlay->GetActive())
         pApp->InjectMouseButton(aX, aY, aButton, !aDown, GetCefModifiers(0));
-    }
 }
 
+/**
+ * Scroll the page with the mouse wheel while the menu is open on the flat screen.
+ *
+ * @param aX Across the game window, in pixels.
+ * @param aY Down the game window, in pixels.
+ * @param aZ How far, in wheel units: 120 is one notch, positive scrolls up.
+ */
 void ProcessMouseWheel(uint16_t aX, uint16_t aY, int16_t aZ)
 {
-    if (!s_pOverlay)
-        return;
-    auto& overlay = *s_pOverlay;
-
-    const auto pApp = overlay.GetOverlayApp();
-    if (!pApp)
-        return;
-
-    const auto pClient = pApp->GetClient();
-    if (!pClient)
-        return;
-
-    const auto pRenderer = pClient->GetOverlayRenderHandler();
-    if (!pRenderer)
-        return;
-
-    const auto active = overlay.GetActive();
-
-    if (active)
-    {
+    OverlayService* pOverlay = s_pOverlay;
+    OverlayApp* pApp = ReadyOverlayApp(pOverlay);
+    if (pApp && pOverlay->GetActive())
         pApp->InjectMouseWheel(aX, aY, aZ, GetCefModifiers(0));
-    }
 }
 
 UINT GetRealACP()
@@ -287,22 +269,19 @@ UINT GetRealACP()
     return acp;
 }
 
+/**
+ * Pass the game window's messages to the page, Discord and the debug windows while the overlay is up.
+ *
+ * @param hwnd The game window.
+ * @param uMsg The message.
+ * @param wParam The message's first value.
+ * @param lParam The message's second value.
+ * @return Always 0, so the game's own window procedure still handles every message; anything else would keep it from the game.
+ */
 LRESULT CALLBACK InputService::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     // The window procedure (BSGraphicsRenderer.cpp) stays hooked longer than this service lives.
-    if (!s_pOverlay)
-        return 0;
-
-    const auto pApp = s_pOverlay->GetOverlayApp();
-    if (!pApp)
-        return 0;
-
-    const auto pClient = pApp->GetClient();
-    if (!pClient)
-        return 0;
-
-    const auto pRenderer = pClient->GetOverlayRenderHandler();
-    if (!pRenderer)
+    if (!ReadyOverlayApp(s_pOverlay))
         return 0;
 
     auto& discord = World::Get().ctx().at<DiscordService>();

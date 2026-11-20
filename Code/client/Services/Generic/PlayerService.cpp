@@ -1,4 +1,5 @@
 #include <Services/PlayerService.h>
+#include <Helpers/Throttle.h>
 #include <Structs/PluginList.h>
 #include <Helpers/PerfScope.h>
 
@@ -30,6 +31,7 @@
 #include <Messages/NotifyNpcPluginsDiffer.h>
 #include <Copies/NpcPlugins.h>
 #include <Services/OverlayService.h>
+#include <Services/CellLookup.h>
 
 #include <Structs/ServerSettings.h>
 
@@ -119,21 +121,6 @@ const char* PlaceNameOf(const PlayerCharacter* apPlayer) noexcept
     if (!pPlace)
         pPlace = nameOf(apPlayer->GetWorldSpace());
     return pPlace;
-}
-
-// The cell of a safe point: the interior itself, or the exterior cell at its position in its worldspace, which may need loading.
-TESObjectCELL* FindSafePointCell(World& aWorld, const GameId& acCellId, const GameId& acWorldSpaceId, const glm::vec3& acPosition) noexcept
-{
-    auto& modSystem = aWorld.GetModSystem();
-    if (TESObjectCELL* pCell = Cast<TESObjectCELL>(TESForm::GetById(modSystem.GetGameId(acCellId))))
-        return pCell;
-    if (!acWorldSpaceId)
-        return nullptr;
-    TESWorldSpace* pWorldSpace = Cast<TESWorldSpace>(TESForm::GetById(modSystem.GetGameId(acWorldSpaceId)));
-    if (!pWorldSpace)
-        return nullptr;
-    const GridCellCoords cCoordinates = GridCellCoords::CalculateGridCellCoords(acPosition.x, acPosition.y);
-    return pWorldSpace->LoadCell(cCoordinates.X, cCoordinates.Y);
 }
 
 // The name a reviver goes by in the party, as the banner shows it.
@@ -667,7 +654,7 @@ void PlayerService::RunRespawnUpdates() noexcept
         TESObjectCELL* pSafeCell = nullptr;
         if (m_respawnPoint.Known)
         {
-            pSafeCell = FindSafePointCell(m_world, m_respawnPoint.CellId, m_respawnPoint.WorldSpaceId, m_respawnPoint.Position);
+            pSafeCell = CellLookup::FindOrLoad(m_world, m_respawnPoint.CellId, m_respawnPoint.WorldSpaceId, m_respawnPoint.Position);
             if (!pSafeCell)
                 spdlog::warn("PlayerService: the safe point's cell is not in this game; respawning at the game's own spot");
         }
@@ -1036,14 +1023,9 @@ void PlayerService::RunLevelUpdates() const noexcept
 {
     // The LevelUp hook is kinda weird, so ehh, just check periodically, doesn't really cost anything.
 
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(1000ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     static uint16_t oldLevel = PlayerCharacter::Get()->GetLevel();
 
@@ -1135,14 +1117,9 @@ void PlayerService::RunCrashPlaceNote() noexcept
 void PlayerService::RunBeastFormDetection() const noexcept
 {
     static uint32_t lastRaceFormID = 0;
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenUpdates = 250ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenUpdates)
+    static Throttle s_sendThrottle(250ms);
+    if (!s_sendThrottle.TakeTurn())
         return;
-
-    lastSendTimePoint = now;
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     if (!pPlayer->race)
