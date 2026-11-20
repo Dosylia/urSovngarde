@@ -1150,6 +1150,11 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 
 ## Parked and later
 
+- [ ] **A raised body turns to ash for its caster and walks on for the other player** (GitHub issue 7, 2026-11-19: the joining player cast Raise Dead on a corpse while the host's game ran it; Realm of Lorkhan's necromancer class; version not given). Parked 2026-11-20: not reproduced, and the reporter cannot be reached; no fix without a reproduction.
+      From the code: a spell the local player casts on a copy is applied here and also sent to the other games (`ShouldSync` holds back summons, invisibility and wards, not reanimation), so the body's own game raises it too. That game then reports it alive, and this game resurrects its copy to match.
+      Rig, 2026-11-20, `Tools/Flat/cross-raise.py` (flat game leads and runs a dead skeever, the VR player raises its copy with Raise Zombie by RemoteCast; flat client and FUS client on v1.9.81-27-gc64bd5dd-dirty.c852168): NOT reproduced. Both games showed the skeever raised for the 12 s watched; the flat game's `is now alive` came about a second after the cast, the copy was resurrected mid-raise (`set alive by its owner`) and stayed raised.
+      Seen on the way: `BodyStand:` takes the health off a body being raised, as Papyrus counts it dead for its first second (a local raise went from 15 health to 0), so a fresh zombie is left at 0 health; it stayed up on the rig, and whether that plays any part is not shown.
+      Not covered by the rig: two VR games over a real connection, a human corpse, Realm of Lorkhan's scripts (a summon limit of three) in both games, a fight around the raised body, the release v1.9.81. What would bring it back: both players' `tp_client.log` from such a session (`Death sync: local actor ... is now alive` on the host, the copy's lines on the caster).
 - [ ] **Mounts** (parked 2026-10-12). The rider's `MountRequest` crosses and the other game gives the rider's copy the
       mount package, which it accepts, but the copy never gets on: copies run no AI of their own. Tried in the rig and
       reverted: `Actor::PutActorOnMountQuick` (vtable 0xAE on VR) returns false; letting the copy's AI run with its
