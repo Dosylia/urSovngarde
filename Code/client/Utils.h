@@ -71,6 +71,20 @@ template <class View> std::optional<entt::entity> FindByFormId(const View& acVie
 {
     return FindById<FormIdComponent>(acView, aFormId);
 }
+
+/**
+ * Find the server's id of a game form, through the entity of a view that has its form id.
+ * For a caller that treats both misses alike; one that tells them apart uses FindByFormId and GetServerId.
+ *
+ * @param acView The view to search; it must hold FormIdComponent.
+ * @param aFormId The game's form id.
+ * @return The server id; nothing when no entity of the view has the form id, or when that entity has no server id yet.
+ */
+template <class TView> std::optional<uint32_t> FindServerIdByFormId(const TView& acView, const uint32_t aFormId) noexcept
+{
+    const auto cEntity = FindByFormId(acView, aFormId);
+    return cEntity ? GetServerId(*cEntity) : std::nullopt;
+}
 std::optional<ActorOwnershipToken> GetLocalOwnershipToken(uint32_t aFormId) noexcept;
 std::optional<ActorOwnershipToken> GetRemoteOwnershipToken(uint32_t aFormId) noexcept;
 //! The owner's token when an item drops out of a dead body another player's game runs, within this player's reach.

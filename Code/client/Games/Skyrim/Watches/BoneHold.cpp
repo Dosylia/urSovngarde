@@ -1,8 +1,10 @@
 #include <TiltedOnlinePCH.h>
 
 #ifdef SKYRIMVR
-#include <CrashHandler.h>
 #include <Helpers/ModuleImage.h>
+#include <Helpers/GuardedRead.h>
+#include <Games/Skyrim/NetImmerse/NiLayout.h>
+#include <Games/Skyrim/Watches/NodeWatch.h>
 #include <Helpers/ReadableMemory.h>
 #include <Games/Skyrim/Watches/BoneHold.h>
 #include <Games/Skyrim/Watches/GameStack.h>
@@ -25,15 +27,11 @@
 // The first held node found written also gets a hardware write watch, to name the code that writes it.
 namespace
 {
-constexpr uint32_t kRefCountOffset = 0x8;   // NiRefObject::refCount
-constexpr uint32_t kNameOffset = 0x10;      // NiObjectNET::name
-constexpr uint32_t kParentOffset = 0x30;    // NiAVObject::parent
-constexpr uint32_t kLocalOffset = 0x48;     // NiAVObject::local, then world at 0x7C
-constexpr uint32_t kTransformsBytes = 0x68; // local and world, 0x34 each
-constexpr uint32_t kChildrenOffset = 0x138; // NiNode::children, on VR
-constexpr uint16_t kMaxChildren = 512;
-constexpr size_t kToldInFull = 20;          // then one in every kToldEvery
-constexpr size_t kToldEvery = 100;
+using NiLayout::kLocalOffset;
+using NiLayout::kNameOffset;
+using NiLayout::kParentOffset;
+using NodeWatch::kMaxChildren;
+constexpr uint32_t kTransformsBytes = NiLayout::kWorldOffset + 0x34 - kLocalOffset; // local, then world, 0x34 each
 constexpr size_t kHeldMax = 8192;
 constexpr auto kHoldFor = std::chrono::milliseconds(1500);
 // The player's own bones are held far longer: a late write came 35 s after a race change.
@@ -127,32 +125,13 @@ WatchHit s_watchHits[kWatchHitsMax]{};
 std::chrono::steady_clock::time_point s_watchUntil{};
 bool s_watchArmed = false;
 
-// A read that answers false instead of faulting.
-// The crash handler is told the fault is expected, or it would report a crash first.
-template <class T> bool SafeRead(const void* apAddress, T& aOut) noexcept
-{
-    bool read = false;
-    CrashGuard::Enter();
-    __try
-    {
-        aOut = *static_cast<const T*>(apAddress);
-        read = true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-    }
-    CrashGuard::Leave();
-    return read;
-}
-
-std::string TextAt(const char* apText) noexcept
-{
-    char text[64]{};
-    for (size_t i = 0; apText && i + 1 < sizeof(text) && ReadableMemory::IsReadable(apText + i, 1) && apText[i]; ++i)
-        text[i] = apText[i];
-    return text;
-}
-
+/**
+ * Copy a node's name into a held node's record, cut to 47 characters.
+ * Not GuardedRead::Text: it runs in the destructor hook before the node is destroyed, and the hook has just read that name unguarded.
+ *
+ * @param apText The name, or null for none.
+ * @param aOut Receives the name, always ended.
+ */
 void CopyName(const char* apText, char (&aOut)[48]) noexcept
 {
     size_t i = 0;
@@ -428,7 +407,11 @@ void* FindByName(void* apRoot, const std::string& acName) noexcept
     return GetObjectByName(apRoot, &cName.data, 1);
 }
 
-// Tells whose graph a bone table belongs to, and each entry that points at a freed node, with what its 3D has under that name.
+/**
+ * Log whose graph a bone table belongs to, and each entry that points at a freed node or at a node outside the graph's 3D, with what its 3D has under that name.
+ *
+ * @param apGraph The animation graph that holds the bone table.
+ */
 void DescribeGraph(uint8_t* apGraph) noexcept
 {
     void* pHolder = nullptr;
@@ -436,30 +419,30 @@ void DescribeGraph(uint8_t* apGraph) noexcept
     uint8_t* pData = nullptr;
     uint32_t size = 0;
     uint32_t formId = 0;
-    if (!SafeRead(apGraph + kGraphHolderOffset, pHolder) || !SafeRead(apGraph + kGraphRootOffset, pRoot) || !SafeRead(apGraph + kGraphBoneNodesOffset, pData) ||
-        !SafeRead(apGraph + kGraphBoneNodesOffset + 0x10, size))
+    if (!GuardedRead::Value(apGraph + kGraphHolderOffset, pHolder) || !GuardedRead::Value(apGraph + kGraphRootOffset, pRoot) ||
+        !GuardedRead::Value(apGraph + kGraphBoneNodesOffset, pData) || !GuardedRead::Value(apGraph + kGraphBoneNodesOffset + 0x10, size))
     {
         spdlog::error("NodeQuarantine: the writer's bone table at {} could not be read", fmt::ptr(apGraph + kGraphBoneNodesOffset));
         return;
     }
     if (pHolder)
-        SafeRead(static_cast<uint8_t*>(pHolder) + kFormIdOffset, formId);
+        GuardedRead::Value(static_cast<uint8_t*>(pHolder) + kFormIdOffset, formId);
     const char* pRootName = nullptr;
     if (pRoot)
-        SafeRead(static_cast<uint8_t*>(pRoot) + kNameOffset, pRootName);
+        GuardedRead::Value(static_cast<uint8_t*>(pRoot) + kNameOffset, pRootName);
     std::unordered_set<const void*> tree;
     CollectNodes(pRoot, tree);
     size_t stale = 0;
     spdlog::error("NodeQuarantine: the writer walks the bone table of the animation graph {} of actor {:X}, root {} ('{}', {} nodes below it), {} entries", fmt::ptr(apGraph),
-                  formId, fmt::ptr(pRoot), TextAt(pRootName), tree.size(), size);
+                  formId, fmt::ptr(pRoot), GuardedRead::Text(pRootName), tree.size(), size);
     for (uint32_t i = 0; i < size && i < 512 && pData; ++i)
     {
         void* pNode = nullptr;
         int32_t index = 0;
-        SafeRead(pData + i * kBoneNodeEntrySize, pNode);
-        SafeRead(pData + i * kBoneNodeEntrySize + 8, index);
+        GuardedRead::Value(pData + i * kBoneNodeEntrySize, pNode);
+        GuardedRead::Value(pData + i * kBoneNodeEntrySize + 8, index);
         void* pVTable = nullptr;
-        if (!pNode || (SafeRead(pNode, pVTable) && pVTable != s_deadVTable && tree.contains(pNode)))
+        if (!pNode || (GuardedRead::Value(pNode, pVTable) && pVTable != s_deadVTable && tree.contains(pNode)))
             continue;
         ++stale;
         const std::string cName = HeldName(pNode);
@@ -470,10 +453,15 @@ void DescribeGraph(uint8_t* apGraph) noexcept
     spdlog::error("NodeQuarantine: {} of the {} entries point at a freed node or one outside the graph's 3D", stale, size);
 }
 
-// An actor's animation graphs keep, for each animated bone, the node its pose is written to.
-// A skeleton rebuilt for a race change or character creation can leave such an entry on the old, freed node: the pose is then written into freed memory each frame.
-// Each entry on a held freed node is moved to the node of the same name in the graph's 3D, or emptied when there is none; the pose loop skips an empty one.
-// From the main loop, between frames, under the graph manager's lock.
+/**
+ * Move an actor's animation bone table entries off freed nodes.
+ * An actor's animation graphs keep, for each animated bone, the node its pose is written to.
+ * A skeleton rebuilt for a race change or character creation can leave such an entry on the old, freed node: the pose is then written into freed memory each frame.
+ * Each entry on a held freed node is moved to the node of the same name in the graph's 3D, or emptied when there is none; the pose loop skips an empty one.
+ * From the main loop, between frames, under the graph manager's lock.
+ *
+ * @param apRefr The actor; null does nothing.
+ */
 void RepairGraphsOf(TESObjectREFR* apRefr) noexcept
 {
     BSAnimationGraphManager* pManager = nullptr;
@@ -493,14 +481,14 @@ void RepairGraphsOf(TESObjectREFR* apRefr) noexcept
             {
                 void*& node = *reinterpret_cast<void**>(pData + i * kBoneNodeEntrySize);
                 void* pVTable = nullptr;
-                if (!node || !SafeRead(node, pVTable) || pVTable != s_deadVTable)
+                if (!node || !GuardedRead::Value(node, pVTable) || pVTable != s_deadVTable)
                     continue;
                 const std::string cName = HeldName(node);
                 void* pNow = FindByName(pRoot, cName);
                 if (pNow && *static_cast<void**>(pNow) == s_deadVTable)
                     pNow = nullptr;
                 ++s_graphRepairs;
-                if (s_graphRepairs <= kToldInFull || s_graphRepairs % kToldEvery == 0)
+                if (NodeWatch::IsTold(s_graphRepairs))
                     spdlog::warn("GraphRebind: actor {:X}'s animation graph {} entry {} ('{}') pointed at a freed node; {} ({} so far)", apRefr->formID, g, i,
                                  cName.empty() ? "?" : cName, pNow ? fmt::format("moved to the node of that name in its 3D ({})", fmt::ptr(pNow)) : std::string("emptied, its 3D has no node of that name"),
                                  s_graphRepairs);
@@ -570,7 +558,13 @@ void UpdateWatch() noexcept
         DescribeGraph(reinterpret_cast<uint8_t*>(s_watchHits[0].R14 - kGraphBoneNodesOffset));
 }
 
-// Every node below a root, for the set of the player's bones.
+/**
+ * Add every node of a tree to a set: the player's bones, or a graph's 3D.
+ * Each read is guarded, a node already in the set is not walked again, and an array said to hold more than kMaxChildren slots is skipped.
+ *
+ * @param apRoot The tree's root, added too.
+ * @param aOut Receives the nodes; it stops growing at kMaxPlayerNodes.
+ */
 void CollectNodes(void* apRoot, std::unordered_set<const void*>& aOut) noexcept
 {
     std::vector<void*> stack{apRoot};
@@ -582,19 +576,20 @@ void CollectNodes(void* apRoot, std::unordered_set<const void*>& aOut) noexcept
             continue;
         void** pChildren = nullptr;
         uint16_t capacity = 0;
-        if (!SafeRead(static_cast<uint8_t*>(pNode) + kChildrenOffset + 0x8, pChildren) || !SafeRead(static_cast<uint8_t*>(pNode) + kChildrenOffset + 0x10, capacity) ||
-            !pChildren || capacity > kMaxChildren)
+        if (!NodeWatch::ReadChildSlots(pNode, pChildren, capacity) || capacity > kMaxChildren)
             continue;
         for (uint16_t i = 0; i < capacity; ++i)
         {
             void* pChild = nullptr;
-            if (SafeRead(&pChildren[i], pChild) && pChild)
+            if (GuardedRead::Value(&pChildren[i], pChild) && pChild)
                 stack.push_back(pChild);
         }
     }
 }
 
-// The player's third-person skeleton, and the first-person one found from its right hand up to its top.
+/**
+ * Read the set of the player's bones again: the third-person skeleton, and the first-person one found from its right hand up to its top.
+ */
 void UpdatePlayerNodes() noexcept
 {
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
@@ -605,12 +600,12 @@ void UpdatePlayerNodes() noexcept
     if (void* pRoot = pPlayer->GetNiNode())
         CollectNodes(pRoot, nodes);
     void* pTop = nullptr;
-    if (SafeRead(reinterpret_cast<uint8_t*>(pPlayer) + kFirstPersonHandOffset, pTop) && pTop)
+    if (GuardedRead::Value(reinterpret_cast<uint8_t*>(pPlayer) + kFirstPersonHandOffset, pTop) && pTop)
     {
         // Up to the skeleton's own root, the first node named after its file: above it is the world.
         void* pParent = nullptr;
-        for (int depth = 0; depth < 32 && TextAt(*reinterpret_cast<const char* const*>(static_cast<uint8_t*>(pTop) + kNameOffset)).find(".nif") == std::string::npos &&
-                            SafeRead(static_cast<uint8_t*>(pTop) + kParentOffset, pParent) && pParent;
+        for (int depth = 0; depth < 32 && GuardedRead::Text(*reinterpret_cast<const char* const*>(static_cast<uint8_t*>(pTop) + kNameOffset)).find(".nif") == std::string::npos &&
+                            GuardedRead::Value(static_cast<uint8_t*>(pTop) + kParentOffset, pParent) && pParent;
              ++depth)
             pTop = pParent;
         CollectNodes(pTop, nodes);
@@ -619,20 +614,29 @@ void UpdatePlayerNodes() noexcept
     s_playerNodes.swap(nodes);
 }
 
-// The class of an object from MSVC's type information before its vtable.
+/**
+ * Name the class of an object from MSVC's type information before its class table.
+ *
+ * @param apVTable The object's class table.
+ * @return The class's decorated name; empty when it cannot be read.
+ */
 std::string ClassOf(const void* apVTable) noexcept
 {
     const void* pLocator = nullptr;
-    if (!apVTable || !SafeRead(static_cast<const void* const*>(apVTable) - 1, pLocator) || !ReadableMemory::IsReadable(pLocator, 0x18))
+    if (!apVTable || !GuardedRead::Value(static_cast<const void* const*>(apVTable) - 1, pLocator) || !ReadableMemory::IsReadable(pLocator, 0x18))
         return {};
     const auto* pFields = static_cast<const uint32_t*>(pLocator);
     if (pFields[0] != 1)
         return {};
     const uintptr_t cModule = reinterpret_cast<uintptr_t>(pLocator) - pFields[5];
-    return TextAt(reinterpret_cast<const char*>(cModule + pFields[3] + 0x10));
+    return GuardedRead::Text(reinterpret_cast<const char*>(cModule + pFields[3] + 0x10));
 }
 
-// Hooks the destructor of the class of the first eye bone found on a loaded actor.
+/**
+ * Hook the destructor of the class of the first node with this name found on a loaded actor.
+ *
+ * @param acName The node's name; the eye bone's.
+ */
 void HookFromALoadedActor(const BSFixedString& acName) noexcept
 {
     using TGetObjectByName = void*(void*, const char* const*, char);
@@ -647,7 +651,7 @@ void HookFromALoadedActor(const BSFixedString& acName) noexcept
         NiNode* pRoot = pRefr ? pRefr->GetNiNode() : nullptr;
         void* pBone = pRoot ? GetObjectByName(pRoot, &acName.data, 1) : nullptr;
         void** pVTable = nullptr;
-        if (!pBone || !SafeRead(pBone, pVTable) || !pVTable)
+        if (!pBone || !GuardedRead::Value(pBone, pVTable) || !pVTable)
             continue;
 
         for (void*& slot : s_deadVTable)
@@ -689,6 +693,10 @@ void SetDestroyObserver(DestroyObserver aObserver) noexcept
     s_observer.store(aObserver, std::memory_order_release);
 }
 
+/**
+ * Run the node hold once a frame, on the main thread, from the main loop.
+ * Hooks the node destructor once a loaded actor shows its class, repairs bone tables left on held nodes, gives back nodes held long enough, and logs what reached a held node.
+ */
 void Update() noexcept
 {
     static const BSFixedString s_name("NPCEyeBone");
@@ -724,7 +732,7 @@ void Update() noexcept
         s_toldLate = lateLast;
     }
     for (size_t i = lateFirst; i < lateLast; ++i)
-        if (i < kToldInFull || (i + 1) % kToldEvery == 0)
+        if (NodeWatch::IsTold(i + 1))
             spdlog::error("NodeQuarantine: {} ({} so far)", Describe(lates[i - lateFirst]), i + 1);
 
     static auto s_nextSummary = std::chrono::steady_clock::now() + std::chrono::seconds(60);

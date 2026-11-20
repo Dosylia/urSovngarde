@@ -1,5 +1,4 @@
 #include <Games/Skyrim/VR/VRBodySync.h>
-#include <Games/Skyrim/Watches/HeadPartWatch.h>
 #include <Games/Skyrim/Watches/BoneHold.h>
 #include <Games/Skyrim/Watches/EyeBoneWatch.h>
 #include <Services/CharacterService.h>
@@ -52,7 +51,6 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
     if (entt::locator<World>::has_value())
         World::Get().GetCharacterService().LayDownStandingBodies();
     // On the main thread between frames: the client's own update may run on another thread during a load.
-    HeadPartWatch::Update();
     BoneHold::Update();
     EyeBoneWatch::Update();
 #endif

@@ -15,6 +15,7 @@
 #include <NetImmerse/NiNode.h>
 #include <NetImmerse/NiTransform.h>
 #include <NetImmerse/NiGlm.h>
+#include <NetImmerse/NiLayout.h>
 
 #include <glm/gtc/quaternion.hpp>
 
@@ -35,20 +36,17 @@
 #include <map>
 #include <vector>
 
-// NetImmerse objects are read through raw offsets: the VR NiAVObject is 0x138 bytes, the client's structs model SE's 0x110.
+// NetImmerse objects are read through raw offsets (NiLayout).
 namespace
 {
-constexpr uint32_t kNameOffset = 0x10;   // NiObjectNET::name
-constexpr uint32_t kParentOffset = 0x30; // NiAVObject::parent
-constexpr uint32_t kLocalOffset = 0x48;  // NiAVObject::local
-constexpr uint32_t kWorldOffset = 0x7C;  // NiAVObject::world
-#ifdef SKYRIMVR
-constexpr uint32_t kChildrenOffset = 0x138; // NiNode::children
-constexpr uint32_t kNiAVObjectSize = 0x138;
-#else
-constexpr uint32_t kChildrenOffset = 0x110;
-constexpr uint32_t kNiAVObjectSize = 0x110;
-#endif
+using NiLayout::kChildCountOffset;
+using NiLayout::kChildrenOffset;
+using NiLayout::kChildSlotsOffset;
+using NiLayout::kLocalOffset;
+using NiLayout::kNameOffset;
+using NiLayout::kNiAVObjectSize;
+using NiLayout::kParentOffset;
+using NiLayout::kWorldOffset;
 // NiAVObject::worldBound, a centre and a radius. On VR it is at 0xE4: 0xB0, where SE keeps it, is previousWorld.
 // Read only through ReadWorldBound, which refuses anything not the size and place of a weapon.
 constexpr uint32_t kWorldBoundOffset = 0xE4;
@@ -128,40 +126,142 @@ void* AsNode(void* apObject) noexcept
     return static_cast<TAsNode>(ppVTable[kVTableAsNodeSlot])(apObject);
 }
 
-// Breadth-first search for the shallowest node with this name.
-// Physics armour (SMP/3BA) carries its own copies of skeleton nodes like "NPC L Hand", deeper down.
-void* FindShallowest(void* apStart, const char* acpName) noexcept
+/**
+ * Where a node keeps its children: an array of slots, some of them empty.
+ */
+struct ChildSlots
 {
-    if (!apStart)
-        return nullptr;
+    void** pSlots = nullptr; // the array; null when the node has none
+    uint16_t Count = 0;      // how many slots the array has, empty ones included
+};
 
-    TiltedPhoques::Vector<void*> queue;
-    queue.push_back(apStart);
-    for (size_t head = 0; head < queue.size() && head < 8192; ++head)
-    {
-        void* pObject = queue[head];
-        if (head > 0)
-        {
-            if (const char* pName = GetName(pObject); pName && _stricmp(pName, acpName) == 0)
-                return pObject;
-        }
-
-        void* pNode = AsNode(pObject);
-        if (!pNode)
-            continue;
-
-        void** pChildren = At<void**>(pNode, kChildrenOffset + 0x8);
-        const uint16_t capacity = At<uint16_t>(pNode, kChildrenOffset + 0x10);
-        if (!pChildren)
-            continue;
-
-        for (uint16_t i = 0; i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
-    }
-    return nullptr;
+/**
+ * Read where a node keeps its children.
+ * A plain read, cheap enough for every frame; the node watches read the same array through NodeWatch::ReadChildSlots, guarded, as their nodes may be freed.
+ *
+ * @param apNode A node, as AsNode gives it.
+ * @return Its slot array, null when it has none, and how many slots it says it has.
+ */
+ChildSlots ChildSlotsOf(void* apNode) noexcept
+{
+    return {At<void**>(apNode, kChildSlotsOffset), At<uint16_t>(apNode, kChildCountOffset)};
 }
 
+/**
+ * Call a visitor, and say whether the walk goes on.
+ * A visitor that returns nothing never stops it; one that returns a bool stops it with false.
+ *
+ * @param aVisit The visitor.
+ * @param aArguments What the visitor is called with: the object, and for some walks its node.
+ * @return False when the visitor asked to stop.
+ */
+template <class TVisit, class... TArguments> bool VisitGoesOn(TVisit& aVisit, TArguments... aArguments) noexcept
+{
+    if constexpr (std::is_same_v<std::invoke_result_t<TVisit&, TArguments...>, bool>)
+        return aVisit(aArguments...);
+    else
+    {
+        aVisit(aArguments...);
+        return true;
+    }
+}
+
+/**
+ * Call a visitor on each child of a node, in slot order, skipping empty slots.
+ *
+ * @param apNode A node, as AsNode gives it.
+ * @param aVisit Called with each child; it may return false to stop before the next one.
+ * @return False when the visitor stopped it, true when every child was visited.
+ */
+template <class TVisit> bool ForEachChild(void* apNode, TVisit&& aVisit) noexcept
+{
+    const ChildSlots cChildren = ChildSlotsOf(apNode);
+    for (uint16_t i = 0; cChildren.pSlots && i < cChildren.Count; ++i)
+        if (cChildren.pSlots[i] && !VisitGoesOn(aVisit, cChildren.pSlots[i]))
+            return false;
+    return true;
+}
+
+/**
+ * Visit a tree of nodes breadth first: the root, then its children, then theirs, each in slot order.
+ * A visitor that takes one object is called before the walk asks the object for its node.
+ * A visitor that takes the object and its node (null for one that is not a node) gets the node the walk asked for, so it need not ask again.
+ *
+ * @param apRoot The tree's root; null visits nothing.
+ * @param aMaxObjects The most objects visited, so that a broken tree cannot keep the walk going.
+ * @param aVisit Called with each object; it may return false to end the walk at once.
+ */
+template <class TVisit> void VisitTree(void* apRoot, const size_t aMaxObjects, TVisit&& aVisit) noexcept
+{
+    if (!apRoot)
+        return;
+
+    TiltedPhoques::Vector<void*> queue;
+    queue.push_back(apRoot);
+    for (size_t head = 0; head < queue.size() && head < aMaxObjects; ++head)
+    {
+        void* pObject = queue[head];
+        void* pNode = nullptr;
+        if constexpr (std::is_invocable_v<TVisit&, void*, void*>)
+        {
+            pNode = AsNode(pObject);
+            if (!VisitGoesOn(aVisit, pObject, pNode))
+                return;
+        }
+        else
+        {
+            if (!VisitGoesOn(aVisit, pObject))
+                return;
+            pNode = AsNode(pObject);
+        }
+        if (pNode)
+            ForEachChild(pNode, [&queue](void* pChild) { queue.push_back(pChild); });
+    }
+}
+
+/**
+ * Visit a tree of nodes as VisitTree does with a visitor that takes one object, but not its root.
+ * The root still counts towards the limit, as the walk passes through it.
+ *
+ * @param apRoot The tree's root; null visits nothing.
+ * @param aMaxObjects The most objects walked through, the root included.
+ * @param aVisit Called with each object below the root; it may return false to end the walk at once.
+ */
+template <class TVisit> void VisitBelow(void* apRoot, const size_t aMaxObjects, TVisit&& aVisit) noexcept
+{
+    bool atRoot = true;
+    VisitTree(apRoot, aMaxObjects, [&](void* pObject) { return std::exchange(atRoot, false) || VisitGoesOn(aVisit, pObject); });
+}
+
+/**
+ * Find the shallowest node below a start node with this name, breadth first.
+ * Physics armour (SMP/3BA) carries its own copies of skeleton nodes like "NPC L Hand", deeper down.
+ *
+ * @param apStart Where the search starts; the start itself is not a match.
+ * @param acpName The name, in any case.
+ * @return The node, or null when none below has that name.
+ */
+void* FindShallowest(void* apStart, const char* acpName) noexcept
+{
+    void* pFound = nullptr;
+    VisitBelow(apStart, 8192, [&](void* pObject) {
+        const char* pName = GetName(pObject);
+        if (!pName || _stricmp(pName, acpName) != 0)
+            return true;
+        pFound = pObject;
+        return false;
+    });
+    return pFound;
+}
+
+/**
+ * Find the first object of a game class in a tree, depth first, at most eight levels down.
+ *
+ * @param apStart Where the search starts; the start itself can match.
+ * @param acpRttiName The class's name as the game's type information gives it.
+ * @param aDepth How deep the search already is.
+ * @return The object, or null when none has that class.
+ */
 void* FindByRtti(void* apStart, const char* acpRttiName, uint32_t aDepth = 0) noexcept
 {
     if (!apStart || aDepth > 8)
@@ -177,13 +277,12 @@ void* FindByRtti(void* apStart, const char* acpRttiName, uint32_t aDepth = 0) no
     if (!pNode)
         return nullptr;
 
-    void** pChildren = At<void**>(pNode, kChildrenOffset + 0x8);
-    const uint16_t capacity = At<uint16_t>(pNode, kChildrenOffset + 0x10);
-    for (uint16_t i = 0; pChildren && i < capacity; ++i)
-        if (void* pFound = pChildren[i] ? FindByRtti(pChildren[i], acpRttiName, aDepth + 1) : nullptr)
-            return pFound;
-
-    return nullptr;
+    void* pFound = nullptr;
+    ForEachChild(pNode, [&](void* pChild) {
+        pFound = FindByRtti(pChild, acpRttiName, aDepth + 1);
+        return pFound == nullptr;
+    });
+    return pFound;
 }
 
 // The skeleton root below the actor's 3D: every bone hangs off it, and its world scale is the body's size.
@@ -454,24 +553,28 @@ struct RemotePose
 std::shared_mutex s_posesLock;
 TiltedPhoques::Map<uint32_t, RemotePose> s_poses;
 
-// Direct children of one node: how many slots the array holds (high 16 bits) and how many are filled (low 16 bits).
-// Plain reads with no virtual call and no VirtualQuery, so it is cheap enough to run every frame.
-// It notices something attached below a bone, which the cached descendant list cannot see.
+/**
+ * Sum up the direct children of one node: how many slots the array holds (high 16 bits) and how many are filled (low 16 bits).
+ * Plain reads with no virtual call and no VirtualQuery, so it is cheap enough to run every frame.
+ * It notices something attached below a bone, which the cached descendant list cannot see.
+ *
+ * @param apChildOwner The node; null gives 0.
+ * @return The slots and filled count; only the slot count when the node has no array.
+ */
 uint32_t ChildFingerprintOf(void* apChildOwner) noexcept
 {
     if (!apChildOwner)
         return 0;
 
-    void** pChildren = At<void**>(apChildOwner, kChildrenOffset + 0x8);
-    const uint16_t slots = At<uint16_t>(apChildOwner, kChildrenOffset + 0x10);
-    if (!pChildren)
-        return slots;
+    const ChildSlots cChildren = ChildSlotsOf(apChildOwner);
+    if (!cChildren.pSlots)
+        return cChildren.Count;
 
     uint32_t filled = 0;
-    for (uint16_t i = 0; i < slots; ++i)
-        filled += pChildren[i] != nullptr;
+    for (uint16_t i = 0; i < cChildren.Count; ++i)
+        filled += cChildren.pSlots[i] != nullptr;
 
-    return (static_cast<uint32_t>(slots) << 16) | filled;
+    return (static_cast<uint32_t>(cChildren.Count) << 16) | filled;
 }
 
 /**
@@ -654,21 +757,23 @@ uint8_t* FindBoneEntry(uint8_t* apArray, uint32_t aCount, void* apNode) noexcept
     return nullptr;
 }
 
+/**
+ * List every object below a node, depth first: each child, then everything below it, before the next child.
+ *
+ * @param apNode The node whose descendants are listed; not listed itself.
+ * @param aOut Receives the descendants.
+ * @param aDepth How deep the walk already is; it stops 64 levels down.
+ */
 void CollectNodeDescendants(void* apNode, std::vector<void*>& aOut, uint32_t aDepth = 0) noexcept
 {
     void* pNode = aDepth < 64 ? AsNode(apNode) : nullptr;
     if (!pNode)
         return;
 
-    void** pChildren = At<void**>(pNode, kChildrenOffset + 0x8);
-    const uint16_t capacity = At<uint16_t>(pNode, kChildrenOffset + 0x10);
-    for (uint16_t i = 0; pChildren && i < capacity; ++i)
-    {
-        if (!pChildren[i])
-            continue;
-        aOut.push_back(pChildren[i]);
-        CollectNodeDescendants(pChildren[i], aOut, aDepth + 1);
-    }
+    ForEachChild(pNode, [&](void* pChild) {
+        aOut.push_back(pChild);
+        CollectNodeDescendants(pChild, aOut, aDepth + 1);
+    });
 }
 
 bool ResolveRig(void* apRoot, Rig& aRig, bool aLog = true) noexcept
@@ -941,42 +1046,24 @@ void* SceneTopOf(void* apNode) noexcept
     return pWalk;
 }
 
-//! Moves a whole 3D tree by acWorldOffset without knowing any bone names, for a corpse being dragged elsewhere.
-//! The skinned body follows the bones, not the root, so every node's world transform is shifted.
-// Used for a body VRPose::NoBones describes: a Dwemer automaton, a spider, anything the bone name search cannot read.
-// The flattened bone array is shifted too where there is one; rotations stay as the local animation has them.
+/**
+ * Move a whole 3D tree without knowing any bone names, for a corpse being dragged elsewhere.
+ * The skinned body follows the bones, not the root, so every node's world transform is shifted.
+ * Used for a body VRPose::NoBones describes: a Dwemer automaton, a spider, anything the bone name search cannot read.
+ * The flattened bone array is shifted too where there is one; rotations stay as the local animation has them.
+ *
+ * @param apRoot The tree's root; null moves nothing.
+ * @param acWorldOffset How far to move it, in world units.
+ */
 void ShiftTree(void* apRoot, const glm::vec3& acWorldOffset) noexcept
 {
     if (!apRoot)
         return;
 
-    NiTransform& rootWorld = At<NiTransform>(apRoot, kWorldOffset);
-    rootWorld.translate = FromGlm(ToGlm(rootWorld.translate) + acWorldOffset);
-
-    TiltedPhoques::Vector<void*> queue;
-    queue.push_back(apRoot);
-    for (size_t head = 0; head < queue.size() && head < 8192; ++head)
-    {
-        void* pObject = queue[head];
-        if (head > 0)
-        {
-            NiTransform& world = At<NiTransform>(pObject, kWorldOffset);
-            world.translate = FromGlm(ToGlm(world.translate) + acWorldOffset);
-        }
-
-        void* pNode = AsNode(pObject);
-        if (!pNode)
-            continue;
-
-        void** pChildren = At<void**>(pNode, kChildrenOffset + 0x8);
-        const uint16_t capacity = At<uint16_t>(pNode, kChildrenOffset + 0x10);
-        if (!pChildren)
-            continue;
-
-        for (uint16_t i = 0; i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
-    }
+    VisitTree(apRoot, 8192, [&acWorldOffset](void* pObject) {
+        NiTransform& world = At<NiTransform>(pObject, kWorldOffset);
+        world.translate = FromGlm(ToGlm(world.translate) + acWorldOffset);
+    });
 
     // Bones that were flattened away exist only in the tree's own array and have no node to walk to.
     uint32_t count = 0;
@@ -1417,6 +1504,15 @@ bool HasSameVTable(void* apNode, void* apVTable) noexcept
     return apNode && apVTable && *static_cast<void**>(apNode) == apVTable;
 }
 
+/**
+ * Find one side's hand, weapon attach node and weapon tip in a body's 3D, with the class table each had when found.
+ * The tip is the attach node's farthest descendant, within 400 units; a weapon whose farthest node is 8 units or less away has none.
+ *
+ * @param apRoot The body's 3D root.
+ * @param acpAttachName The attach node's name for that side (WEAPON or SHIELD).
+ * @param acpHandName The hand node's name for that side.
+ * @param aSide Receives what was found; anything not found stays null.
+ */
 void FindHeldNodes(void* apRoot, const char* acpAttachName, const char* acpHandName, HeldSide& aSide) noexcept
 {
     aSide = HeldSide{};
@@ -1439,32 +1535,14 @@ void FindHeldNodes(void* apRoot, const char* acpAttachName, const char* acpHandN
     const glm::vec3 grip = ToGlm(At<NiTransform>(pAttach, kWorldOffset).translate);
     float best = 0.f;
 
-    TiltedPhoques::Vector<void*> queue;
-    queue.push_back(pAttach);
-    for (size_t head = 0; head < queue.size() && head < 256; ++head)
-    {
-        void* pObject = queue[head];
-        if (head > 0)
+    VisitBelow(pAttach, 256, [&](void* pObject) {
+        const float d = glm::distance(grip, ToGlm(At<NiTransform>(pObject, kWorldOffset).translate));
+        if (d > best && d < 400.f)
         {
-            const float d = glm::distance(grip, ToGlm(At<NiTransform>(pObject, kWorldOffset).translate));
-            if (d > best && d < 400.f)
-            {
-                best = d;
-                aSide.pTipNode = pObject;
-            }
+            best = d;
+            aSide.pTipNode = pObject;
         }
-
-        void* pNode = AsNode(pObject);
-        if (!pNode)
-            continue;
-        void** pChildren = At<void**>(pNode, kChildrenOffset + 0x8);
-        const uint16_t capacity = At<uint16_t>(pNode, kChildrenOffset + 0x10);
-        if (!pChildren)
-            continue;
-        for (uint16_t i = 0; i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
-    }
+    });
 
     if (aSide.pTipNode && best > 8.f)
     {
@@ -2899,8 +2977,13 @@ struct PlacedCorpse
 };
 std::unordered_map<uint32_t, PlacedCorpse> s_placedCorpses;
 
-// How close the nearer of the player's hands is to any node of a body, in units; very large when unknown.
-// Every node counts, not only the root: a dragon is dragged by a wing or the tail, far from its root.
+/**
+ * Measure how close the nearer of the player's hands is to any node of a body.
+ * Every node counts, not only the root: a dragon is dragged by a wing or the tail, far from its root.
+ *
+ * @param apBodyRoot The body's 3D root.
+ * @return The distance in units; very large when the body or the hands are not known.
+ */
 float NearestHandToBody(void* apBodyRoot) noexcept
 {
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
@@ -2909,27 +2992,15 @@ float NearestHandToBody(void* apBodyRoot) noexcept
         return 1e9f;
 
     float nearest = 1e9f;
-    TiltedPhoques::Vector<void*> queue;
-    queue.push_back(apBodyRoot);
-    for (size_t head = 0; head < queue.size() && head < 1024; ++head)
-    {
-        void* pNode = AsNode(queue[head]);
+    VisitTree(apBodyRoot, 1024, [&](void*, void* pNode) {
         if (!pNode)
-            continue;
+            return;
         const glm::vec3 at = ToGlm(At<NiTransform>(pNode, kWorldOffset).translate);
         const Segment point{at, at, true};
         for (const Segment* pHand : {&mine.RightHand, &mine.LeftHand})
             if (pHand->Valid)
                 nearest = std::min(nearest, SegmentDistance(*pHand, point));
-
-        void** pChildren = At<void**>(pNode, kChildrenOffset + 0x8);
-        const uint16_t capacity = At<uint16_t>(pNode, kChildrenOffset + 0x10);
-        if (!pChildren)
-            continue;
-        for (uint16_t i = 0; i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
-    }
+    });
     return nearest;
 }
 
@@ -3190,22 +3261,19 @@ struct CopyArrow
 };
 std::unordered_map<uint32_t, CopyArrow> s_nocked;
 
+/**
+ * List the "Arrow:0" nodes in a character's 3D, the root included.
+ *
+ * @param apRoot The character's 3D root.
+ * @return The nodes, breadth first.
+ */
 std::vector<void*> ArrowNodesOf(void* apRoot) noexcept
 {
     std::vector<void*> out;
-    std::vector<void*> queue{apRoot};
-    for (size_t head = 0; head < queue.size() && head < 4096; ++head)
-    {
-        void* pObject = queue[head];
+    VisitTree(apRoot, 4096, [&out](void* pObject) {
         if (const char* pName = GetName(pObject); pName && std::strcmp(pName, "Arrow:0") == 0)
             out.push_back(pObject);
-        void* pNode = AsNode(pObject);
-        void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
-        const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
-        for (uint16_t i = 0; pChildren && i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
-    }
+    });
     return out;
 }
 
@@ -3214,6 +3282,12 @@ std::vector<void*> ArrowNodesOf(void* apRoot) noexcept
 constexpr glm::vec3 kArrowForward{0.f, 1.f, 0.f};
 constexpr float kArrowNockDistance = 64.f;
 
+/**
+ * Place each copy's nocked arrow as its owner has it, and draw its bow string back.
+ * An arrow held in a hand goes where the owner holds it against that hand; any other lies on the string, along the line from the string hand to the bow hand.
+ * With the arrow on the string and the hands within a draw's reach, the bow's string bone is moved to the string hand.
+ * A copy whose arrow or hands cannot be found is left as the game has it.
+ */
 void PlaceNockedArrows() noexcept
 {
     std::vector<std::pair<uint32_t, CopyArrow>> ids;
@@ -3235,6 +3309,7 @@ void PlaceNockedArrows() noexcept
             void* pObject;
             int Parent;
         };
+        // Its own walk, not VisitTree: each item keeps its parent's index, which the placing below walks up.
         std::vector<Item> items{{pRoot, -1}};
         void* pHands[2]{};
         int arrow = -1;
@@ -3250,12 +3325,8 @@ void PlaceNockedArrows() noexcept
                 else if (std::strcmp(pName, "Arrow:0") == 0 && std::find(cBefore.begin(), cBefore.end(), pObject) == cBefore.end())
                     arrow = static_cast<int>(head);
             }
-            void* pNode = AsNode(pObject);
-            void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
-            const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
-            for (uint16_t i = 0; pChildren && i < capacity; ++i)
-                if (pChildren[i])
-                    items.push_back({pChildren[i], static_cast<int>(head)});
+            if (void* pNode = AsNode(pObject))
+                ForEachChild(pNode, [&items, head](void* pChild) { items.push_back({pChild, static_cast<int>(head)}); });
         }
         if (arrow < 0 || !pHands[0] || !pHands[1])
             continue;
@@ -4115,8 +4186,17 @@ struct SharedStop
 std::mutex s_sharedStopsLock;
 std::array<SharedStop, 2> s_sharedStops{};
 
-// The weapon drawn in that hand, as the player sees it: the node under the first-person attach node, or null.
-// It is read from the attach node's children every frame, so a weapon swapped between two searches is never a stale pointer.
+/**
+ * Find the weapon drawn in one of the local player's hands, as the player sees it: the node under the first-person attach node.
+ * It is read from the attach node's children every frame, so a weapon swapped between two searches is never a stale pointer.
+ * The attach node itself is searched for again every half second, or at once when its class table changed.
+ *
+ * @param apPlayer The local player.
+ * @param aStop That hand's blade stop, which keeps the attach node and when to search again.
+ * @param aSide 0 for the left hand, 1 for the right.
+ * @param aNow The time now.
+ * @return The weapon's node, or null when the hand holds none.
+ */
 void* LocalWeaponNode(PlayerCharacter* apPlayer, LocalStop& aStop, const size_t aSide, const std::chrono::steady_clock::time_point aNow) noexcept
 {
     const bool cLost = aStop.pAttach && !HasSameVTable(aStop.pAttach, aStop.pAttachVTable);
@@ -4138,11 +4218,11 @@ void* LocalWeaponNode(PlayerCharacter* apPlayer, LocalStop& aStop, const size_t 
     }
     if (!aStop.pAttach)
         return nullptr;
-    void** pChildren = At<void**>(aStop.pAttach, kChildrenOffset + 0x8);
-    const uint16_t slots = At<uint16_t>(aStop.pAttach, kChildrenOffset + 0x10);
-    for (uint16_t i = 0; pChildren && i < slots && i < 8; ++i)
-        if (pChildren[i])
-            return pChildren[i];
+    // Not ForEachChild: only the first eight slots are looked at.
+    const ChildSlots cChildren = ChildSlotsOf(aStop.pAttach);
+    for (uint16_t i = 0; cChildren.pSlots && i < cChildren.Count && i < 8; ++i)
+        if (cChildren.pSlots[i])
+            return cChildren.pSlots[i];
     return nullptr;
 }
 
@@ -4412,6 +4492,15 @@ void ForgetCorpse(const uint32_t aFormId) noexcept
     s_bodyPosedByOwnerAt.erase(aFormId);
 }
 
+/**
+ * Move a dead body whose owner has it elsewhere to where the owner has it, by moving its ragdoll, which it is drawn from.
+ * A living NPC knocked down here is moved only right after its owner carried it.
+ * Every rigid body moves by the same offset, when it lies more than 64 units away across the ground, or more than 256 below (at most twice a second).
+ *
+ * @param apActor The body's copy.
+ * @param acWanted Where its owner has it.
+ * @return False when nothing was moved.
+ */
 bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
 {
     // A corpse is drawn from its ragdoll, and moving the reference (ForcePosition, MoveTo, SetPosition) leaves the ragdoll behind.
@@ -4460,28 +4549,18 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     // Only dynamic bodies in a world count; the first found from the root is the ragdoll's root (pelvis or centre of mass).
     TiltedPhoques::Vector<uint8_t*> bodies;
     void* pHkpWorld = nullptr;
-    TiltedPhoques::Vector<void*> queue;
-    queue.push_back(pRoot);
-    for (size_t head = 0; head < queue.size() && head < 512; ++head)
-    {
-        void* pObject = queue[head];
-        if (uint8_t* pBody = HavokBodyOfLive(pObject))
+    VisitTree(pRoot, 512, [&](void* pObject) {
+        uint8_t* pBody = HavokBodyOfLive(pObject);
+        if (!pBody)
+            return;
+        const uint8_t motionType = pBody[kMotionTypeOffset];
+        void* pWorld = At<void*>(pBody, kHkWorldOffset);
+        if (pWorld && ((motionType >= 1 && motionType <= 3) || motionType == 6) && (!pHkpWorld || pWorld == pHkpWorld) && bodies.size() < 64)
         {
-            const uint8_t motionType = pBody[kMotionTypeOffset];
-            void* pWorld = At<void*>(pBody, kHkWorldOffset);
-            if (pWorld && ((motionType >= 1 && motionType <= 3) || motionType == 6) && (!pHkpWorld || pWorld == pHkpWorld) && bodies.size() < 64)
-            {
-                pHkpWorld = pWorld;
-                bodies.push_back(pBody);
-            }
+            pHkpWorld = pWorld;
+            bodies.push_back(pBody);
         }
-        void* pNode = AsNode(pObject);
-        void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
-        const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
-        for (uint16_t i = 0; pChildren && i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
-    }
+    });
     if (bodies.empty())
         return false;
 
@@ -4591,6 +4670,15 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
     return moved > 0;
 }
 
+/**
+ * List the names of the nodes in an actor's 3D whose name contains a part, in any case, for checks that cannot look at the screen (the rig).
+ *
+ * @param apActor The actor.
+ * @param acpPart The part of the name to look for.
+ * @param aMax The most names listed.
+ * @param aCount Receives how many nodes have such a name in all.
+ * @return The names, comma separated; empty when there is none.
+ */
 std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, size_t& aCount) noexcept
 {
     aCount = 0;
@@ -4601,29 +4689,20 @@ std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, siz
     std::string part(acpPart);
     std::transform(part.begin(), part.end(), part.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    std::vector<void*> queue{pRoot};
-    for (size_t head = 0; head < queue.size() && head < 4096; ++head)
-    {
-        void* pObject = queue[head];
-        if (const char* pName = GetName(pObject))
+    VisitTree(pRoot, 4096, [&](void* pObject) {
+        const char* pName = GetName(pObject);
+        if (!pName)
+            return;
+        std::string name(pName);
+        std::string lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.find(part) != std::string::npos)
         {
-            std::string name(pName);
-            std::string lower = name;
-            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (lower.find(part) != std::string::npos)
-            {
-                if (aCount < aMax)
-                    out += (out.empty() ? "" : ", ") + name;
-                ++aCount;
-            }
+            if (aCount < aMax)
+                out += (out.empty() ? "" : ", ") + name;
+            ++aCount;
         }
-        void* pNode = AsNode(pObject);
-        void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
-        const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
-        for (uint16_t i = 0; pChildren && i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
-    }
+    });
     return out;
 }
 
@@ -4639,6 +4718,14 @@ void* LocalWorldNode(PlayerCharacter* apPlayer) noexcept
     return nullptr;
 }
 
+/**
+ * Log the local player's nodes named like an arrow (VR, first and third person) when their names, parents or hidden flags change.
+ * Measurement only: where the game keeps the arrow taken from the quiver and the one on the string.
+ * It walks the nodes at most every 200 ms.
+ *
+ * @param apPlayer The local player.
+ * @param aAttackState The player's attack state, written in the line.
+ */
 void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexcept
 {
 #ifdef SKYRIMVR
@@ -4677,6 +4764,7 @@ void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexce
     std::string signature;
     std::string details;
     size_t count = 0;
+    // Its own walk, not VisitTree: three roots share one queue, and a node reached from two of them is listed once.
     std::unordered_set<void*> seen;
     std::vector<void*> queue;
     for (void* pRoot : {pWorldNode, pFirstPerson, static_cast<void*>(apPlayer->GetNiNode())})
@@ -4704,12 +4792,8 @@ void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexce
                                        hasHand[0] ? glm::distance(cAt, hands[0]) : -1.f);
             }
         }
-        void* pNode = AsNode(pObject);
-        void** pChildren = pNode ? At<void**>(pNode, kChildrenOffset + 0x8) : nullptr;
-        const uint16_t capacity = pNode ? At<uint16_t>(pNode, kChildrenOffset + 0x10) : 0;
-        for (uint16_t i = 0; pChildren && i < capacity; ++i)
-            if (pChildren[i])
-                queue.push_back(pChildren[i]);
+        if (void* pNode = AsNode(pObject))
+            ForEachChild(pNode, [&queue](void* pChild) { queue.push_back(pChild); });
     }
 
     signature += fmt::format("world node {}, first person {}", pWorldNode != nullptr, pFirstPerson != nullptr);

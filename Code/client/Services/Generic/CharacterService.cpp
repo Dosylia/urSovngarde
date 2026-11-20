@@ -822,6 +822,20 @@ ActorValues ValuesUntilKilled(const ActorValues& acValues) noexcept
     return values;
 }
 
+/**
+ * Choose the values a copy takes from its owner's.
+ * A copy that is to be dead and is still alive here gets ValuesUntilKilled; any other copy gets the owner's values as they are.
+ *
+ * @param acValues The owner's values.
+ * @param aDeadAtOwner Whether the character is dead in its owner's game.
+ * @param apActor The copy the values are for.
+ * @return The values to set on the copy.
+ */
+ActorValues ValuesForCopy(const ActorValues& acValues, const bool aDeadAtOwner, Actor* apActor) noexcept
+{
+    return aDeadAtOwner && !apActor->IsDead() ? ValuesUntilKilled(acValues) : acValues;
+}
+
 //! The values a player's fresh copy starts with: visible, and health never below a quarter of its maximum.
 //! The server's stored values for a respawning player can be the negative health from the death.
 //! A copy that starts that low goes down before the owner's real health arrives; the owner's game decides deaths.
@@ -846,6 +860,91 @@ ActorValues StandingValues(const ActorValues& acValues, const uint32_t aFormId) 
         it.value() = floor;
     }
     return values;
+}
+
+/**
+ * Choose the values a copy takes from its spawn message.
+ * A player's copy never starts down, and a body that is to be dead lives until it is killed with its 3D.
+ *
+ * @param acMessage The spawn message from the server.
+ * @param apActor The copy the values are for.
+ * @return The owner's values, adjusted for the copy.
+ */
+ActorValues SpawnValues(const CharacterSpawnRequest& acMessage, Actor* apActor) noexcept
+{
+    if (acMessage.IsPlayer)
+        return StandingValues(acMessage.InitialActorValues, apActor->formID);
+    return ValuesForCopy(acMessage.InitialActorValues, acMessage.IsDead, apActor);
+}
+
+/**
+ * Set up a copy of another game's character from its spawn message.
+ * The copy is marked remote, turned and placed in this player's cell, and given the owner's values.
+ * A player's copy is also marked as one, and its entity gets the player's component.
+ *
+ * @param aWorld The world that holds the character's entity.
+ * @param aEntity The character's entity.
+ * @param apActor The copy.
+ * @param acMessage The spawn message from the server.
+ * @param acPosition Where the copy is placed.
+ */
+void SetUpCopyFromSpawn(World& aWorld, const entt::entity aEntity, Actor* apActor, const CharacterSpawnRequest& acMessage, const NiPoint3& acPosition) noexcept
+{
+    apActor->GetExtension()->SetRemote(true);
+    apActor->rotation.x = acMessage.Rotation.x;
+    apActor->rotation.z = acMessage.Rotation.y;
+    apActor->MoveTo(PlayerCharacter::Get()->parentCell, acPosition);
+    apActor->SetActorValues(SpawnValues(acMessage, apActor));
+
+    apActor->GetExtension()->SetPlayer(acMessage.IsPlayer);
+    if (acMessage.IsPlayer)
+    {
+        apActor->SetIgnoreFriendlyHit(true);
+        apActor->SetPlayerRespawnMode();
+        // The copy stays essential (it cannot die here), but may get up again once its owner's real health arrives.
+        apActor->SetNoBleedoutRecovery(false);
+        aWorld.emplace_or_replace<PlayerComponent>(aEntity, acMessage.PlayerId);
+    }
+}
+
+/**
+ * Kill a fresh copy or bring it back, so that it is dead or alive as in its owner's game.
+ * A copy that is to be dead but has no 3D yet is left alive; the WaitingFor3D step kills it once it has its 3D.
+ * Killed before that, it dies with nothing played, and that step then finds it dead and leaves it standing.
+ *
+ * @param apActor The copy.
+ * @param aDeadAtOwner Whether the character is dead in its owner's game.
+ */
+void MatchOwnersLife(Actor* apActor, const bool aDeadAtOwner) noexcept
+{
+    if (apActor->IsDead() == aDeadAtOwner)
+        return;
+    if (!aDeadAtOwner)
+        apActor->Respawn();
+    else if (apActor->GetNiNode())
+        apActor->Kill();
+}
+
+/**
+ * Find the server id of a character that speaks, so that its line can be sent.
+ * A speaker with no entity is not shared with the server, and is skipped without a word.
+ * One with an entity but no server id yet is logged, as an error.
+ *
+ * @param aWorld The world that holds the characters' entities.
+ * @param aFormId The speaker's form id.
+ * @param acpCaller The calling function's name, for the log line.
+ * @return The server id, or nothing when the line cannot be sent.
+ */
+std::optional<uint32_t> SpeakerServerId(World& aWorld, const uint32_t aFormId, const char* acpCaller) noexcept
+{
+    const auto cEntity = Utils::FindByFormId(aWorld.view<FormIdComponent>(entt::exclude<ObjectComponent>), aFormId);
+    if (!cEntity)
+        return std::nullopt;
+
+    const auto cServerId = Utils::GetServerId(*cEntity);
+    if (!cServerId)
+        spdlog::error("{}: server id not found for form id {:X}", acpCaller, aFormId);
+    return cServerId;
 }
 
 // Measurement: an NPC this game runs that travels while it lies down (bleedout, essential down, knocked down).
@@ -1021,7 +1120,7 @@ void CharacterService::ReconcileActorData(
     if (ActorExtension* pExtension = apActor->GetExtension())
         pExtension->RevivedSinceDeath = acActorData.RevivedSinceDeath;
 
-    apActor->SetActorValues(acActorData.IsDead && !apActor->IsDead() ? ValuesUntilKilled(acActorData.InitialActorValues) : acActorData.InitialActorValues);
+    apActor->SetActorValues(ValuesForCopy(acActorData.InitialActorValues, acActorData.IsDead, apActor));
 
     if (aApplyInventory)
     {
@@ -1877,7 +1976,7 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
                 copyRemote.CachedBaseId = pCopy->baseForm->formID;
             ClaimCopyId(copyEntity, pCopy->formID);
             pCopy->MoveTo(PlayerCharacter::Get()->parentCell, acMessage.Position);
-            pCopy->SetActorValues(acMessage.IsDead && !pCopy->IsDead() ? ValuesUntilKilled(acMessage.AllActorValues) : acMessage.AllActorValues);
+            pCopy->SetActorValues(ValuesForCopy(acMessage.AllActorValues, acMessage.IsDead, pCopy));
             auto& copyInterpolation = InterpolationSystem::Setup(m_world, copyEntity);
             copyInterpolation.Position = acMessage.Position;
             AnimationSystem::Setup(m_world, copyEntity);
@@ -1972,6 +2071,13 @@ static void LogPlayerCopyAppearance(const CharacterSpawnRequest& acMessage, cons
                  apNpc->fullName.value.AsAscii());
 }
 
+/**
+ * Make or update this game's copy of a character another game runs, from the server's spawn message.
+ * A character already known here is corrected where it went stale.
+ * Otherwise its copy is picked or made now (the reference itself, a stand-in or a new actor) and finished once it has its 3D.
+ *
+ * @param acMessage The spawn message.
+ */
 void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept
 {
     if (acMessage.OwnershipEpoch == 0)
@@ -2041,9 +2147,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
                         // Actor values and weapon state are also sent in range only, so they are stale too.
                         // Under this staleness gate nothing fresher arrives to conflict with the spawn's values.
-                        pActor->SetActorValues(acMessage.IsPlayer ? StandingValues(acMessage.InitialActorValues, pActor->formID)
-                                                                   : acMessage.IsDead && !pActor->IsDead() ? ValuesUntilKilled(acMessage.InitialActorValues)
-                                                                                      : acMessage.InitialActorValues);
+                        pActor->SetActorValues(SpawnValues(acMessage, pActor));
                         if (pActor->actorState.IsWeaponDrawn() != acMessage.IsWeaponDrawn)
                             pActor->SetWeaponDrawnEx(acMessage.IsWeaponDrawn);
 
@@ -2276,31 +2380,12 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
         pActor->EnableImpl();
     }
 
-    pActor->GetExtension()->SetRemote(true);
+    SetUpCopyFromSpawn(m_world, *entity, pActor, acMessage, acMessage.Position);
 
-    pActor->rotation.x = acMessage.Rotation.x;
-    pActor->rotation.z = acMessage.Rotation.y;
-    pActor->MoveTo(PlayerCharacter::Get()->parentCell, acMessage.Position);
-    pActor->SetActorValues(acMessage.IsPlayer ? StandingValues(acMessage.InitialActorValues, pActor->formID)
-                           : acMessage.IsDead && !pActor->IsDead() ? ValuesUntilKilled(acMessage.InitialActorValues)
-                                              : acMessage.InitialActorValues);
-
-    pActor->GetExtension()->SetPlayer(acMessage.IsPlayer);
-    if (acMessage.IsPlayer)
-    {
-        pActor->SetIgnoreFriendlyHit(true);
-        pActor->SetPlayerRespawnMode();
-        // The copy stays essential (it cannot die here), but may get up again once its owner's real health arrives.
-        pActor->SetNoBleedoutRecovery(false);
-        m_world.emplace_or_replace<PlayerComponent>(*entity, acMessage.PlayerId);
-    }
-
-    // A body that is to be dead is killed once it has its 3D, by the WaitingFor3D step below.
-    // Killed before that, it dies with nothing played, and that step then finds it dead and leaves it standing.
     if (deadHere)
         SendKillingBlowToOwner(m_transport, pActor, acMessage.ServerId);
-    else if (pActor->IsDead() != acMessage.IsDead && (!acMessage.IsDead || pActor->GetNiNode()))
-        acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
+    else
+        MatchOwnersLife(pActor, acMessage.IsDead);
 
     spdlog::info("Spawn Request Is summon {}", acMessage.IsPlayerSummon);
 
@@ -3166,6 +3251,12 @@ void CharacterService::OnNotifySyncExperience(const NotifySyncExperience& acMess
     pPlayer->AddSkillExperience(PlayerCharacter::LastUsedCombatSkill, acMessage.Experience);
 }
 
+/**
+ * Send a line a shared character speaks in this game to the other players, with its scene when it has one.
+ * The same line spoken twice within a second goes once.
+ *
+ * @param acEvent The spoken line.
+ */
 void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
 {
     if (!m_transport.IsConnected())
@@ -3182,21 +3273,12 @@ void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
     s_lastFile = acEvent.VoiceFile;
     s_lastAt = cNow;
 
-    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
-    auto entityIt = Utils::FindByFormId(view, acEvent.ActorID);
-
-    if (!entityIt)
+    const auto cServerId = SpeakerServerId(m_world, acEvent.ActorID, __FUNCTION__);
+    if (!cServerId)
         return;
-
-    auto serverIdRes = Utils::GetServerId(*entityIt);
-    if (!serverIdRes)
-    {
-        spdlog::error("{}: server id not found for form id {:X}", __FUNCTION__, acEvent.ActorID);
-        return;
-    }
 
     DialogueRequest request{};
-    request.ServerId = serverIdRes.value();
+    request.ServerId = *cServerId;
     request.SoundFilename = acEvent.VoiceFile;
     if (acEvent.SceneID && m_world.GetModSystem().GetServerModId(acEvent.SceneID, request.SceneId))
         request.ScenePhase = acEvent.ScenePhase;
@@ -3250,26 +3332,22 @@ void CharacterService::OnNotifyDialogue(const NotifyDialogue& acMessage) noexcep
                  cDistance, pActor->GetNiNode() ? "yes" : "no", pUI ? pUI->numPausesGame : 0);
 }
 
+/**
+ * Send a subtitle a shared character shows in this game to the other players, with its scene when it has one.
+ *
+ * @param acEvent The subtitle.
+ */
 void CharacterService::OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept
 {
     if (!m_transport.IsConnected())
         return;
 
-    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
-    auto entityIt = Utils::FindByFormId(view, acEvent.SpeakerID);
-
-    if (!entityIt)
+    const auto cServerId = SpeakerServerId(m_world, acEvent.SpeakerID, __FUNCTION__);
+    if (!cServerId)
         return;
-
-    auto serverIdRes = Utils::GetServerId(*entityIt);
-    if (!serverIdRes)
-    {
-        spdlog::error("{}: server id not found for form id {:X}", __FUNCTION__, acEvent.SpeakerID);
-        return;
-    }
 
     SubtitleRequest request{};
-    request.ServerId = serverIdRes.value();
+    request.ServerId = *cServerId;
     request.Text = acEvent.Text;
     request.TopicFormId = acEvent.TopicFormID;
     if (acEvent.SceneID && m_world.GetModSystem().GetServerModId(acEvent.SceneID, request.SceneId))
@@ -3919,6 +3997,13 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
     }
 }
 
+/**
+ * Make the copy for a character whose spawn waits for this game, from the spawn message it keeps.
+ * A placed reference whose stand-in copy is gone gets a new stand-in.
+ *
+ * @param aEntity The character's entity, waiting for its 3D.
+ * @return The copy, or null when it cannot be made yet; it is asked again every five seconds.
+ */
 Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const noexcept
 {
     PerfCounterScope perfScope(PerfCounter::kActorSpawn);
@@ -4008,27 +4093,8 @@ Actor* CharacterService::CreateCharacterForEntity(entt::entity aEntity) const no
         return nullptr;
     }
 
-    pActor->GetExtension()->SetRemote(true);
-    pActor->rotation.x = acMessage.Rotation.x;
-    pActor->rotation.z = acMessage.Rotation.y;
-    pActor->MoveTo(PlayerCharacter::Get()->parentCell, pInterpolationComponent->Position);
-    pActor->SetActorValues(acMessage.IsPlayer ? StandingValues(acMessage.InitialActorValues, pActor->formID)
-                           : acMessage.IsDead && !pActor->IsDead() ? ValuesUntilKilled(acMessage.InitialActorValues)
-                                              : acMessage.InitialActorValues);
-
-    pActor->GetExtension()->SetPlayer(acMessage.IsPlayer);
-    if (acMessage.IsPlayer)
-    {
-        pActor->SetIgnoreFriendlyHit(true);
-        pActor->SetPlayerRespawnMode();
-        // The copy stays essential (it cannot die here), but may get up again once its owner's real health arrives.
-        pActor->SetNoBleedoutRecovery(false);
-        m_world.emplace_or_replace<PlayerComponent>(aEntity, acMessage.PlayerId);
-    }
-
-    // A body that is to be dead is killed once it has its 3D, by the WaitingFor3D step.
-    if (pActor->IsDead() != acMessage.IsDead && (!acMessage.IsDead || pActor->GetNiNode()))
-        acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
+    SetUpCopyFromSpawn(m_world, aEntity, pActor, acMessage, pInterpolationComponent->Position);
+    MatchOwnersLife(pActor, acMessage.IsDead);
     remoteComponent.DeadAtOwner = acMessage.IsDead;
 
     spdlog::info("Spawned character for entity, server id: {:X}", remoteComponent.Id);

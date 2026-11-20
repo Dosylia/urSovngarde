@@ -104,6 +104,7 @@ float HeadSpace::AngleFromGaze(const glm::vec3& acWorld) const noexcept
 
 #include <Games/Skyrim/NetImmerse/NiTransform.h>
 #include <Games/Skyrim/NetImmerse/NiGlm.h>
+#include <Games/Skyrim/NetImmerse/NiLayout.h>
 #include <PlayerCharacter.h>
 #include <Helpers/ReadableMemory.h>
 
@@ -115,8 +116,8 @@ float HeadSpace::AngleFromGaze(const glm::vec3& acWorld) const noexcept
 
 namespace
 {
-constexpr uint32_t kNameOffset = 0x10;  // NiObjectNET::name
-constexpr uint32_t kWorldOffset = 0x7C; // NiAVObject::world
+using NiLayout::kNameOffset;
+using NiLayout::kWorldOffset;
 
 // PlayerCharacter's VR nodes (CommonLibVR's VR_NODE_DATA; the headset as measured by TiltedEvolutionVR), each checked by name before use.
 constexpr uint32_t kHeadsetOffset = 0x570;

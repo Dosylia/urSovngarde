@@ -5,7 +5,10 @@
 // A skeleton rebuilt for character creation or a race change left the player's animation writing WEAPON and SHIELD into freed memory.
 namespace BoneHold
 {
-//! Once a frame, on the main thread, from the main loop.
+/**
+ * Run the node hold once a frame, on the main thread, from the main loop.
+ * Hooks the node destructor once a loaded actor shows its class, repairs bone tables left on held nodes, gives back nodes held long enough, and logs what reached a held node.
+ */
 void Update() noexcept;
 //! From the crash handler: what reached a held node, and a crashing register pointing into one.
 void Report(const uint64_t* apRegisters, size_t aCount) noexcept;

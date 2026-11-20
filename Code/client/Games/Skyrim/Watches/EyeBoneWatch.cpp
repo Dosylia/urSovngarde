@@ -1,8 +1,9 @@
 #include <TiltedOnlinePCH.h>
 
 #ifdef SKYRIMVR
-#include <CrashHandler.h>
-#include <Helpers/ReadableMemory.h>
+#include <Helpers/GuardedRead.h>
+#include <Games/Skyrim/NetImmerse/NiLayout.h>
+#include <Games/Skyrim/Watches/NodeWatch.h>
 #include <Games/Skyrim/Watches/BoneHold.h>
 #include <Games/Skyrim/Watches/EyeBoneWatch.h>
 #include <Games/Skyrim/Watches/GameStack.h>
@@ -15,13 +16,10 @@
 // The destructor hook is BoneHold's; this only looks at each node it destroys.
 namespace
 {
-constexpr uint32_t kRefCountOffset = 0x8;   // NiRefObject::refCount
-constexpr uint32_t kNameOffset = 0x10;      // NiObjectNET::name
-constexpr uint32_t kParentOffset = 0x30;    // NiAVObject::parent
-constexpr uint32_t kChildrenOffset = 0x138; // NiNode::children, on VR
-constexpr uint16_t kMaxChildren = 512;
-constexpr size_t kToldInFull = 20;          // then one in every kToldEvery
-constexpr size_t kToldEvery = 100;
+using NiLayout::kNameOffset;
+using NiLayout::kParentOffset;
+using NiLayout::kRefCountOffset;
+using NodeWatch::kMaxChildren;
 
 struct Suspect
 {
@@ -39,53 +37,38 @@ std::mutex s_suspectLock;
 Suspect s_suspects[16]{};
 size_t s_suspectCount = 0;
 
-// A read that answers false instead of faulting.
-// The crash handler is told the fault is expected, or it would report a crash first.
-template <class T> bool SafeRead(const void* apAddress, T& aOut) noexcept
-{
-    bool read = false;
-    CrashGuard::Enter();
-    __try
-    {
-        aOut = *static_cast<const T*>(apAddress);
-        read = true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-    }
-    CrashGuard::Leave();
-    return read;
-}
-
-std::string TextAt(const char* apText) noexcept
-{
-    char text[64]{};
-    for (size_t i = 0; apText && i + 1 < sizeof(text) && ReadableMemory::IsReadable(apText + i, 1) && apText[i]; ++i)
-        text[i] = apText[i];
-    return text;
-}
-
-// Whether a live parent still lists the node among its children.
+/**
+ * Check whether a live parent still lists a node among its children.
+ *
+ * @param apNode The node being destroyed.
+ * @param apParent Its parent.
+ * @param aParentRefs Receives the parent's reference count; 0 when it could not be read.
+ * @return True when the parent has references left and lists the node.
+ */
 bool HeldByLiveParent(void* apNode, void* apParent, uint32_t& aParentRefs) noexcept
 {
     aParentRefs = 0;
-    if (!SafeRead(static_cast<uint8_t*>(apParent) + kRefCountOffset, aParentRefs) || aParentRefs == 0)
+    if (!GuardedRead::Value(static_cast<uint8_t*>(apParent) + kRefCountOffset, aParentRefs) || aParentRefs == 0)
         return false;
     void** pChildren = nullptr;
     uint16_t capacity = 0;
-    if (!SafeRead(static_cast<uint8_t*>(apParent) + kChildrenOffset + 0x8, pChildren) || !SafeRead(static_cast<uint8_t*>(apParent) + kChildrenOffset + 0x10, capacity) ||
-        !pChildren)
+    if (!NodeWatch::ReadChildSlots(apParent, pChildren, capacity))
         return false;
     for (uint16_t i = 0; i < capacity && i < kMaxChildren; ++i)
     {
         void* pChild = nullptr;
-        if (SafeRead(&pChildren[i], pChild) && pChild == apNode)
+        if (GuardedRead::Value(&pChildren[i], pChild) && pChild == apNode)
             return true;
     }
     return false;
 }
 
-// Called by BoneHold's destructor hook for each node it destroys, on any thread.
+/**
+ * Note a node destroyed while a live parent still holds it, with the stack of that release.
+ * Called by BoneHold's destructor hook for each node it destroys, on any thread.
+ *
+ * @param apThis The node being destroyed.
+ */
 void OnDestroy(void* apThis) noexcept
 {
     auto* pBytes = static_cast<uint8_t*>(apThis);
@@ -100,7 +83,7 @@ void OnDestroy(void* apThis) noexcept
         suspect.pName = *reinterpret_cast<const char* const*>(pBytes + kNameOffset);
         suspect.pParent = pParent;
         suspect.pParentName = nullptr;
-        SafeRead(static_cast<uint8_t*>(pParent) + kNameOffset, suspect.pParentName);
+        GuardedRead::Value(static_cast<uint8_t*>(pParent) + kNameOffset, suspect.pParentName);
         suspect.ParentRefs = parentRefs;
         suspect.Thread = GetCurrentThreadId();
         suspect.Frame = MainLoopFrame();
@@ -108,17 +91,28 @@ void OnDestroy(void* apThis) noexcept
     }
 }
 
+/**
+ * Describe a noted node for the log: it and its parent, with their names, the parent's references, the thread and the frame.
+ *
+ * @param acSuspect The noted node.
+ * @return The description.
+ */
 std::string Describe(const Suspect& acSuspect) noexcept
 {
-    return fmt::format("{} ('{}') freed while its parent {} ('{}', {} refs) still held it, on thread {} (main thread {}) in frame {}", fmt::ptr(acSuspect.pNode),
-                       TextAt(acSuspect.pName), fmt::ptr(acSuspect.pParent), TextAt(acSuspect.pParentName), acSuspect.ParentRefs, acSuspect.Thread, GameMainThreadId(),
-                       acSuspect.Frame);
+    return fmt::format(
+        "{} ('{}') freed while its parent {} ('{}', {} refs) still held it, on thread {} (main thread {}) in frame {}", fmt::ptr(acSuspect.pNode),
+        GuardedRead::Text(acSuspect.pName), fmt::ptr(acSuspect.pParent), GuardedRead::Text(acSuspect.pParentName), acSuspect.ParentRefs, acSuspect.Thread, GameMainThreadId(),
+        acSuspect.Frame);
 }
 
 } // namespace
 
 namespace EyeBoneWatch
 {
+/**
+ * Log the nodes freed while a live parent still held them, once a frame, on the main thread, from the main loop, after BoneHold::Update.
+ * The first time it also asks BoneHold to show it every node its destructor hook destroys.
+ */
 void Update() noexcept
 {
     static bool s_observing = false;
@@ -143,7 +137,7 @@ void Update() noexcept
     }
     for (size_t i = first; i < last; ++i)
     {
-        if (i >= kToldInFull && (i + 1) % kToldEvery != 0)
+        if (!NodeWatch::IsTold(i + 1))
             continue;
         const Suspect& cSuspect = suspects[i - first];
         spdlog::error("EyeBoneWatch: node {} ({} so far); the stack of that release:\n{}", Describe(cSuspect), i + 1, GameStack::Describe(cSuspect.Frames, cSuspect.Depth));

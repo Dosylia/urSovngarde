@@ -22,7 +22,12 @@ struct CombatService
     static bool CanFight(Actor* apActor) noexcept;
     //! Sets an NPC that can fight on a target alive and drawn here; one already fighting is turned to it, never stopped first.
     bool SetOnTarget(Actor* apActor, Actor* apTarget) const noexcept;
-    //! Whom an NPC this game runs fights, by server id; 0 for nobody, or a target without one.
+    /**
+     * Find whom an NPC this game runs fights, by server id.
+     *
+     * @param apActor The NPC.
+     * @return Its target's server id; 0 for nobody, or for a target without one.
+     */
     uint32_t FightOf(Actor* apActor) const noexcept;
     //! An NPC hit by another player fights that player too.
     void FightBack(Actor* apActor, uint32_t aAttackerPlayerId, float aDeltaHealth) const noexcept;

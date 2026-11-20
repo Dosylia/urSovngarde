@@ -45,18 +45,36 @@ struct Clash
 bool TakeClash(Clash& aOut) noexcept;
 //! A clash the other player saw on one of this player's weapons: felt on the hand holding it (0 left, 1 right).
 void PulseClashHaptics(uint8_t aSide) noexcept;
-//! A dead body whose owner has it elsewhere: its ragdoll, which it is drawn from, is moved there.
-//! A living NPC knocked down here is moved only right after its owner carried it.
-//! Every rigid body moves by the same offset, when it lies more than 64 units away across the ground, or more than 256 below (at most twice a second).
-//! False when nothing was moved.
+/**
+ * Move a dead body whose owner has it elsewhere to where the owner has it, by moving its ragdoll, which it is drawn from.
+ * A living NPC knocked down here is moved only right after its owner carried it.
+ * Every rigid body moves by the same offset, when it lies more than 64 units away across the ground, or more than 256 below (at most twice a second).
+ *
+ * @param apActor The body's copy.
+ * @param acWanted Where its owner has it.
+ * @return False when nothing was moved.
+ */
 bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept;
 //! Forgets what PlaceCorpse and the owner's posing knew of a copy, so a new copy under the same id starts afresh.
 void ForgetCorpse(uint32_t aFormId) noexcept;
-//! The names of the nodes in an actor's 3D whose name contains `acpPart` (any case), comma separated, at most `aMax`.
-//! How many there were in all goes to `aCount`. For checks that cannot look at the screen (the rig).
+/**
+ * List the names of the nodes in an actor's 3D whose name contains a part, in any case, for checks that cannot look at the screen (the rig).
+ *
+ * @param apActor The actor.
+ * @param acpPart The part of the name to look for.
+ * @param aMax The most names listed.
+ * @param aCount Receives how many nodes have such a name in all.
+ * @return The names, comma separated; empty when there is none.
+ */
 std::string NodesNamedLike(Actor* apActor, const char* acpPart, size_t aMax, size_t& aCount) noexcept;
-//! Logs the local player's nodes named like an arrow (VR, first and third person) when their names, parents or hidden flags change.
-//! Measurement only: where the game keeps the arrow taken from the quiver and the one on the string. Walks at most every 200 ms.
+/**
+ * Log the local player's nodes named like an arrow (VR, first and third person) when their names, parents or hidden flags change.
+ * Measurement only: where the game keeps the arrow taken from the quiver and the one on the string.
+ * It walks the nodes at most every 200 ms.
+ *
+ * @param apPlayer The local player.
+ * @param aAttackState The player's attack state, written in the line.
+ */
 void LogLocalArrowNodes(PlayerCharacter* apPlayer, uint32_t aAttackState) noexcept;
 //! Measurement: the heading sent for this player against the headset's yaw and the VRIK body's facing (from the thighs).
 //! Sampled ten times a second, one `HeadingDiag:` line every 30 s.

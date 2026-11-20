@@ -32,10 +32,16 @@ Tints FaceTints() noexcept
     return result;
 }
 
+/**
+ * Send this player's look and name to the server, which rebuilds their copy in the other games and renames the player.
+ *
+ * @param aWorld The world that holds the player's entity.
+ * @param aTransport The connection to the server.
+ * @return False when the player has no server character yet.
+ */
 bool SendRenamed(World& aWorld, TransportService& aTransport) noexcept
 {
-    const auto cEntity = Utils::FindByFormId(aWorld.view<FormIdComponent>(), 0x14);
-    const auto cServerId = cEntity ? Utils::GetServerId(*cEntity) : std::nullopt;
+    const auto cServerId = Utils::FindServerIdByFormId(aWorld.view<FormIdComponent>(), 0x14);
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     TESNPC* pNpc = pPlayer ? Cast<TESNPC>(pPlayer->baseForm) : nullptr;
     if (!cServerId || !pNpc)

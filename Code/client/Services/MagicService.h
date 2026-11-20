@@ -84,10 +84,9 @@ struct MagicService
 
   private:
     /**
-     * Sometimes, certain magic effects are applied on actors that do not yet exist
-     * within the client's entity component system (for example when a beast is summoned).
-     * This function periodically checks whether the queued magic effects' targets exist already
-     * and if so, sends out a message to add the magic effect to the target.
+     * Retry the magic effects held back because their target or caster was not known yet, such as a beast just summoned.
+     * At most every 100 ms: this game's effects are sent once their target and caster have server ids, and other players' effects are applied once their target and caster exist here.
+     * Each queue is taken in order and stops at the first effect still waiting; an effect queued too long is dropped.
      */
     void ApplyQueuedEffects() noexcept;
 

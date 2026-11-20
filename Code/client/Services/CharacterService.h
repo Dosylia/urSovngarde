@@ -84,6 +84,13 @@ struct CharacterService
     void OnConnected(const ConnectedEvent& acConnectedEvent) const noexcept;
     void OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept;
     void OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept;
+    /**
+     * Make or update this game's copy of a character another game runs, from the server's spawn message.
+     * A character already known here is corrected where it went stale.
+     * Otherwise its copy is picked or made now (the reference itself, a stand-in or a new actor) and finished once it has its 3D.
+     *
+     * @param acMessage The spawn message.
+     */
     void OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept;
     void OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept;
     void OnNotifyActionEvents(const NotifyActionEvents& acMessage) const noexcept;
@@ -102,8 +109,19 @@ struct CharacterService
     void OnBeastFormChange(const BeastFormChangeEvent& acEvent) const noexcept;
     void OnAddExperienceEvent(const AddExperienceEvent& acEvent) noexcept;
     void OnNotifySyncExperience(const NotifySyncExperience& acMessage) noexcept;
+    /**
+     * Send a line a shared character speaks in this game to the other players, with its scene when it has one.
+     * The same line spoken twice within a second goes once.
+     *
+     * @param acEvent The spoken line.
+     */
     void OnDialogueEvent(const DialogueEvent& acEvent) noexcept;
     void OnNotifyDialogue(const NotifyDialogue& acMessage) noexcept;
+    /**
+     * Send a subtitle a shared character shows in this game to the other players, with its scene when it has one.
+     *
+     * @param acEvent The subtitle.
+     */
     void OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept;
     void OnNotifySubtitle(const NotifySubtitle& acMessage) noexcept;
     void OnNotifyActorTeleport(const NotifyActorTeleport& acMessage) noexcept;
@@ -140,6 +158,13 @@ private:
     void DeclineOwnership(uint32_t aServerId, uint32_t aOwnershipEpoch) const noexcept;
     void ReconcileActorData(entt::entity aEntity, Actor* apActor, uint32_t aOwnershipEpoch, const ActorData& acActorData, bool aApplyInventory, bool aIsLocalOwner) noexcept;
 
+    /**
+     * Make the copy for a character whose spawn waits for this game, from the spawn message it keeps.
+     * A placed reference whose stand-in copy is gone gets a new stand-in.
+     *
+     * @param aEntity The character's entity, waiting for its 3D.
+     * @return The copy, or null when it cannot be made yet; it is asked again every five seconds.
+     */
     Actor* CreateCharacterForEntity(entt::entity aEntity) const noexcept;
     ActorData BuildActorData(Actor* apActor) const noexcept;
     //! @param apOwnerEquipment The owner's equipment, put back on a copy once its rebuild completes; null when this game owns it.

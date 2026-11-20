@@ -670,7 +670,7 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Diagnostic `HeadPartWatch` (TEMPORARY): logs a head part holding a freed property, and the stack of the release that destroyed one while a part held it. Deployed v1.9.8-17-gfab767c9-dirty.52e2ab5, FUS and MGO, client and server; it runs from the main loop on the main thread, its guarded reads tell the crash handler to leave their faults alone, and an address a new property took is not reported. Rig: 37 head rebuilds in character creation, no false line.
       Seen in play once on it (22:00, the owner): a new game in Realm of Lorkhan, connected 4 s after the menu opened as at 20:05, 2 min 46 s in the menu, 29 head rebuilds, a save after; no crash and no `HeadPartWatch:` fault line.
       So it does not happen every time; what differed from the three crashes is not known (that build, a freshly started server, nobody else on it).
-      To see: a `HeadPartWatch: shader property ... was destroyed while` or `... holds no shader property now` line in any log, with the stack under it.
+      `HeadPartWatch` removed 2026-11-20: never a fault line in 35 character creations across 135 client logs, and the crashes it was for were the WEAPON and SHIELD bone fault found below, fixed on 11-13; every later crash at `+0x1354C40` was on a build from before that fix.
       19:46: the menu updated the head (`MaleHeadImperial` under its `BSFaceGenNiNode`) and read its shader property's fade node as garbage (`SkyrimVR.exe+0x3e95d0`, `mov eax, [rcx+0x10C]`).
       20:01: 4 s after the race change (`Animation graph project of actor 14 changed`), the shadow scene's update wrote through a garbage pointer from the brows (`FemaleBrowsHuman06`; `SkyrimVR.exe+0x1354c40`, `mov dword ptr [rcx+0x18], 0`).
       No code of ours is on either stack. Our only code touching a head's shader property tints other players' copies, and there was none; the VR body code writes only to copies' skeletons. The menu paused the game as it does without the mod.
@@ -819,6 +819,7 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       Since 57331c6 it notes any plain node freed while a live parent lists it, not only the eye bone: a head bone released once too many frees the eye bone with it, as its child, and only the head bone's release shows the culprit.
       Its line is now `EyeBoneWatch: node X ('<name>') freed while its parent ...`; the first 20 are logged in full, then one in a hundred. Rig on 57331c6: silent through four trips that unloaded 142 actors, 60 fps.
       To see: an `EyeBoneWatch: node` line in any log; its stack names what freed the node.
+      2026-11-20: no such crash in the hub's reports since 11-13 (17 reports after it), but all eight came from the release v1.9.81, which has neither the watch nor BoneHold, and no machine that crashed ever ran the watch. Kept until the next release has run a while with it.
 - [!] **An NPC revived at its owner stays a body in the other game** (rig, two real games, 2026-11-01). Build v1.9.7-16-g2fb3bc58-dirty.84d6682, its last part never run, not seen in play.
       A script called Resurrect on an Imperial Soldier in its owner's game only. On 355ef2d it stayed dead in the other game, 0 of 3 rounds alive, health -99902, the owner's killing blow: `Reset()` unloaded the copy, and it was announced again with the server's stale health.
       On VR `Respawn` no longer calls `Reset()`. On 11f01df, 5 of 10 rounds then held, with equal health and about 1 unit apart. In the others the copy is dead again 50 to 100 ms after the revive, health full, with no call to KillImpl. Why is not known. A Papyrus Resurrect from our code did no better, 5 of 10 as well.
@@ -1147,6 +1148,11 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       suite as a whole; `live-copy-knockdown`'s `getup-jump 1 (up to 149 units)`, counted but not judged in its passing run; `live-copy-quiet` on
       MGO, on player 2's PC (red on v1.9.6, green on 1b7b5b5 or later), as this PC's MGO profile cannot walk in the rig; and a choice for the
       owner: let the rig set the monitors to 60 Hz while it runs.
+      2026-11-20, four scripts that cannot pass as they are (found on 979d41c, the same on c852168):
+        - `live-arrow-nock` checks for `arrow put on the string`, a line the code no longer writes, and the copy's bow stays sheathed (`has its weapon sheathed; not attached`);
+        - `live-blade` gets no VR pose from the bot (`no VR pose data for remote actor`), so no blade meets;
+        - `live-corpse-dragged` can miss its whole-tree line: the line is written once in 5 s, and the bot's first drag pose can land before live-check takes the log mark (red once on 979d41c with the game's lines matching a green run, green on the rerun);
+        - `live-scene-dialogue` has never passed, and leaves the player in Whiterun's own world, so the scripts after it find nobody (run it last, or with a fresh `headless.ps1 up` after it, as said above).
 
 ## Parked and later
 

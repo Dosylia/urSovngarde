@@ -643,6 +643,11 @@ void MagicService::OnNotifyRemoveSpell(const NotifyRemoveSpell& acMessage) noexc
     pActor->RemoveSpell(pSpell);
 }
 
+/**
+ * Retry the magic effects held back because their target or caster was not known yet, such as a beast just summoned.
+ * At most every 100 ms: this game's effects are sent once their target and caster have server ids, and other players' effects are applied once their target and caster exist here.
+ * Each queue is taken in order and stops at the first effect still waiting; an effect queued too long is dropped.
+ */
 void MagicService::ApplyQueuedEffects() noexcept
 {
     static Throttle s_sendThrottle(100ms);
@@ -685,24 +690,11 @@ void MagicService::ApplyQueuedEffects() noexcept
                 break;
             }
 
-            if (target.CasterID)
+            if (target.CasterID && !Utils::FindServerIdByFormId(view, target.CasterID))
             {
-                const auto casterIt = Utils::FindById<FormIdComponent>(view, target.CasterID);
-
-                if (!casterIt)
-                {
-                    spdlog::debug("{}: serverID for AddTargetEvent caster formID still not found: caster {}({:X}), spell {:X}, effect {:X}, target {}({:X})",
-                                  __FUNCTION__, pCasterName, target.CasterID, target.SpellID, target.EffectID, pTargetName, target.TargetID);
-                    break;
-                }
-
-                serverIdRes = Utils::GetServerId(*casterIt);
-                if (!serverIdRes.has_value())
-                {
-                    spdlog::debug("{}: serverID for AddTargetEvent caster formID still not found: caster {}({:X}), spell {:X}, effect {:X}, target {}({:X})",
-                                  __FUNCTION__, pCasterName, target.CasterID, target.SpellID, target.EffectID, pTargetName, target.TargetID);
-                    break;
-                }
+                spdlog::debug("{}: serverID for AddTargetEvent caster formID still not found: caster {}({:X}), spell {:X}, effect {:X}, target {}({:X})",
+                              __FUNCTION__, pCasterName, target.CasterID, target.SpellID, target.EffectID, pTargetName, target.TargetID);
+                break;
             }
 
             // At this point, it will succeed or fail, but not queue another one ad infinitum

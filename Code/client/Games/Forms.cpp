@@ -11,8 +11,14 @@
 #include <CrashHandler.h>
 #include <Helpers/ModuleImage.h>
 
-// Returns the first word at this address, or 0 if reading it faults.
-// The caller wraps it in CrashGuard so the crash handler treats a fault in here as expected.
+/**
+ * Read the first word at an address, without crashing when it cannot be read.
+ * The caller wraps it in CrashGuard so the crash handler treats a fault in here as expected.
+ * Not GuardedRead::Value: this catches only access violations and lets any other fault through.
+ *
+ * @param apAddress The address.
+ * @return The word, or 0 when reading it faults.
+ */
 static uintptr_t ReadFirstWord(const void* apAddress) noexcept
 {
     __try

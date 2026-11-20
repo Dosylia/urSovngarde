@@ -65,6 +65,12 @@ bool CombatService::SetOnTarget(Actor* apActor, Actor* apTarget) const noexcept
     return true;
 }
 
+/**
+ * Find whom an NPC this game runs fights, by server id.
+ *
+ * @param apActor The NPC.
+ * @return Its target's server id; 0 for nobody, or for a target without one.
+ */
 uint32_t CombatService::FightOf(Actor* apActor) const noexcept
 {
     if (!CanFight(apActor))
@@ -72,8 +78,7 @@ uint32_t CombatService::FightOf(Actor* apActor) const noexcept
     const Actor* pTarget = apActor->GetCombatTarget();
     if (!pTarget)
         return 0;
-    const auto cEntity = Utils::FindByFormId(m_world.view<FormIdComponent>(), pTarget->formID);
-    return cEntity ? Utils::GetServerId(*cEntity).value_or(0) : 0;
+    return Utils::FindServerIdByFormId(m_world.view<FormIdComponent>(), pTarget->formID).value_or(0);
 }
 
 void CombatService::FightBack(Actor* apActor, const uint32_t aAttackerPlayerId, const float aDeltaHealth) const noexcept
