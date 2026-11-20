@@ -3,7 +3,8 @@
 #ifdef SKYRIMVR
 
 #include <UI/Menu/VREyeDraw.h>
-#include <UI/Menu/VRPage.h>
+#include <UI/Menu/EyeGeometry.h>
+#include <UI/Menu/PanelColours.h>
 
 #include <Games/Skyrim/VR/VRRuntime.h>
 #include <Games/Skyrim/VR/VRControllers.h>
@@ -91,7 +92,7 @@ struct Vertex
 // A mark's four corners in one eye, as a triangle strip.
 using EyeVertices = std::array<Vertex, 4>;
 // Four corners in the headset's space, from the top left, clockwise as the player faces them.
-using HeadCorners = std::array<glm::vec3, 4>;
+using HeadCorners = EyeGeometry::HeadCorners;
 
 /**
  * Everything the panel is drawn with, all on the game's device, made at its first frame submitted from the main thread.
@@ -184,7 +185,7 @@ std::string ShaderSource()
         return fmt::format("static const float3 {} = float3({}.0, {}.0, {}.0) / 255.0;\n", acpName, static_cast<int>(acRgb[0]), static_cast<int>(acRgb[1]),
                            static_cast<int>(acRgb[2]));
     };
-    return cColour("Panel", VRPage::kPanelRgb) + cColour("Gold", VRPage::kGoldRgb) + cColour("Pale", kPaleRgb) + kShaderCode;
+    return cColour("Panel", PanelColours::kPanelRgb) + cColour("Gold", PanelColours::kGoldRgb) + cColour("Pale", kPaleRgb) + kShaderCode;
 }
 
 /**
@@ -394,30 +395,6 @@ bool EnsureTargetView(ID3D11Texture2D* apTarget) noexcept
 }
 
 /**
- * Turn a point seen from the headset into where one eye's projection puts it (its clip space).
- * clip = projection * (eye from head) * head point; OpenVR's matrices multiply column vectors.
- *
- * @param acProjection The eye's projection.
- * @param acEyeToHead Where the eye is in the head.
- * @param acHead The point relative to the headset, in metres.
- * @return The point in the eye's clip space: x, y, z, w.
- */
-std::array<float, 4> ToClip(const vr::HmdMatrix44_t& acProjection, const vr::HmdMatrix34_t& acEyeToHead, const glm::vec3& acHead) noexcept
-{
-    // The eye-to-head transform is rigid: its inverse is the transposed rotation, applied after taking its translation off.
-    float relative[3];
-    for (int i = 0; i < 3; ++i)
-        relative[i] = acHead[i] - acEyeToHead.m[i][3];
-    float eye[4]{0.f, 0.f, 0.f, 1.f};
-    for (int i = 0; i < 3; ++i)
-        eye[i] = acEyeToHead.m[0][i] * relative[0] + acEyeToHead.m[1][i] * relative[1] + acEyeToHead.m[2][i] * relative[2];
-    std::array<float, 4> clip{};
-    for (int i = 0; i < 4; ++i)
-        clip[i] = acProjection.m[i][0] * eye[0] + acProjection.m[i][1] * eye[1] + acProjection.m[i][2] * eye[2] + acProjection.m[i][3] * eye[3];
-    return clip;
-}
-
-/**
  * Work out a mark's corners as one eye sees them, ready for the GPU.
  *
  * @param acProjection The eye's projection.
@@ -433,7 +410,7 @@ EyeVertices VerticesFor(const vr::HmdMatrix44_t& acProjection, const vr::HmdMatr
     EyeVertices vertices{};
     for (int i = 0; i < 4; ++i)
     {
-        const auto cClip = ToClip(acProjection, acEyeToHead, acCorners[kOrder[i]]);
+        const auto cClip = EyeGeometry::ToClip(acProjection.m, acEyeToHead.m, acCorners[kOrder[i]]);
         std::memcpy(vertices[i].Position, cClip.data(), sizeof(vertices[i].Position));
         vertices[i].Uv[0] = kUv[i][0];
         vertices[i].Uv[1] = kUv[i][1];
@@ -495,57 +472,6 @@ bool ReadPixel(ID3D11DeviceContext* apImmediate, ID3D11Texture2D* apTarget, cons
     }
     pStaging->Release();
     return cRead;
-}
-
-/**
- * Find the eye image pixel a point in an eye's clip space lands on.
- *
- * @param acClip The point in the eye's clip space.
- * @param acViewport The eye's part of the eye image.
- * @return The pixel, across and down, or nothing when the point is behind the eye or outside its part of the image.
- */
-std::optional<std::pair<UINT, UINT>> PixelOf(const std::array<float, 4>& acClip, const D3D11_VIEWPORT& acViewport) noexcept
-{
-    if (!(acClip[3] > 0.f))
-        return std::nullopt;
-    const float cX = acViewport.TopLeftX + (acClip[0] / acClip[3] * 0.5f + 0.5f) * acViewport.Width;
-    const float cY = acViewport.TopLeftY + (0.5f - acClip[1] / acClip[3] * 0.5f) * acViewport.Height;
-    if (!(cX >= acViewport.TopLeftX && cX < acViewport.TopLeftX + acViewport.Width && cY >= acViewport.TopLeftY && cY < acViewport.TopLeftY + acViewport.Height))
-        return std::nullopt;
-    return std::make_pair(static_cast<UINT>(cX), static_cast<UINT>(cY));
-}
-
-/**
- * Make a square facing the eyes around a point: the dot and the rings.
- *
- * @param acCentre The square's centre in the headset's space.
- * @param aHalf Half its width, in metres.
- * @return Its corners in the headset's space.
- */
-HeadCorners Facing(const glm::vec3& acCentre, const float aHalf) noexcept
-{
-    const glm::vec3 cView = glm::length2(acCentre) > 1e-8f ? glm::normalize(acCentre) : glm::vec3(0.f, 0.f, -1.f);
-    glm::vec3 right = glm::cross(cView, glm::vec3(0.f, 1.f, 0.f));
-    right = glm::length2(right) > 1e-8f ? glm::normalize(right) : glm::vec3(1.f, 0.f, 0.f);
-    const glm::vec3 cUp = glm::cross(right, cView);
-    return {acCentre - right * aHalf + cUp * aHalf, acCentre + right * aHalf + cUp * aHalf, acCentre + right * aHalf - cUp * aHalf, acCentre - right * aHalf - cUp * aHalf};
-}
-
-/**
- * Make a thin strip from one point to another, turned to face the eyes: the beam.
- *
- * @param acFrom One end in the headset's space.
- * @param acTo The other end in the headset's space.
- * @param aHalf Half the strip's width, in metres.
- * @return Its corners in the headset's space, or nothing when the beam points straight at the eyes or has no length.
- */
-std::optional<HeadCorners> Strip(const glm::vec3& acFrom, const glm::vec3& acTo, const float aHalf) noexcept
-{
-    glm::vec3 side = glm::cross(acTo - acFrom, (acFrom + acTo) * 0.5f);
-    if (!(glm::length2(side) > 1e-12f))
-        return std::nullopt;
-    side = glm::normalize(side) * aHalf;
-    return HeadCorners{acFrom + side, acTo + side, acTo - side, acFrom - side};
 }
 
 /**
@@ -670,20 +596,20 @@ Marks MarksFor(const Scene& acScene, const VRControllers::HeadSpace& acHead) noe
     {
         const glm::vec3 cFrom = acHead.Point((*acScene.Pointing.Beam)[0]);
         const glm::vec3 cTo = acHead.Point((*acScene.Pointing.Beam)[1]);
-        if (const auto cStrip = Strip(cFrom, cTo, kBeamHalf))
+        if (const auto cStrip = EyeGeometry::Strip(cFrom, cTo, kBeamHalf))
         {
             cAdd(*cStrip, s_drawer.pBeamShader);
             marks.BeamMiddle = (cFrom + cTo) * 0.5f;
         }
     }
     if (acScene.Pointing.Dot)
-        cAdd(Facing(acHead.Point(*acScene.Pointing.Dot), kDotHalf), s_drawer.pDotShader);
+        cAdd(EyeGeometry::Facing(acHead.Point(*acScene.Pointing.Dot), kDotHalf), s_drawer.pDotShader);
     for (size_t i = 0; i < acScene.Pointing.Hands.size(); ++i)
     {
         if (!acScene.Pointing.Hands[i])
             continue;
         const glm::vec3 cCentre = acHead.Point(*acScene.Pointing.Hands[i]);
-        const HeadCorners cRing = Facing(cCentre, kRingHalf);
+        const HeadCorners cRing = EyeGeometry::Facing(cCentre, kRingHalf);
         cAdd(cRing, s_drawer.pRingShader);
         // A point on the ring itself, which is hollow: most of the way from its centre to its right edge.
         const glm::vec3 cRightEdge = (cRing[1] + cRing[2]) * 0.5f;
@@ -769,7 +695,7 @@ std::array<uint32_t, 3> PictureCentreOverPanel() noexcept
     if (cIndex + 3 < s_renderPixels.size())
     {
         for (int c = 0; c < 3; ++c)
-            colour[c] = VRPage::OverPanel(&s_renderPixels[cIndex], c);
+            colour[c] = PanelColours::OverPanel(&s_renderPixels[cIndex], c);
     }
     return colour;
 }
@@ -796,12 +722,12 @@ Checks ChecksFor(const Scene& acScene, const Marks& acMarks, const D3D11_VIEWPOR
         check.Expected = acExpected;
         check.pTries = &aTries;
     };
-    const auto cLeftEyePixel = [&](const glm::vec3& acHeadPoint) { return PixelOf(ToClip(acScene.Projection[0], acScene.EyeToHead[0], acHeadPoint), acViewport); };
+    const auto cLeftEyePixel = [&](const glm::vec3& acHeadPoint) { return EyeGeometry::PixelOf(EyeGeometry::ToClip(acScene.Projection[0].m, acScene.EyeToHead[0].m, acHeadPoint), acViewport); };
 
     if (IsCheckPending(s_panelTries))
-        cAdd("panel", "picture centre", PixelOf(ClipCentreOf(acMarks.List[0].Eyes[0]), acViewport), PictureCentreOverPanel(), s_panelTries);
+        cAdd("panel", "picture centre", EyeGeometry::PixelOf(ClipCentreOf(acMarks.List[0].Eyes[0]), acViewport), PictureCentreOverPanel(), s_panelTries);
     if (IsCheckPending(s_beamTries) && acMarks.BeamMiddle)
-        cAdd("beam", "beam", cLeftEyePixel(*acMarks.BeamMiddle), RgbOf(VRPage::kGoldRgb), s_beamTries);
+        cAdd("beam", "beam", cLeftEyePixel(*acMarks.BeamMiddle), RgbOf(PanelColours::kGoldRgb), s_beamTries);
     // The first ring the left eye sees: a hand held low can be out of view.
     for (const auto& cPoint : acMarks.RingPoints)
     {

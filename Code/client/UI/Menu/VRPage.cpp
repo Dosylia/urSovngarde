@@ -3,6 +3,7 @@
 #ifdef SKYRIMVR
 
 #include <UI/Menu/VRPage.h>
+#include <UI/Menu/PanelColours.h>
 
 #include <Services/OverlayService.h>
 
@@ -98,7 +99,7 @@ size_t LayOverPanel(const std::vector<uint8_t>& acPainted, std::vector<uint8_t>&
         contentPixels += acPainted[i + 3] != 0;
         // The picture is blue, green, red: its first byte is the panel's third colour.
         for (int c = 0; c < 3; ++c)
-            aOpaque[i + c] = VRPage::OverPanel(&acPainted[i], 2 - c);
+            aOpaque[i + c] = PanelColours::OverPanel(&acPainted[i], 2 - c);
         aOpaque[i + 3] = 255;
     }
     return contentPixels;

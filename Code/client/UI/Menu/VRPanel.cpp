@@ -6,6 +6,7 @@
 #include <UI/Menu/VRPage.h>
 #include <UI/Menu/VREyeDraw.h>
 #include <UI/Menu/PageInput.h>
+#include <UI/Menu/PanelGeometry.h>
 
 #include <Services/MenuService.h>
 #include <Services/OverlayService.h>
@@ -17,11 +18,9 @@
 
 namespace
 {
-// In metres, from the headset as the panel opens: ahead, a little below the eyes, wide enough to read the page at its zoom.
-constexpr float kWidth = 1.4f;
-constexpr float kHeight = kWidth * VRPage::kHeight / VRPage::kWidth;
-constexpr float kAhead = 1.25f;
-constexpr float kBelowEyes = 0.15f;
+// In metres, from the headset as the panel opens: wide enough to read the page at its zoom, ahead, a little below the eyes.
+constexpr float kPanelWidth = 1.4f;
+constexpr PanelGeometry::Placement kPlacement{kPanelWidth, kPanelWidth * VRPage::kHeight / VRPage::kWidth, 1.25f, 0.15f};
 // A headset this far from the panel's centre, after a door or a fall, brings it back in front.
 constexpr float kBringBackBeyond = 3.f;
 // How far the beam reaches when it misses the panel.
@@ -65,31 +64,6 @@ constexpr VRControllers::Hand OtherHand(const VRControllers::Hand aHand) noexcep
 }
 
 /**
- * Find which way is ahead for the player, level with the ground: where the head looks, without looking up or down.
- * Looking straight down, that is where the top of the head points; looking straight up, the opposite way.
- *
- * @param acHead The headset's space.
- * @return A level direction of length 1 in the game's world, or nothing when the headset's numbers give none.
- */
-std::optional<glm::vec3> LevelAhead(const VRControllers::HeadSpace& acHead) noexcept
-{
-    // The game's world has z up: the level part of a direction is its x and y.
-    const glm::vec3 cLooking = acHead.Ahead();
-    glm::vec3 ahead = cLooking;
-    ahead.z = 0.f;
-    if (!(glm::length2(ahead) > 1e-4f))
-    {
-        const glm::vec3 cHeadTop = acHead.WorldDirection({0.f, 1.f, 0.f});
-        ahead = cHeadTop * (cLooking.z > 0.f ? -1.f : 1.f);
-        ahead.z = 0.f;
-    }
-    // The test passes only for a real number, so broken numbers give no direction.
-    if (!(glm::length2(ahead) > 1e-4f))
-        return std::nullopt;
-    return glm::normalize(ahead);
-}
-
-/**
  * Place the panel in front of the headset as it is now, upright and level, in the game's world: it then stays there while the head moves.
  *
  * @param acHead The headset's space.
@@ -97,30 +71,13 @@ std::optional<glm::vec3> LevelAhead(const VRControllers::HeadSpace& acHead) noex
  */
 std::optional<VREyeDraw::Quad> PlaceInFront(const VRControllers::HeadSpace& acHead) noexcept
 {
-    const auto cAhead = LevelAhead(acHead);
+    const glm::vec3 cHeadTop = acHead.WorldDirection({0.f, 1.f, 0.f});
+    const auto cAhead = PanelGeometry::LevelAhead(acHead.Ahead(), cHeadTop);
     if (!cAhead)
         return std::nullopt;
-    const glm::vec3 cUp(0.f, 0.f, 1.f);
-    const glm::vec3 cRight = glm::cross(*cAhead, cUp);
-
-    const float cMetre = acHead.UnitsPerMetre;
-    const glm::vec3 cCentre = acHead.Position + *cAhead * (kAhead * cMetre) - cUp * (kBelowEyes * cMetre);
-    const glm::vec3 cHalfWidth = cRight * (kWidth / 2.f * cMetre);
-    const glm::vec3 cHalfHeight = cUp * (kHeight / 2.f * cMetre);
     VREyeDraw::Quad quad;
-    quad.Corners = {cCentre - cHalfWidth + cHalfHeight, cCentre + cHalfWidth + cHalfHeight, cCentre + cHalfWidth - cHalfHeight, cCentre - cHalfWidth - cHalfHeight};
+    quad.Corners = PanelGeometry::CornersInFront(acHead.Position, *cAhead, acHead.UnitsPerMetre, kPlacement);
     return quad;
-}
-
-/**
- * Find the middle of the panel.
- *
- * @param acQuad The panel's corners.
- * @return The point halfway between opposite corners, in the game's world.
- */
-glm::vec3 CentreOf(const VREyeDraw::Quad& acQuad) noexcept
-{
-    return (acQuad.Corners[0] + acQuad.Corners[2]) * 0.5f;
 }
 
 /**
@@ -132,51 +89,7 @@ glm::vec3 CentreOf(const VREyeDraw::Quad& acQuad) noexcept
  */
 bool IsFarFrom(const VRControllers::HeadSpace& acHead, const VREyeDraw::Quad& acPanel) noexcept
 {
-    return glm::length(acHead.Point(CentreOf(acPanel))) > kBringBackBeyond;
-}
-
-/**
- * Where a laser lands on the panel.
- */
-struct Aim
-{
-    // The page pixel, across and down from its top left.
-    uint16_t X;
-    uint16_t Y;
-    // The same spot in the game's world.
-    glm::vec3 Point;
-};
-
-/**
- * Find where a controller's laser lands on the panel.
- *
- * @param acPanel The panel's corners.
- * @param acPointer The controller: where it is and which way it points.
- * @return The page pixel and the point in the game's world, or nothing when it points elsewhere, from behind the panel, or with broken numbers.
- */
-std::optional<Aim> AimAt(const VREyeDraw::Quad& acPanel, const VRControllers::Pointer& acPointer) noexcept
-{
-    const glm::vec3& cTopLeft = acPanel.Corners[0];
-    const glm::vec3 cAcross = acPanel.Corners[1] - cTopLeft;
-    const glm::vec3 cDown = acPanel.Corners[3] - cTopLeft;
-    // Away from the player, who faces the panel's front.
-    const glm::vec3 cNormal = glm::cross(cAcross, cDown);
-    // Each test passes only for a real number, so a broken transform points nowhere.
-    // A controller behind the panel points nowhere too: the page would be seen from its back, mirrored.
-    if (!(glm::dot(acPointer.From - cTopLeft, cNormal) < 0.f))
-        return std::nullopt;
-    const float cFacing = glm::dot(acPointer.Along, cNormal);
-    if (!(std::abs(cFacing) > 1e-6f))
-        return std::nullopt;
-    const float cDistance = glm::dot(cTopLeft - acPointer.From, cNormal) / cFacing;
-    if (!(cDistance > 0.f))
-        return std::nullopt;
-    const glm::vec3 cHit = acPointer.From + cDistance * acPointer.Along;
-    const float cU = glm::dot(cHit - cTopLeft, cAcross) / glm::length2(cAcross);
-    const float cV = glm::dot(cHit - cTopLeft, cDown) / glm::length2(cDown);
-    if (!(cU >= 0.f && cU <= 1.f && cV >= 0.f && cV <= 1.f))
-        return std::nullopt;
-    return Aim{static_cast<uint16_t>(cU * (VRPage::kWidth - 1)), static_cast<uint16_t>(cV * (VRPage::kHeight - 1)), cHit};
+    return glm::length(acHead.Point(PanelGeometry::CentreOf(acPanel.Corners))) > kBringBackBeyond;
 }
 
 /**
@@ -189,7 +102,7 @@ std::optional<Aim> AimAt(const VREyeDraw::Quad& acPanel, const VRControllers::Po
  * @param aUnitsPerMetre Game units in a metre, for the beam's length when it misses.
  * @return What to draw over the panel.
  */
-VREyeDraw::Pointing PointingFor(const std::array<std::optional<VRControllers::Pointer>, 2>& acPointers, const VRControllers::Hand aPointingHand, const std::optional<Aim>& acAim,
+VREyeDraw::Pointing PointingFor(const std::array<std::optional<VRControllers::Pointer>, 2>& acPointers, const VRControllers::Hand aPointingHand, const std::optional<PanelGeometry::Hit>& acAim,
                                 const float aUnitsPerMetre) noexcept
 {
     VREyeDraw::Pointing pointing;
@@ -347,7 +260,7 @@ void VRPanel::FollowPointer(OverlayService& aOverlay, const VRControllers::HeadS
 
     const std::array<std::optional<VRControllers::Pointer>, 2> cPointers{VRControllers::PointerOf(VRControllers::Hand::kLeft), VRControllers::PointerOf(VRControllers::Hand::kRight)};
     const auto& cPointing = cPointers[IndexOf(m_pointingHand)];
-    const auto cAim = m_placement && cPointing ? AimAt(*m_placement, *cPointing) : std::nullopt;
+    const auto cAim = m_placement && cPointing ? PanelGeometry::AimAt(m_placement->Corners, cPointing->From, cPointing->Along, VRPage::kWidth, VRPage::kHeight) : std::nullopt;
 
     const bool cWasOnPanel = m_aimsAtPanel;
     m_aimsAtPanel = cAim.has_value();

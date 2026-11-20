@@ -4,7 +4,6 @@
 
 #include <OverlayApp.hpp>
 
-#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <vector>
@@ -22,11 +21,6 @@ struct VRPage final : TiltedPhoques::OverlayApp::RenderProvider
     // The page's size in pixels: the flat-screen menu's own size.
     static constexpr int kWidth = 1600;
     static constexpr int kHeight = 900;
-
-    // The dark panel colour behind the page, red, green, blue: the SteamVR tab and the in-game panel both use it.
-    static constexpr uint8_t kPanelRgb[3]{18, 21, 24};
-    // The menu's gold, red, green, blue: the laser and its dot on the in-game panel.
-    static constexpr uint8_t kGoldRgb[3]{200, 169, 110};
 
     /**
      * What the page's text fields last asked of a keyboard.
@@ -104,20 +98,6 @@ struct VRPage final : TiltedPhoques::OverlayApp::RenderProvider
      * @return True when a newer picture was copied.
      */
     bool CopyOverPanelIfNewer(uint64_t& aVersion, std::vector<uint8_t>& aPixels, uint32_t& aContentPercent) noexcept;
-
-    /**
-     * Lay one pixel of the page over the dark panel colour, as the tab and the in-game panel show it.
-     *
-     * @param acpPainted The pixel as the browser painted it: blue, green, red and alpha, premultiplied.
-     * @param aChannel Which colour to give: 0 red, 1 green, 2 blue.
-     * @return That colour of the pixel over the panel, 0 to 255.
-     */
-    static uint8_t OverPanel(const uint8_t* acpPainted, const int aChannel) noexcept
-    {
-        // Premultiplied: the page's colour plus as much of the panel as the page lets through.
-        const uint32_t cPanelShare = 255 - acpPainted[3];
-        return static_cast<uint8_t>(std::min<uint32_t>(255, acpPainted[2 - aChannel] + (kPanelRgb[aChannel] * cPanelShare + 127) / 255));
-    }
 
     /**
      * Take the browser's last request for a keyboard.

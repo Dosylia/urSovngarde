@@ -18,6 +18,8 @@ target("TPTests")
     add_files("../common/DateTime.cpp")
     -- Where a Steam friend's server is reached from: plain values in and out.
     add_files("../client/Services/Generic/SteamJoin.cpp")
+    -- Where the in-game panel opens and where a laser lands on it: plain numbers in and out.
+    add_files("../client/UI/Menu/PanelGeometry.cpp")
     add_includedirs("../common", "..")
     add_deps("SkyrimEncoding")
     if is_plat("windows") then
@@ -27,10 +29,13 @@ target("TPTests")
         add_files("../client/UI/Banner/BannerPicture.cpp")
         add_syslinks("gdi32", "user32")
         add_packages("zlib")
+        -- The panel's marks in the eye images: plain numbers, with Direct3D's viewport type.
+        add_files("../client/UI/Menu/EyeGeometry.cpp")
     else
         -- Windows minidumps: on Linux this file broke the server's CI build from 2026-10-07 (c5d3236e).
         remove_files("smalldump.cpp")
         remove_files("banner.cpp")
+        remove_files("eye_geometry.cpp")
         -- PatchCheck.h asks Windows what memory a call leads to.
         remove_files("patch_check.cpp")
     end
