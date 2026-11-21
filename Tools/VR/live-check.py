@@ -38,6 +38,7 @@ Checks:
                                                                           to that place, or to the player
     scene <hex> playing                                                   a scene of the game's own plays
     ref <hex> world <hex>                                                 a reference is in that world space
+    papyrus <Script> <Function> <self> [argument ...] is <value>          what a native function answers, e.g. Quest IsObjectiveCompleted 29940 n:101 is true
     ref <hex> cell same | ref <hex> cell other                            a reference of the game's own is in the
                                                                           player's cell, or in another one
     ref <hex> open | ref <hex> closed                                     a door of the game's own is open (or
@@ -76,6 +77,8 @@ The bot's script does not stop while the driver is busy with that, so its own `w
 `log DO pickup own` has the player pick up the newest item this game dropped itself.
 `log DO papyrus <Script> <Function> <self>|global [form ...]` calls a native function on a reference, or a global one (ids in hex; a number as n:<value>,
 a float as f:<value>, a bool as b:true or b:false, a string as s:<text>).
+`log CHECK papyrus <Script> <Function> <self> [argument ...] is <value>` passes when that native function answers that value
+(a bool as true or false, a number within 0.001), such as `Quest IsObjectiveCompleted 29940 n:101 is true`.
 
 `log CHECK copy|npc mounted|unmounted` asks whether the copy rides (IsOnMount). `log CHECK copy|npc weapon drawn|sheathed` asks whether its weapon is out (IsWeaponDrawn). `log CHECK copy|npc equipped|unequipped <hex>` asks the game whether its copy has that item equipped (not for the left hand: the
 game's IsEquipped does not count it); `lefthand|righthand <hex>` asks which weapon is in that hand; `has <hex>` whether it owns one.
@@ -209,6 +212,18 @@ def papyrus(script, function, form, args=None):
         return NOT_FOUND if re.search(r"self form '[^']*' not found", text) else 'ERR HTTPError %d' % e.code
     except Exception as e:
         return 'ERR ' + type(e).__name__
+
+
+def papyrus_answer_matches(returned, wanted):
+    """Whether what a native function returned is the value a check wants: a bool as true or false, a number within 0.001, anything else as text."""
+    if isinstance(returned, bool):
+        return wanted.lower() == ('true' if returned else 'false')
+    if isinstance(returned, (int, float)):
+        try:
+            return abs(float(returned) - float(wanted)) < 0.001
+        except ValueError:
+            return False
+    return str(returned) == wanted
 
 
 def papyrus_global(script, function, args=None):
@@ -826,6 +841,32 @@ class Run:
             return None, 'the game logged no spawn for server id %s' % sid
         return form, None
 
+    def papyrus_argument(self, word):
+        """One argument of a "papyrus" line: a form by its hex id, n:<number>, f:<float>, b:true, b:false, s:<text>, or copy, npc or placed."""
+        if word.startswith('n:'):
+            return int(word[2:])
+        if word.startswith('f:'):
+            return float(word[2:])
+        if word in ('b:true', 'b:false'):
+            return word == 'b:true'
+        if word.startswith('s:'):
+            return word[2:]
+        if word in ('copy', 'npc'):
+            form, _ = self.subject(word)
+            return {'form': '0x' + (form or '0')}
+        if word == 'placed':
+            return {'form': '0x' + (getattr(self, 'placed', None) or '0')}
+        return {'form': '0x' + word}
+
+    def papyrus_target(self, word):
+        """The reference a "papyrus" line calls on: a hex id, or copy, npc or placed; None when the script has no such form."""
+        if word in ('copy', 'npc'):
+            form, _ = self.subject(word)
+            return form
+        if word == 'placed':
+            return getattr(self, 'placed', None)
+        return word
+
     def report(self):
         """The bot's last "report": actors (server id -> (Skyrim.esm reference or None, dead, "ours" or "theirs", position or None)),
         doors (reference -> open) and locks (reference -> locked); three Nones before the bot has given one."""
@@ -1268,6 +1309,18 @@ class Run:
                 hits = [l for l in session_lines()[self.log_from:] if rx.search(l)]
                 ok = len(hits) >= wanted
                 detail = '%d lines (wanted %d)%s' % (len(hits), wanted, ', the last ' + hits[-1][35:140].strip() if hits else '')
+            elif who == 'papyrus' and 'is' in words[4:]:
+                # "papyrus <Script> <Function> <self> [argument ...] is <value>": what a native function answers, such as whether a quest objective is completed.
+                # Arguments as in "DO papyrus"; self is a reference (hex, copy, npc or placed), not "global"; a number compares within 0.001.
+                at = len(words) - 1 - words[::-1].index('is')
+                target = self.papyrus_target(words[3])
+                wanted = ' '.join(words[at + 1:])
+                returned = papyrus(words[1], words[2], target, [self.papyrus_argument(w) for w in words[4:at]]) if target else 'ERR no %s' % words[3]
+                if returned == TIMED_OUT:
+                    detail = UNASKED
+                else:
+                    ok = papyrus_answer_matches(returned, wanted)
+                    detail = '%s.%s on %s answered %s (wanted %s)' % (words[1], words[2], words[3], returned, wanted)
             elif who == 'logged':
                 # "logged <regular expression>": the client wrote such a line since this script began. For a test
                 # whose point is that a certain path was taken, not only that the game survived it.
@@ -1886,28 +1939,8 @@ class Run:
                     # "DO papyrus <Script> <Function> <self> [form ...]": a native function called on a reference,
                     # with forms as its arguments (hex ids).
                     words = text.split()
-                    # Arguments: a form by its hex id, or a plain number written "n:<value>".
-                    def arg(w):
-                        if w.startswith('n:'):
-                            return int(w[2:])
-                        if w.startswith('f:'):
-                            return float(w[2:])
-                        if w in ('b:true', 'b:false'):
-                            return w == 'b:true'
-                        if w.startswith('s:'):
-                            return w[2:]
-                        if w in ('copy', 'npc'):
-                            f, _ = self.subject(w)
-                            return {'form': '0x' + (f or '0')}
-                        if w == 'placed':
-                            return {'form': '0x' + (getattr(self, 'placed', None) or '0')}
-                        return {'form': '0x' + w}
-                    args = [arg(w) for w in words[5:]]
-                    target = words[4]
-                    if target in ('copy', 'npc'):
-                        target, _ = self.subject(target)
-                    elif target == 'placed':
-                        target = getattr(self, 'placed', None)
+                    args = [self.papyrus_argument(w) for w in words[5:]]
+                    target = self.papyrus_target(words[4])
                     # "global" in place of the reference: a global function, such as Debug.SendAnimationEvent copy s:<event>.
                     if words[4] == 'global':
                         result = papyrus_global(words[2], words[3], args)

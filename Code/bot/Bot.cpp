@@ -65,6 +65,7 @@
 #include <Messages/SafePointRequest.h>
 #include <Messages/NotifyDownedState.h>
 #include <Messages/RequestQuestUpdate.h>
+#include <Messages/RequestWarState.h>
 #include <Messages/NotifyQuestUpdate.h>
 #include <Messages/RequestActorValueChanges.h>
 #include <Messages/RequestDeathStateChange.h>
@@ -3393,6 +3394,43 @@ bool Bot::StepCommand(const Command& acCommand, const bool aFirstTick) noexcept
 
         SendMsg(request);
         spdlog::info("[script] quest {:X}: {} {}", base, args[1], request.Stage);
+        return true;
+    }
+
+    // "war <owner> <flags> [<objective>=<flags> ...]": the civil war as a party leader's game sends it.
+    // Every hold gets that owner and every objective those flags (1 shown, 2 completed, 4 failed); then each named objective its own.
+    if (name == "war")
+    {
+        float owner = 0.f;
+        float flags = 0.f;
+        if (args.size() < 2 || !ParseFloat(args[0], owner) || !ParseFloat(args[1], flags))
+        {
+            spdlog::error("[script] war needs an owner for every hold and flags for every objective, then any <objective>=<flags>, e.g. 'war 1 0 101=3'");
+            return true;
+        }
+
+        RequestWarState request{};
+        request.State.Owners.fill(static_cast<uint8_t>(owner));
+        request.State.Objectives.fill(static_cast<uint8_t>(flags));
+        for (size_t i = 2; i < args.size(); ++i)
+        {
+            const size_t cEquals = args[i].find('=');
+            float objective = 0.f;
+            float objectiveFlags = 0.f;
+            const bool cRead = cEquals != std::string::npos && ParseFloat(args[i].substr(0, cEquals), objective) && ParseFloat(args[i].substr(cEquals + 1), objectiveFlags) &&
+                               objective >= 0.f;
+            const auto& cObjectives = WarState::kObjectives;
+            const auto cAt = std::find(cObjectives.begin(), cObjectives.end(), static_cast<uint16_t>(objective));
+            if (!cRead || cAt == cObjectives.end())
+            {
+                spdlog::error("[script] war: '{}' is not <war objective>=<flags>", args[i]);
+                continue;
+            }
+            request.State.Objectives[cAt - cObjectives.begin()] = static_cast<uint8_t>(objectiveFlags);
+        }
+
+        SendMsg(request);
+        spdlog::info("[script] war sent (the server passes it on only from the party leader): every hold owned by {}, objectives at {} but {} named", owner, flags, args.size() - 2);
         return true;
     }
 

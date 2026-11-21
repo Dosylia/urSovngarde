@@ -88,9 +88,20 @@ private:
     BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
     void OnQuestUpdate(const NotifyQuestUpdate&) noexcept;
-    void OnWarState(const NotifyWarState&) noexcept;
+    /**
+     * Follow the party leader's civil war in this member's game, forward only.
+     * The holds take the leader's owners and the journal's war objectives gain the leader's flags.
+     * When the leader's war is behind this game's (an objective is completed or failed in this game but not in the leader's), its holds are left alone, as they would undo this game's own wins.
+     * No objective loses a flag, and no hold is taken back while the leader's war is behind.
+     *
+     * @param acMessage The leader's war, as the server relays it.
+     */
+    void OnWarState(const NotifyWarState& acMessage) noexcept;
     // On the leader, in a party: sends the war when it changes, and every so often for whoever fell behind.
     void SendWarState() noexcept;
+    /**
+     * Forget what this member set from the leader's war, and which of the leader's states it found behind, so that the next state the leader sends is looked at afresh.
+     */
     void ForgetAppliedWarState() noexcept;
     // aSceneId and aPhase: the playing scene and phase that check the stage, 0 when it waits behind stages held before it.
     void HoldStage(TESQuest* apQuest, uint16_t aStage, uint32_t aSceneId, uint32_t aPhase) noexcept;
@@ -105,8 +116,10 @@ private:
     Map<uint32_t, HeldStages> m_heldStages{};
 
     WarState m_sentWarState{};
-    // What this member last set, so that something the game will not take is not tried, and announced in the journal, again and again.
+    // What this member last set or chose not to set from the leader's war, so that nothing is tried, and announced in the journal, again and again.
     WarState m_appliedWarState{};
+    // The leader's last state found behind this game's war, so that it is logged once and not every time it comes again.
+    WarState m_behindWarState{};
     std::chrono::steady_clock::time_point m_nextWarCheck{};
     std::chrono::steady_clock::time_point m_nextWarSend{};
 

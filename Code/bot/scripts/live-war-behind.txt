@@ -1,0 +1,59 @@
+# A member's game follows the party leader's civil war forward only: a leader whose war is behind undoes nothing here.
+#
+#   python Tools\VR\live-check.py live-war-behind
+#   python Tools\VR\live-check.py --expect-fail live-war-behind     on a build without the change: must be RED
+#
+# The leader is whoever leads the party now, which after a crash or reconnect can be the player whose war is behind.
+# That leader's war must not give back a hold this game's war won, nor un-complete or hide an objective finished here.
+# Here: the bot leads (this game drops its connection and comes back, and the bot keeps the party), this game is a member.
+# This game's war is set in its memory only: hold 16770 owned by side 2, objective 101 of the journal's war quest (29940) shown and completed, objective 102 hidden.
+# The bot then sends a war that is behind (every hold to side 1, no objective done), then one that has caught up and gone further.
+# The save must have the war quest running and no other war objective completed or failed, or the leader's second war still reads as behind.
+# A run counts only when (REQUIRE) the bot did lead the party and the war quest took this setup.
+party lead
+log live war behind
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+
+log -- the game drops its connection (F6), so the party passes to the bot; then it connects again, as a member
+log DO f6
+wait 10
+log DO f6
+wait 15
+waitfor known other 60
+wait 5
+# "info] " is in the bot's own log line, not in its echo of this check.
+log REQUIRE bot logged info\] Leading the party
+
+log -- this game's war won a hold and finished its objective; the next objective is not shown yet
+log REQUIRE papyrus Quest IsRunning 29940 is true
+log DO papyrus Location SetKeywordData 16770 2A456 f:2
+log DO papyrus Quest SetObjectiveDisplayed 29940 n:101 b:true b:true
+log DO papyrus Quest SetObjectiveCompleted 29940 n:101 b:true
+log DO papyrus Quest SetObjectiveDisplayed 29940 n:102 b:false b:true
+wait 2
+log REQUIRE papyrus Quest IsObjectiveCompleted 29940 n:101 is true
+log REQUIRE papyrus Quest IsObjectiveDisplayed 29940 n:102 is false
+log REQUIRE papyrus Location GetKeywordData 16770 2A456 is 2
+# Checks run while the script goes on, a few seconds behind it: without this wait the leader's war can land before the game is asked.
+wait 6
+
+log -- the leader's war is behind: every hold to the other side, no objective done; nothing here may go back
+war 1 0
+wait 4
+log CHECK papyrus Quest IsObjectiveCompleted 29940 n:101 is true
+log CHECK papyrus Quest IsObjectiveDisplayed 29940 n:101 is true
+log CHECK papyrus Location GetKeywordData 16770 2A456 is 2
+log CHECK logged WarState: the leader's war is behind this game's: objective 101 is completed or failed in this game but not in the leader's
+wait 6
+
+log -- the leader catches up and goes further: objective 101 done there too, 102 shown; now its holds are taken
+war 1 0 101=3 102=1
+wait 4
+log CHECK papyrus Location GetKeywordData 16770 2A456 is 1
+log CHECK papyrus Quest IsObjectiveDisplayed 29940 n:102 is true
+
+wait 2
+log CHECK game alive

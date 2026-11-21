@@ -7,6 +7,7 @@
 
 #include <Services/QuestService.h>
 #include <Services/ImguiService.h>
+#include <Services/WarFollow.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESQuest.h>
@@ -165,6 +166,101 @@ void QuestService::SendWarState() noexcept
     m_world.GetTransport().Send(request);
 }
 
+/**
+ * Give this game's holds the owners the leader's war gave them.
+ * A hold that already has the leader's owner here, or was set to it before, is left alone.
+ *
+ * @param acLeader The leader's war.
+ * @param acHere This game's war.
+ * @param apKeyword The keyword whose data on a hold's location names its owner.
+ * @param aApplied What this member last set; updated for each hold set.
+ * @param aChanges Receives one note per hold set, for the log.
+ */
+static void FollowLeaderHolds(const WarState& acLeader, const WarState& acHere, BGSKeyword* apKeyword, WarState& aApplied, String& aChanges) noexcept
+{
+    using Location = TESForm;
+    PAPYRUS_FUNCTION(void, Location, SetKeywordData, BGSKeyword*, float);
+
+    for (size_t i = 0; i < WarState::kHolds.size(); ++i)
+    {
+        const uint8_t cWanted = acLeader.Owners[i];
+        if (acHere.Owners[i] == cWanted || aApplied.Owners[i] == cWanted)
+            continue;
+        const TESForm* pHold = TESForm::GetById(WarState::kHolds[i]);
+        if (!pHold)
+            continue;
+
+        s_pSetKeywordData(pHold, apKeyword, static_cast<float>(cWanted));
+        aApplied.Owners[i] = cWanted;
+        aChanges += spdlog::fmt_lib::format(" hold {:X} owner {} to {};", WarState::kHolds[i], acHere.Owners[i], cWanted);
+    }
+}
+
+/**
+ * Add to this game's war objectives the flags the leader's have and these lack.
+ * No flag is taken away, and an objective already completed or failed in this game is left as it is (WarFollow::FlagsToAdd).
+ *
+ * @param apQuest The journal's war quest, running here.
+ * @param acLeader The leader's war.
+ * @param acHere This game's war.
+ * @param aApplied What this member last set; updated for each objective looked at, so that one the game refuses is not tried again.
+ * @param aChanges Receives one note per objective changed, for the log.
+ */
+static void FollowLeaderObjectives(TESQuest* apQuest, const WarState& acLeader, const WarState& acHere, WarState& aApplied, String& aChanges) noexcept
+{
+    using Quest = TESQuest;
+    PAPYRUS_FUNCTION(void, Quest, SetObjectiveDisplayed, int, bool, bool);
+    PAPYRUS_FUNCTION(void, Quest, SetObjectiveCompleted, int, bool);
+    PAPYRUS_FUNCTION(void, Quest, SetObjectiveFailed, int, bool);
+
+    for (size_t i = 0; i < WarState::kObjectives.size(); ++i)
+    {
+        const uint8_t cWanted = acLeader.Objectives[i];
+        const uint8_t cHere = acHere.Objectives[i];
+        if (cHere == cWanted || aApplied.Objectives[i] == cWanted)
+            continue;
+        aApplied.Objectives[i] = cWanted;
+
+        const uint8_t cAdded = WarFollow::FlagsToAdd(cHere, cWanted);
+        if (cAdded == 0)
+            continue;
+
+        const int cObjective = WarState::kObjectives[i];
+        // Shown last: the journal then announces the objective in its final state.
+        if (cAdded & WarState::kCompleted)
+            s_pSetObjectiveCompleted(apQuest, cObjective, true);
+        if (cAdded & WarState::kFailed)
+            s_pSetObjectiveFailed(apQuest, cObjective, true);
+        if (cAdded & WarState::kDisplayed)
+            s_pSetObjectiveDisplayed(apQuest, cObjective, true, true);
+        aChanges += spdlog::fmt_lib::format(" objective {} flags {} to {};", cObjective, cHere, cHere | cAdded);
+    }
+}
+
+/**
+ * Log that the leader's war is behind this game's, once for each state the leader sends.
+ *
+ * @param acLeader The leader's war.
+ * @param aObjectiveIndex The index in WarState::kObjectives of an objective completed or failed in this game but not in the leader's.
+ * @param aLastNoted The leader's state last logged as behind; updated.
+ */
+static void NoteLeaderBehind(const WarState& acLeader, const size_t aObjectiveIndex, WarState& aLastNoted) noexcept
+{
+    if (acLeader == aLastNoted)
+        return;
+    aLastNoted = acLeader;
+    spdlog::info("WarState: the leader's war is behind this game's: objective {} is completed or failed in this game but not in the leader's, so this game keeps its own holds and finished objectives",
+                 WarState::kObjectives[aObjectiveIndex]);
+}
+
+/**
+ * Follow the party leader's civil war in this member's game, forward only.
+ * The holds take the leader's owners and the journal's war objectives gain the leader's flags.
+ * When the leader's war is behind this game's (an objective is completed or failed in this game but not in the leader's), its holds are left alone, as they would undo this game's own wins.
+ * No objective loses a flag, and no hold is taken back while the leader's war is behind.
+ *
+ * @param acMessage The leader's war, as the server relays it.
+ */
 void QuestService::OnWarState(const NotifyWarState& acMessage) noexcept
 {
     if (m_world.GetPartyService().IsLeader() || !IsWarReadable())
@@ -172,57 +268,25 @@ void QuestService::OnWarState(const NotifyWarState& acMessage) noexcept
 
     auto* pQuest = Cast<TESQuest>(TESForm::GetById(WarState::kObjectiveQuest));
     auto* pKeyword = Cast<BGSKeyword>(TESForm::GetById(WarState::kOwnerKeyword));
-    if (!pQuest || !pKeyword)
+    WarState here{};
+    if (!pQuest || !pKeyword || !ReadWarState(pQuest, here))
         return;
 
-    using Location = TESForm;
-    using Quest = TESQuest;
-    PAPYRUS_FUNCTION(void, Location, SetKeywordData, BGSKeyword*, float);
-    PAPYRUS_FUNCTION(void, Quest, SetObjectiveDisplayed, int, bool, bool);
-    PAPYRUS_FUNCTION(void, Quest, SetObjectiveCompleted, int, bool);
-    PAPYRUS_FUNCTION(void, Quest, SetObjectiveFailed, int, bool);
-
-    const WarState& cState = acMessage.State;
+    const WarState& cLeader = acMessage.State;
     String changes;
 
-    for (size_t i = 0; i < WarState::kHolds.size(); ++i)
+    if (const auto cFinishedOnlyHere = WarFollow::FirstFinishedOnlyHere(here.Objectives, cLeader.Objectives))
+        NoteLeaderBehind(cLeader, *cFinishedOnlyHere, m_behindWarState);
+    else
     {
-        const TESForm* pHold = TESForm::GetById(WarState::kHolds[i]);
-        if (!pHold)
-            continue;
-
-        const uint8_t cHere = static_cast<uint8_t>(GetHoldOwner(pHold, pKeyword));
-        if (cHere == cState.Owners[i] || m_appliedWarState.Owners[i] == cState.Owners[i])
-            continue;
-
-        s_pSetKeywordData(pHold, pKeyword, static_cast<float>(cState.Owners[i]));
-        m_appliedWarState.Owners[i] = cState.Owners[i];
-        changes += spdlog::fmt_lib::format(" hold {:X} owner {} to {};", WarState::kHolds[i], cHere, cState.Owners[i]);
+        // Caught up: should the leader fall behind again with the same state, that is logged again.
+        m_behindWarState.Objectives.fill(WarState::kNothingApplied);
+        FollowLeaderHolds(cLeader, here, pKeyword, m_appliedWarState, changes);
     }
 
     // Objectives of a war quest that does not run here cannot be shown, and are set once it does.
     if (!pQuest->IsStopped())
-    {
-        for (size_t i = 0; i < WarState::kObjectives.size(); ++i)
-        {
-            const int cObjective = WarState::kObjectives[i];
-            const uint8_t cWanted = cState.Objectives[i];
-            const uint8_t cHere = GetObjectiveFlags(pQuest, cObjective);
-            if (cHere == cWanted || m_appliedWarState.Objectives[i] == cWanted)
-                continue;
-
-            // Shown last: the journal then announces the objective in its final state.
-            if ((cHere ^ cWanted) & WarState::kCompleted)
-                s_pSetObjectiveCompleted(pQuest, cObjective, (cWanted & WarState::kCompleted) != 0);
-            if ((cHere ^ cWanted) & WarState::kFailed)
-                s_pSetObjectiveFailed(pQuest, cObjective, (cWanted & WarState::kFailed) != 0);
-            if ((cHere ^ cWanted) & WarState::kDisplayed)
-                s_pSetObjectiveDisplayed(pQuest, cObjective, (cWanted & WarState::kDisplayed) != 0, true);
-
-            m_appliedWarState.Objectives[i] = cWanted;
-            changes += spdlog::fmt_lib::format(" objective {} flags {} to {};", cObjective, cHere, cWanted);
-        }
-    }
+        FollowLeaderObjectives(pQuest, cLeader, here, m_appliedWarState, changes);
 
     if (!changes.empty())
         spdlog::info("WarState: following the leader's war here:{}{}", changes, pQuest->IsStopped() ? " the war quest does not run here, so its objectives wait" : "");
@@ -280,10 +344,16 @@ void QuestService::OnDisconnected(const DisconnectedEvent&) noexcept
     ForgetAppliedWarState();
 }
 
+/**
+ * Forget what this member set from the leader's war, and which of the leader's states it found behind, so that the next state the leader sends is looked at afresh.
+ */
 void QuestService::ForgetAppliedWarState() noexcept
 {
-    m_appliedWarState.Owners.fill(WarState::kNothingApplied);
-    m_appliedWarState.Objectives.fill(WarState::kNothingApplied);
+    for (WarState* pState : {&m_appliedWarState, &m_behindWarState})
+    {
+        pState->Owners.fill(WarState::kNothingApplied);
+        pState->Objectives.fill(WarState::kNothingApplied);
+    }
 }
 
 void QuestService::OnPartyLeft(const PartyLeftEvent&) noexcept

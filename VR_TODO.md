@@ -254,6 +254,14 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       - Not carried: the rest of what winning a hold does in the member's world (the jarl, garrisons) unless a relayed `ReferenceEnable` does it, a `CW` script's own variables and globals (an objective's percentage text), and the leader's mission quests, which still run on the leader only. A member whose `CWObj` does not run gets the holds, and the objectives wait.
       - `Gameplay:bEnableMiscQuestSync` still decides whether `CW`, a quest of type None, syncs its stages at all. This new message does not depend on it.
       - To see: "Win a hold with both players in the war".
+      - 2026-11-21, build 1bd985f (client and server on FUS and MGO; same protocol; rig only, not seen in play): a member follows the leader's war forward only.
+        Before, a member copied the leader's war exactly, so a leader whose war was behind gave back the member's won holds and un-completed and hid its finished objectives, and the member's save kept that; the lead passes to the next member whenever the leader leaves, so the player who is behind could lead after any reconnect.
+        Now a member's objectives only gain flags (shown, completed, failed) and an objective already completed or failed in this game is left alone; when an objective is completed or failed in this game but not in the leader's, the leader's holds are not taken (`WarState: the leader's war is behind this game's`, once per state).
+        Left as it was: a member that loads an older save while connected does not catch up until it reconnects, and a member runs a repeated stage sent by anyone.
+        A finished objective can still be shown when the leader shows it; nothing else changes on it.
+        Rig: `live-war-behind` (the bot leads and sends a war that is behind, then one that caught up): RED on 979d41c (hold 16770 went back to the other side, objective 101 un-completed and hidden), 9 of 9 on 92e590f, 8 of 8 on 1bd985f.
+        Coarse on purpose: one objective finished here and not by the leader stops every hold from following until the leader finishes it too; a member's holds then stay its own, the safe side.
+        A finer rule, per hold, needs this player's side from the war's own script data; and an objective the leader's war hides or opens again is not followed (whether the vanilla war does either is not read).
 - [!] **A player's copy snapped between two poses at each menu** (session 2026-10-31 14:52, player 2 watching player 1 loot; fix in the tree on
       82bc61ca, client only, no protocol change; each player needs it for the others to see them right; not seen in play).
       In a full menu the game shows a second body. `CaptureLocalPose` read its bones and sent them, so each opening and closing snapped the copy,
