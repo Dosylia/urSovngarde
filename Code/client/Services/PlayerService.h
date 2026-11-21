@@ -7,6 +7,7 @@
 
 struct World;
 struct TransportService;
+struct PlayerCharacter;
 
 struct UpdateEvent;
 struct ConnectedEvent;
@@ -75,6 +76,16 @@ private:
     void StartRespawn(const SafePoint& acWhere) noexcept;
     //! A party member revived the player: back on its feet where it lies, with part of its health.
     void StandUp(uint32_t aReviverId) noexcept;
+    /**
+     * Take back any health the player gets while down: a level-up, a potion or a healing spell.
+     * The game's stand-up that health asks for is refused while the down holds (DownedHold); taken back, the health no longer asks for it.
+     * Only a revive, giving up, the end of the wait or a fallen party may end a down; a revive leaves the down first (StandUp), so it is not taken back.
+     * Called only while the down holds (not after a loaded save or in a brawl, where the game stands the player up on purpose), and acts only while the game still has the player bleeding out.
+     * Logged once per down.
+     *
+     * @param apPlayer This game's player, down.
+     */
+    void KeepDownedHealthAtZero(PlayerCharacter* apPlayer) noexcept;
     //! Every frame: while down, the heartbeat in both hands, or a rising buzz while both grips are held; after a revive, one strong pulse.
     void RunDownedCues() noexcept;
     //! While down: both grips held long enough to give up the wait.
@@ -120,6 +131,8 @@ private:
     // The party members holding this downed player now, the newest last: the banner names the newest.
     TiltedPhoques::Vector<uint32_t> m_revivers;
     std::chrono::steady_clock::time_point m_downedAt{};
+    // Whether health given while down was taken back yet in this down (KeepDownedHealthAtZero), for its one log line.
+    bool m_healthTakenBackThisDown = false;
     std::chrono::steady_clock::time_point m_respawnDeadline{};
     std::chrono::steady_clock::time_point m_respawnAt{};
     SafePoint m_respawnPoint{};

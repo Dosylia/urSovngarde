@@ -1,0 +1,61 @@
+# Health given back while down, as a level-up or a potion does: the player stays down, before and after a respawn.
+# Only a revive, giving up, the end of the wait or a fallen party may end a down.
+#
+#   python Tools\VR\live-check.py live-down-heal
+#   python Tools\VR\live-check.py --expect-fail live-down-heal     on a build without the fix: must be RED
+#
+# The player goes down in a party with this bot standing by, so the server waits (Gameplay:uDownedSeconds).
+# Health comes back by console twice: a raise of its value (player.modav), as the level-up's +10 does, and a refill (player.restoreav), as a potion's.
+# Then the player gives up (both grips), respawns, and goes down again: the same health must not end that down either.
+log live down heal
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO logmark
+
+log -- a safe point here
+log DO menu 2 Sleep/Wait Menu
+wait 6
+log REQUIRE logged PlayerService: safe point in cell
+
+log -- down before any respawn; health comes back while down, as a level-up gives it
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 3
+log REQUIRE logged PlayerService: the server gives \d+ s to be revived
+log DO console player.modav health 10
+wait 4
+expect downstate other down
+log CHECK absent PlayerService: the bleedout ended by itself
+log CHECK logged PlayerService: health came back while down
+log CHECK papyrus Actor IsBleedingOut 14 is true
+
+log -- given up, respawned
+log DO grip both 3500
+waitfor downstate other respawned 8
+expect downstate other respawned
+wait 20
+log REQUIRE logged PlayerService: god mode of the respawn over
+log CHECK player alive
+
+log -- down again after the respawn; health refilled while down, as a potion gives it
+log DO logmark
+log DO console player.damageav health 100000
+waitfor downstate other down 20
+expect downstate other down
+wait 3
+log REQUIRE logged PlayerService: the server gives \d+ s to be revived
+log DO console player.restoreav health 1000
+wait 4
+expect downstate other down
+log CHECK absent PlayerService: the bleedout ended by itself
+log CHECK logged PlayerService: health came back while down
+log CHECK papyrus Actor IsBleedingOut 14 is true
+
+log -- given up again, so the test leaves the player standing
+log DO grip both 3500
+waitfor downstate other respawned 8
+wait 20
+log CHECK game alive

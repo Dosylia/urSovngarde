@@ -555,6 +555,29 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 ## Open work
 
 ### Reported or changed from 2026-11-02
+- [!] **A downed player gets up by levelling up** (play 2026-11-21 13:59 on MGO, 8825f9f, player 1). Fixed in build 3f94616 (client and server on FUS, flat client on the flat rig; not on MGO yet; rig only, not seen in play).
+      Player 1 went down at 13:59:21 (`player is down, waiting for a revive`), opened the skills menu while down and levelled up at 13:59:25; at 13:59:26 `the bleedout ended by itself 5348 ms after going down; respawning`, and the respawn skipped the wait.
+      Cause: the level-up adds +10 to the chosen attribute (`ConfirmLevelUpAttributeCallback::Run`, the actor value owner's ModActorValue), so health goes from 0 to above it, and the game stands a bleeding-out player up as soon as health is above zero, whatever `SetNoBleedoutRecovery` says; a potion's or a spell's refill does the same.
+      The game does it from its own update, before ours runs (our update runs from the Papyrus VM's), so taking the health back each update alone came too late (tried, still red).
+      Fix: `DownedHold` refuses the game's change of this game's player from bleedout to alive (`Actor::SetLifeState`, SE 36604, AE 37612) while the down holds; PlayerService holds it while down and waiting (not after a loaded save or in a brawl) and lets go at once for a revive, a respawn, a loaded save or the death system turned off; the health is then taken back (`health came back while down ... taken back`).
+      `live-down-heal` (health raised by 10 as a level-up does, then refilled as a potion does, before and after a respawn): RED on 8825f9f (both downs ended), green on 3f94616 (9 of 9: the player stays down and bleeding out, `DownedHold: the game would stand the downed player up ...; kept down`); `live-revive` 10 of 10 on fd4509d (a revive still stands the player up); on flat, a death through the hooked function did not crash.
+      Not tested: a real level-up in a headset, a real potion, what the other player sees of the refused stand-up, a save loaded while down, the flat game's down.
+      The 503 ms `ended by itself` at 13:57:44 (no heal seen) is not explained.
+- [ ] **A mod's carts: no wheels, an invisible cart, prisoners riding a flying cart** (play 2026-11-21 14:06 to 14:09 on MGO, 8825f9f, seen by player 1).
+      The carts are a mod's actors named Goods (FE01EB60, FE01EB2E); their drivers and prisoners were copies in player 1's game of NPCs player 2's game spawned (`IdleCartDriverSway`, `IdleCartPrisonerASway`, `BSway`, `DSway`).
+      Imperial soldiers attacked a cart player 1 could not see. Which part of a Goods copy's 3D does not come through (the wheels and body as worn items or attached nodes, or the whole model) is not read yet.
+- [ ] **The wrong NPC on a cart: a Dawnguard for player 1, a miner for player 2** (play 2026-11-21 14:07 on MGO, 8825f9f).
+      Player 2's game spawned a Miner (FF001F35) at 14:04:57; at 14:04:55 player 1's game made the copy of server id 10003D (FF001FB3) from local base 401422C (Dawnguard). Likely the same character with its base resolved wrongly here; that the two are the same is not checked yet.
+- [ ] **A chicken carried by player 1 not seen by player 2** (play 2026-11-21 14:05 on MGO, 8825f9f).
+      The chickens there (106C22, 106C23) were loaded in both games but never got a server id in either, so each game had its own; why they were never assigned is not in the logs.
+- [ ] **Player 2's game slowed to 6 fps and froze for a moment near the cart fight** (play 2026-11-21 14:12 to 14:17 on MGO, 8825f9f).
+      From 14:12 to about 14:16 player 2 ran at 15, 6, 27, 10 fps, frames up to a second; our update stayed under 1 ms. Every `Stutter:` busiest thread and the 14:17:09 `FreezeWatchdog` were in Havok (MOPP mesh queries, height field, the broad phase).
+      The freeze dump: two threads in `bhkWorld::PickObject` raycasts (one from `PPB.dll`) through the broad phase and MOPP, others waiting for the physics world's write lock (one through HIGGS); no frame of ours in a busy stack.
+      Candidate of ours, not shown to be the cause: from 14:12:39 to 14:16:27 player 1's game sent a dead wolf (847DF) as being moved, and player 2's game moved that whole body 16 to 97 units at every frame end to follow (`has no humanoid skeleton; moved its whole tree`). Why player 1's game counted that body as moving is not read yet.
+- [ ] **Items on a table vanish for the player whose body is inside the table** (play 2026-11-21 09:11 on MGO, 21d21bb). Low.
+      Player 1's body was inside the table; in player 2's game its copy knocked four items, held back for a moment (`moved next to another player's copy; not sent`), then sent as they kept falling (`is being moved here`), and player 1's game moved them to where they landed there.
+      The guard against a copy's push covers only its first second.
+- [ ] **Other players' names overlap at the top left of the view in VR** (play 2026-11-21 09:14 on MGO). The original mod's party panel (`group` component, pinned at the top left, unchanged since the original web UI); it needs a place in the headset.
 - [ ] **OpenComposite through our launcher: players with it ticked now run on it, with the panel inside the game as their menu** (found 2026-11-17 never used; made to work 2026-11-18, build afb0604, rig only, not seen in play).
       OpenComposite replaces SteamVR's `openvr_api.dll` in the game folder; FUS ships OpenComposite Unleashed 5.0.0 as an option (off, its DLL shipped hidden), MGO 4.0 ships 4.3.0 ticked.
       Rig, build d3591f6, FUS with Unleashed ticked once: Root Builder put Unleashed's DLL in the game folder, yet the game loaded `Steam\openvr_api.dll` and ran on SteamVR, no crash, the dashboard made.

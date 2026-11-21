@@ -53,6 +53,7 @@
 #include <UI/Banner/DeathSentence.h>
 #include <Components.h>
 #include <Forms/TESQuest.h>
+#include <Services/Generic/DownedHold.h>
 
 namespace
 {
@@ -521,10 +522,16 @@ void PlayerService::OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept
 void PlayerService::RunRespawnUpdates() noexcept
 {
     if (!m_isDeathSystemEnabled)
+    {
+        DownedHold::Set(false);
         return;
+    }
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     const auto cNow = std::chrono::steady_clock::now();
+    // Only a revive, giving up, the end of the wait or a fallen party may end a down; a loaded save and a brawl stand the player up on purpose.
+    const bool cDownHolds = m_downState == DownState::kDown && !m_saveLoaded && !IsBrawlRunning();
+    DownedHold::Set(cDownHolds);
 
     if (m_downState == DownState::kUp)
     {
@@ -573,6 +580,7 @@ void PlayerService::RunRespawnUpdates() noexcept
         m_revivers.clear();
         m_downingCause.reset();
         m_downedAt = cNow;
+        m_healthTakenBackThisDown = false;
         m_respawnDeadline = cNow + 5s;
         m_standingUp = false;
         m_saveLoaded = false;
@@ -596,6 +604,8 @@ void PlayerService::RunRespawnUpdates() noexcept
         if (!m_downingCause && cNow >= m_downedAt + cKillingBlow)
             m_downingCause = DowningCause();
 
+        if (cDownHolds)
+            KeepDownedHealthAtZero(pPlayer);
         if (!pPlayer->actorState.IsBleedingOut())
         {
             // After a loaded save the player is up in it, and a lost brawl stands the player up: no respawn, as when playing alone.
@@ -685,6 +695,8 @@ void PlayerService::RunRespawnUpdates() noexcept
 
 void PlayerService::StartRespawn(const SafePoint& acWhere) noexcept
 {
+    // The respawn stands the player up, which the down's hold would refuse.
+    DownedHold::Set(false);
     StopHeartbeat();
     m_giveUpSince = {};
     // Held through the fade and the respawn; the place's name replaces it as the screen comes back (RunPostDeathUpdates).
@@ -741,6 +753,8 @@ void PlayerService::RunSafePointUpdates() noexcept
 BSTEventResult PlayerService::OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*)
 {
     m_saveLoaded = true;
+    // The player is in the save now, up or down as it has it.
+    DownedHold::Set(false);
     return BSTEventResult::kOk;
 }
 
@@ -779,6 +793,8 @@ void PlayerService::RecordSafePoint() noexcept
 
 void PlayerService::StandUp(const uint32_t aReviverId) noexcept
 {
+    // The game stands the player up from here, which the down's hold would refuse.
+    DownedHold::Set(false);
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     const auto cNow = std::chrono::steady_clock::now();
 
@@ -811,6 +827,31 @@ void PlayerService::StandUp(const uint32_t aReviverId) noexcept
                  std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count(), pPlayer->GetActorValue(ActorValueInfo::kHealth));
     Utils::ShowHudMessage(String("urSovngarde: ") + who + " revived you");
     VRBanner::Hide();
+}
+
+/**
+ * Take back any health the player gets while down: a level-up, a potion or a healing spell.
+ * The game's stand-up that health asks for is refused while the down holds (DownedHold); taken back, the health no longer asks for it.
+ * Only a revive, giving up, the end of the wait or a fallen party may end a down; a revive leaves the down first (StandUp), so it is not taken back.
+ * Called only while the down holds (not after a loaded save or in a brawl, where the game stands the player up on purpose), and acts only while the game still has the player bleeding out.
+ * Logged once per down.
+ *
+ * @param apPlayer This game's player, down.
+ */
+void PlayerService::KeepDownedHealthAtZero(PlayerCharacter* apPlayer) noexcept
+{
+    if (!apPlayer->actorState.IsBleedingOut())
+        return;
+
+    const float cHealth = apPlayer->GetActorValue(ActorValueInfo::kHealth);
+    if (cHealth <= 0.f)
+        return;
+
+    apPlayer->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, 0.f);
+    if (m_healthTakenBackThisDown)
+        return;
+    m_healthTakenBackThisDown = true;
+    spdlog::info("PlayerService: health came back while down ({:.0f}, from a level-up, a potion or a spell); taken back, as only a revive gets the player up", cHealth);
 }
 
 void PlayerService::RunDownedCues() noexcept
@@ -1137,6 +1178,8 @@ void PlayerService::RunBeastFormDetection() const noexcept
 void PlayerService::ToggleDeathSystem(bool aSet) noexcept
 {
     m_isDeathSystemEnabled = aSet;
+    if (!aSet)
+        DownedHold::Set(false);
 
     PlayerCharacter::Get()->SetPlayerRespawnMode(aSet);
 }
