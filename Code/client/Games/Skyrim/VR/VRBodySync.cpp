@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Games/Skyrim/VR/VRBodySync.h>
+#include <Games/Skyrim/VR/PoseKeepDiag.h>
 #include <Games/Skyrim/VR/VRHaptics.h>
 #include <Games/Skyrim/VR/VRControllers.h>
 #include <Games/Skyrim/GameSound.h>
@@ -675,6 +676,9 @@ struct Rig
     bool Valid = false;
     // Whether it was in view at the last frame end: once in view, it leaves only well past the cone's edge.
     bool InView = false;
+    // TEMPORARY (PoseKeepDiag): where a frame end last left the pelvis, and which frame end that was.
+    glm::vec3 PelvisLeft{};
+    uint64_t PelvisLeftAt = 0;
 };
 
 std::unordered_map<uint32_t, Rig> s_rigs; // frame end only
@@ -3538,6 +3542,9 @@ void OnFrameEnd() noexcept
         }
     };
     static std::unordered_map<uint32_t, FrameEndCount> s_frameEndCounts;
+    // TEMPORARY (PoseKeepDiag): this frame end's number, so a copy is compared only with the frame end right before.
+    static uint64_t s_frameEndNumber = 0;
+    ++s_frameEndNumber;
 
     for (const auto& [formId, pose] : poses)
     {
@@ -3736,6 +3743,14 @@ void OnFrameEnd() noexcept
             continue;
         }
 
+        // TEMPORARY (PoseKeepDiag): whether the bones are still where the last frame end put them.
+        // A pelvis that moved less than this since the last frame end was left alone.
+        constexpr float cLeftAloneWithin = 0.5f;
+        const RigBone& keptPelvis = rig.Bones[VRPose::kPelvis];
+        const bool cWatchKeep = pCount && !isBody && (keptPelvis.pNode || keptPelvis.pEntry);
+        const bool cPosedJustBefore = cWatchKeep && rig.PelvisLeftAt != 0 && rig.PelvisLeftAt + 1 == s_frameEndNumber;
+        const bool cStillWhereLeft = cPosedJustBefore && glm::distance(ToGlm(keptPelvis.World().translate), rig.PelvisLeft) < cLeftAloneWithin;
+
         // The root is placed first, so the bone world transforms below are built on the right origin.
         // Like the bones, it is written at the renderer's frame end, after the local ragdoll's turn, so the ragdoll cannot drag it back.
         // worldOffset is how far the whole body moves to be where its owner has it.
@@ -3794,6 +3809,13 @@ void OnFrameEnd() noexcept
         PoseActor(rig, pose, worldOffset);
         if (pCount)
             ++pCount->Posed;
+        if (cWatchKeep)
+        {
+            if (cPosedJustBefore)
+                PoseKeepDiag::NotePosed(formId, cStillWhereLeft, glm::length(glm::vec2(worldOffset.x, worldOffset.y)));
+            rig.PelvisLeft = ToGlm(keptPelvis.World().translate);
+            rig.PelvisLeftAt = s_frameEndNumber;
+        }
         // Confirm in the log the first time this copy's fingers are posed.
         // Without it, "fingers worked" and "finger code never ran" look the same: both are just the absence of a warning.
         const bool leftFound = rig.FingersFound[kLeftSide];

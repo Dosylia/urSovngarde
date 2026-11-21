@@ -25,6 +25,7 @@
 #include <Games/Misc/MenuTopicManager.h>
 #include <Events/HitEvent.h>
 #include <Services/ActorValueService.h>
+#include <Games/Skyrim/VR/PoseKeepDiag.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VR/VRBodySync.h>
 #include <Services/CalendarService.h>
@@ -306,6 +307,10 @@ void Actor::ForcePosition(const NiPoint3& acPosition) noexcept
             updateController = pController->UpdateStepTiming();
         }
     }
+
+    // TEMPORARY (PoseKeepDiag): how often another player's copy has its 3D moved at once.
+    if (pExtension && pExtension->IsRemotePlayer())
+        PoseKeepDiag::NotePlaced(formID, !updateController);
 
     // With no usable step yet, update the reference and 3D now.
     // Interpolation catches the controller up once physics timing becomes available.
