@@ -16,6 +16,7 @@
 #include <World.h>
 
 #include <Games/Skyrim/VR/VRBodySync.h>
+#include <Games/Skyrim/VR/PosedCopyPlacement.h>
 #include <Services/DiscoveryService.h>
 
 namespace
@@ -223,6 +224,10 @@ uint64_t InterpolationSystem::GetPlaybackTick(const InterpolationComponent& acIn
 
 void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterpolationComponent, const double aNow, const bool aDeadAtOwner, const uint64_t aLastActionTick) noexcept
 {
+    // A place kept for the frame end by an earlier step goes: only one kept in this step is given (PosedCopyPlacement).
+    if (apActor)
+        PosedCopyPlacement::DropKeptPlace(apActor->formID);
+
     const double cDeltaTime = aInterpolationComponent.Clock.Advance(aNow);
 
     auto& movements = aInterpolationComponent.TimePoints;
@@ -792,7 +797,13 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         }
     }
 
-    apActor->ForcePosition(placed);
+    // A VR player's posed copy is placed and turned at the frame end, right before its pose is written (PosedCopyPlacement).
+    // This runs on the game's script threads at no fixed point in the frame, and a placement here could rebuild the skeleton after the pose.
+    // Not while the copy waits hidden for its first placement: that one shows it, so it lands now.
+    const bool cPosedPlayerCopy = vrPose.HasData && !vrPose.NoBones && pExtension && pExtension->IsRemotePlayer();
+    const bool cPlaceAtFrameEnd = cPosedPlayerCopy && !SpawnReveal::IsWaiting(apActor->formID) && PosedCopyPlacement::IsFrameEndRunning();
+    if (!cPlaceAtFrameEnd)
+        apActor->ForcePosition(placed);
     SpawnReveal::Placed(apActor);
     // A creature of another kind than the owner's (see MarkForeignGraph) keeps its own animation state.
     if (!aInterpolationComponent.ForeignGraph)
@@ -845,7 +856,10 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     const auto finalY = TiltedPhoques::Mod(rotA.y + deltaY, float(TiltedPhoques::Pi * 2));
     const auto finalZ = TiltedPhoques::Mod(rotA.z + deltaZ, float(TiltedPhoques::Pi * 2));
 
-    apActor->SetRotation(finalX, finalY, finalZ);
+    if (cPlaceAtFrameEnd)
+        PosedCopyPlacement::KeepForFrameEnd(apActor->formID, placed, NiPoint3(glm::vec3(finalX, finalY, finalZ)));
+    else
+        apActor->SetRotation(finalX, finalY, finalZ);
 }
 
 void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationComponent, const InterpolationComponent::TimePoint& acPoint, const double aArrivalTime) noexcept

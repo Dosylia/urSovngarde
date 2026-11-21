@@ -25,4 +25,11 @@ void NotePosed(uint32_t aFormId, bool aStillWhereLeft, float aBodyShift) noexcep
  * @param aMovedAtOnce True when the game moves its 3D at once, false when its character controller takes it to the next physics step.
  */
 void NotePlaced(uint32_t aFormId, bool aMovedAtOnce) noexcept;
+
+/**
+ * Count one of those positions given at the frame end, right before the copy's pose (PosedCopyPlacement), rather than on the interpolation's thread.
+ *
+ * @param aFormId The copy's form id.
+ */
+void NoteGivenAtFrameEnd(uint32_t aFormId) noexcept;
 } // namespace PoseKeepDiag

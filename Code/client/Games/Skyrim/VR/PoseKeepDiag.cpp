@@ -30,6 +30,7 @@ struct Window
     float ShiftMost = 0.f;
     uint32_t Placed = 0;
     uint32_t PlacedAtOnce = 0;
+    uint32_t GivenAtFrameEnd = 0;
 };
 
 std::mutex s_lock;
@@ -48,9 +49,9 @@ void Report(const uint32_t aFormId, Window& arWindow, const std::chrono::steady_
     const auto cSeconds = std::chrono::duration_cast<std::chrono::seconds>(aNow - arWindow.Since).count();
     spdlog::info("PoseKeepDiag: copy {:X}, {} s: {} frame ends; its bones were where the last frame end put them at {}, moved by something else at {} "
                  "(switching {} times); the frame end moved the whole body to the pose's hips by {:.0f} units on average at those, {:.0f} at most; "
-                 "{} of {} positions given to it moved its 3D at once",
+                 "{} of {} positions given to it moved its 3D at once, {} were given at the frame end",
                  aFormId, cSeconds, arWindow.FrameEnds, arWindow.StillWhereLeft, arWindow.MovedSince, arWindow.Switches, cShiftAverage, arWindow.ShiftMost,
-                 arWindow.PlacedAtOnce, arWindow.Placed);
+                 arWindow.PlacedAtOnce, arWindow.Placed, arWindow.GivenAtFrameEnd);
     arWindow = Window{};
     arWindow.Since = aNow;
 }
@@ -101,5 +102,16 @@ void NotePlaced(const uint32_t aFormId, const bool aMovedAtOnce) noexcept
     ++window.Placed;
     if (aMovedAtOnce)
         ++window.PlacedAtOnce;
+}
+
+/**
+ * Count one of those positions given at the frame end, right before the copy's pose (PosedCopyPlacement), rather than on the interpolation's thread.
+ *
+ * @param aFormId The copy's form id.
+ */
+void NoteGivenAtFrameEnd(const uint32_t aFormId) noexcept
+{
+    std::scoped_lock lock(s_lock);
+    ++s_windows[aFormId].GivenAtFrameEnd;
 }
 } // namespace PoseKeepDiag

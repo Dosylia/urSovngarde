@@ -2,6 +2,7 @@
 
 #include <Games/Skyrim/VR/VRBodySync.h>
 #include <Games/Skyrim/VR/PoseKeepDiag.h>
+#include <Games/Skyrim/VR/PosedCopyPlacement.h>
 #include <Games/Skyrim/VR/VRHaptics.h>
 #include <Games/Skyrim/VR/VRControllers.h>
 #include <Games/Skyrim/GameSound.h>
@@ -3474,6 +3475,20 @@ bool HasCopyArrow(uint32_t aFormId) noexcept
 
 void OnFrameEnd() noexcept
 {
+    // The places the interpolation kept so far are this frame end's; one kept while it runs waits for the next (PosedCopyPlacement).
+    PosedCopyPlacement::StartFrameEnd();
+
+    /**
+     * Gives, on the way out whichever way this returns, the places taken for copies not posed in this frame.
+     */
+    struct PlacesLast
+    {
+        /**
+         * Give the places left (PosedCopyPlacement::FinishFrameEnd).
+         */
+        ~PlacesLast() { PosedCopyPlacement::FinishFrameEnd(); }
+    } placesLast;
+
 #ifdef SKYRIMVR
     // The nocked arrows go last, once every hand is where it ends up this frame, whichever way this returns.
     struct ArrowsLast
@@ -3750,6 +3765,9 @@ void OnFrameEnd() noexcept
         const bool cWatchKeep = pCount && !isBody && (keptPelvis.pNode || keptPelvis.pEntry);
         const bool cPosedJustBefore = cWatchKeep && rig.PelvisLeftAt != 0 && rig.PelvisLeftAt + 1 == s_frameEndNumber;
         const bool cStillWhereLeft = cPosedJustBefore && glm::distance(ToGlm(keptPelvis.World().translate), rig.PelvisLeft) < cLeftAloneWithin;
+
+        // Its place for this frame, kept by the interpolation, is given now, so the pose below is the last thing written to it before it is drawn.
+        PosedCopyPlacement::GiveKeptPlace(pActor);
 
         // The root is placed first, so the bone world transforms below are built on the right origin.
         // Like the bones, it is written at the renderer's frame end, after the local ragdoll's turn, so the ragdoll cannot drag it back.

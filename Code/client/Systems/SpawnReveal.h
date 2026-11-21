@@ -11,5 +11,12 @@ namespace SpawnReveal
 {
 void HideUntilPlaced(Actor* apActor) noexcept;
 void Placed(Actor* apActor) noexcept;
+/**
+ * Whether a copy is still hidden, waiting to be placed from its first movement update.
+ *
+ * @param aFormId The copy's form id.
+ * @return True while it is hidden.
+ */
+bool IsWaiting(uint32_t aFormId) noexcept;
 void Tick() noexcept;
 } // namespace SpawnReveal

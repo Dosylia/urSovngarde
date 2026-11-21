@@ -63,6 +63,17 @@ void SpawnReveal::Placed(Actor* apActor) noexcept
         Show(apActor->formID, "placed from a movement update");
 }
 
+/**
+ * Whether a copy is still hidden, waiting to be placed from its first movement update.
+ *
+ * @param aFormId The copy's form id.
+ * @return True while it is hidden.
+ */
+bool SpawnReveal::IsWaiting(const uint32_t aFormId) noexcept
+{
+    return s_hidden.find(aFormId) != s_hidden.end();
+}
+
 void SpawnReveal::Tick() noexcept
 {
     if (s_hidden.empty())
