@@ -296,17 +296,17 @@ std::vector<Choice> Choose(const Share& acFriend, const std::vector<Network>& ac
  */
 ShareContent ChooseShareContent(const ServerPlace aPlace, const ServerSource aSource)
 {
-    switch (aPlace)
-    {
-    case ServerPlace::OwnServer: return ShareContent::OwnServer;
-    case ServerPlace::Elsewhere:
-        if (aSource == ServerSource::FriendShare)
-            return ShareContent::WithheldFriendsServer;
-        return ShareContent::ServerItIsOn;
-    case ServerPlace::Unreadable:
-    case ServerPlace::LocalTunnel: return ShareContent::Nothing;
-    }
-    return ShareContent::Nothing;
+    if (aPlace == ServerPlace::OwnServer)
+        return ShareContent::OwnServer;
+
+    // An address that does not read, or the launcher's tunnel on this PC, is not shown.
+    if (aPlace != ServerPlace::Elsewhere)
+        return ShareContent::Nothing;
+
+    if (aSource == ServerSource::FriendShare)
+        return ShareContent::WithheldFriendsServer;
+
+    return ShareContent::ServerItIsOn;
 }
 
 void StunRequest(const uint8_t (&acTransaction)[12], uint8_t (&aRequest)[20])
