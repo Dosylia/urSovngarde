@@ -91,6 +91,21 @@ TEST_CASE("A friend's malformed value is not valid", "[steamjoin]")
     REQUIRE(Read("v1 port=10578 later=yes").Valid);
 }
 
+TEST_CASE("A server joined through a friend's share is not passed on", "[steamjoin]")
+{
+    // The friend's address was given to the friend's own friends, not to this player's.
+    REQUIRE(ChooseShareContent(ServerPlace::Elsewhere, ServerSource::FriendShare) == ShareContent::WithheldFriendsServer);
+
+    // A server from connect.txt or the menu's list, and this player's own, are shown.
+    REQUIRE(ChooseShareContent(ServerPlace::Elsewhere, ServerSource::Picked) == ShareContent::ServerItIsOn);
+    REQUIRE(ChooseShareContent(ServerPlace::OwnServer, ServerSource::Picked) == ShareContent::OwnServer);
+    REQUIRE(ChooseShareContent(ServerPlace::OwnServer, ServerSource::FriendShare) == ShareContent::OwnServer);
+
+    // An address that does not read and the launcher's tunnel are never shown.
+    REQUIRE(ChooseShareContent(ServerPlace::Unreadable, ServerSource::Picked) == ShareContent::Nothing);
+    REQUIRE(ChooseShareContent(ServerPlace::LocalTunnel, ServerSource::Picked) == ShareContent::Nothing);
+}
+
 TEST_CASE("Two players in one house meet on the home network", "[steamjoin]")
 {
     const auto cChoices = Choose(Hosting(), {Net("192.168.1.20", 24)}, {}, Ip("81.2.3.4"));

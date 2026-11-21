@@ -134,6 +134,18 @@ void VRConnectService::ConnectToServer(const std::string& acAddress, const std::
     ReconnectNow();
 }
 
+/**
+ * Check if the server this game connects to, or is on, came from a Steam friend's share.
+ * Such an address is the friend's to give, so it is not passed on to this player's own Steam friends.
+ *
+ * @return True while the menu's pick of a Steam friend's server is in use; false for connect.txt, the launcher and the menu's own server list.
+ */
+bool VRConnectService::IsServerFromFriendsShare() const noexcept
+{
+    // The friend flag counts only while the pick is in use: leaving it, or connecting elsewhere, clears the pick.
+    return m_chosen.has_value() && m_chosenIsFriend;
+}
+
 void VRConnectService::ReconnectNow() noexcept
 {
     // Waiting before closing: the disconnection then schedules nothing, and the next update connects.

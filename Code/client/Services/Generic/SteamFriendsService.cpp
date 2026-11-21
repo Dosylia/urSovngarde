@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Services/SteamFriendsService.h>
+#include <Services/ConnectFile.h>
 #include <Services/JsonText.h>
 #include <Services/OverlayService.h>
 #include <Services/TransportService.h>
@@ -22,6 +23,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstring>
+#include <limits>
 #include <random>
 #include <thread>
 
@@ -194,6 +196,40 @@ bool ServerListens(const uint16_t aPort, const std::vector<Network>& acLan, cons
         }
     }
     return false;
+}
+
+/**
+ * Find where the server at an address runs, as this PC sees it.
+ * SteamJoin's check of a friend's text stays apart: this reads this game's own address, which may leave the port out or be IPv6.
+ *
+ * @param acEndpoint The server as the transport reached it: "host:port", or a host alone for the default port.
+ * @param acLan This PC's home networks.
+ * @param acVlan This PC's virtual LANs.
+ * @param aPublic The address the internet sees for this PC, 0 when unknown.
+ * @param aPort Set to the server's port when the address reads.
+ * @return Where the server runs; Unreadable for an IPv6 address or a port that does not read.
+ */
+SteamJoin::ServerPlace PlaceOf(const std::string& acEndpoint, const std::vector<Network>& acLan, const std::vector<Network>& acVlan, const uint32_t aPublic, uint16_t& aPort)
+{
+    const size_t cColon = acEndpoint.rfind(':');
+    const std::string cHost = Lower(acEndpoint.substr(0, cColon));
+    uint32_t port = ConnectFile::kDefaultPort;
+    if (cColon != std::string::npos)
+    {
+        const char* pEnd = acEndpoint.data() + acEndpoint.size();
+        const auto [cPortEnd, cPortError] = std::from_chars(acEndpoint.data() + cColon + 1, pEnd, port);
+        if (cPortError != std::errc() || cPortEnd != pEnd || port == 0 || port > std::numeric_limits<uint16_t>::max())
+            return SteamJoin::ServerPlace::Unreadable;
+    }
+    if (cHost.find(':') != std::string::npos || cHost.find('[') != std::string::npos)
+        return SteamJoin::ServerPlace::Unreadable;
+    aPort = static_cast<uint16_t>(port);
+
+    uint32_t ip = 0;
+    const bool cOnThisPc = cHost == "localhost" || (SteamJoin::ParseIp(cHost, ip) && IsOwnAddress(ip, acLan, acVlan, aPublic));
+    if (!cOnThisPc)
+        return SteamJoin::ServerPlace::Elsewhere;
+    return ServerListens(aPort, acLan, acVlan) ? SteamJoin::ServerPlace::OwnServer : SteamJoin::ServerPlace::LocalTunnel;
 }
 
 // The address the internet sees, from a public STUN server: one small UDP question, the answer within 2 s.
@@ -402,62 +438,91 @@ void SteamFriendsService::OnUpdate(const UpdateEvent&) noexcept
     SendFriends(cNow);
 }
 
+/**
+ * Show Steam friends where this player plays, in this game's rich presence, and log each change.
+ * A server reached through a Steam friend's share is not passed on, and one line says why when that starts.
+ * Main thread, every few seconds.
+ */
 void SteamFriendsService::Publish() noexcept
 {
-    std::string value;
-    bool hosting = false;
-    SteamJoin::Share share;
-    if (m_sharing && m_transport.IsOnline())
-    {
-        const std::string& cEndpoint = m_transport.GetServerEndpoint();
-        const size_t cColon = cEndpoint.rfind(':');
-        const std::string cHost = Lower(cEndpoint.substr(0, cColon));
-        uint32_t port = 10578;
-        bool portOk = true;
-        if (cColon != std::string::npos)
-        {
-            const auto [cPortEnd, cPortError] = std::from_chars(cEndpoint.data() + cColon + 1, cEndpoint.data() + cEndpoint.size(), port);
-            portOk = cPortError == std::errc() && cPortEnd == cEndpoint.data() + cEndpoint.size() && port > 0 && port <= 65535;
-        }
+    const std::string& cEndpoint = m_transport.GetServerEndpoint();
+    uint16_t port = 0;
+    const SteamJoin::ShareContent cContent = CurrentShareContent(cEndpoint, port);
+    if (cContent == SteamJoin::ShareContent::WithheldFriendsServer && m_shareContent != cContent)
+        spdlog::info("SteamFriends: Steam friends don't see the server this player is on: it was joined through a Steam friend's share, and that address is the friend's to give");
+    m_shareContent = cContent;
 
-        uint32_t ip = 0;
-        const bool cIpv4 = SteamJoin::ParseIp(cHost, ip);
-        const bool cOwn = cHost == "localhost" || (cIpv4 && IsOwnAddress(ip, m_lan, m_vlan, m_public));
-        // An IPv6 address or a port that does not read is left out, and so is a local address no server of this PC listens on:
-        // the launcher's tunnel for a friend's code.
-        if (portOk && cHost.find(':') == std::string::npos && cHost.find('[') == std::string::npos)
-        {
-            hosting = cOwn && ServerListens(static_cast<uint16_t>(port), m_lan, m_vlan);
-            share.Valid = hosting || !cOwn;
-        }
-
-        if (share.Valid)
-        {
-            share.Password = m_transport.HasServerPassword();
-            share.Public = m_public;
-            if (hosting)
-            {
-                share.Port = static_cast<uint16_t>(port);
-                share.Lan = m_lan;
-                share.Vlan = m_vlan;
-            }
-            else
-                share.Server = cEndpoint;
-            AskPublicAddress();
-            value = SteamJoin::Write(share);
-        }
-    }
-
-    if (value == m_published)
+    const SteamJoin::Share cShare = BuildShare(cContent, cEndpoint, port);
+    if (cShare.Valid)
+        AskPublicAddress();
+    const std::string cValue = cShare.Valid ? SteamJoin::Write(cShare) : std::string{};
+    if (cValue == m_published)
         return;
-    m_steam->SetRichPresence(m_steam->Friends, kShareKey, value.empty() ? nullptr : value.c_str());
-    m_published = value;
 
-    if (value.empty())
+    m_steam->SetRichPresence(m_steam->Friends, kShareKey, cValue.empty() ? nullptr : cValue.c_str());
+    m_published = cValue;
+    LogPublished(cValue, cContent, cShare);
+}
+
+/**
+ * Decide what this game's share shows now.
+ *
+ * @param acEndpoint The server this game is on, as the transport reached it.
+ * @param aPort Set to the server's port when its address reads.
+ * @return Nothing while sharing is off or this game is offline; otherwise what SteamJoin::ChooseShareContent decides for that server.
+ */
+SteamJoin::ShareContent SteamFriendsService::CurrentShareContent(const std::string& acEndpoint, uint16_t& aPort) const noexcept
+{
+    if (!m_sharing || !m_transport.IsOnline())
+        return SteamJoin::ShareContent::Nothing;
+
+    const SteamJoin::ServerPlace cPlace = PlaceOf(acEndpoint, m_lan, m_vlan, m_public, aPort);
+    const bool cFromFriend = m_world.ctx().at<VRConnectService>().IsServerFromFriendsShare();
+    return SteamJoin::ChooseShareContent(cPlace, cFromFriend ? SteamJoin::ServerSource::FriendShare : SteamJoin::ServerSource::Picked);
+}
+
+/**
+ * Build the share that shows what was decided, with this PC's public address and the server's password setting.
+ *
+ * @param aContent What the share shows.
+ * @param acEndpoint The server this game is on, as the transport reached it: shown when the share holds that server.
+ * @param aPort This player's own server's port: shown when the share holds that server.
+ * @return The share; not valid when it shows nothing.
+ */
+SteamJoin::Share SteamFriendsService::BuildShare(const SteamJoin::ShareContent aContent, const std::string& acEndpoint, const uint16_t aPort) const noexcept
+{
+    SteamJoin::Share share;
+    if (aContent != SteamJoin::ShareContent::OwnServer && aContent != SteamJoin::ShareContent::ServerItIsOn)
+        return share;
+
+    share.Valid = true;
+    share.Password = m_transport.HasServerPassword();
+    share.Public = m_public;
+    if (aContent == SteamJoin::ShareContent::OwnServer)
+    {
+        share.Port = aPort;
+        share.Lan = m_lan;
+        share.Vlan = m_vlan;
+    }
+    else
+        share.Server = acEndpoint;
+    return share;
+}
+
+/**
+ * Log what Steam friends see since the rich presence last changed.
+ *
+ * @param acValue The rich presence value just set, empty when friends see nothing.
+ * @param aContent What that value shows.
+ * @param acShare The share the value was written from.
+ */
+void SteamFriendsService::LogPublished(const std::string& acValue, const SteamJoin::ShareContent aContent, const SteamJoin::Share& acShare) noexcept
+{
+    if (acValue.empty())
         spdlog::info("SteamFriends: Steam friends no longer see where this player plays");
-    else if (hosting)
-        spdlog::info("SteamFriends: Steam friends see this player's own server: {} home and {} virtual LAN networks, public address {}", share.Lan.size(), share.Vlan.size(),
-                     share.Public ? "known" : "not known yet");
+    else if (aContent == SteamJoin::ShareContent::OwnServer)
+        spdlog::info("SteamFriends: Steam friends see this player's own server: {} home and {} virtual LAN networks, public address {}", acShare.Lan.size(), acShare.Vlan.size(),
+                     acShare.Public ? "known" : "not known yet");
     else
         spdlog::info("SteamFriends: Steam friends see the server this player is on");
 }

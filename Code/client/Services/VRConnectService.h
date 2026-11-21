@@ -52,6 +52,14 @@ struct VRConnectService final : BSTEventSink<TESLoadGameEvent>
     // The menu's Disconnect or Cancel: closes the connection or the attempt, and stops the retries.
     void Stop() noexcept;
 
+    /**
+     * Check if the server this game connects to, or is on, came from a Steam friend's share.
+     * Such an address is the friend's to give, so it is not passed on to this player's own Steam friends.
+     *
+     * @return True while the menu's pick of a Steam friend's server is in use; false for connect.txt, the launcher and the menu's own server list.
+     */
+    [[nodiscard]] bool IsServerFromFriendsShare() const noexcept;
+
     BSTEventResult OnEvent(const TESLoadGameEvent*, const EventDispatcher<TESLoadGameEvent>*) override;
 
 private:

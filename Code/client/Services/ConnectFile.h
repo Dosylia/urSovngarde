@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +18,9 @@ constexpr const char* kFolderName = "SkyrimTogetherVR";
 #else
 constexpr const char* kFolderName = "SkyrimTogetherSE";
 #endif
+
+// The server's port when an address leaves it out.
+constexpr uint16_t kDefaultPort = 10578;
 
 inline std::filesystem::path PlayerFolder()
 {
@@ -63,7 +67,7 @@ inline bool Parse(std::istream& aText, Contents& aContents)
 
     // A hand-made file may leave the port out, and the network library's own default is not the server's.
     if (address.find(':') == std::string::npos)
-        address += ":10578";
+        address += ":" + std::to_string(kDefaultPort);
 
     // After the address: the password, then settings as "name=value" lines.
     // A file without a password may have the setting on the second line, so a setting is never taken for a password.

@@ -286,6 +286,29 @@ std::vector<Choice> Choose(const Share& acFriend, const std::vector<Network>& ac
     return choices;
 }
 
+/**
+ * Decide what this game's share shows Steam friends about the server it is on.
+ * Another PC's server reached through a friend's share is never shown.
+ *
+ * @param aPlace Where the server runs, as this PC sees its address.
+ * @param aSource How this game came to the server.
+ * @return OwnServer for this player's own server, ServerItIsOn for another PC's server, WithheldFriendsServer when that one came from a friend's share, else Nothing.
+ */
+ShareContent ChooseShareContent(const ServerPlace aPlace, const ServerSource aSource)
+{
+    switch (aPlace)
+    {
+    case ServerPlace::OwnServer: return ShareContent::OwnServer;
+    case ServerPlace::Elsewhere:
+        if (aSource == ServerSource::FriendShare)
+            return ShareContent::WithheldFriendsServer;
+        return ShareContent::ServerItIsOn;
+    case ServerPlace::Unreadable:
+    case ServerPlace::LocalTunnel: return ShareContent::Nothing;
+    }
+    return ShareContent::Nothing;
+}
+
 void StunRequest(const uint8_t (&acTransaction)[12], uint8_t (&aRequest)[20])
 {
     // A binding request with no attributes: type 0x0001, length 0, the magic cookie, the transaction id.

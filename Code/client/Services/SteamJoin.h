@@ -46,6 +46,47 @@ struct Choice
     Route Kind;
 };
 
+/**
+ * Where the server this game is on runs, as this PC sees its address.
+ */
+enum class ServerPlace
+{
+    Unreadable,  // an IPv6 address, or a port that does not read
+    OwnServer,   // this PC, with its own server listening on that port
+    LocalTunnel, // this PC with no server of its own on that port: the launcher's tunnel for a friend's code
+    Elsewhere,   // another PC
+};
+
+/**
+ * How this game came to the server it is on.
+ */
+enum class ServerSource
+{
+    Picked,      // connect.txt, the launcher, or the menu's connect form or server list
+    FriendShare, // a Steam friend's share, joined from the menu's list of Steam friends
+};
+
+/**
+ * What this game's share shows Steam friends about the server it is on.
+ */
+enum class ShareContent
+{
+    Nothing,
+    OwnServer,             // this player's own server: its port and the networks it is reached on
+    ServerItIsOn,          // the server this player is on, at the address it was reached by
+    WithheldFriendsServer, // nothing: the address came from a friend's share, and it is that friend's to give
+};
+
+/**
+ * Decide what this game's share shows Steam friends about the server it is on.
+ * Another PC's server reached through a friend's share is never shown.
+ *
+ * @param aPlace Where the server runs, as this PC sees its address.
+ * @param aSource How this game came to the server.
+ * @return OwnServer for this player's own server, ServerItIsOn for another PC's server, WithheldFriendsServer when that one came from a friend's share, else Nothing.
+ */
+ShareContent ChooseShareContent(ServerPlace aPlace, ServerSource aSource);
+
 // The Steam rich presence value, at most 255 characters; empty when it would not fit.
 std::string Write(const Share& acShare);
 // A friend's value, as Steam gives it: anything malformed reads as not valid.
