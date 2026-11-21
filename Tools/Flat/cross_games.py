@@ -88,11 +88,19 @@ def log_since(target, offset):
 
 
 def connected(target):
-    """Whether that game's client log says it is connected now."""
-    if not os.path.isfile(target['log']):
-        return False
-    text = log_since(target, 0)
-    return text.rfind('Connected: the server accepted this player') > text.rfind('Disconnected from server')
+    """Whether that game's client log says it is connected now.
+
+    The log starts a new file at 5 MB (tp_client.log, the one before it tp_client.1.log); one that says neither is read with the file before it."""
+    stem, extension = os.path.splitext(target['log'])
+    for path in (target['log'], stem + '.1' + extension):
+        if not os.path.isfile(path):
+            continue
+        with open(path, 'rb') as f:
+            text = f.read().decode('utf-8', errors='replace')
+        accepted, dropped = text.rfind('Connected: the server accepted this player'), text.rfind('Disconnected from server')
+        if accepted >= 0 or dropped >= 0:
+            return accepted > dropped
+    return False
 
 
 def close_menus(target):

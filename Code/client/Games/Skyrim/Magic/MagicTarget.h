@@ -66,6 +66,17 @@ struct MagicTarget
     // A spell or a staff's enchantment, as opposed to what a hand or a weapon delivers, which travels as the hit.
     static bool IsCast(MagicItem* apSpell) noexcept;
 
+    /**
+     * Whether an effect is a raise landing on another player's game's actor here, which this game does not run.
+     * The owner's game raises the body and says it lives, and the copy here gets up with a plain resurrection (Actor::Respawn).
+     * A raise run on the copy too would be ended by that resurrection, which turns the body to ash, or would leave it lying dead and commanded.
+     *
+     * @param apTarget The actor the effect lands on.
+     * @param apEffect The effect.
+     * @return True for a reanimate effect on a copy.
+     */
+    static bool IsRaiseOnCopy(Actor* apTarget, const EffectItem* apEffect) noexcept;
+
     Actor* GetTargetAsActor();
 
     bool AddTarget(AddTargetData& arData, float aCasterPerkFactor, bool aApplyStaminaPerkBonus) noexcept;

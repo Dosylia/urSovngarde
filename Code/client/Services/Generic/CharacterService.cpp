@@ -2390,7 +2390,7 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
     spdlog::info("Spawn Request Is summon {}", acMessage.IsPlayerSummon);
 
     // Taken from every spawn, as a reference of the game's own can be a summon's copy once and not the next time.
-    // A body a relayed spell is raising stays that spell's (Actor::IsBeingRaised), whatever its owner calls it.
+    // A body a spell is raising stays that spell's (Actor::IsBeingRaised), whatever its owner calls it.
     // The old mark is cleared first, as IsBeingRaised reads it.
     ActorExtension* pSpawnedExtension = pActor->GetExtension();
     pSpawnedExtension->CommandedAsSummonCopy = false;

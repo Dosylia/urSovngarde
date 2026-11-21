@@ -33,6 +33,16 @@ bool EffectItem::IsVampireLordEffect() const noexcept
     return pEffectSetting->eArchetype == EffectArchetypes::ArchetypeID::kVampireLord;
 }
 
+/**
+ * Whether this effect raises a dead body to fight for its caster (Raise Zombie, Dead Thrall, Revenant).
+ *
+ * @return True for the reanimate archetype.
+ */
+bool EffectItem::IsReanimateEffect() const noexcept
+{
+    return pEffectSetting && pEffectSetting->eArchetype == EffectArchetypes::ArchetypeID::kReanimate;
+}
+
 bool EffectItem::IsNightVisionEffect() const noexcept
 {
     BGSKeyword* pMagicNightEye = Cast<BGSKeyword>(TESForm::GetById(0xad7c6));

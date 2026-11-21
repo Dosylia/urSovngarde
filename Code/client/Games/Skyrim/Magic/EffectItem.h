@@ -20,6 +20,12 @@ struct EffectItem
     bool IsWerewolfEffect() const noexcept;
     bool IsVampireLordEffect() const noexcept;
     bool IsNightVisionEffect() const noexcept;
+    /**
+     * Whether this effect raises a dead body to fight for its caster (Raise Zombie, Dead Thrall, Revenant).
+     *
+     * @return True for the reanimate archetype.
+     */
+    bool IsReanimateEffect() const noexcept;
 
     EffectItemData data;
     uint32_t padC;

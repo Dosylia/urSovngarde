@@ -1,6 +1,7 @@
 """A body raised by the player whose game does not run it: both games must show the raised creature standing, with health, through a hit.
 
     python Tools/Flat/cross-raise.py [--tries <n>] [--hit-after <seconds>] [--own-body [--caster vr|flat]]
+    python Tools/Flat/cross-raise.py --strong [--tries <n>]     a body too strong for the spell: raised in neither game
     python Tools/Flat/cross-raise.py --expect-fail     once a fix exists, on the build without it: must be RED
 
 Both rigs up and connected, the flat one first so that it leads the party: Tools/Flat/flat-rig.ps1 up, then Tools/VR/headless.ps1 up -AutoConnect.
@@ -8,12 +9,17 @@ The flat game places a skeever ahead of its player and kills it, so the flat gam
 The VR player then raises that copy with Raise Zombie, as a player who joined raises a body the host's game runs.
 The spell is launched by RemoteCast from a marker just above the body, with the VR player as its caster.
 A VR spell cast by the player flies where the rig's hand points, which is not at a body on the ground.
-For the next seconds both games are read: raised (a creature the player commands), dead, up, or gone (switched off: a raised body that ends turns to ash).
-Papyrus counts a body as dead for the first moment of its raising, so a raised one is told by the command, not by IsDead.
+For the next seconds both games are read: raised (alive and commanded by the player), up (alive), dead (lying, even when commanded), or gone (switched off: a raised body that ends turns to ash).
+A body counts as standing only when Papyrus has it alive: one commanded but dead lies on the ground, as a copy did when it ran the raise itself.
+Only the game that runs the body raises it; a copy gets up when that game says it lives, so it reads up, not raised.
 The skeever is Skyrim.esm's own, not levelled, so both games show the same creature; Raise Zombie raises one that weak.
 Its health is read in both games: a raised body left at 0 health dies at its first hit and turns to ash in that game only.
-After the watch the VR player's game hits it once, lightly, and both games must still show it raised.
+After the watch the VR player's game hits it once, lightly, and it must still stand in both games.
+At the end of the watch it prints whether each game has it hostile to that game's player (Papyrus IsHostileToActor), without judging it.
+A copy commanded by this game's player still reads hostile, where a creature raised in that game does not; what that means in play is not shown.
 A body is raised again in a new try with --tries, as what takes its health may catch only some raises.
+With --strong the flat game's body is a bear (EncBear, level 12), too strong for Raise Zombie (level 6).
+The VR game must refuse the raise, as the game refuses it on a body it runs, and send nothing; the bear must stay dead in both games.
 """
 import argparse
 import math
@@ -24,17 +30,21 @@ import time
 from cross_games import close_menus, connected, flat_game, form_id, log_since, log_size, nearest_temporary_actor, papyrus, position, vr_game
 
 SKEEVER = '0x00023AB7'
+# Skyrim.esm's EncBear, a fixed level 12, above the level 6 Raise Zombie raises.
+BEAR = '0x00023A8A'
 RAISE_ZOMBIE = '0x0007E8E1'
 XMARKER = '0x0000003B'
 # How long the raised skeever is watched; the spell lasts 60 s.
 WATCH = 12.0
-# The first moments after the cast, while the body gets up, are not judged.
-SETTLE = 3.0
+# The first moments after the cast, while the body gets up and its copy follows, are not judged.
+SETTLE = 4.0
 # Fewer looks than this after SETTLE judge nothing: DevBench stalled (a look takes about a second, so a watch has about 9).
 FEWEST_JUDGED = 6
 # The hit after the watch, well under the skeever's health of about 15, and how long both games are watched after it.
 HIT = 5.0
 AFTER_HIT = 4.0
+# The looks that have the body on its feet.
+STANDING = ('raised', 'up')
 
 
 def ahead_of(target, distance):
@@ -54,31 +64,39 @@ def marker_at(target, spot):
     return marker
 
 
-def place_dead_skeever(target):
-    """A skeever that game places 200 units ahead of its player, at that spot from the start, and kills; returns its form id, or None.
+def place_dead_creature(target, base=SKEEVER):
+    """A creature (a skeever unless told) that game places 200 units ahead of its player, at that spot from the start, and kills; returns its form id, or None.
 
     Placed where it stays, its copy in the other game falls where this game's body lies."""
     spot = ahead_of(target, 200.0)
     marker = marker_at(target, spot) if spot else None
-    skeever = form_id(papyrus(target, 'ObjectReference', 'PlaceAtMe', [{'form': SKEEVER}, 1, False, False], marker)) if marker else None
-    if not skeever:
+    creature = form_id(papyrus(target, 'ObjectReference', 'PlaceAtMe', [{'form': base}, 1, False, False], marker)) if marker else None
+    if not creature:
         return None
     time.sleep(4)
-    papyrus(target, 'Actor', 'DamageActorValue', ['Health', 10000.0], skeever)
+    papyrus(target, 'Actor', 'DamageActorValue', ['Health', 10000.0], creature)
     papyrus(target, 'ObjectReference', 'Disable', [False], marker)
-    return skeever
+    return creature
 
 
 def state(target, form):
-    """'raised', 'dead', 'up' or 'gone' for an actor in that game; gone when it is switched off, has no 3D, or is no longer there."""
+    """'raised', 'dead', 'up' or 'gone' for an actor in that game; gone when it is switched off, has no 3D, or is no longer there; dead when it lies, commanded or not."""
     if papyrus(target, 'ObjectReference', 'IsDisabled', [], form) is not False:
         return 'gone'
     if papyrus(target, 'ObjectReference', 'Is3DLoaded', [], form) is False:
         return 'gone'
-    if papyrus(target, 'Actor', 'IsCommandedActor', [], form) is True:
-        return 'raised'
     dead = papyrus(target, 'Actor', 'IsDead', [], form)
-    return 'dead' if dead is True else 'up' if dead is False else 'gone'
+    if dead is True:
+        return 'dead'
+    if dead is not False:
+        return 'gone'
+    return 'raised' if papyrus(target, 'Actor', 'IsCommandedActor', [], form) is True else 'up'
+
+
+def hostile_to_player(target, form):
+    """Whether an actor in that game is hostile to that game's player, or None when it cannot be read."""
+    hostile = papyrus(target, 'Actor', 'IsHostileToActor', [{'form': '0x14'}], form)
+    return hostile if isinstance(hostile, bool) else None
 
 
 def health_of(target, form):
@@ -141,16 +159,6 @@ def raise_body(caster, body):
     return True
 
 
-def wait_for(test, seconds):
-    """Waits until a test holds or the time runs out; returns whether it held."""
-    end = time.time() + seconds
-    while time.time() < end:
-        if test():
-            return True
-        time.sleep(0.5)
-    return False
-
-
 def say_log_lines(target, offset, forms):
     """Prints the log lines since an offset that speak of a death or a life, or of one of the forms."""
     wanted = [f.upper().replace('0X', '') for f in forms]
@@ -159,24 +167,45 @@ def say_log_lines(target, offset, forms):
             print('   %s: %s' % (target['name'], line.strip()[:230]), flush=True)
 
 
-def raise_flat_body(flat, vr):
-    """Places a dead skeever in the flat game and raises its copy from the VR game.
+def base_of(target, form):
+    """The form id of an actor's base in that game, or None."""
+    return form_id(papyrus(target, 'Actor', 'GetActorBase', [], form))
 
-    Returns (skeever, copy, cast time), or the reason the try is invalid."""
-    skeever = place_dead_skeever(flat)
+
+def dead_copy_near(target, at, owner, body):
+    """Waits up to 10 s for that game's dead copy of a body another game runs, near where that game has it; returns (form id or None, whether it is dead).
+
+    The owner's player's copy is left out, and so are actors switched off nearby or of another creature: bodies of earlier tries.
+    A copy that has no 3D yet is waited for."""
+    body_base = base_of(owner, body)
+    owner_player_copy = nearest_temporary_actor(target, position(owner) or [0, 0, 0], 150.0)
+    leave_out = [owner_player_copy] if owner_player_copy else []
+    found = None
+    end = time.time() + 10.0
+    while time.time() < end:
+        found = nearest_temporary_actor(target, at, 300.0, leave_out)
+        look = state(target, found) if found else None
+        if look and base_of(target, found) != body_base:
+            leave_out.append(found)
+        elif look == 'dead':
+            return found, True
+        elif look == 'gone' and papyrus(target, 'ObjectReference', 'IsDisabled', [], found) is True:
+            leave_out.append(found)
+        time.sleep(0.5)
+    return found, False
+
+
+def raise_flat_body(flat, vr, base=SKEEVER):
+    """Places a dead creature (a skeever unless told) in the flat game and raises its copy from the VR game.
+
+    Returns (the flat game's body, copy, cast time), or the reason the try is invalid."""
+    skeever = place_dead_creature(flat, base)
     at = position(flat, skeever) if skeever else None
     if not at:
         return 'the flat game placed no skeever'
-    flat_player_copy = nearest_temporary_actor(vr, position(flat) or [0, 0, 0], 150.0)
-    copy = None
-
-    def copy_is_dead():
-        nonlocal copy
-        copy = copy or nearest_temporary_actor(vr, at, 300.0, [flat_player_copy] if flat_player_copy else [])
-        return bool(copy) and state(vr, copy) == 'dead'
-
     vr_offset = log_size(vr)
-    if not wait_for(copy_is_dead, 10.0):
+    copy, dead = dead_copy_near(vr, at, flat, skeever)
+    if not dead:
         return 'the VR game shows no dead copy of the flat game\'s skeever %s (copy %s)' % (skeever, copy)
     if re.search(r'GAINED OWNERSHIP OF ACTOR \S+ \(FORM %s\)' % copy.upper().replace('0X', ''), log_since(vr, vr_offset).upper()):
         return 'the VR game took the skeever over; the flat game must run it, as the host\'s game did'
@@ -194,19 +223,12 @@ def raise_own_body(caster, other):
     """Places a dead skeever in the caster's game, which then runs that body while the other game shows a copy, and the caster's player raises it.
 
     Returns (the caster's skeever, the other game's copy, cast time), or the reason the try is invalid."""
-    skeever = place_dead_skeever(caster)
+    skeever = place_dead_creature(caster)
     at = position(caster, skeever) if skeever else None
     if not at:
         return 'the %s game placed no skeever' % caster['name']
-    caster_copy = nearest_temporary_actor(other, position(caster) or [0, 0, 0], 150.0)
-    copy = None
-
-    def copy_is_dead():
-        nonlocal copy
-        copy = copy or nearest_temporary_actor(other, at, 300.0, [caster_copy] if caster_copy else [])
-        return bool(copy) and state(other, copy) == 'dead'
-
-    if not wait_for(copy_is_dead, 10.0):
+    copy, dead = dead_copy_near(other, at, caster, skeever)
+    if not dead:
         return 'the %s game shows no dead copy of the %s game\'s skeever %s (copy %s)' % (other['name'], caster['name'], skeever, copy)
     print('   %s skeever %s, its copy in %s %s, both dead' % (caster['name'], skeever, other['name'], copy), flush=True)
 
@@ -217,20 +239,24 @@ def raise_own_body(caster, other):
     return skeever, copy, time.time()
 
 
-def judge(looks, after_hit):
-    """The checks on one try's looks: the reason when they judge nothing, else a list of (name, ok, detail)."""
-    if not any(v in ('raised', 'up') or f in ('raised', 'up') for _, v, f, _, _ in looks):
+def judge(looks, after_hit, owner_is_vr):
+    """The checks on one try's looks: the reason when they judge nothing, else a list of (name, ok, detail).
+
+    owner_is_vr: the VR game runs the body, else the flat game does."""
+    if not any(v in STANDING or f in STANDING for _, v, f, _, _ in looks):
         return 'the skeever got up in neither game: the spell did not take'
     judged = [look for look in looks if look[0] >= SETTLE]
     if len(judged) < FEWEST_JUDGED:
         return 'only %d looks after the first %.0f s: DevBench stalled' % (len(judged), SETTLE)
     low = [(t, hv, hf) for t, _, _, hv, hf in judged if (hv is not None and hv <= 0) or (hf is not None and hf <= 0)]
     looks_after_hit = sorted({'%s/%s' % (v, f) for _, v, f, _, _ in after_hit})
+    lying = [(t, v, f) for t, v, f, _, _ in judged if v not in STANDING or f not in STANDING]
     return [
-        ('the raised skeever stays up in the caster\'s game', all(v == 'raised' for _, v, _, _, _ in judged), ', '.join(sorted({v for _, v, _, _, _ in judged}))),
-        ('both games show the raised skeever the same way', all(v == f for _, v, f, _, _ in judged), '%d of %d looks differ' % (sum(v != f for _, v, f, _, _ in judged), len(judged))),
+        ('the raised skeever stands in both games', not lying, ('%d of %d looks; first at %.1f s: VR %s, flat %s' % ((len(lying), len(judged)) + lying[0])) if lying else 'standing in %d looks' % len(judged)),
+        ('the game that runs it has it raised', any((v if owner_is_vr else f) == 'raised' for _, v, f, _, _ in judged),
+         'the %s game, which runs it: %s' % ('VR' if owner_is_vr else 'flat', ', '.join(sorted({(v if owner_is_vr else f) for _, v, f, _, _ in judged})))),
         ('the raised skeever keeps health in both games', not low, ('first at %.1f s: VR %s, flat %s' % low[0]) if low else 'above 0 in %d looks' % len(judged)),
-        ('one light hit does not end it in either game', bool(after_hit) and all(v == 'raised' and f == 'raised' for _, v, f, _, _ in after_hit),
+        ('one light hit does not end it in either game', bool(after_hit) and all(v in STANDING and f in STANDING for _, v, f, _, _ in after_hit),
          ', '.join(looks_after_hit) or 'no look after the hit'),
     ]
 
@@ -266,9 +292,13 @@ def one_try(flat, vr, number, hit_after, own_body, caster_is_flat):
         papyrus(hit_game, 'Actor', 'DamageActorValue', ['Health', HIT], hit_form)
         after_hit = watch(flat, vr, bodies, cast_at, WATCH)
         looks = before_hit + after_hit
+        # Timed from the cast: the looks before the body got up say nothing of the hit.
+        after_hit = [look for look in after_hit if look[0] >= SETTLE]
+    hostile = (hostile_to_player(vr, bodies[1]), hostile_to_player(flat, bodies[0]))
 
     say_looks('after the raise, VR/flat (VR health, flat health)', looks)
     say_looks('after a hit of %.0f in the %s game' % (HIT, hit_game['name']), after_hit)
+    print('   hostile to that game\'s player at the end of the watch (not judged): VR %s, flat %s' % hostile, flush=True)
     say_log_lines(flat, flat_offset, [skeever])
     say_log_lines(vr, vr_offset, [copy])
 
@@ -277,7 +307,33 @@ def one_try(flat, vr, number, hit_after, own_body, caster_is_flat):
         papyrus(vr, 'ObjectReference', 'Disable', [False], copy)
     else:
         papyrus(flat, 'ObjectReference', 'Disable', [False], skeever)
-    return judge(looks, after_hit)
+    return judge(looks, after_hit, own_body and not caster_is_flat)
+
+
+def strong_try(flat, vr, number):
+    """The VR player raises the copy of a bear the flat game runs, too strong for Raise Zombie: the reason when the try is invalid, else its checks."""
+    print('-- try %d: a bear (level 12) against Raise Zombie (level 6)' % number, flush=True)
+    vr_offset = log_size(vr)
+    raised = raise_flat_body(flat, vr, BEAR)
+    if isinstance(raised, str):
+        return raised
+    bear, copy, cast_at = raised
+    looks = watch(flat, vr, [bear, copy], cast_at, WATCH)
+    say_looks('after the raise, VR/flat (VR health, flat health)', looks)
+    vr_log = log_since(vr, vr_offset).upper()
+    short = copy.upper().replace('0X', '')
+    refused = ('RAISE ON COPY %s IS REFUSED BY THE GAME HERE' % short) in vr_log
+    sent = ('RAISE ON COPY %s IS SENT TO ITS OWNER' % short) in vr_log
+    papyrus(flat, 'ObjectReference', 'Disable', [False], bear)
+    judged = [look for look in looks if look[0] >= SETTLE]
+    # A build without these log lines shows the raise only by the bear getting up.
+    if not refused and not sent and not any(v != 'dead' or f != 'dead' for _, v, f, _, _ in judged):
+        return 'no sign that the spell reached the copy %s' % copy
+    risen = [(t, v, f) for t, v, f, _, _ in judged if v != 'dead' or f != 'dead']
+    return [
+        ('the VR game refuses the raise and sends nothing', refused and not sent, 'refused here' if refused else 'sent to the flat game' if sent else 'no log line of the refusal'),
+        ('the bear stays dead in both games', not risen, ('first at %.1f s: VR %s, flat %s' % risen[0]) if risen else 'dead in %d looks' % len(judged)),
+    ]
 
 
 def main():
@@ -287,6 +343,7 @@ def main():
     parser.add_argument('--hit-after', type=float, default=None, help='seconds after the cast for the hit; by default it comes once the watch is over')
     parser.add_argument('--own-body', action='store_true', help='the caster\'s game runs the body it raises')
     parser.add_argument('--caster', choices=('vr', 'flat'), default='vr', help='with --own-body: which game\'s player raises its own body')
+    parser.add_argument('--strong', action='store_true', help='the body is a bear, too strong for the spell: raised in neither game')
     options = parser.parse_args()
 
     flat, vr = flat_game(), vr_game()
@@ -299,7 +356,10 @@ def main():
 
     results = []
     for number in range(1, options.tries + 1):
-        checks = one_try(flat, vr, number, options.hit_after, options.own_body, options.caster == 'flat')
+        if options.strong:
+            checks = strong_try(flat, vr, number)
+        else:
+            checks = one_try(flat, vr, number, options.hit_after, options.own_body, options.caster == 'flat')
         if isinstance(checks, str):
             print('   try %d INVALID: %s' % (number, checks), flush=True)
             continue

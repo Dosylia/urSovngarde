@@ -751,7 +751,8 @@ void Actor::SetCommandingActor(BSPointerHandle<TESObjectREFR> aCommandingActor) 
 
 /**
  * Whether a spell is raising this body: dead, and already commanded by the one who raised it.
- * The game counts a raised body dead for its first moments; a copy raised by a relayed spell stays so while it is up.
+ * The game counts a raised body dead for its first moments.
+ * A raise starts only in the game that runs the body (MagicTarget::IsRaiseOnCopy), so a copy is being raised only when this game ran it as the raise began.
  * A copy of another player's summon is commanded by this game's own mark (ActorExtension::CommandedAsSummonCopy), which says nothing of a raise.
  *
  * @return True while the body is dead and commanded by a spell.

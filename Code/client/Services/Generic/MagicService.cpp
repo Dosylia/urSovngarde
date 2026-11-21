@@ -553,6 +553,13 @@ void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
         return;
     }
 
+    // A raise from another game on a copy here is its owner's game's to run; the copy gets up when that game says it lives.
+    if (MagicTarget::IsRaiseOnCopy(pActor, pEffect))
+    {
+        spdlog::info("Magic: a raise from another game on copy {:X} is not run here; the copy gets up when its owner's game raises it", pActor->formID);
+        return;
+    }
+
     MagicTarget::AddTargetData data{};
     data.pCaster = pCaster;
     data.pSpell = pSpell;
