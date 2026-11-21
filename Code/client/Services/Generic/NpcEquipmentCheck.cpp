@@ -2,6 +2,7 @@
 
 #include <Services/Generic/NpcEquipmentCheck.h>
 
+#include <Services/NpcEquipmentQueue.h>
 #include <World.h>
 #include <Components.h>
 #include <Services/TransportService.h>
@@ -15,19 +16,20 @@
 
 namespace
 {
-struct PendingCheck
-{
-    uint32_t FormId{};
-    uint32_t ServerId{};
-    uint32_t OwnershipEpoch{};
-    Inventory Sent{};
-    std::chrono::steady_clock::time_point Due{};
-    uint32_t ChecksLeft{};
-    std::chrono::steady_clock::time_point SentAt{};
-    bool Undone{};
-};
-TiltedPhoques::Vector<PendingCheck> s_pending;
+// The first check after a change, and the second after the first.
+constexpr auto kFirstCheckAfter = std::chrono::seconds(1);
+constexpr auto kSecondCheckAfter = std::chrono::seconds(2);
+constexpr uint32_t kChecksPerChange = 2;
 
+// The checks waiting, oldest first.
+TiltedPhoques::Vector<NpcEquipmentQueue::PendingCheck> s_pending;
+
+/**
+ * Find the shield an equipment list has worn.
+ *
+ * @param acInventory The equipment list.
+ * @return The shield, or null when none is worn or it is not loaded in this game.
+ */
 TESObjectARMO* WornShield(const Inventory& acInventory) noexcept
 {
     auto& modSystem = World::Get().GetModSystem();
@@ -45,6 +47,14 @@ TESObjectARMO* WornShield(const Inventory& acInventory) noexcept
 
 namespace NpcEquipmentCheck
 {
+/**
+ * Check whether two equipment lists hold the same items, worn in the same hands, with the same spells.
+ * Charges and other extra data are not compared.
+ *
+ * @param acLhs One equipment list.
+ * @param acRhs The other equipment list.
+ * @return True when both list the same items in the same order, worn the same way, with the same magic equipment.
+ */
 bool HasSameWornItems(const Inventory& acLhs, const Inventory& acRhs) noexcept
 {
     if (acLhs.Entries.size() != acRhs.Entries.size() || !(acLhs.CurrentMagicEquipment == acRhs.CurrentMagicEquipment))
@@ -61,21 +71,43 @@ bool HasSameWornItems(const Inventory& acLhs, const Inventory& acRhs) noexcept
     return true;
 }
 
+/**
+ * Check whether an equipment list has an item worn, in either hand or as armor.
+ *
+ * @param acInventory The equipment list.
+ * @param acItemId The item, as the server names it.
+ * @return True when the list has that item worn.
+ */
 bool IsWorn(const Inventory& acInventory, const GameId& acItemId) noexcept
 {
     return std::any_of(acInventory.Entries.begin(), acInventory.Entries.end(), [&acItemId](const Inventory::Entry& acEntry) { return acEntry.BaseId == acItemId && acEntry.IsWorn(); });
 }
 
+/**
+ * Queue two checks of what a local NPC wears after one of its equipment changes is sent: 1 s and 3 s later.
+ * A difference from what was sent goes out as an equipment snapshot.
+ * A check already waiting for that NPC is merged into the new one, so a change the game undid at once is not lost (NpcEquipmentQueue::Queue).
+ *
+ * @param aFormId The NPC's form id in this game.
+ * @param aServerId The NPC's id on the server.
+ * @param aOwnershipEpoch The ownership epoch the change was sent with.
+ * @param acSent The equipment sent with the change.
+ * @param aUndone True when the change was already undone when it was sent, so the first check sends what the NPC wears whatever it finds.
+ */
 void Note(const uint32_t aFormId, const uint32_t aServerId, const uint32_t aOwnershipEpoch, const Inventory& acSent, const bool aUndone) noexcept
 {
     const auto cNow = std::chrono::steady_clock::now();
-    s_pending.erase(std::remove_if(s_pending.begin(), s_pending.end(), [aFormId](const PendingCheck& acCheck) { return acCheck.FormId == aFormId; }), s_pending.end());
-    // A bound for a fight with many NPCs changing gear at once: the oldest checks go first.
-    if (s_pending.size() >= 256)
-        s_pending.erase(s_pending.begin());
-    s_pending.push_back({aFormId, aServerId, aOwnershipEpoch, acSent, cNow + std::chrono::seconds(1), 2, cNow, aUndone});
+    NpcEquipmentQueue::Queue(s_pending, {aFormId, aServerId, aOwnershipEpoch, acSent, cNow + kFirstCheckAfter, kChecksPerChange, cNow, aUndone});
 }
 
+/**
+ * Run the checks that are due, and send an equipment snapshot for each NPC that wears other items than were sent or had a change undone.
+ * A check is dropped when its NPC is no longer this game's at the same epoch, and all are dropped while not connected.
+ * Called every frame.
+ *
+ * @param aWorld The world, for the NPCs this game owns.
+ * @param aTransport The connection the snapshots are sent through.
+ */
 void Run(World& aWorld, TransportService& aTransport) noexcept
 {
     if (s_pending.empty())
@@ -134,11 +166,18 @@ void Run(World& aWorld, TransportService& aTransport) noexcept
             it = s_pending.erase(it);
             continue;
         }
-        it->Due = cNow + std::chrono::seconds(2);
+        it->Due = cNow + kSecondCheckAfter;
         ++it;
     }
 }
 
+/**
+ * Make an NPC's copy wear the shield its owner wears, or none, from an equipment snapshot.
+ * A shield the copy lacks is added to its inventory first; when that fails, the copy keeps its own.
+ *
+ * @param apActor The copy.
+ * @param acOwnerEquipment The equipment its owner's game sent.
+ */
 void ApplyShield(Actor* apActor, const Inventory& acOwnerEquipment) noexcept
 {
     TESObjectARMO* pWanted = WornShield(acOwnerEquipment);
