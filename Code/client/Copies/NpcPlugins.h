@@ -4,6 +4,11 @@
 // Two games without the same ones roll different creatures and people in the same places.
 namespace NpcPlugins
 {
-//! Read from the game's loaded records once, then kept; empty when they could not be read.
+/**
+ * List the plugins that add or change NPCs or levelled NPC lists, sorted by name.
+ * Read from the game's loaded records on the first call, then kept; nothing is listed when a read faults.
+ *
+ * @return The plugins' file names; empty when the game's records could not be read.
+ */
 const Vector<String>& Get() noexcept;
 } // namespace NpcPlugins
