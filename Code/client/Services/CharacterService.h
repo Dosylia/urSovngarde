@@ -130,6 +130,12 @@ struct CharacterService
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
 
 #ifdef SKYRIMVR
+    /**
+     * Take the health off the dead bodies near the player, and lay down one that has stood still over two looks.
+     * A dead body with health gets back up, and stands with no ragdoll while the game still lets a player search it; a save keeps it so.
+     * A body a spell is raising is left alone: it counts as dead for its first moments, with the health the spell gave it back.
+     * From the start of a frame on the main thread: no job is rebuilding a body then.
+     */
     void LayDownStandingBodies() noexcept;
 #endif
     //! Switches off the removed copies queued since the last frame; called on the main thread at the start of a frame.

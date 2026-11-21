@@ -251,10 +251,17 @@ struct Actor : TESObjectREFR
     bool InitiateMountPackage(Actor* apMount) noexcept;
     void GenerateMagicCasters() noexcept;
     void DispelAllSpells(bool aNow = false) noexcept;
-    void Reset() noexcept;
     //! Kills it; a copy dies even when protected or essential, since its owner's game decided.
     //! A protected NPC this game owns dies only with this game's player as the killer.
     void Kill(Actor* apKiller = nullptr) noexcept;
+    /**
+     * Bring a dead actor back to life where it lies, with its inventory and its 3D kept.
+     * The game's own Resurrect is called with its 3D attached, on flat and VR alike.
+     * No Reset follows: it unloads the actor, and a copy unloaded that way is removed, announced again and comes back dead, over and over.
+     * A body a spell is raising (IsBeingRaised) is left to its spell: the game's Resurrect ends every spell on the body, and a raise that ends turns it to ash.
+     * Such a body only gets the health a revival would give, if it has none: a copy's health follows its owner's only as that changes.
+     * A copy resurrected here is then watched until its revival lasts (ActorValueService::WatchCopyRevival).
+     */
     void Respawn() noexcept;
     void PickUpObject(TESObjectREFR* apObject, int32_t aCount, bool aUnk1, float aUnk2) noexcept;
     void DropObject(TESBoundObject* apObject, ExtraDataList* apExtraData, int32_t aCount, NiPoint3* apLocation, NiPoint3* apRotation) noexcept;
@@ -301,6 +308,14 @@ struct Actor : TESObjectREFR
     //! The game sets it again from the base and the quests before each kill.
     bool IsProtected() const noexcept { return flags2 & ActorFlags::IS_PROTECTED; }
     bool IsCommandedActor() const noexcept { return flags2 & ActorFlags::IS_COMMANDED_ACTOR; }
+    /**
+     * Whether a spell is raising this body: dead, and already commanded by the one who raised it.
+     * The game counts a raised body dead for its first moments; a copy raised by a relayed spell stays so while it is up.
+     * A copy of another player's summon is commanded by this game's own mark (ActorExtension::CommandedAsSummonCopy), which says nothing of a raise.
+     *
+     * @return True while the body is dead and commanded by a spell.
+     */
+    [[nodiscard]] bool IsBeingRaised() const noexcept;
     //! This game's player's follower (Actor::boolBits kPlayerTeammate, bit 26; flags1 is boolBits).
     bool IsPlayerTeammate() const noexcept { return (flags1 & (1u << 26)) != 0; }
     //! This player's follower: a teammate in the game's CurrentFollowerFaction, which is what the game's and the frameworks' follower quests give her.

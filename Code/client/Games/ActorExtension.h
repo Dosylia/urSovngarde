@@ -45,6 +45,9 @@ struct ActorExtension
     //! Its owner's game, this one or another, revived it since its last death, as this game last heard.
     //! An announcement from here carries it (CharacterService::BuildActorData).
     bool RevivedSinceDeath = false;
+    //! A copy of another player's summon, marked here as commanded by this game's player so it turns on no one.
+    //! That mark is ours, not a spell's, so it does not mean a spell is raising the body (Actor::IsBeingRaised).
+    bool CommandedAsSummonCopy = false;
 
     // TODO: atomic? bool instead? maybe simplify to `IsReenabling()` ?
     // Protects discovery while rebuilding a leveled NPC.

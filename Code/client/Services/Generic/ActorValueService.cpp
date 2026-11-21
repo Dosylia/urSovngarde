@@ -177,6 +177,10 @@ bool IsAliveAtOwner(const uint32_t aFormId) noexcept
     return it && !view.get<RemoteComponent>(*it).DeadAtOwner;
 }
 
+/**
+ * Look again at each copy revived in the last moments, and revive it again if it is dead while its owner has it alive.
+ * A copy stops being watched once it lives, its tries are used up, its owner has it dead, or a spell raises it (Actor::IsBeingRaised).
+ */
 void RunCopyRevivals() noexcept
 {
     const auto cNow = std::chrono::steady_clock::now();
@@ -190,7 +194,7 @@ void RunCopyRevivals() noexcept
 
         Actor* pActor = Cast<Actor>(TESForm::GetById(it->first));
         const ActorExtension* pExtension = pActor ? pActor->GetExtension() : nullptr;
-        if (!pExtension || !pExtension->IsRemote() || !pActor->IsDead() || it->second.TriesLeft == 0 || !IsAliveAtOwner(pActor->formID))
+        if (!pExtension || !pExtension->IsRemote() || !pActor->IsDead() || it->second.TriesLeft == 0 || !IsAliveAtOwner(pActor->formID) || pActor->IsBeingRaised())
         {
             it = s_copyRevivals.erase(it);
             continue;
@@ -199,7 +203,7 @@ void RunCopyRevivals() noexcept
         pActor->Respawn();
         it.value().CheckAt = cNow + 1s;
         --it.value().TriesLeft;
-        spdlog::info("Death sync: remote actor {:X} fell dead again after its revival; revived again, {} tries left", pActor->formID, it->second.TriesLeft);
+        spdlog::info("Death sync: remote actor {:X} is dead again after its revival; revival asked again, {} tries left", pActor->formID, it->second.TriesLeft);
         ++it;
     }
 }

@@ -60,7 +60,9 @@ protected:
      */
     void DetectGridCellChange(TESWorldSpace* aWorldSpace, bool aNewCellGrid) noexcept;
     /**
-     * @brief Dispatches (un)loaded actors.
+     * Find the actors that came into the loaded area and those that left it, and dispatch an added or removed event for each.
+     * An actor that left waits out a grace period, except another player's copy whose 3D is gone, which counts as gone at once.
+     * A copy this game moved in the last two seconds is not taken for gone at once either, as a move can take its 3D for a moment.
      */
     void VisitForms() noexcept;
 

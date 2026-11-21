@@ -2389,6 +2389,13 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 
     spdlog::info("Spawn Request Is summon {}", acMessage.IsPlayerSummon);
 
+    // Taken from every spawn, as a reference of the game's own can be a summon's copy once and not the next time.
+    // A body a relayed spell is raising stays that spell's (Actor::IsBeingRaised), whatever its owner calls it.
+    // The old mark is cleared first, as IsBeingRaised reads it.
+    ActorExtension* pSpawnedExtension = pActor->GetExtension();
+    pSpawnedExtension->CommandedAsSummonCopy = false;
+    const bool cRaisedHere = pActor->IsBeingRaised();
+    pSpawnedExtension->CommandedAsSummonCopy = acMessage.IsPlayerSummon && !cRaisedHere;
     if (acMessage.IsPlayerSummon)
     {
         // Prevents remote summons agroing other players.
@@ -4779,9 +4786,12 @@ void CharacterService::RunWeaponTouch() noexcept {}
 #endif
 
 #ifdef SKYRIMVR
-// A dead body with health gets back up, and stands with no ragdoll while the game still lets a player search it.
-// A save keeps it so, so this takes the health off any body near, and lays down one that has stood still over two looks.
-// From the start of a frame on the main thread: no job is rebuilding a body then.
+/**
+ * Take the health off the dead bodies near the player, and lay down one that has stood still over two looks.
+ * A dead body with health gets back up, and stands with no ragdoll while the game still lets a player search it; a save keeps it so.
+ * A body a spell is raising is left alone: it counts as dead for its first moments, with the health the spell gave it back.
+ * From the start of a frame on the main thread: no job is rebuilding a body then.
+ */
 void CharacterService::LayDownStandingBodies() noexcept
 {
     constexpr float cStandingHeight = 50.f; // a pelvis over the feet: about 60 standing, up to 43 lying on a slope
@@ -4818,7 +4828,7 @@ void CharacterService::LayDownStandingBodies() noexcept
         Actor* pActor = Cast<Actor>(TESForm::GetById(m_world.get<FormIdComponent>(cEntity).Id));
         if (!pActor || pActor == pPlayer || !pActor->GetNiNode())
             continue;
-        if (glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) > cNearPlayer || !pActor->IsDead())
+        if (glm::distance(glm::vec3(pActor->position), glm::vec3(pPlayer->position)) > cNearPlayer || !pActor->IsDead() || pActor->IsBeingRaised())
             continue;
         if (seen++ < s_skip)
             continue;

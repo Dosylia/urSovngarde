@@ -239,6 +239,11 @@ void DiscoveryService::DetectGridCellChange(TESWorldSpace* aWorldSpace, bool aNe
     m_worldSpaceId = worldSpaceId;
 }
 
+/**
+ * Find the actors that came into the loaded area and those that left it, and dispatch an added or removed event for each.
+ * An actor that left waits out a grace period, except another player's copy whose 3D is gone, which counts as gone at once.
+ * A copy this game moved in the last two seconds is not taken for gone at once either, as a move can take its 3D for a moment.
+ */
 void DiscoveryService::VisitForms() noexcept
 {
     // Actors briefly lose their 3D when crossing the edge of the loaded cells (a circling dragon does it every few seconds).

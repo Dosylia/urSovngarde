@@ -24,9 +24,9 @@
 #include <Events/DialogueEvent.h>
 #include <Games/Misc/MenuTopicManager.h>
 #include <Events/HitEvent.h>
+#include <Services/ActorValueService.h>
 #ifdef SKYRIMVR
 #include <Games/Skyrim/VR/VRBodySync.h>
-#include <Services/ActorValueService.h>
 #include <Services/CalendarService.h>
 #endif
 #include <Events/RemoveSpellEvent.h>
@@ -744,6 +744,20 @@ void Actor::SetCommandingActor(BSPointerHandle<TESObjectREFR> aCommandingActor) 
     }
 }
 
+/**
+ * Whether a spell is raising this body: dead, and already commanded by the one who raised it.
+ * The game counts a raised body dead for its first moments; a copy raised by a relayed spell stays so while it is up.
+ * A copy of another player's summon is commanded by this game's own mark (ActorExtension::CommandedAsSummonCopy), which says nothing of a raise.
+ *
+ * @return True while the body is dead and commanded by a spell.
+ */
+bool Actor::IsBeingRaised() const noexcept
+{
+    const ActorExtension* pExtension = const_cast<Actor*>(this)->GetExtension();
+    const bool cCommandedBySpell = IsCommandedActor() && !(pExtension && pExtension->CommandedAsSummonCopy);
+    return cCommandedBySpell && IsDead();
+}
+
 bool Actor::IsPlayerSummon() const noexcept
 {
     const Actor* pCommandingActor = GetCommandingActor();
@@ -1197,37 +1211,41 @@ void Actor::Kill(Actor* apKiller) noexcept
     */
 }
 
-void Actor::Reset() noexcept
-{
-    using ObjectReference = TESObjectREFR;
-
-    PAPYRUS_FUNCTION(void, ObjectReference, Reset, int, TESObjectREFR*);
-
-    s_pReset(this, 0, nullptr);
-}
-
 bool Actor::PlayIdle(TESIdleForm* apIdle) noexcept
 {
     PAPYRUS_FUNCTION(bool, Actor, PlayIdle, TESIdleForm*);
     return s_pPlayIdle(this, apIdle);
 }
 
+/**
+ * Bring a dead actor back to life where it lies, with its inventory and its 3D kept.
+ * The game's own Resurrect is called with its 3D attached, on flat and VR alike.
+ * No Reset follows: it unloads the actor, and a copy unloaded that way is removed, announced again and comes back dead, over and over.
+ * A body a spell is raising (IsBeingRaised) is left to its spell: the game's Resurrect ends every spell on the body, and a raise that ends turns it to ash.
+ * Such a body only gets the health a revival would give, if it has none: a copy's health follows its owner's only as that changes.
+ * A copy resurrected here is then watched until its revival lasts (ActorValueService::WatchCopyRevival).
+ */
 void Actor::Respawn() noexcept
 {
+    if (IsBeingRaised())
+    {
+        if (GetActorValue(ActorValueInfo::kHealth) <= 0.f)
+            ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, GetActorPermanentValue(ActorValueInfo::kHealth));
+        spdlog::info("Revive: {:X} is raised by a spell; not resurrected, as that would end the spell and turn it to ash (health now {:.0f})", formID,
+                     GetActorValue(ActorValueInfo::kHealth));
+        return;
+    }
+
     RecentModelChanges::Note(this, RecentModelChanges::Kind::Revived);
     EmptyHandsOfStrayExtraData("its item does not hold, before its revival");
-#ifdef SKYRIMVR
-    // Resurrect(resetInventory, attach3D) = SE 36331, by address like KillImpl above.
-    // No Reset here: it unloads the actor, and a copy announced again that way comes back dead.
+    // Resurrect(resetInventory, attach3D): Anniversary Edition 37321 on flat, SE 36331 for VR (VRAddressOverrides.h).
     TP_THIS_FUNCTION(TResurrect, void, Actor, bool aResetInventory, bool aAttach3D);
-    POINTER_SKYRIMSE(TResurrect, s_resurrect, 0, 36331);
-    TiltedPhoques::ThisCall(s_resurrect, this, false, true);
+    POINTER_SKYRIMSE(TResurrect, s_resurrect, 37321, 36331);
+    constexpr bool cResetInventory = false;
+    constexpr bool cAttach3D = true;
+    TiltedPhoques::ThisCall(s_resurrect, this, cResetInventory, cAttach3D);
     if (const ActorExtension* pExtension = GetExtension(); pExtension && pExtension->IsRemote())
         ActorValueService::WatchCopyRevival(formID);
-    return;
-#endif
-    Resurrect(false);
-    Reset();
 }
 
 bool Actor::IsVampireLord() const noexcept
