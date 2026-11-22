@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Misc/IMovementState.h>
+#include <Games/LifeStates.h>
 
 struct ActorState : IMovementState
 {
@@ -34,11 +35,25 @@ struct ActorState : IMovementState
     //! Drawn, or on its way back: the weapon is in the hand.
     bool IsWeaponInHand() const noexcept { return GetWeaponState() >= WeaponState::Drawn && GetWeaponState() <= WeaponState::Sheathing; }
 
-    bool IsBleedingOut() const noexcept { return (flags1 & 0x1E00000) == 0x1000000 || (flags1 & 0x1E00000) == 0xE00000; }
+    /**
+     * Read the life state out of a flags1 word, this actor's or one recorded or received.
+     *
+     * @param aFlags1 The flags1 word.
+     * @return Its life state, bits 21-24 (LifeStates names them).
+     */
+    static uint32_t LifeStateOf(const uint32_t aFlags1) noexcept { return (aFlags1 >> 21) & 0xF; }
 
-    // Life state (bits 21-24): 1 dying, 2 dead.
-    bool IsDying() const noexcept { return (flags1 & 0x1E00000) == 0x200000; }
-    bool IsDead() const noexcept { return (flags1 & 0x1E00000) == 0x400000; }
+    /**
+     * Read this actor's life state.
+     *
+     * @return Its life state (LifeStates names them).
+     */
+    uint32_t LifeState() const noexcept { return LifeStateOf(flags1); }
+
+    bool IsBleedingOut() const noexcept { return LifeState() == LifeStates::kBleedout || LifeState() == LifeStates::kEssentialDown; }
+
+    bool IsDying() const noexcept { return LifeState() == LifeStates::kDying; }
+    bool IsDead() const noexcept { return LifeState() == LifeStates::kDead; }
     //! FLY_STATE, bits 18-20 of flags1 (CommonLibVR-NG ActorState1, just below the life state).
     //! In the air unless none (0) or perching (5).
     bool IsFlying() const noexcept

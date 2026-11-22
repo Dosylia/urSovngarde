@@ -142,8 +142,8 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
             // The copy's own state before the owner's was written over it: what the game judged the action on.
             spdlog::info("ReplayDiag: 'bleedOutStop' refused as an action on {:X}; sent to its graph instead ({}); before it the copy had life state {}, knock state {}, "
                          "health {:.0f}; the owner's life state {}",
-                         apActor->formID, cpOutcome, (cOwnStateBefore >> 21) & 0xF, (cOwnStateBefore >> 25) & 0x7,
-                         apActor->GetActorValue(ActorValueInfo::kHealth), (first.State1 >> 21) & 0xF);
+                         apActor->formID, cpOutcome, ActorState::LifeStateOf(cOwnStateBefore), (cOwnStateBefore >> 25) & 0x7,
+                         apActor->GetActorValue(ActorValueInfo::kHealth), ActorState::LifeStateOf(first.State1));
         }
 
         // TEMPORARY: kept to show what state an NPC copy's graph was left in.

@@ -1,0 +1,38 @@
+# Health climbing back in the down's first frame: the player stays down.
+# The game stands a downed player up as soon as health is above zero; the hold must refuse that from the frame the down starts.
+#
+#   python Tools\VR\live-check.py live-down-firstframe
+#   python Tools\VR\live-check.py --expect-fail live-down-firstframe     on a build without the fix: must be RED
+#
+# The player goes down in a party with this bot standing by, so the server waits (Gameplay:uDownedSeconds).
+# Small heals follow the blow back to back, one a frame or so, as a heal still running when the player falls does.
+# The ones before the down only lessen a blow far larger than the health; one lands in the frame after the down sets health to zero.
+log live down firstframe
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 5
+log DO logmark
+
+log -- down, with heals right behind the blow
+log DO console player.damageav health 100000
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+log DO console player.restoreav health 5
+waitfor downstate other down 20
+wait 3
+log CHECK absent PlayerService: the bleedout ended by itself
+log CHECK papyrus Actor IsBleedingOut 14 is true
+
+log -- given up, so the test leaves the player standing
+log DO grip both 3500
+waitfor downstate other respawned 8
+wait 20
+log CHECK game alive

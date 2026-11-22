@@ -954,9 +954,9 @@ void NoteDownedTravel(uint32_t aFormId) noexcept
 
     Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
     const uint32_t cFlags = pActor ? pActor->actorState.flags1 : 0;
-    const uint32_t cLife = (cFlags >> 21) & 0xF;  // ACTOR_LIFE_STATE: 3 unconscious, 7 essential down, 8 bleedout
+    const uint32_t cLife = ActorState::LifeStateOf(cFlags);
     const uint32_t cKnock = (cFlags >> 25) & 0x7; // KNOCK_STATE_ENUM: 0 normal, anything else on the way down or up
-    const bool cDown = pActor && !pActor->actorState.IsDeadOrDying() && (pActor->actorState.IsBleedingOut() || cLife == 3 || cKnock != 0);
+    const bool cDown = pActor && !pActor->actorState.IsDeadOrDying() && (pActor->actorState.IsBleedingOut() || cLife == LifeStates::kUnconscious || cKnock != 0);
     if (!cDown)
     {
         s_down.erase(aFormId);

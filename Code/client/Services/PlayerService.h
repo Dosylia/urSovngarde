@@ -77,6 +77,12 @@ private:
     //! A party member revived the player: back on its feet where it lies, with part of its health.
     void StandUp(uint32_t aReviverId) noexcept;
     /**
+     * Tell whether the player's down holds: down and waiting, with no loaded save and no brawl, which stand the player up on purpose.
+     *
+     * @return True while only a revive, giving up, the end of the wait or a fallen party may end the down.
+     */
+    [[nodiscard]] bool IsDownHeld() const noexcept;
+    /**
      * Take back any health the player gets while down: a level-up, a potion or a healing spell.
      * The game's stand-up that health asks for is refused while the down holds (DownedHold); taken back, the health no longer asks for it.
      * Only a revive, giving up, the end of the wait or a fallen party may end a down; a revive leaves the down first (StandUp), so it is not taken back.

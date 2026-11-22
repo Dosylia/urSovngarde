@@ -530,9 +530,8 @@ void PlayerService::RunRespawnUpdates() noexcept
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     const auto cNow = std::chrono::steady_clock::now();
-    // Only a revive, giving up, the end of the wait or a fallen party may end a down; a loaded save and a brawl stand the player up on purpose.
-    const bool cDownHolds = m_downState == DownState::kDown && !m_saveLoaded && !IsBrawlRunning();
-    DownedHold::Set(cDownHolds);
+    const bool cDownHeld = IsDownHeld();
+    DownedHold::Set(cDownHeld);
 
     if (m_downState == DownState::kUp)
     {
@@ -586,6 +585,9 @@ void PlayerService::RunRespawnUpdates() noexcept
         m_standingUp = false;
         m_saveLoaded = false;
         m_giveUpSince = {};
+        // The hold starts in the same frame as the down.
+        // The game's next update already stands the player up if its health climbs back above zero.
+        DownedHold::Set(IsDownHeld());
         m_transport.Send(PlayerDownedRequest());
         float highest = pPlayer->position.z;
         for (const auto& [cAt, cHeight] : m_heights)
@@ -605,7 +607,7 @@ void PlayerService::RunRespawnUpdates() noexcept
         if (!m_downingCause && cNow >= m_downedAt + cKillingBlow)
             m_downingCause = DowningCause();
 
-        if (cDownHolds)
+        if (cDownHeld)
             KeepDownedHealthAtZero(pPlayer);
         if (!pPlayer->actorState.IsBleedingOut())
         {
@@ -627,8 +629,10 @@ void PlayerService::RunRespawnUpdates() noexcept
             }
 
             // A bleedout that ends by itself cannot be revived any more; the player respawns as it always did.
-            spdlog::info("PlayerService: the bleedout ended by itself {} ms after going down; respawning",
-                         std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count());
+            // The life state says how it ended: 0 stood up, 1 or 2 killed.
+            spdlog::info("PlayerService: the bleedout ended by itself {} ms after going down (life state {}, health {:.0f}); respawning",
+                         std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count(), pPlayer->actorState.LifeState(),
+                         pPlayer->GetActorValue(ActorValueInfo::kHealth));
             StartRespawn(m_ownSafePoint);
         }
         else if (HeldToGiveUp(cNow))
@@ -828,6 +832,16 @@ void PlayerService::StandUp(const uint32_t aReviverId) noexcept
                  std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count(), pPlayer->GetActorValue(ActorValueInfo::kHealth));
     Utils::ShowModHudMessage(who + " revived you");
     VRBanner::Hide();
+}
+
+/**
+ * Tell whether the player's down holds: down and waiting, with no loaded save and no brawl, which stand the player up on purpose.
+ *
+ * @return True while only a revive, giving up, the end of the wait or a fallen party may end the down.
+ */
+bool PlayerService::IsDownHeld() const noexcept
+{
+    return m_downState == DownState::kDown && !m_saveLoaded && !IsBrawlRunning();
 }
 
 /**

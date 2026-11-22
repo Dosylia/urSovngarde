@@ -1790,9 +1790,9 @@ bool TP_MAKE_THISCALL(HookInitiateMountPackage, Actor, Actor* apMount)
         World::Get().GetRunner().Trigger(MountEvent(apThis->formID, apMount->formID));
 
     // TEMPORARY: a horse killed in play could still be ridden (its prompt said "Steal"); what the game had of it when a ride began.
-    if (apMount && pExtension && pExtension->IsLocal() && (((apMount->actorState.flags1 >> 21) & 0xF) != 0 || apMount->GetActorValue(ActorValueInfo::kHealth) <= 0.f))
+    if (apMount && pExtension && pExtension->IsLocal() && (apMount->actorState.LifeState() != LifeStates::kAlive || apMount->GetActorValue(ActorValueInfo::kHealth) <= 0.f))
         spdlog::info("Mount: {:X} starts to ride {:X}, whose life state here is {} (dead {}), health {:.0f}", apThis->formID, apMount->formID,
-                     (apMount->actorState.flags1 >> 21) & 0xF, apMount->IsDead(), apMount->GetActorValue(ActorValueInfo::kHealth));
+                     apMount->actorState.LifeState(), apMount->IsDead(), apMount->GetActorValue(ActorValueInfo::kHealth));
 
     return TiltedPhoques::ThisCall(RealInitiateMountPackage, apThis, apMount);
 }
