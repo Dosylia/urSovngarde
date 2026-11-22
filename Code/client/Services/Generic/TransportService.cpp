@@ -157,6 +157,10 @@ void TransportService::OnConsume(const void* apData, uint32_t aSize)
     m_messageHandlers[pMessage->GetOpcode()](pMessage);
 }
 
+/**
+ * Send the authentication request once the connection to the server is up: version, protocol, player, mods, place, time and the server password.
+ * The password's text goes out once and is forgotten then; whether there was one stays known for this connection.
+ */
 void TransportService::OnConnected()
 {
     AuthenticationRequest request{};
@@ -165,8 +169,7 @@ void TransportService::OnConnected()
     request.SKSEActive = IsScriptExtenderLoaded();
     request.MO2Active = GetModuleHandleW(kMO2DllName);
 
-    request.Token = m_serverPassword;
-    m_serverPassword = "";
+    request.Token = m_serverPassword.TakeText();
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
 
