@@ -77,9 +77,10 @@ private:
     //! A party member revived the player: back on its feet where it lies, with part of its health.
     void StandUp(uint32_t aReviverId) noexcept;
     /**
-     * Tell whether the player's down holds: down and waiting, with no loaded save and no brawl, which stand the player up on purpose.
+     * Tell whether the player's down holds: it lasts until a revive, giving up, the end of the wait or a fallen party.
+     * It does not hold after a loaded save or during a brawl, where the game stands the player up on purpose.
      *
-     * @return True while only a revive, giving up, the end of the wait or a fallen party may end the down.
+     * @return True while the down holds.
      */
     [[nodiscard]] bool IsDownHeld() const noexcept;
     /**

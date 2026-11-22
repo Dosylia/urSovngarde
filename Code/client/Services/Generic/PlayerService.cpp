@@ -62,6 +62,11 @@ namespace
 // Skyrim.esm DGIntimidateQuest; it still runs when that bleedout ends, and stops a moment later.
 constexpr uint32_t cBrawlQuest = 0x47AE6;
 
+/**
+ * Tell whether the game's brawl quest runs: a fist fight, not combat in general.
+ *
+ * @return True while the brawl's quest runs.
+ */
 bool IsBrawlRunning() noexcept
 {
     const auto* pQuest = Cast<TESQuest>(TESForm::GetById(cBrawlQuest));
@@ -835,13 +840,15 @@ void PlayerService::StandUp(const uint32_t aReviverId) noexcept
 }
 
 /**
- * Tell whether the player's down holds: down and waiting, with no loaded save and no brawl, which stand the player up on purpose.
+ * Tell whether the player's down holds: it lasts until a revive, giving up, the end of the wait or a fallen party.
+ * It does not hold after a loaded save or during a brawl, where the game stands the player up on purpose.
  *
- * @return True while only a revive, giving up, the end of the wait or a fallen party may end the down.
+ * @return True while the down holds.
  */
 bool PlayerService::IsDownHeld() const noexcept
 {
-    return m_downState == DownState::kDown && !m_saveLoaded && !IsBrawlRunning();
+    const bool cGameStandsPlayerUp = m_saveLoaded || IsBrawlRunning();
+    return m_downState == DownState::kDown && !cGameStandsPlayerUp;
 }
 
 /**
