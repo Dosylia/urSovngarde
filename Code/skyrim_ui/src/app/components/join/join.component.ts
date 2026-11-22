@@ -20,7 +20,10 @@ export class JoinComponent implements OnDestroy {
 
   /** The friend picked from the list: their name, kept for a code retry. */
   private friendName = '';
-  /** A Steam friend whose server asks for a password: joined once it is typed. */
+  /**
+   * A Steam friend whose server asks for a password: joined once it is typed.
+   * Kept for a retry until the join succeeds or the prompt is left.
+   */
   private steamFriend: SteamFriend | null = null;
 
   @Output() public done = new EventEmitter<void>();
@@ -85,11 +88,18 @@ export class JoinComponent implements OnDestroy {
     return 'COMPONENT.JOIN.NOT_REACHABLE';
   }
 
+  /**
+   * Join a friend from the Steam list: straight from the game, or through the launcher's code.
+   * A friend whose server asks for a password opens the password prompt first.
+   * The code field is emptied, so a code left from an earlier join is never joined in this friend's name.
+   *
+   * @param friend The friend picked from the list.
+   * @param launcherOpen True while the launcher runs, so its code can be used.
+   */
   public joinFriend(friend: SteamFriend, launcherOpen: boolean): void {
     this.friendName = friend.name;
-    this.steamFriend = null;
-    this.password = '';
-    this.askPassword = false;
+    this.code = '';
+    this.closePasswordPrompt();
 
     // A launcher host's public address works only with their port open; the launcher's relay does without.
     const viaCode = !!friend.code && launcherOpen && (!friend.reachable || friend.route === 'public');
@@ -109,6 +119,10 @@ export class JoinComponent implements OnDestroy {
     }
   }
 
+  /**
+   * Join from the password prompt or the code field: the Steam friend the prompt is for, otherwise the typed code.
+   * The friend is kept, so a retry after a failed join goes to the same friend.
+   */
   public joinTyped(): void {
     if (this.busy || !this.canJoinTyped) {
       return;
@@ -117,7 +131,6 @@ export class JoinComponent implements OnDestroy {
     this.sound.play(Sound.Ok);
     if (this.steamFriend) {
       this.joinService.joinSteamFriend(this.steamFriend, this.password);
-      this.steamFriend = null;
       return;
     }
     this.joinService.joinCode(this.code.trim(), this.friendName, this.password);
@@ -126,6 +139,11 @@ export class JoinComponent implements OnDestroy {
   /** The code field changed by hand: it is no longer the friend's from the list. */
   public onCodeTyped(): void {
     this.friendName = '';
+    this.closePasswordPrompt();
+  }
+
+  /** Close the password prompt and forget the Steam friend it was for. */
+  private closePasswordPrompt(): void {
     this.steamFriend = null;
     this.askPassword = false;
     this.password = '';
