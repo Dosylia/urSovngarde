@@ -20,6 +20,7 @@
 //   start <x> <y>                   where to look for the host (same as --x --y)
 
 #include "Bot.h"
+#include "../common/BuildVersion.h"
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -147,7 +148,7 @@ int main(int argc, char** argv)
         // warning on every single run, which is the fastest way to teach somebody to ignore version-skew warnings.
         if (arg == "--version")
         {
-            std::printf("STBot %s protocol %s\n", BUILD_COMMIT, BUILD_PROTOCOL);
+            std::printf("STBot %s protocol %s\n", BuildVersion::Commit(), BUILD_PROTOCOL);
             return 0;
         }
 
@@ -212,7 +213,7 @@ int main(int argc, char** argv)
     if (!ReadScript(scriptPath, script, options))
         return 2;
 
-    spdlog::info("STBot {} : '{}' with {} commands, server {}, name '{}'", BUILD_COMMIT, scriptPath, script.size(), options.Server, options.Name);
+    spdlog::info("STBot {} : '{}' with {} commands, server {}, name '{}'", BuildVersion::Commit(), scriptPath, script.size(), options.Server, options.Name);
 
 #ifdef _WIN32
     // The run loop sleeps 10 ms between steps, and that sleep paces every send.

@@ -1,4 +1,5 @@
 #include "Bot.h"
+#include "../common/BuildVersion.h"
 
 #include <steam/isteamnetworkingutils.h>
 
@@ -334,7 +335,7 @@ void Bot::OnConsume(const void* apData, uint32_t aSize)
 
 void Bot::OnConnected()
 {
-    spdlog::info("Connected to {}; authenticating as '{}', version {}", m_options.Server, m_options.Name, BUILD_COMMIT);
+    spdlog::info("Connected to {}; authenticating as '{}', version {}", m_options.Server, m_options.Name, BuildVersion::Commit());
     StringCache::Get().Clear();
     SendAuthentication();
     m_phase = Phase::Authenticating;
@@ -526,7 +527,7 @@ void Bot::SendAuthentication() noexcept
     request.SKSEActive = false;
     request.MO2Active = false;
     request.Token = m_options.Password.c_str();
-    request.Version = BUILD_COMMIT;
+    request.Version = BuildVersion::Commit();
     request.Protocol = BUILD_PROTOCOL;
     request.Username = m_options.Name.c_str();
     request.Level = 1;
@@ -998,7 +999,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
                               : message.Type == RT::kWrongPassword      ? "wrong password"
                               : message.Type == RT::kServerFull         ? "server full"
                                                                         : "?";
-            spdlog::error("Refused: {}. Server version '{}', ours '{}' (protocol {})", why, message.Version.c_str(), BUILD_COMMIT, BUILD_PROTOCOL);
+            spdlog::error("Refused: {}. Server version '{}', ours '{}' (protocol {})", why, message.Version.c_str(), BuildVersion::Commit(), BUILD_PROTOCOL);
             m_phase = Phase::Stopped;
             Close();
             return;

@@ -1,4 +1,5 @@
 #include <Events/PlayerJoinEvent.h>
+#include <BuildVersion.h>
 #include <Events/PlayerLeaveEvent.h>
 #include <Events/UpdateEvent.h>
 #include <GameServer.h>
@@ -80,7 +81,7 @@ void ServerListService::PostAnnouncement(String acName, String acDesc, String ac
                                          uint16_t aPlayerCount, uint16_t aPlayerMaxCount, String acTagList,
                                          bool aPublic, bool aPassword, int32 aFlags) noexcept
 {
-    const std::string kVersion{BUILD_COMMIT};
+    const std::string kVersion{BuildVersion::Commit()};
     const httplib::Params params{
         {"name", std::string(acName.c_str(), acName.size())},
         {"desc", std::string(acDesc.c_str(), acDesc.size())},

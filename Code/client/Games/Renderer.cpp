@@ -1,4 +1,5 @@
 #include <TiltedOnlinePCH.h>
+#include <BuildVersion.h>
 
 #include <Renderer.h>
 
@@ -42,7 +43,8 @@ static void HookPresent()
 // unused, never hooked
 static bool HookCreateViewport(void* viewport, ViewportConfig* pConfig, WindowConfig* pWindowConfig, void* a4)
 {
-    pConfig->name = "Skyrim Together | " BUILD_BRANCH "@" BUILD_COMMIT;
+    static const std::string s_name = fmt::format("Skyrim Together | {}", BuildVersion::Tag());
+    pConfig->name = s_name.c_str();
 
 #if 0
     pWindowConfig->bBorderlessDisplay = false;

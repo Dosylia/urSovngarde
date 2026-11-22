@@ -1,4 +1,5 @@
 #include <TiltedOnlinePCH.h>
+#include <BuildVersion.h>
 #include <Helpers/Throttle.h>
 #include <Helpers/PerfScope.h>
 
@@ -318,7 +319,7 @@ void OverlayService::PushUiState() noexcept
 
         if (m_inGame)
         {
-            SetVersion(BUILD_COMMIT);
+            SetVersion(BuildVersion::Commit());
             m_pOverlay->ExecuteAsync("enterGame");
         }
         else
@@ -423,7 +424,7 @@ void OverlayService::OnUpdate(const UpdateEvent&) noexcept
 
 void OverlayService::OnConnectedEvent(const ConnectedEvent& acEvent) noexcept
 {
-    Utils::ShowHudMessage("urSovngarde: connected (build " BUILD_COMMIT ")");
+    Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: connected (build ") + BuildVersion::Commit() + ")");
     if (!m_pOverlay)
         return;
 

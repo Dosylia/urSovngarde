@@ -7,6 +7,8 @@ target("STBot")
     add_includedirs(".", "../encoding")
     add_headerfiles("*.h")
     add_files("*.cpp")
+    -- The version, read from the one file the build sets it on (root xmake.lua).
+    add_files("../common/BuildVersion.cpp")
     add_deps("SkyrimEncoding", "TiltedConnect")
     add_packages(
         "tiltedcore",

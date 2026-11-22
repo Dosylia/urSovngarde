@@ -1,5 +1,6 @@
 
 #include <TiltedCore/Filesystem.hpp>
+#include <BuildVersion.h>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -207,7 +208,7 @@ int main(int argc, char** argv)
     ConfigureConsoleMode();
 
     // the binaries are not from the same commit.
-    if (!CheckBuildTag(kBuildTag))
+    if (!CheckBuildTag(BuildVersion::Tag()))
         return 1;
 
     Base::SetCurrentThreadName("ServerRunnerMain");

@@ -1,4 +1,5 @@
 #include <BranchInfo.h>
+#include <BuildVersion.h>
 #include <Helpers/PerfScope.h>
 
 #include <Havok/hkbStateMachine.h>
@@ -74,12 +75,22 @@
 #include <inttypes.h>
 extern thread_local bool g_overrideFormId;
 
-constexpr char kBuildTag[] = "Build: " BUILD_COMMIT " " BUILD_BRANCH " EVO\nBuilt: " __TIMESTAMP__;
+/**
+ * The build tag drawn in the corner: the commit, the branch and when this file was last changed.
+ *
+ * @return The text, made once.
+ */
+static const std::string& BuildTagText()
+{
+    static const std::string s_text = fmt::format("Build: {} {} EVO\nBuilt: " __TIMESTAMP__, BuildVersion::Commit(), BuildVersion::Branch());
+    return s_text;
+}
+
 static void DrawBuildTag()
 {
     auto* pWindow = BSGraphics::GetMainWindow();
     const ImVec2 coord{50.f, static_cast<float>((pWindow->uiWindowHeight + 25) - 100)};
-    ImGui::GetBackgroundDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), coord, ImColor::ImColor(255.f, 0.f, 0.f), kBuildTag);
+    ImGui::GetBackgroundDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), coord, ImColor::ImColor(255.f, 0.f, 0.f), BuildTagText().c_str());
 }
 
 void __declspec(noinline) DebugService::PlaceActorInWorld() noexcept

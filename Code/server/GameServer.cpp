@@ -1,5 +1,6 @@
 ﻿#include <Components.h>
 #include <GameServer.h>
+#include <BuildVersion.h>
 #include <steam/isteamnetworkingutils.h>
 #include <AdminKeys.h>
 #include <openssl/evp.h>
@@ -123,7 +124,7 @@ Console::Command<int64_t> SetDifficulty(
         spdlog::get("ConOut")->info("Difficulty has been set to {}.", aDiff);
     });
 
-Console::Command<> ShowVersion("version", "Show the version the server was compiled with", [](Console::ArgStack&) { spdlog::get("ConOut")->info("Server " BUILD_COMMIT); });
+Console::Command<> ShowVersion("version", "Show the version the server was compiled with", [](Console::ArgStack&) { spdlog::get("ConOut")->info("Server {}", BuildVersion::Commit()); });
 
 Console::Command<> CrashServer(
     "crash", "Crashes the server, don't use!",
@@ -227,7 +228,7 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole) noexcept
     m_isPasswordProtected = strcmp(sPassword.value(), "") != 0;
 
     UpdateInfo();
-    spdlog::info("Server {} started on port {}", BUILD_COMMIT, GetPort());
+    spdlog::info("Server {} started on port {}", BuildVersion::Commit(), GetPort());
     spdlog::info("Protocol {}: clients built with the same message definitions are let in, whatever their version", BUILD_PROTOCOL);
     UpdateTitle();
 
@@ -889,7 +890,7 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
     info.m_addrRemote.ToString(remoteAddress, 48, false);
 
     AuthenticationResponse serverResponse;
-    serverResponse.Version = BUILD_COMMIT;
+    serverResponse.Version = BuildVersion::Commit();
 
     using RT = AuthenticationResponse::ResponseType;
     auto sendKick = [&](const RT type)
@@ -906,11 +907,12 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         spdlog::info("New player {:x} '{}' tried to connect with client {} (protocol '{}'); this server speaks protocol {} - refused", aConnectionId, remoteAddress,
                      acRequest->Version.c_str(), acRequest->Protocol.c_str(), BUILD_PROTOCOL);
         // The client shows this as the expected version; the protocol is what has to match.
-        serverResponse.Version = BUILD_COMMIT " (protocol " BUILD_PROTOCOL ")";
+        serverResponse.Version = BuildVersion::Commit();
+        serverResponse.Version += " (protocol " BUILD_PROTOCOL ")";
         sendKick(RT::kWrongVersion);
         return;
     }
-    if (acRequest->Version != BUILD_COMMIT)
+    if (acRequest->Version != BuildVersion::Commit())
         spdlog::info("Player {:x} '{}' is on another build ({}) with the same protocol {}; let in", aConnectionId, remoteAddress, acRequest->Version.c_str(), BUILD_PROTOCOL);
 #endif
 
@@ -1163,7 +1165,7 @@ void GameServer::UpdateTitle() const
     const auto name = m_info.name.empty() ? "Private server" : m_info.name;
     const char* playerText = GetClientCount() <= 1 ? " player" : " players";
 
-    const auto title = fmt::format("{} - {} {} - {} Ticks - " BUILD_BRANCH "@" BUILD_COMMIT, name.c_str(), GetClientCount(), playerText, GetTickRate());
+    const auto title = fmt::format("{} - {} {} - {} Ticks - {}", name.c_str(), GetClientCount(), playerText, GetTickRate(), BuildVersion::Tag());
 
 #if TP_PLATFORM_WINDOWS
     SetConsoleTitleA(title.c_str());

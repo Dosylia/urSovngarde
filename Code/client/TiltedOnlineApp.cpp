@@ -1,4 +1,5 @@
 #include <TiltedOnlinePCH.h>
+#include <BuildVersion.h>
 
 #include <TiltedOnlineApp.h>
 
@@ -227,7 +228,7 @@ TiltedOnlineApp::TiltedOnlineApp()
     logger->flush_on(spdlog::level::warn);
     set_default_logger(logger);
 
-    spdlog::info("Skyrim Together client, build " BUILD_BRANCH "@" BUILD_COMMIT);
+    spdlog::info("Skyrim Together client, build {}", BuildVersion::Tag());
 
 #ifdef SKYRIMVR
     // Logged here because the address database loads before the logger exists.

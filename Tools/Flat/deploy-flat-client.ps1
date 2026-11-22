@@ -6,11 +6,12 @@
 # That folder also needs the menu's browser files and UI, which a release package carries; this copies only what the build makes.
 # The binary is checked before it is copied: its size, and the build's version string inside it.
 
-param([int]$MinimumBytes = 5000000)
+# -From takes the binaries from a saved build folder instead of build\windows\x64\release.
+param([int]$MinimumBytes = 5000000, [string]$From = '')
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$release = Join-Path $repo 'build\windows\x64\release'
+$release = if ($From) { (Resolve-Path $From).Path } else { Join-Path $repo 'build\windows\x64\release' }
 $root = $env:SKYRIM_FLAT_ROOT
 if (-not $root -or -not (Test-Path (Join-Path $root 'ModOrganizer.exe'))) {
     throw 'No flat Mod Organizer instance: set the SKYRIM_FLAT_ROOT user variable to its folder.'

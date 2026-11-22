@@ -1,5 +1,6 @@
 
 #include "Game/Cell.h"
+#include <BuildVersion.h>
 #include "Game/Player.h"
 #include "Game/PlayerManager.h"
 
@@ -23,8 +24,8 @@ namespace Script
 void BindMetadata(sol::state_view aState)
 {
     auto table = aState.create_named_table("BuildInfo");
-    table["Commit"] = BUILD_COMMIT;
-    table["Branch"] = BUILD_BRANCH;
+    table["Commit"] = BuildVersion::Commit();
+    table["Branch"] = BuildVersion::Branch();
 }
 
 void BindEnttEntity(sol::state_view aState)

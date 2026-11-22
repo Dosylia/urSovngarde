@@ -1,5 +1,6 @@
 
 #include <TiltedOnlineApp.h>
+#include <BuildVersion.h>
 #include <TiltedOnlinePCH.h>
 #include <ScriptExtender.h>
 
@@ -42,7 +43,7 @@ static void ShowIncompatibleVersionError(const char* apDetectedGameVersion, cons
     const auto [steamVer, gogVer] = kSupportedGameVersions;
 
     std::string supportedVersions = steamVer != gogVer ? fmt::format("{} (or {} if GOG)", steamVer, gogVer) : std::string{steamVer};
-    std::string message = fmt::format("Skyrim Together {} requires Skyrim SE {}, but your installed version is {}\n\nUpdate or downgrade to match, then relaunch", BUILD_COMMIT + 1, supportedVersions, apDetectedGameVersion);
+    std::string message = fmt::format("Skyrim Together {} requires Skyrim SE {}, but your installed version is {}\n\nUpdate or downgrade to match, then relaunch", BuildVersion::Commit() + 1, supportedVersions, apDetectedGameVersion);
     std::wstring wideMessage(message.begin(), message.end());
 
     const auto optionalDetails = fmt::format(L"Installed here: {}", apGamePath);

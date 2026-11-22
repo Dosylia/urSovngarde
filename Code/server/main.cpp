@@ -1,5 +1,6 @@
 
 #include "GameServer.h"
+#include <BuildVersion.h>
 
 #include <common/GameServerInstance.h>
 
@@ -8,11 +9,6 @@
 #else
 #define GS_EXPORT __attribute__((visibility("default")))
 #endif
-
-namespace
-{
-constexpr char kBuildTag[]{BUILD_BRANCH "@" BUILD_COMMIT};
-} // namespace
 
 struct GameServerInstance final : IGameServerInstance
 {
@@ -64,12 +60,12 @@ void GameServerInstance::Update()
 // NOTE(Vince): For now we use this to compare the dll to the server.
 GS_EXPORT const char* GetBuildTag()
 {
-    return kBuildTag;
+    return BuildVersion::Tag();
 }
 
 GS_EXPORT bool CheckBuildTag(const char* apBuildTag)
 {
-    return std::strcmp(apBuildTag, kBuildTag) == 0;
+    return std::strcmp(apBuildTag, BuildVersion::Tag()) == 0;
 }
 
 GS_EXPORT UniquePtr<IGameServerInstance> CreateGameServer(Console::ConsoleRegistry& aConReg, const std::function<void()>& aCallback)

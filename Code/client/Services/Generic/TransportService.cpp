@@ -1,5 +1,6 @@
 
 #include <Services/TransportService.h>
+#include <BuildVersion.h>
 #include <steam/isteamnetworkingutils.h>
 #include <Helpers/PerfScope.h>
 
@@ -159,7 +160,7 @@ void TransportService::OnConsume(const void* apData, uint32_t aSize)
 void TransportService::OnConnected()
 {
     AuthenticationRequest request{};
-    request.Version = BUILD_COMMIT;
+    request.Version = BuildVersion::Commit();
     request.Protocol = BUILD_PROTOCOL;
     request.SKSEActive = IsScriptExtenderLoaded();
     request.MO2Active = GetModuleHandleW(kMO2DllName);
@@ -311,7 +312,7 @@ void TransportService::HandleAuthenticationResponse(const AuthenticationResponse
     {
     case AR::kWrongVersion:
         ErrorInfo += "\"error\": \"wrong_version\", \"data\": {";
-        ErrorInfo += fmt::format("\"expectedVersion\": \"{}\", \"version\": \"{}\"", acMessage.Version, BUILD_COMMIT " (protocol " BUILD_PROTOCOL ")");
+        ErrorInfo += fmt::format("\"expectedVersion\": \"{}\", \"version\": \"{}\"", acMessage.Version, fmt::format("{} (protocol " BUILD_PROTOCOL ")", BuildVersion::Commit()));
         ErrorInfo += "}";
         break;
     case AR::kModsMismatch:
