@@ -118,3 +118,20 @@ uint32_t PlayerManager::Count() const noexcept
 {
     return static_cast<uint32_t>(m_players.size());
 }
+
+/**
+ * List the server ids of every connected player, loading ones and those in the main menu included.
+ *
+ * @param apLeaving A player who is disconnecting, still listed, and must not count; null when nobody is.
+ * @return Their server ids.
+ */
+std::vector<uint32_t> PlayerManager::ListIds(const Player* apLeaving) const noexcept
+{
+    std::vector<uint32_t> ids;
+    for (const auto& [cConnectionId, cpPlayer] : m_players)
+    {
+        if (cpPlayer.get() != apLeaving)
+            ids.push_back(cpPlayer->GetId());
+    }
+    return ids;
+}

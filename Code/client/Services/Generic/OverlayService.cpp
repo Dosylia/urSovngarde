@@ -423,7 +423,7 @@ void OverlayService::OnUpdate(const UpdateEvent&) noexcept
 
 void OverlayService::OnConnectedEvent(const ConnectedEvent& acEvent) noexcept
 {
-    Utils::ShowHudMessage("urSovngarde: connected (build " BUILD_COMMIT ")");
+    Utils::ShowModHudMessage("connected (build " BUILD_COMMIT ")");
     if (!m_pOverlay)
         return;
 
@@ -514,7 +514,12 @@ void OverlayService::OnPlayerDialogue(const NotifyPlayerDialogue& acMessage) noe
 #ifdef SKYRIMVR
 namespace
 {
-// The error detail is JSON meant for the UI's error popup; the HUD needs a sentence.
+/**
+ * Turn a refused connection's error detail, JSON meant for the UI's error popup, into a sentence for the HUD.
+ *
+ * @param acDetail The error detail.
+ * @return The sentence, without the mod's name in front.
+ */
 TiltedPhoques::String DescribeConnectionError(const TiltedPhoques::String& acDetail)
 {
     const std::string detail = acDetail.c_str();
@@ -544,7 +549,7 @@ TiltedPhoques::String DescribeConnectionError(const TiltedPhoques::String& acDet
     else
         text = "refused by the server";
 
-    return TiltedPhoques::String("urSovngarde: connection failed, ") + text.c_str();
+    return TiltedPhoques::String("connection failed, ") + text.c_str();
 }
 } // namespace
 #endif
@@ -552,7 +557,7 @@ TiltedPhoques::String DescribeConnectionError(const TiltedPhoques::String& acDet
 void OverlayService::OnConnectionError(const ConnectionErrorEvent& acConnectedEvent) const noexcept
 {
 #ifdef SKYRIMVR
-    Utils::ShowHudMessage(DescribeConnectionError(acConnectedEvent.ErrorDetail));
+    Utils::ShowModHudMessage(DescribeConnectionError(acConnectedEvent.ErrorDetail));
 #endif
     if (!m_pOverlay)
         return;
@@ -567,7 +572,7 @@ void OverlayService::OnPlayerJoined(const NotifyPlayerJoined& acMessage) noexcep
     String cellName = GetCellName(acMessage.WorldSpaceId, acMessage.CellId);
 #ifdef SKYRIMVR
     // Sent both when someone joins and, on connecting, for everyone already there.
-    Utils::ShowHudMessage(String("urSovngarde: ") + acMessage.Username + " is online" + (cellName.empty() ? "" : String(" (") + cellName + ")"));
+    Utils::ShowModHudMessage(acMessage.Username + " is online" + (cellName.empty() ? "" : String(" (") + cellName + ")"));
 #endif
     if (!m_pOverlay)
         return;
@@ -587,7 +592,7 @@ void OverlayService::OnPlayerName(const NotifyPlayerName& acMessage) noexcept
 {
     spdlog::info("Player {} is now called '{}', renamed in play", acMessage.PlayerId, acMessage.Username.c_str());
 #ifdef SKYRIMVR
-    Utils::ShowHudMessage(String("urSovngarde: a player is now called ") + acMessage.Username);
+    Utils::ShowModHudMessage(String("a player is now called ") + acMessage.Username);
 #endif
 }
 
@@ -595,7 +600,7 @@ void OverlayService::OnPlayerLeft(const NotifyPlayerLeft& acMessage) noexcept
 {
     m_playerHealth.erase(acMessage.PlayerId);
 #ifdef SKYRIMVR
-    Utils::ShowHudMessage(String("urSovngarde: ") + acMessage.Username + " left");
+    Utils::ShowModHudMessage(acMessage.Username + " left");
 #endif
     if (!m_pOverlay)
         return;
@@ -668,7 +673,7 @@ void OverlayService::OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& 
 void OverlayService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
 {
 #ifdef SKYRIMVR
-    Utils::ShowHudMessage(acEvent.IsLeader ? "urSovngarde: party created" : "urSovngarde: joined party");
+    Utils::ShowModHudMessage(acEvent.IsLeader ? "party created" : "joined party");
 #endif
     if (!m_pOverlay)
         return;
@@ -680,7 +685,7 @@ void OverlayService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcep
 void OverlayService::OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept
 {
 #ifdef SKYRIMVR
-    Utils::ShowHudMessage("urSovngarde: left party");
+    Utils::ShowModHudMessage("left party");
 #endif
     if (!m_pOverlay)
         return;

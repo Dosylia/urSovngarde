@@ -163,11 +163,15 @@ private:
     }
 };
 
-// Shows a message in the menu's chat box and on the HUD, which is hidden while the menu is open.
+/**
+ * Show a message in the menu's chat box, and on the HUD with the mod's name in front, as the HUD is hidden while the menu is open.
+ *
+ * @param acMessage The message.
+ */
 void TellPlayer(const std::string& acMessage) noexcept
 {
     World::Get().GetOverlayService().SendSystemMessage(acMessage);
-    Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: ") + acMessage.c_str());
+    Utils::ShowModHudMessage(acMessage.c_str());
 }
 
 constexpr auto kTestLength = std::chrono::seconds(5);

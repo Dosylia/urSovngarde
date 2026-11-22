@@ -49,6 +49,14 @@ struct PlayerManager
 
     uint32_t Count() const noexcept;
 
+    /**
+     * List the server ids of every connected player, loading ones and those in the main menu included.
+     *
+     * @param apLeaving A player who is disconnecting, still listed, and must not count; null when nobody is.
+     * @return Their server ids.
+     */
+    std::vector<uint32_t> ListIds(const Player* apLeaving = nullptr) const noexcept;
+
     template <class T> void ForEach(const T& acFunctor) noexcept
     {
         auto itor = std::begin(m_players);

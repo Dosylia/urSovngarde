@@ -11,17 +11,10 @@
 
 #include <Setting.h>
 
-extern Console::Setting<bool> bPublicStatus;
 extern Console::Setting<bool> bAnnounceServer;
 
 namespace
 {
-// A server strangers join: listed upstream or on the public server page.
-bool IsPublicServer() noexcept
-{
-    return bAnnounceServer || bPublicStatus;
-}
-
 bool IsAdmin(const Player* apPlayer) noexcept
 {
     for (const auto cSession : GameServer::Get()->GetAdminSessions())
@@ -93,7 +86,7 @@ void CommandService::OnTeleportCommandRequest(const PacketEvent<TeleportCommandR
 
     // On a public server, only admins and the target's party may teleport to a player.
     // A refused answer carries no cell, and the game reports a failed teleport.
-    if (pTargetPlayer && IsPublicServer() && !IsAdmin(acMessage.pPlayer))
+    if (pTargetPlayer && CalendarService::IsOpenToStrangers() && !IsAdmin(acMessage.pPlayer))
     {
         auto& partyService = m_world.GetPartyService();
         const auto* pParty = partyService.GetPlayerParty(acMessage.pPlayer);

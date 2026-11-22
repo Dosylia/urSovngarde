@@ -3,13 +3,10 @@
 #include <Events/PacketEvent.h>
 #include <DateTime.h>
 #include <Structs/GameId.h>
-#include <SleepSession.h>
 
 struct World;
 struct UpdateEvent;
 struct PlayerJoinEvent;
-struct PlayerLeaveEvent;
-struct RequestSleep;
 struct ServerTimeSettings;
 struct Player;
 
@@ -27,8 +24,42 @@ public:
     using TTime = std::pair<int, int>;
     using TDate = std::tuple<int, int, int>;
 
-    // bEnableSleep on a private server: a sleep can be granted, so clients report their combat state.
+    /**
+     * Tell whether strangers join this server: listed upstream or on the public server page.
+     * Nobody, admins included, may move the hour for strangers there by a plugin.
+     *
+     * @return True when bAnnounceServer or bPublicStatus is on.
+     */
+    static bool IsOpenToStrangers() noexcept;
+
+    /**
+     * Tell whether a plugin's hour move can be granted: Gameplay:bEnableSleep on a server strangers do not join.
+     * Clients report their combat state only then.
+     *
+     * @return True when the setting is on and the server is private.
+     */
     static bool IsSleepAvailable() noexcept;
+
+    /**
+     * Tell whether the server lets players move the shared clock by sleeping or waiting (Gameplay:bEnableSleep).
+     *
+     * @return True when the setting is on, on any server.
+     */
+    static bool IsSleepEnabled() noexcept;
+
+    /**
+     * Move the shared clock and calendar forward, then send every loaded player the new time.
+     *
+     * @param aHours How far to move, in game hours.
+     */
+    void AdvanceHours(float aHours) noexcept;
+
+    /**
+     * Give the shared clock's hour now.
+     *
+     * @return The hour, from 0 to 24, with its fraction.
+     */
+    float GetCurrentHour() const noexcept;
 
     bool SetTime(int aHour, int aMinutes, float aScale) noexcept;
     bool SetDate(int aDay, int aMonth, float aYear) noexcept;
@@ -46,30 +77,15 @@ public:
 private:
     void OnUpdate(const UpdateEvent&) noexcept;
     void OnPlayerJoin(const PlayerJoinEvent&) noexcept;
-    void OnPlayerLeave(const PlayerLeaveEvent&) noexcept;
     ServerTimeSettings TimeResync() const noexcept;
     void SendTimeResync() noexcept;
-
-    // Sleep advances everyone's clock and calendar; only the party receives provisional progress and waits in place.
-    void OnSleepRequest(const PacketEvent<RequestSleep>&) noexcept;
-    void AskToSleep(Player* apPlayer) noexcept;
-    void SendSleepProgress(float aHours) noexcept;
-    void EndSleep(float aHours) noexcept;
-    void ExpireSleep() noexcept;
 
     DateTime m_dateTime;
     uint64_t m_lastTick = 0;
     bool m_timeSetFromFirstPlayer = false;
 
-    SleepSession m_sleepSession;
-    Vector<uint32_t> m_sleepAudience; // the sleeper's party at the grant, sleeper excluded
-    bool m_sleepProgressSent = false; // the audience holds provisional hours a cancellation must undo
-    TiltedPhoques::Set<uint32_t> m_playersInCombat;
-
     World& m_world;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_joinConnection;
-    entt::scoped_connection m_leaveConnection;
-    entt::scoped_connection m_sleepConnection;
 };

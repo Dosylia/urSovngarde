@@ -14,10 +14,20 @@ target("TPTests")
     add_files("../server/ReviveRules.cpp")
     -- Which plugin differences between two players are worth a warning (PluginRules): plain values in and out.
     add_files("../server/PluginRules.cpp")
+    -- Who has confirmed the shared time skip, which length wins and when the vote runs out (SleepVote): plain values in and out.
+    add_files("../server/SleepVote.cpp")
+    -- Which games still rest an agreed shared skip (RestingPlayers): plain values in and out.
+    add_files("../server/RestingPlayers.cpp")
+    -- How far a plugin's hour move takes the shared clock (HourMove): plain values in and out.
+    add_files("../server/HourMove.cpp")
     -- The shared clock, for the hours a sleep adds.
     add_files("../common/DateTime.cpp")
     -- Where a Steam friend's server is reached from: plain values in and out.
     add_files("../client/Services/Generic/SteamJoin.cpp")
+    -- This game's part in the shared time skip vote (LocalSleepVote): plain values in and out.
+    add_files("../client/Services/Generic/LocalSleepVote.cpp")
+    -- This game's clock across a shared time skip (SharedSkipClock): plain values in and out.
+    add_files("../client/Services/Generic/SharedSkipClock.cpp")
     -- Where the in-game panel opens and where a laser lands on it: plain numbers in and out.
     add_files("../client/UI/Menu/PanelGeometry.cpp")
     add_includedirs("../common", "..")

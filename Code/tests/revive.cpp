@@ -14,21 +14,12 @@
 
 #include <ReviveRules.h>
 
+#include "MessageRoundTrip.h"
+
 using namespace TiltedPhoques;
 
 namespace
 {
-template <class T> T RoundTrip(const T& acMessage)
-{
-    Buffer buffer(128);
-    Buffer::Writer writer(&buffer);
-    acMessage.SerializeRaw(writer);
-    Buffer::Reader reader(&buffer);
-    T back{};
-    back.DeserializeRaw(reader);
-    return back;
-}
-
 // Two party members a few steps apart, the target down with time left: a revive that goes ahead.
 ReviveRules::ReviveCheck Allowed()
 {

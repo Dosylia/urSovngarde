@@ -32,6 +32,7 @@
 #include <Copies/NpcPlugins.h>
 #include <Services/OverlayService.h>
 #include <Services/CellLookup.h>
+#include <Interface/Menus/SleepWaitOk.h>
 
 #include <Structs/ServerSettings.h>
 
@@ -358,10 +359,10 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         spdlog::info("PlayerService: the server gives {} s to be revived", acMessage.SecondsLeft);
 #ifdef SKYRIMVR
         if (acMessage.SecondsLeft > 0)
-            Utils::ShowHudMessage(String(fmt::format("urSovngarde: you are down; your party has {} seconds to revive you, or hold both grips to give up", acMessage.SecondsLeft)));
+            Utils::ShowModHudMessage(String(fmt::format("you are down; your party has {} seconds to revive you, or hold both grips to give up", acMessage.SecondsLeft)));
 #else
         if (acMessage.SecondsLeft > 0)
-            Utils::ShowHudMessage(String(fmt::format("urSovngarde: you are down; your party has {} seconds to revive you", acMessage.SecondsLeft)));
+            Utils::ShowModHudMessage(String(fmt::format("you are down; your party has {} seconds to revive you", acMessage.SecondsLeft)));
 #endif
         break;
     case NotifyDownedState::kRevived:
@@ -376,14 +377,14 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         if (m_downState != DownState::kDown)
             return;
         spdlog::info("PlayerService: {}; respawning {}", cAlone ? "down alone" : "not revived in time", cpLogWhere);
-        Utils::ShowHudMessage(String(fmt::format("urSovngarde: {}; {}", cAlone ? "you died" : "nobody revived you in time", cpComeBack)));
+        Utils::ShowModHudMessage(String(fmt::format("{}; {}", cAlone ? "you died" : "nobody revived you in time", cpComeBack)));
         StartRespawn(where);
         break;
     case NotifyDownedState::kPartyFallen:
         if (m_downState != DownState::kDown)
             return;
         // A party that lost its standing members leaves this player alone: nobody is left, rather than a party fallen.
-        Utils::ShowHudMessage(String(fmt::format("urSovngarde: {}; {}", cAlone ? "nobody is left to revive you" : "your party has fallen", cpComeBack)));
+        Utils::ShowModHudMessage(String(fmt::format("{}; {}", cAlone ? "nobody is left to revive you" : "your party has fallen", cpComeBack)));
         spdlog::info("PlayerService: {}; respawning {}", cAlone ? "nobody is left to revive the player" : "the whole party is down", cpLogWhere);
         StartRespawn(where);
         break;
@@ -404,7 +405,7 @@ void PlayerService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         const String cWho = ReviverName(cParty, acMessage.ReviverId);
         spdlog::info("PlayerService: player {} '{}' is reviving this player", acMessage.ReviverId, cWho.c_str());
         VRBanner::Show(std::string(cWho.c_str()) + " is reviving you", cPlaceColour, 72, 8.f);
-        Utils::ShowHudMessage(String("urSovngarde: ") + cWho + " is reviving you");
+        Utils::ShowModHudMessage(cWho + " is reviving you");
         break;
     }
     case NotifyDownedState::kReviveLetGo:
@@ -736,7 +737,7 @@ void PlayerService::RunSafePointUpdates() noexcept
     const uint32_t cLoadingScreens = UI::LoadingScreensQueued();
     const bool cLoading = cLoadingScreens != m_loadingScreens || pUI->GetMenuOpen(BSFixedString("Loading Menu"));
     m_loadingScreens = cLoadingScreens;
-    const bool cResting = pUI->GetMenuOpen(BSFixedString("Sleep/Wait Menu"));
+    const bool cResting = SleepWaitOk::FindOpenMenu() != nullptr;
     // The game autosaves as a loading screen or a sleep or wait ends; two seconds after the last sign of one, the player stands where it was placed.
     if (cLoading)
         m_safePointAt = cNow + 2s;
@@ -825,7 +826,7 @@ void PlayerService::StandUp(const uint32_t aReviverId) noexcept
     const String who = name != players.end() ? name->second : String("A party member");
     spdlog::info("PlayerService: revived by player {} '{}' after {} ms down; health {:.0f}", aReviverId, who.c_str(),
                  std::chrono::duration_cast<std::chrono::milliseconds>(cNow - m_downedAt).count(), pPlayer->GetActorValue(ActorValueInfo::kHealth));
-    Utils::ShowHudMessage(String("urSovngarde: ") + who + " revived you");
+    Utils::ShowModHudMessage(who + " revived you");
     VRBanner::Hide();
 }
 

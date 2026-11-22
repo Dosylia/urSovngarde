@@ -108,7 +108,7 @@ void ReviveService::OnUpdate(const UpdateEvent&) noexcept
             m_holdTarget = touched;
             m_holdSince = cNow;
             spdlog::info("Revive: holding a hand on player {} '{}', {:.0f} units from its body", touched, NameOf(touched).c_str(), touchedDistance);
-            Utils::ShowHudMessage(String("urSovngarde: reviving ") + NameOf(touched) + ", keep your hand on them");
+            Utils::ShowModHudMessage(String("reviving ") + NameOf(touched) + ", keep your hand on them");
             // The downed player learns someone is on it.
             ReviveRequest held{};
             held.TargetPlayerId = touched;
@@ -163,7 +163,7 @@ void ReviveService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         if (acMessage.ReviverId != m_transport.GetLocalPlayerId())
             return;
         spdlog::info("Revive: the server refused the revive of player {} '{}': {}", acMessage.PlayerId, who.c_str(), RefusalText(acMessage.Refusal));
-        Utils::ShowHudMessage(String("urSovngarde: cannot revive ") + who + ", " + RefusalText(acMessage.Refusal));
+        Utils::ShowModHudMessage(String("cannot revive ") + who + ", " + RefusalText(acMessage.Refusal));
         if (m_holdTarget == acMessage.PlayerId)
         {
             m_holdSince = std::chrono::steady_clock::now();
@@ -183,28 +183,28 @@ void ReviveService::OnNotifyDownedState(const NotifyDownedState& acMessage) noex
         m_downed.push_back(acMessage.PlayerId);
         spdlog::info("Revive: player {} '{}' is down; {} s to revive them", acMessage.PlayerId, who.c_str(), acMessage.SecondsLeft);
 #ifdef SKYRIMVR
-        Utils::ShowHudMessage(String("urSovngarde: ") + who + " is down; hold a hand on them to revive them");
+        Utils::ShowModHudMessage(who + " is down; hold a hand on them to revive them");
 #else
-        Utils::ShowHudMessage(String("urSovngarde: ") + who + " is down; stand by them to revive them");
+        Utils::ShowModHudMessage(who + " is down; stand by them to revive them");
 #endif
         break;
     case NotifyDownedState::kRevived:
         spdlog::info("Revive: player {} '{}' was revived by player {}", acMessage.PlayerId, who.c_str(), acMessage.ReviverId);
         if (acMessage.ReviverId == m_transport.GetLocalPlayerId())
-            Utils::ShowHudMessage(String("urSovngarde: you revived ") + who);
+            Utils::ShowModHudMessage(String("you revived ") + who);
         else
-            Utils::ShowHudMessage(String("urSovngarde: ") + NameOf(acMessage.ReviverId) + " revived " + who);
+            Utils::ShowModHudMessage(NameOf(acMessage.ReviverId) + " revived " + who);
         m_revivedChecks.push_back({acMessage.PlayerId, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
         break;
     case NotifyDownedState::kRespawned: spdlog::info("Revive: player {} '{}' respawned", acMessage.PlayerId, who.c_str()); break;
     case NotifyDownedState::kDied:
         spdlog::info("Revive: player {} '{}' was not revived in time", acMessage.PlayerId, who.c_str());
-        Utils::ShowHudMessage(String("urSovngarde: ") + who + " was not revived in time");
+        Utils::ShowModHudMessage(who + " was not revived in time");
         break;
     case NotifyDownedState::kStoodUp: spdlog::info("Revive: player {} '{}' is up again without a revive", acMessage.PlayerId, who.c_str()); break;
     case NotifyDownedState::kLeft:
         spdlog::info("Revive: player {} '{}' left the party or the server while down; nobody here can revive them", acMessage.PlayerId, who.c_str());
-        Utils::ShowHudMessage(String("urSovngarde: ") + who + " left while down");
+        Utils::ShowModHudMessage(who + " left while down");
         break;
     case NotifyDownedState::kPartyFallen:
     case NotifyDownedState::kReviveRefused:

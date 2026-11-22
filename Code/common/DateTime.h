@@ -5,6 +5,9 @@
 
 struct DateTime
 {
+    /** Hours in a day. */
+    static constexpr float kHoursPerDay = 24.f;
+
     [[nodiscard]] static uint32_t GetNumberOfDaysByMonthIndex(int index);
 
     DateTime() = default;

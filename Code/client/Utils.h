@@ -109,6 +109,13 @@ template <class T> T* GetByServerId(const uint32_t acServerId) noexcept
 }
 
 void ShowHudMessage(const TiltedPhoques::String& acMessage);
+
+/**
+ * Show one of the mod's lines on the HUD, with the mod's name in front, as "urSovngarde: ...".
+ *
+ * @param acText The line, without the mod's name.
+ */
+void ShowModHudMessage(const TiltedPhoques::String& acText);
 } // namespace Utils
 
 namespace TiltedPhoques

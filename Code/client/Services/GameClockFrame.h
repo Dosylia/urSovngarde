@@ -34,7 +34,7 @@ inline float Interpolate(const TimeModel& aFrom, const TimeModel& aTo, float aFa
 }
 
 // One frame of the online clock. The baseline always advances; the game's globals follow it only while
-// the clock is locked, which returns true. A granted sleeper unlocks it so the game can fast-forward.
+// the clock is locked, which returns true. A shared skip leaves the clock to the game so it can fast-forward.
 inline bool Step(DateTime& aOnline, const TimeModel& acOffline, uint64_t aDeltaTick, float aFrameDelta, float& aFadeTimer, bool aLocked,
                  Globals& aGlobals) noexcept
 {
