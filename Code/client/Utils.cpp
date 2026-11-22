@@ -116,4 +116,14 @@ void ShowHudMessage(const TiltedPhoques::String& acMessage)
     s_showHudMessage(acMessage.c_str(), nullptr, false);
 }
 
+/**
+ * Show one of the mod's lines on the HUD, with the mod's name in front, as "urSovngarde: ...".
+ *
+ * @param acText The line, without the mod's name.
+ */
+void ShowModHudMessage(const TiltedPhoques::String& acText)
+{
+    ShowHudMessage(TiltedPhoques::String("urSovngarde: ") + acText);
+}
+
 } // namespace Utils

@@ -122,6 +122,13 @@ struct PlayerCharacter : Actor
     void SetWaypoint(NiPoint3* apPosition, TESWorldSpace* apWorldSpace) noexcept;
     void RemoveWaypoint() noexcept;
 
+    /**
+     * Tell whether the player is sleeping or waiting: the game's own countdown of the hours still to pass is running.
+     *
+     * @return True while the game's own sleep or wait runs; false otherwise, and when the game's check is not found.
+     */
+    bool IsSleepingOrWaiting() const noexcept;
+
 #ifdef SKYRIMVR
     //! Whether the game's lock on the world map's marker list is known; without it the list is never touched.
     static bool CanEditMapMarkers() noexcept;

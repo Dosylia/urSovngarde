@@ -15,18 +15,20 @@ inline void ApplyServerTime(DateTime& aClock, const TimeModel& acServer, const T
     aClock.m_timeModel.TimeScale = acServer.TimeScale;
 }
 
-// Returns the GameDaysPassed correction. The native sleeper has already advanced its own globals;
-// party members may have provisional progress, while everyone else needs the entire committed duration.
-inline std::optional<float> CommitSleep(DateTime& aClock, uint32_t aLocalPlayerId, uint32_t aSleeperId, float aHours,
-                                        std::optional<uint32_t> aWatchedSleeper, float aWatchedHours) noexcept
+/**
+ * Move a personal calendar by the hours the shared clock moved, before the server's resync.
+ * A resync keeps this game's own date, so hours past midnight would be lost without this step.
+ *
+ * @param aClock The game's online clock.
+ * @param aHours How far the shared clock moved, in game hours.
+ * @return The GameDaysPassed correction, in days; nothing for no hours or a broken number.
+ */
+inline std::optional<float> AdvancePersonalClock(DateTime& aClock, float aHours) noexcept
 {
-    const bool cWatching = aWatchedSleeper == aSleeperId;
-    if (aSleeperId == aLocalPlayerId || !std::isfinite(aHours) || aHours < 0.f || aHours > 24.f || (!cWatching && aHours == 0.f))
+    if (!std::isfinite(aHours) || aHours <= 0.f || aHours > DateTime::kHoursPerDay)
         return std::nullopt;
 
-    const float cAppliedHours = cWatching ? aWatchedHours : 0.f;
-    const float cCorrection = aHours - cAppliedHours;
-    aClock.AdvanceHours(cCorrection);
-    return cCorrection / 24.f;
+    aClock.AdvanceHours(aHours);
+    return aHours / DateTime::kHoursPerDay;
 }
 }

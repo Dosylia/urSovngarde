@@ -22,6 +22,8 @@
 #include <Services/VoiceService.h>
 #include <Services/WhereaboutsService.h>
 #include <Services/ReviveService.h>
+#include <Services/SleepVoteService.h>
+#include <Services/HourMoveService.h>
 
 #include <es_loader/ESLoader.h>
 
@@ -58,6 +60,8 @@ World::World()
     ctx().emplace<VoiceService>(*this, m_dispatcher);
     ctx().emplace<WhereaboutsService>(*this, m_dispatcher);
     ctx().emplace<ReviveService>(*this, m_dispatcher);
+    ctx().emplace<SleepVoteService>(*this, m_dispatcher);
+    ctx().emplace<HourMoveService>(*this, m_dispatcher);
 
     ESLoader::ESLoader loader;
     // emplace loaded mods into modscomponent.

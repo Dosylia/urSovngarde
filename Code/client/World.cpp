@@ -35,6 +35,7 @@
 #include <Services/VoiceService.h>
 #include <Services/PlayerMarkerService.h>
 #include <Services/ReviveService.h>
+#include <Services/SleepVoteService.h>
 
 #include <Events/PreUpdateEvent.h>
 #include <Events/UpdateEvent.h>
@@ -74,6 +75,7 @@ World::World()
     ctx().emplace<VoiceService>(*this, m_dispatcher);
     ctx().emplace<PlayerMarkerService>(*this, m_dispatcher);
     ctx().emplace<ReviveService>(*this, m_dispatcher, m_transport);
+    ctx().emplace<SleepVoteService>(m_dispatcher, m_transport, ctx().at<CalendarService>());
     ctx().emplace<VRConnectService>(*this, m_dispatcher, m_transport);
     ctx().emplace<LauncherLinkService>(*this, m_dispatcher);
     ctx().emplace<SteamFriendsService>(*this, m_dispatcher, m_transport);

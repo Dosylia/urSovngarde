@@ -98,7 +98,7 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     { 36527u, 0x05efa10u }, // SE 36527 Actor::GetGoldAmount
     { 36544u, 0x05b4290u }, // SE 35545 WinMain
     { 36548u, 0x05b65e0u }, // SE 35549 Main::Init (intro movie branch at +0x96)
-    { 36564u, 0x05bab10u }, // Main::Update; deferred unpaused sleep confirmation before its UI jobs
+    { 36564u, 0x05bab10u }, // Main::Update; the shared sleep's agreed OK and its line in the menu run before its UI jobs
     { 36741u, 0x0604f30u }, // SE 36741 Actor::GetDetectionState
     { 37147u, 0x05d5120u }, // SE 36174 animation helper
     { 37175u, 0x05d63a0u }, // SE 36196 Character dtor
@@ -3149,4 +3149,10 @@ static constexpr VRAddressOverrideEntry kVRAddressOverrides[] = {
     // The input poll's call that hands the polled events to the game's listeners (SE 67315 and AE 68617 +0x7B; VR poll 0xc519e0 +0x81).
     // SKSE VR hooks the same call. Read from the game image: rcx is the device manager, rdx the address of the event list's head.
     { 9000015u, 0x0c51a61u },
+
+    // PlayerCharacter's sleeping-or-waiting check (AE 40413): the seconds still to pass at +0xFE0, not zero. Read from the game image, just before the sleep start at 0x6bae40.
+    { 9000016u, 0x06bae20u },
+
+    // The Sleep/Wait menu's OK callback (AE 524025): the menu at args+0x18, the hours at [[args+0x28]+0x10], then the sleep or the wait start.
+    { 9000017u, 0x08eaca0u },
 };

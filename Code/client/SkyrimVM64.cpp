@@ -6,7 +6,8 @@
 #include <TiltedOnlinePCH.h>
 #include "TiltedOnlineApp.h"
 #include <Misc/GameVM.h>
-#include <Interface/Menus/SleepWaitMenu.h>
+#include <Interface/Menus/SleepWaitOk.h>
+#include <Interface/Menus/SleepWaitVoteLine.h>
 #include <Interface/Menus/SkillsMenu.h>
 #include <Interface/Menus/MapMenu.h>
 #include <Interface/UI.h>
@@ -41,8 +42,6 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
 {
 #ifdef SKYRIMVR
     UnpausedMenusOnMainLoop();
-    UpdateSleepWatchControls();
-    RunDeferredSleepWaitAccept();
     UpdateSkillsMenuChecks();
     RunDeferredSkillsTreeUpdate();
     ReleaseClosedSkillsTrees();
@@ -54,6 +53,9 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
     BoneHold::Update();
     EyeBoneWatch::Update();
 #endif
+    // The shared sleep's agreed OK and the vote's line in the menu: on the main thread, before the frame's update runs the menus.
+    SleepWaitOk::PressAgreedOk();
+    SleepWaitVoteLine::Update();
     CharacterService::DisableQueuedCopies();
 
     return TiltedPhoques::ThisCall(MainLoop, apThis);
@@ -74,19 +76,24 @@ static TiltedPhoques::Initializer s_mainHooks(
         TP_HOOK(&VMUpdate, HookVMUpdate);
 
 #ifdef SKYRIMVR
-        // VR needs Main::Update for the unpaused Sleep/Wait OK and the party's control lock; without it a granted sleep's OK button does nothing.
+        // VR needs Main::Update for the shared sleep's agreed OK and its line in the menu; without it the OK button works as in the game and time is not shared.
         // Its call is swapped and the function left as it is: CBPC detours Main::Update, following a jump at its start and copying the bytes it finds there without relocating them.
         // With the function detoured, CBPC's copy held our hook's first call, which then landed in the heap and crashed the game at the main menu.
         auto* pMainUpdateCall = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) + kMainUpdateCall);
         if (PatchCheck::IsCall(pMainUpdateCall))
+        {
             TiltedPhoques::SwapCall(pMainUpdateCall, MainLoop, &HookMainLoop);
+            SleepWaitOk::EnableHold();
+        }
         else
-            spdlog::error("Main loop: {} is not the call to Main::Update ({}), leaving it alone; a sleep's OK button does nothing", fmt::ptr(pMainUpdateCall),
-                          PatchCheck::Bytes(pMainUpdateCall, 5));
+            spdlog::error("Main loop: {} is not the call to Main::Update ({}), leaving it alone; the Sleep/Wait OK works as in the game and time is not shared",
+                          fmt::ptr(pMainUpdateCall), PatchCheck::Bytes(pMainUpdateCall, 5));
 #else
         POINTER_SKYRIMSE(TMainLoop, cMainLoop, 36564, 36564);
         MainLoop = cMainLoop.Get();
         TP_HOOK(&MainLoop, HookMainLoop);
+        if (MainLoop)
+            SleepWaitOk::EnableHold();
 
         // An empty placeholder, and the address does not exist on VR.
         POINTER_SKYRIMSE(TVMDestructor, cVMDestructor, 40412, 40412);

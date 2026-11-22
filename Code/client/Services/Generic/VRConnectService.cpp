@@ -25,11 +25,11 @@ constexpr auto kAttemptTimeout = 30s;     // an attempt that never reports back 
 constexpr std::array<std::chrono::seconds, 5> kRetryDelays{5s, 10s, 20s, 30s, 60s};
 #ifdef SKYRIMVR
 constexpr const char* kScriptExtender = "SKSE VR";
-constexpr const char* kNoServerHint = "urSovngarde: no server set, join from the urSovngarde launcher";
+constexpr const char* kNoServerHint = "no server set, join from the urSovngarde launcher";
 #else
 constexpr const char* kScriptExtender = "SKSE";
 // A flat player also picks a server in the menu.
-constexpr const char* kNoServerHint = "urSovngarde: no server set, pick one in the menu (F2) or join from the urSovngarde launcher";
+constexpr const char* kNoServerHint = "no server set, pick one in the menu (F2) or join from the urSovngarde launcher";
 #endif
 
 // The name the server knows this player by: TransportService sends it when connecting.
@@ -102,7 +102,7 @@ void VRConnectService::Stop() noexcept
         return;
 
     spdlog::info("VRConnectService: disconnecting, asked for here (F6 or the menu)");
-    Utils::ShowHudMessage("urSovngarde: disconnected (F6 to connect again)");
+    Utils::ShowModHudMessage("disconnected (F6 to connect again)");
 }
 
 void VRConnectService::ConnectNow() noexcept
@@ -164,14 +164,14 @@ bool VRConnectService::CheckInstall() noexcept
     if (!IsScriptExtenderLoaded())
     {
         spdlog::error("VRConnectService: {} is not loaded", kScriptExtender);
-        Utils::ShowHudMessage(fmt::format("urSovngarde: {0} is not loaded, check the {0} install", kScriptExtender).c_str());
+        Utils::ShowModHudMessage(fmt::format("{0} is not loaded, check the {0} install", kScriptExtender).c_str());
     }
 
     auto* pGrids = INISettingCollection::Get()->GetSetting("uGridsToLoad:General");
     if (pGrids && pGrids->data != 5)
     {
         spdlog::error("VRConnectService: uGridsToLoad is {}, the server requires 5", pGrids->data);
-        Utils::ShowHudMessage("urSovngarde: set uGridsToLoad=5 in SkyrimPrefs.ini, the server refuses other values");
+        Utils::ShowModHudMessage("set uGridsToLoad=5 in SkyrimPrefs.ini, the server refuses other values");
         ok = false;
     }
 
@@ -189,7 +189,7 @@ void VRConnectService::StartAttempt() noexcept
 {
     if (!IsInGame())
     {
-        Utils::ShowHudMessage("urSovngarde: load a save before connecting");
+        Utils::ShowModHudMessage("load a save before connecting");
         m_state = State::kIdle;
         return;
     }
@@ -201,7 +201,7 @@ void VRConnectService::StartAttempt() noexcept
     {
         // The folder by name only: its full path holds the Windows user name, and logs end up in crash reports.
         spdlog::warn("VRConnectService: no server in %LOCALAPPDATA%\\{}\\connect.txt or Data\\SKSE\\Plugins\\urSovngarde\\connect.txt", ConnectFile::kFolderName);
-        Utils::ShowHudMessage(kNoServerHint);
+        Utils::ShowModHudMessage(kNoServerHint);
         m_state = State::kIdle;
         return;
     }
@@ -210,12 +210,12 @@ void VRConnectService::StartAttempt() noexcept
     if (m_chosen)
     {
         spdlog::info("VRConnectService: connecting to {} (attempt {})", m_chosenIsFriend ? "a Steam friend's server" : "the server chosen in the menu", m_failedAttempts + 1);
-        Utils::ShowHudMessage(m_chosenIsFriend ? "urSovngarde: connecting to your friend's server" : "urSovngarde: connecting to the server you chose");
+        Utils::ShowModHudMessage(m_chosenIsFriend ? "connecting to your friend's server" : "connecting to the server you chose");
     }
     else
     {
         spdlog::info("VRConnectService: connecting to {} (attempt {})", config.Address.c_str(), m_failedAttempts + 1);
-        Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: connecting to ") + config.Address);
+        Utils::ShowModHudMessage(TiltedPhoques::String("connecting to ") + config.Address);
     }
 
     // Any leftover connection (say a dashboard connect still trying) is closed while the state is still idle or waiting.
@@ -300,14 +300,14 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
             if (!LoadConfig(config))
             {
 #ifdef SKYRIMVR
-                Utils::ShowHudMessage("urSovngarde: no server set, join from the urSovngarde launcher or run setup-connect.bat in the mod's folder");
+                Utils::ShowModHudMessage("no server set, join from the urSovngarde launcher or run setup-connect.bat in the mod's folder");
 #endif
                 return;
             }
             if (!config.AutoConnect)
             {
                 spdlog::info("VRConnectService: ready to connect to {}; waiting for F6", config.Address.c_str());
-                Utils::ShowHudMessage(TiltedPhoques::String("urSovngarde: press F6 to connect to ") + config.Address);
+                Utils::ShowModHudMessage(TiltedPhoques::String("press F6 to connect to ") + config.Address);
                 return;
             }
         }
@@ -351,7 +351,7 @@ void VRConnectService::OnUpdate(const UpdateEvent&) noexcept
             else if (!name.empty() && !m_connectedName.empty() && name != m_connectedName)
             {
                 spdlog::info("VRConnectService: the character is now '{}', was '{}' when connecting; connecting again", name.c_str(), m_connectedName.c_str());
-                Utils::ShowHudMessage("urSovngarde: another character was loaded, connecting again");
+                Utils::ShowModHudMessage("another character was loaded, connecting again");
                 // Waiting before closing: the disconnection then schedules nothing, and the next update connects.
                 m_state = State::kWaiting;
                 m_failedAttempts = 0;

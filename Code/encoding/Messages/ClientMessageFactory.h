@@ -40,7 +40,7 @@
 #include <Messages/ReviveRequest.h>
 #include <Messages/SafePointRequest.h>
 #include <Messages/RequestActionEvents.h>
-#include <Messages/RequestSleep.h>
+#include <Messages/RequestHourMove.h>
 #include <Messages/RequestReferenceEnable.h>
 #include <Messages/RequestWarState.h>
 #include <Messages/RequestFollowerState.h>
@@ -76,6 +76,8 @@
 #include <Messages/RequestRemoveWaypoint.h>
 #include <Messages/RequestActorPresence.h>
 #include <Messages/RequestNpcPlugins.h>
+#include <Messages/RequestTimeSkip.h>
+#include <Messages/RequestCombatState.h>
 
 using TiltedPhoques::UniquePtr;
 
@@ -90,7 +92,7 @@ struct ClientMessageFactory
             PartyChangeLeaderRequest, PartyKickRequest, RequestActorValueChanges, RequestActorMaxValueChanges, EnterExteriorCellRequest, RequestHealthChangeBroadcast, ActivateRequest, LockChangeRequest, AssignObjectsRequest, RequestDeathStateChange, ShiftGridCellRequest,
             RequestOwnershipTransfer, RequestOwnershipClaim, RequestObjectInventoryChanges, SpellCastRequest, ProjectileLaunchRequest, InterruptCastRequest, AddTargetRequest, ScriptAnimationRequest, DrawWeaponRequest, MountRequest, NewPackageRequest, RequestRespawn, SyncExperienceRequest,
             RequestEquipmentChanges, SendChatMessageRequest, TeleportCommandRequest, PlayerRespawnRequest, DialogueRequest, SubtitleRequest, PlayerDialogueRequest, PlayerLevelRequest, TeleportRequest, RequestPlayerHealthUpdate, RequestWeatherChange, RequestCurrentWeather, RequestSetWaypoint,
-            RequestRemoveWaypoint, RemoveSpellRequest, SetTimeCommandRequest, RequestDroppedItemAdd, RequestDroppedItemRemove, RequestDroppedItemMove, RequestWorldObjectMove, ClashRequest, PlayerPlaceRequest, VoiceDataRequest, VoiceStateRequest, ArrowNockedRequest, PlayerDownedRequest, ReviveRequest, SafePointRequest, RequestActionEvents, RequestSleep, RequestReferenceEnable, RequestWarState, RequestFollowerState, RequestPartyPlugin, RequestPartyValue, RequestActorPresence, RequestNpcPlugins>;
+            RequestRemoveWaypoint, RemoveSpellRequest, SetTimeCommandRequest, RequestDroppedItemAdd, RequestDroppedItemRemove, RequestDroppedItemMove, RequestWorldObjectMove, ClashRequest, PlayerPlaceRequest, VoiceDataRequest, VoiceStateRequest, ArrowNockedRequest, PlayerDownedRequest, ReviveRequest, SafePointRequest, RequestActionEvents, RequestHourMove, RequestReferenceEnable, RequestWarState, RequestFollowerState, RequestPartyPlugin, RequestPartyValue, RequestActorPresence, RequestNpcPlugins, RequestTimeSkip, RequestCombatState>;
 
         return s_visitor(std::forward<T>(func));
     }

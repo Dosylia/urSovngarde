@@ -135,7 +135,7 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         {
             // From the menu, so a player who closed the dashboard still learns how a join ended.
             const std::string cText = std::string(eventArgs->GetString(0)).substr(0, 200);
-            World::Get().GetRunner().Queue([cText]() { Utils::ShowHudMessage(TiltedPhoques::String(("urSovngarde: " + cText).c_str())); });
+            World::Get().GetRunner().Queue([cText]() { Utils::ShowModHudMessage(cText.c_str()); });
         }
 
         return true;

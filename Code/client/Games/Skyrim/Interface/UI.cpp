@@ -8,8 +8,6 @@
 #include <World.h>
 #include <CrashHandler.h>
 #include <Helpers/PatchCheck.h>
-#include <Services/CalendarService.h>
-#include <Interface/Menus/SleepWaitMenu.h>
 #include <Interface/Menus/SkillsMenu.h>
 #include <Interface/Menus/MapMenu.h>
 
@@ -112,12 +110,11 @@ bool UnpausedMenusOnline() noexcept
     return world.GetTransport().IsConnected() && world.GetServerSettings().UnpausedMenus;
 }
 
-// Whether each menu that can run unpaused was, at its last opening: kAllowList, then the Sleep/Wait menu.
+// Whether each menu that can run unpaused, the kAllowList ones, was unpaused at its last opening.
 // Recorded where the menu is queued (UI_AddToActiveQueue_Hook), after the decision, from its flags.
 // The checks below run per input event and per pose send on several threads. Reading the menu object there meant
 // walking menuMap without the UI's lock and reading flags of a menu another thread may be freeing as it closes.
-static constexpr const char* kSleepWaitMenuName = "Sleep/Wait Menu";
-static std::atomic<bool> s_openedUnpaused[std::size(kAllowList) + 1];
+static std::atomic<bool> s_openedUnpaused[std::size(kAllowList)];
 
 static std::atomic<bool>* OpenedUnpausedFlag(const char* acpName) noexcept
 {
@@ -126,8 +123,6 @@ static std::atomic<bool>* OpenedUnpausedFlag(const char* acpName) noexcept
     for (size_t i = 0; i < std::size(kAllowList); ++i)
         if (std::strcmp(acpName, kAllowList[i]) == 0)
             return &s_openedUnpaused[i];
-    if (std::strcmp(acpName, kSleepWaitMenuName) == 0)
-        return &s_openedUnpaused[std::size(kAllowList)];
     return nullptr;
 }
 
@@ -243,10 +238,9 @@ TP_THIS_FUNCTION(TPlayerControlsCanProcess, bool, void);
 static TPlayerControlsCanProcess* RealPlayerControlsCanProcess;
 
 // The one hook on it: MinHook takes a single hook per address, and a second one is silently not installed.
-// So the party sleep's control lock (Menus/SleepWaitMenu.cpp) is asked here too.
 static bool HookPlayerControlsCanProcess(void* apControls)
 {
-    if (IsAllowListMenuOpenUnpaused() || SleepWaitBlocksControls())
+    if (IsAllowListMenuOpenUnpaused())
         return false;
 
     return TiltedPhoques::ThisCall(RealPlayerControlsCanProcess, apControls);
@@ -291,9 +285,6 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
             ++s_loadingScreensQueued;
             FreezeWatchdog::NoteLoadingScreen();
         }
-        // A sleep fades out a couple of seconds before the clock moves; the party fades with it.
-        if (pName && pName->AsAscii() && strcmp(pName->AsAscii(), "Fader Menu") == 0)
-            CalendarService::OnFaderQueued();
 #ifdef SKYRIMVR
         // The in-headset dashboard is made at the main menu, where a pause costs nothing.
         // Made later, on the first update in the world, it stops the game for up to 1.5 s right after the save loads.
@@ -309,17 +300,6 @@ static void* UI_AddToActiveQueue_Hook(UI* apSelf, IMenu* apMenu, void* apFoundIt
         RecordMenuOpening(apSelf, apMenu);
         return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
     }
-
-#ifdef SKYRIMVR
-    static const BSFixedString s_sleepWaitMenu(kSleepWaitMenuName);
-    // Only where the server lets a sleep pass time: elsewhere the menu pauses as in the game, and the sleep hooks stay idle.
-    if (SleepWaitCanRunUnpaused() && apSelf->FindMenuByName(s_sleepWaitMenu) == apMenu)
-    {
-        UnfreezeMenu(apMenu);
-        RecordMenuOpening(apSelf, apMenu);
-        return UI_AddToActiveQueue(apSelf, apMenu, apFoundItem);
-    }
-#endif
 
 #if 0
         if (auto* pName = apSelf->LookupMenuNameByInstance(apEntry))

@@ -291,6 +291,7 @@ __declspec(dllexport) bool urSovngarde_GetPartyValue(const char* acpKey, float* 
 // Moves the shared clock forward to the next time it is aHour, from 0 to 24, in every game on the server that is in the world, as a wait does.
 // Days pass as in a wait, and the clock never goes back; at that hour already, or up to six game minutes past it, nothing moves.
 // The server must let a wait pass time: Gameplay:bEnableSleep on a private server, with nobody of the party in combat, this player included.
+// No shared sleep or wait may be under way either: no vote open, and no game still resting from one.
 // Only the party's leader can ask, or a player in no party; a game that plays alone sets its own hour.
 // True when it was asked; false too while an earlier ask waits for its answer.
 // urSovngarde_GetPartyHourAnswer then says how it went.
@@ -314,7 +315,7 @@ __declspec(dllexport) bool urSovngarde_SetPartyHour(float aHour) noexcept
 // 2 refused, this server does not let a wait pass time (Gameplay:bEnableSleep);
 // 3 refused, a public server;
 // 4 refused, a party member is in combat;
-// 5 refused, a player on the server is sleeping or waiting, or this game is;
+// 5 refused, a shared sleep or wait is under way (a vote open, or a game still resting from one), or this game still waits for an earlier answer;
 // 6 refused, this player is in no party and others are online;
 // 7 lost: the connection went before the server answered.
 __declspec(dllexport) int32_t urSovngarde_GetPartyHourAnswer() noexcept

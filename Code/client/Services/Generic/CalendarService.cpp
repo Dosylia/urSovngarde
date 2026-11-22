@@ -6,14 +6,13 @@
 #include <Events/DisconnectedEvent.h>
 #include <Events/UpdateEvent.h>
 #include <Messages/ServerTimeSettings.h>
-#include <Messages/RequestSleep.h>
-#include <Messages/NotifySleep.h>
+#include <Messages/RequestHourMove.h>
+#include <Messages/RequestCombatState.h>
+#include <Messages/NotifyHourMove.h>
 #include <World.h>
 
 #include <Forms/TESObjectCELL.h>
 #include <Games/References.h>
-#include <Interface/UI.h>
-#include <Interface/Menus/SleepWaitMenu.h>
 #include <PlayerCharacter.h>
 #include <TimeManager.h>
 #include <Utils.h>
@@ -27,44 +26,13 @@ using GameClockFrame::kTransitionSpeed;
 
 namespace
 {
-// A menu closed before the clock moved keeps it free this long, in case the fast-forward is still to come.
-constexpr double kSleepGrace = 3.0;
-// The sleep is over once the hours slept have grown less than this for this long.
-constexpr float kSleepMovingStep = 0.01f;
-constexpr double kSleepStillTime = 0.5;
-constexpr double kWatchHudInterval = 2.5;
-// Less than a game minute slept is a menu opened and cancelled.
-constexpr float kMinSleepHours = 1.f / 60.f;
-// Progress goes out at most this often, and only once the clock has moved this far.
-constexpr double kSleepSendInterval = 0.2;
-constexpr double kSleepHeartbeatInterval = 5.0;
-constexpr float kSleepSendStep = 0.1f;
-// A watcher that hears nothing for this long regains controls on its own.
-constexpr double kWatchTimeout = 15.0;
 constexpr double kCombatCheckInterval = 0.5;
 
-bool IsSleepMenuOpen() noexcept
-{
-    UI* pUI = UI::Get();
-    // Sleeping and waiting both run through this menu.
-    // Checked every frame; interning the name once avoids a string-cache lookup per call.
-    static const BSFixedString s_name("Sleep/Wait Menu");
-    return pUI && pUI->GetMenuOpen(s_name);
-}
-
-TimeModel ReadGameClock() noexcept
-{
-    auto* pGameTime = TimeData::Get();
-
-    TimeModel model{};
-    model.TimeScale = pGameTime->TimeScale->f;
-    model.Time = pGameTime->GameHour->f;
-    model.Day = static_cast<uint32_t>(pGameTime->GameDay->f);
-    model.Month = static_cast<uint32_t>(pGameTime->GameMonth->f);
-    model.Year = static_cast<uint32_t>(pGameTime->GameYear->f);
-    return model;
-}
-
+/**
+ * Write a clock into the game's own date and hour.
+ *
+ * @param acTime The clock.
+ */
 void WriteGameClock(const TimeModel& acTime) noexcept
 {
     auto* pGameTime = TimeData::Get();
@@ -74,6 +42,35 @@ void WriteGameClock(const TimeModel& acTime) noexcept
     pGameTime->GameYear->f = static_cast<float>(acTime.Year);
 }
 
+/**
+ * Turn an answer to a plugin's hour move into the value plugins read.
+ *
+ * @param aEvent The answer.
+ * @return Moved for a move or an hour already reached, else the refusal's reason.
+ */
+CalendarService::HourAnswer AnswerFor(const NotifyHourMove::Event aEvent) noexcept
+{
+    using Event = NotifyHourMove::Event;
+    switch (aEvent)
+    {
+    case Event::kMoved:
+    case Event::kAlreadyThere: return CalendarService::HourAnswer::kMoved;
+    case Event::kRefusedDisabled: return CalendarService::HourAnswer::kSleepOff;
+    case Event::kRefusedPublic: return CalendarService::HourAnswer::kPublic;
+    case Event::kRefusedCombat: return CalendarService::HourAnswer::kCombat;
+    case Event::kRefusedBusy: return CalendarService::HourAnswer::kBusy;
+    case Event::kRefusedNoParty: return CalendarService::HourAnswer::kNoParty;
+    }
+    // An answer this build does not know reads as moved, as an hour already reached does.
+    return CalendarService::HourAnswer::kMoved;
+}
+
+/**
+ * Write an hour of the day as hh:mm, for the log.
+ *
+ * @param aTime The hour, from 0 to 24.
+ * @return The text.
+ */
 String FormatHour(float aTime)
 {
     const int cHour = static_cast<int>(aTime);
@@ -85,44 +82,54 @@ String FormatHour(float aTime)
 
 bool CalendarService::s_gameClockLocked = false;
 
+/**
+ * Tell the game's own time step whether it may move the clock: offline, or while a shared skip leaves the clock to the game.
+ * Read by the game's time hook (TimeManager.cpp), on the game's thread.
+ *
+ * @return True when the game may move its own clock.
+ */
 bool CalendarService::AllowGameTick() noexcept
 {
-    return !s_gameClockLocked;
+    // During a shared skip the game runs its own clock, so its hourly updates see the hours pass.
+    return !s_gameClockLocked || s_sharedSkipRunning;
 }
 
+/**
+ * Listen for the server's time, the frame's update, the end of the connection and a plugin's hour moves.
+ *
+ * @param aWorld The client's world, for its clock.
+ * @param aDispatcher Where the client's events and messages come from.
+ * @param aTransport The connection to the server.
+ */
 CalendarService::CalendarService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport)
     : m_world(aWorld), m_transport(aTransport)
 {
     m_timeUpdateConnection = aDispatcher.sink<ServerTimeSettings>().connect<&CalendarService::OnTimeUpdate>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&CalendarService::HandleUpdate>(this);
     m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&CalendarService::OnDisconnected>(this);
-    m_sleepConnection = aDispatcher.sink<NotifySleep>().connect<&CalendarService::OnNotifySleep>(this);
+    m_hourMoveConnection = aDispatcher.sink<NotifyHourMove>().connect<&CalendarService::OnNotifyHourMove>(this);
 }
 
+/**
+ * Take the server's time: the game's clock follows it from now on, with this player's own date when calendars are not shared.
+ *
+ * @param acMessage The server's time.
+ */
 void CalendarService::OnTimeUpdate(const ServerTimeSettings& acMessage) noexcept
 {
-    // A join or admin change can resync the server while a sleep is in progress. Keep the native clock
-    // and provisional audience progress until the session ends; every end path sends a fresh resync.
-    if (m_sleepState == SleepState::kSleeping || m_watchedSleeper)
-        return;
-
-    if (m_sleepState == SleepState::kFinishing)
-        m_sleepState = SleepState::kIdle;
-
     // disable the game clock
     ToggleGameClock(false);
     m_lastTick = m_world.GetTick();
     SleepTimeSync::ApplyServerTime(m_onlineTime, acMessage.timeModel, m_offlineTime.m_timeModel, m_world.GetServerSettings().SyncPlayerCalendar);
 }
 
-void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
+/**
+ * Give the clock back to the game when the connection is lost, dropping any hour move or shared skip.
+ *
+ * @param acEvent The end of the connection.
+ */
+void CalendarService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
 {
-#ifdef SKYRIMVR
-    ResolveDeferredSleepWait(false);
-#endif
-    if (m_watchedSleeper)
-        StopWatching(0.f);
-
     if (m_hourMove)
     {
         m_hourMove.reset();
@@ -130,176 +137,62 @@ void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
         spdlog::info("Hour: a plugin's move of the hour was lost with the connection");
     }
 
+    m_sharedSkip.Cancel();
+    s_sharedSkipRunning = false;
+
     // signal a time transition
     m_fadeTimer = 0.f;
     ToggleGameClock(true);
 
-    s_sleepControlsLocked = false;
-    m_watchedSleeper.reset();
-    m_sleepState = SleepState::kIdle;
     m_reportedCombat = false;
 }
 
-String CalendarService::PlayerName(uint32_t aPlayerId) const noexcept
+/**
+ * Give a player's name for the log, from the party's list.
+ *
+ * @param aPlayerId The player's server id.
+ * @return The name; "A party member" when the list does not know the player.
+ */
+String CalendarService::FindPartyMemberName(uint32_t aPlayerId) const noexcept
 {
     const auto& cPlayers = m_world.GetPartyService().GetPlayers();
     const auto it = cPlayers.find(aPlayerId);
     return it != cPlayers.end() ? it->second : String("A party member");
 }
 
-void CalendarService::OnNotifySleep(const NotifySleep& acMessage) noexcept
+/**
+ * Follow a plugin's hour move: every game in the world takes the hours a move covered, and the asker hears how its ask went.
+ *
+ * @param acMessage The move, or why it was refused.
+ */
+void CalendarService::OnNotifyHourMove(const NotifyHourMove& acMessage) noexcept
 {
-    using Event = NotifySleep::Event;
-
-    switch (acMessage.SleepEvent)
+    if (acMessage.MoveEvent == NotifyHourMove::Event::kMoved)
     {
-    case Event::kGranted:
-        // Asked for by a plugin, with no menu: the hours are known, so the wait ends as it is granted.
-        if (m_hourMove)
-        {
-            const float cHour = *m_hourMove;
-            m_hourMove.reset();
-            FinishHourMove(cHour);
+        ApplyHourMove(acMessage.Hours);
+        spdlog::info("Hour: {} moved the shared clock forward {:.2f} h to {}", FindPartyMemberName(acMessage.PlayerId).c_str(), acMessage.Hours,
+                     FormatHour(m_onlineTime.m_timeModel.Time).c_str());
+        // Another player's move is no answer to this game's own ask.
+        if (acMessage.PlayerId != m_transport.GetLocalPlayerId())
             return;
-        }
-
-        if (m_sleepState != SleepState::kAsking || !IsSleepMenuOpen()
-#ifdef SKYRIMVR
-            || m_sleepMenuGeneration != SleepWaitMenuGeneration()
-#endif
-        )
-        {
-            // The menu closed before the answer came.
-            RequestSleep cancel{};
-            cancel.SleepStep = RequestSleep::Step::kCancel;
-            m_transport.Send(cancel);
-#ifdef SKYRIMVR
-            // Await this grant's cancellation resync before asking for the replacement menu.
-            m_sleepState = SleepState::kFinishing;
-#endif
-            return;
-        }
-
-        m_sleepStart = ReadGameClock();
-        m_sleepRealSeconds = 0.0;
-        m_sleepSentHours = 0.f;
-        m_sleepAnnounced = false;
-        m_sleepLastHours = 0.f;
-        m_sleepStill = 0.0;
-        m_sleepGrace = kSleepGrace;
-        m_sleepSendTimer = 0.0;
-        m_sleepHeartbeatTimer = 0.0;
-        s_faderQueued = false;
-        m_sleepState = SleepState::kSleeping;
-        ToggleGameClock(true);
-#ifdef SKYRIMVR
-        ResolveDeferredSleepWait(true);
-#endif
-        return;
-    case Event::kRevoked:
-#ifdef SKYRIMVR
-        ResolveDeferredSleepWait(false);
-#endif
-        if (m_sleepState == SleepState::kSleeping || m_sleepState == SleepState::kFinishing)
-        {
-            // The server discarded this session. Restore the continuously maintained baseline before
-            // its resync, including the personal date when calendar synchronization is disabled.
-            RestoreOnlineClock();
-            ToggleGameClock(false);
-        }
-        m_sleepState = IsSleepMenuOpen() ? SleepState::kRefused : SleepState::kIdle;
-        Utils::ShowHudMessage("urSovngarde: sleep session expired, reopen the sleep/wait menu to try again");
-        return;
-    case Event::kRefusedDisabled:
-    case Event::kRefusedPublic:
-    case Event::kRefusedNotAllowed:
-    case Event::kRefusedBusy:
-    case Event::kRefusedCombat:
-    {
-        String reason;
-        if (acMessage.SleepEvent == Event::kRefusedDisabled)
-            reason = "sleeping does not pass time on this server";
-        else if (acMessage.SleepEvent == Event::kRefusedPublic)
-            reason = "sleeping only passes time on private servers";
-        else if (acMessage.SleepEvent == Event::kRefusedNotAllowed)
-            reason = "join a party to sleep, the hour is shared";
-        else if (acMessage.SleepEvent == Event::kRefusedBusy)
-            reason = PlayerName(acMessage.PlayerId) + " is already sleeping";
-        else
-            reason = PlayerName(acMessage.PlayerId) + " is in combat";
-
-        // A plugin's move: the plugin tells its player, and no menu waits for this answer.
-        if (m_hourMove)
-        {
-            m_hourMove.reset();
-            m_sleepState = SleepState::kIdle;
-            s_hourAnswer = acMessage.SleepEvent == Event::kRefusedDisabled  ? HourAnswer::kSleepOff
-                           : acMessage.SleepEvent == Event::kRefusedPublic  ? HourAnswer::kPublic
-                           : acMessage.SleepEvent == Event::kRefusedCombat  ? HourAnswer::kCombat
-                           : acMessage.SleepEvent == Event::kRefusedBusy    ? HourAnswer::kBusy
-                                                                            : HourAnswer::kNoParty;
-            spdlog::info("Hour: a plugin's move of the hour was refused, {}", reason);
-            return;
-        }
-
-        if (m_sleepState == SleepState::kAsking)
-            m_sleepState = SleepState::kRefused;
-#ifdef SKYRIMVR
-        ResolveDeferredSleepWait(false);
-#endif
-
-        spdlog::info("Sleep: refused, {}", reason);
-        Utils::ShowHudMessage(String("urSovngarde: no time will pass, ") + reason);
-        return;
     }
-    case Event::kProgress:
-        if (!m_watchedSleeper)
-        {
-            m_watchedSleeper = acMessage.PlayerId;
-            m_watchHudTimer = 0.0;
-            m_watchHours = 0.f;
-            s_sleepControlsLocked = true;
-        }
 
-        if (m_watchedSleeper != acMessage.PlayerId)
-            return;
-
-        m_watchSilence = 0.0;
-        if (acMessage.HoursSlept > m_watchHours)
-        {
-            // Our clock kept running too, so only the hours slept on top of it are added.
-            const float cStep = acMessage.HoursSlept - m_watchHours;
-            m_watchHours = acMessage.HoursSlept;
-            m_onlineTime.AdvanceHours(cStep);
-            m_fadeTimer = kTransitionSpeed;
-            if (s_gameClockLocked)
-                TimeData::Get()->GameDaysPassed->f += cStep / 24.f;
-        }
-
-        // The game shows each HUD line for about 2 s and queues the rest, and a sleep runs at about an hour a second.
-        if (m_watchHudTimer <= 0.0)
-        {
-            m_watchHudTimer = kWatchHudInterval;
-            Utils::ShowHudMessage(String("urSovngarde: ") + PlayerName(acMessage.PlayerId) + " is sleeping, " + FormatHour(m_onlineTime.m_timeModel.Time));
-        }
+    if (!m_hourMove)
         return;
-    case Event::kFinished:
-        CommitSleepTime(acMessage.PlayerId, acMessage.HoursSlept);
-        return;
-    }
+
+    m_hourMove.reset();
+    s_hourAnswer = AnswerFor(acMessage.MoveEvent);
+    spdlog::info("Hour: the server answered a plugin's move of the hour with {}", static_cast<int>(s_hourAnswer.load()));
 }
 
-void CalendarService::StopWatching(float aHours) noexcept
+/**
+ * Take the hours the shared clock moved into this game's own date and days passed, before the server's resync.
+ *
+ * @param aHours How far the shared clock moved, in game hours.
+ */
+void CalendarService::ApplyHourMove(const float aHours) noexcept
 {
-    CommitSleepTime(*m_watchedSleeper, aHours);
-}
-
-void CalendarService::CommitSleepTime(uint32_t aSleeperId, float aHours) noexcept
-{
-    // Progress is provisional until the finish. Undo it on cancellation/disconnect/timeout, including
-    // midnight and GameDaysPassed. Players outside the party have no progress to subtract, so their
-    // personal calendar advances by the full duration, even with bSyncPlayerCalendar disabled.
-    const auto cDays = SleepTimeSync::CommitSleep(m_onlineTime, m_transport.GetLocalPlayerId(), aSleeperId, aHours, m_watchedSleeper, m_watchHours);
+    const auto cDays = SleepTimeSync::AdvancePersonalClock(m_onlineTime, aHours);
     if (!cDays)
         return;
 
@@ -307,163 +200,17 @@ void CalendarService::CommitSleepTime(uint32_t aSleeperId, float aHours) noexcep
     if (s_gameClockLocked)
     {
         TimeData::Get()->GameDaysPassed->f += *cDays;
-        // The following resync snapshots these globals. Publish the new date now so it cannot put
-        // 06:00 back on the old day; it must also preserve a 24-hour sleep with the same final hour.
+        // The resync that follows reads the date from these globals: published now, it keeps the new day.
         WriteGameClock(m_onlineTime.m_timeModel);
     }
-
-    if (m_watchedSleeper != aSleeperId)
-        return;
-
-    if (aHours >= kMinSleepHours)
-        Utils::ShowHudMessage(String("urSovngarde: ") + PlayerName(*m_watchedSleeper) + " woke up, " + FormatHour(m_onlineTime.m_timeModel.Time));
-
-    // The server's resync follows with the shared clock and corrects anything left over.
-    m_watchedSleeper.reset();
-    s_sleepControlsLocked = false;
 }
 
-void CalendarService::UpdateWatch(double aDelta) noexcept
-{
-    if (!m_watchedSleeper)
-        return;
-
-    m_watchHudTimer -= aDelta;
-    m_watchSilence += aDelta;
-    if (m_watchSilence >= kWatchTimeout)
-    {
-        spdlog::warn("Sleep: nothing from player {:X} for {:.0f} s, releasing sleep controls", *m_watchedSleeper, kWatchTimeout);
-        StopWatching(0.f);
-    }
-}
-
-void CalendarService::UpdateSleep(double aDelta) noexcept
-{
-    bool cMenuOpen = IsSleepMenuOpen();
-#ifdef SKYRIMVR
-    if (m_sleepState != SleepState::kIdle && m_sleepMenuGeneration != SleepWaitMenuGeneration())
-    {
-        // A close/reopen can happen between VM updates, even reusing the same IMenu address.
-        // Drain the old answer before asking again; its grant must not start the new confirmation.
-        if (m_sleepState == SleepState::kAsking)
-            return;
-        cMenuOpen = false;
-    }
-#endif
-
-    switch (m_sleepState)
-    {
-    case SleepState::kIdle:
-        if (cMenuOpen)
-        {
-#ifdef SKYRIMVR
-            m_sleepMenuGeneration = SleepWaitMenuGeneration();
-#endif
-            RequestSleep ask{};
-            ask.SleepStep = RequestSleep::Step::kAsk;
-            m_transport.Send(ask);
-            m_sleepState = SleepState::kAsking;
-        }
-        return;
-    case SleepState::kAsking:
-#ifndef SKYRIMVR
-        // A plugin's move asks with no menu open.
-        if (!cMenuOpen && !m_hourMove)
-        {
-            RequestSleep cancel{};
-            cancel.SleepStep = RequestSleep::Step::kCancel;
-            m_transport.Send(cancel);
-            m_sleepState = SleepState::kIdle;
-        }
-#endif
-        // VR drains the outstanding reply even after closing: a late grant is cancelled and resynced
-        // in OnNotifySleep before the replacement menu may request its own grant.
-        return;
-    case SleepState::kRefused:
-        if (!cMenuOpen)
-            m_sleepState = SleepState::kIdle;
-        return;
-    case SleepState::kFinishing: return;
-    case SleepState::kSleeping: break;
-    }
-
-    m_sleepRealSeconds += aDelta;
-    m_sleepHeartbeatTimer -= aDelta;
-    if (m_sleepHeartbeatTimer <= 0.0)
-    {
-        RequestSleep heartbeat{};
-        heartbeat.SleepStep = RequestSleep::Step::kHeartbeat;
-        m_transport.Send(heartbeat);
-        m_sleepHeartbeatTimer = kSleepHeartbeatInterval;
-    }
-    const float cHours = SleptHours(ReadGameClock());
-
-    // The native sleeper fades before the clock moves; lock the party's controls from that point.
-    const bool cFaderQueued = s_faderQueued.exchange(false);
-    m_sleepSendTimer -= aDelta;
-    if ((cFaderQueued && !m_sleepAnnounced) || (m_sleepSendTimer <= 0.0 && cHours - m_sleepSentHours >= kSleepSendStep))
-    {
-        m_sleepAnnounced = true;
-        RequestSleep progress{};
-        progress.SleepStep = RequestSleep::Step::kProgress;
-        progress.HoursSlept = cHours;
-        m_transport.Send(progress);
-
-        m_sleepSentHours = cHours;
-        m_sleepSendTimer = kSleepSendInterval;
-    }
-
-    if (cHours - m_sleepLastHours > kSleepMovingStep)
-    {
-        m_sleepLastHours = cHours;
-        m_sleepStill = 0.0;
-    }
-    else
-        m_sleepStill += aDelta;
-
-    if (cMenuOpen)
-    {
-        m_sleepGrace = kSleepGrace;
-        return;
-    }
-
-    // Done once the clock has moved and then stopped; a menu closed with no movement waits for the fast-forward.
-    m_sleepGrace -= aDelta;
-    if ((cHours >= kMinSleepHours && m_sleepStill >= kSleepStillTime) || m_sleepGrace <= 0.0)
-        FinishSleep();
-}
-
-float CalendarService::SleptHours(const TimeModel& acNow) const noexcept
-{
-    // The server's clock ran on in real time meanwhile, so only the game time beyond that was slept.
-    const double cGameHours = (DateTime(acNow).GetTimeInDays() - DateTime(m_sleepStart).GetTimeInDays()) * 24.0;
-    const double cRealHours = m_sleepRealSeconds * m_sleepStart.TimeScale / 3600.0;
-    return static_cast<float>(std::max(0.0, cGameHours - cRealHours));
-}
-
-void CalendarService::RestoreOnlineClock() noexcept
-{
-    const double cCorrectionDays = m_onlineTime.GetTimeInDays() - DateTime(ReadGameClock()).GetTimeInDays();
-    TimeData::Get()->GameDaysPassed->f += static_cast<float>(cCorrectionDays);
-    WriteGameClock(m_onlineTime.m_timeModel);
-}
-
-void CalendarService::FinishSleep() noexcept
-{
-    const float cHours = SleptHours(ReadGameClock());
-    m_sleepState = SleepState::kFinishing;
-    if (cHours < kMinSleepHours)
-        RestoreOnlineClock();
-
-    // Leave the displayed clock with the game until the final resync so it does not jump back during
-    // the round trip. Keep m_onlineTime as the baseline in case the server revokes this grant instead.
-
-    RequestSleep done{};
-    done.SleepStep = cHours >= kMinSleepHours ? RequestSleep::Step::kFinish : RequestSleep::Step::kCancel;
-    done.HoursSlept = cHours;
-    m_transport.Send(done);
-}
-
+/**
+ * Ask the server to move the shared clock forward to the next time it is an hour, for a plugin; the answer comes in GetHourAnswer.
+ * Main thread.
+ *
+ * @param aHour The hour, from 0 to 24.
+ */
 void CalendarService::MoveToHour(const float aHour) noexcept
 {
     if (!m_transport.IsConnected())
@@ -471,8 +218,8 @@ void CalendarService::MoveToHour(const float aHour) noexcept
         s_hourAnswer = HourAnswer::kLost;
         return;
     }
-    // One wait at a time here, the player's own or another plugin's move.
-    if (m_sleepState != SleepState::kIdle || m_watchedSleeper || m_hourMove)
+    // One move at a time here, a shared skip's or another plugin's.
+    if (m_hourMove || m_sharedSkip.IsRunning())
     {
         s_hourAnswer = HourAnswer::kBusy;
         spdlog::info("Hour: a plugin's move to {} not asked, a sleep or wait is under way here", FormatHour(std::fmod(aHour, 24.f)));
@@ -486,51 +233,83 @@ void CalendarService::MoveToHour(const float aHour) noexcept
         return;
     }
 
-    // The same grant as a wait: the server's rules for passing time hold, and only one player passes it at a time.
+    // The server's rules for passing time hold, and it counts the hours on its own clock.
     m_hourMove = aHour;
-#ifdef SKYRIMVR
-    m_sleepMenuGeneration = SleepWaitMenuGeneration();
-#endif
-    RequestSleep ask{};
-    ask.SleepStep = RequestSleep::Step::kAsk;
+    RequestHourMove ask{};
+    ask.TargetHour = aHour;
     m_transport.Send(ask);
-    m_sleepState = SleepState::kAsking;
     spdlog::info("Hour: a plugin asked to move the hour to {}; asking the server", FormatHour(std::fmod(aHour, 24.f)));
 }
 
-void CalendarService::FinishHourMove(const float aHour) noexcept
+/**
+ * Let the game keep its own clock while it rests the hours every player agreed on.
+ * The server's time still comes in meanwhile; the game's clock follows it again once the skip ends.
+ *
+ * @param aHours The agreed length, in game hours.
+ */
+void CalendarService::BeginSharedSkip(const float aHours) noexcept
 {
-    // Counted at the grant: the clock ran on while the server answered.
-    // An hour asked for that the clock passed meanwhile, by up to six game minutes, is reached, not a day away.
-    constexpr float cJustPassed = 0.1f;
-    const float cHours = std::fmod(aHour - m_onlineTime.m_timeModel.Time + 48.f, 24.f);
-    const bool cMoves = cHours >= kMinSleepHours && cHours <= 24.f - cJustPassed;
-    // Idle at once: this game moves its own clock here, and the server's resync, which it may not send before this player is in the world, is taken in any state.
-    m_sleepState = SleepState::kIdle;
-    s_hourAnswer = HourAnswer::kMoved;
-
-    RequestSleep done{};
-    done.SleepStep = cMoves ? RequestSleep::Step::kFinish : RequestSleep::Step::kCancel;
-    done.HoursSlept = cHours;
-    m_transport.Send(done);
-    if (!cMoves)
+    if (m_sharedSkip.IsRunning())
     {
-        spdlog::info("Hour: already {}, as a plugin asked; nothing moved", FormatHour(m_onlineTime.m_timeModel.Time));
+        spdlog::warn("SleepVote: a skip of {} h agreed while the last one still runs here, ignored", aHours);
         return;
     }
 
-    // The server gives every other game these hours, then its clock; this game moves its own, as a sleeper's game does.
-    // Published now, as at a sleep's end, so the resync that follows keeps the new day.
-    m_onlineTime.AdvanceHours(cHours);
-    m_fadeTimer = kTransitionSpeed;
-    if (s_gameClockLocked)
-    {
-        TimeData::Get()->GameDaysPassed->f += cHours / 24.f;
-        WriteGameClock(m_onlineTime.m_timeModel);
-    }
-    spdlog::info("Hour: moved forward {:.2f} h to {} for every game, as a plugin asked", cHours, FormatHour(m_onlineTime.m_timeModel.Time));
+    m_sharedSkip.Begin(m_onlineTime.m_timeModel, TimeData::Get()->GameDaysPassed->f, aHours, m_world.GetTick());
+    s_sharedSkipRunning = true;
+    spdlog::info("SleepVote: the game keeps its own clock while it rests {} h", aHours);
 }
 
+/**
+ * End a shared skip: the days passed count the whole skip, this player's own date moves by it, and the game's clock follows the server's again.
+ * Nothing happens when no skip runs.
+ */
+void CalendarService::EndSharedSkip() noexcept
+{
+    if (!m_sharedSkip.IsRunning())
+        return;
+
+    auto* pGameTime = TimeData::Get();
+    const auto cResult = m_sharedSkip.End(pGameTime->GameDaysPassed->f, m_world.GetTick());
+    s_sharedSkipRunning = false;
+    pGameTime->GameDaysPassed->f = cResult.DaysPassed;
+
+    // The server's resync came before the rest, with the date as it was then: a personal date takes the skip's own.
+    // A shared calendar has the server's date already.
+    if (!m_world.GetServerSettings().SyncPlayerCalendar)
+    {
+        const float cTimeScale = m_onlineTime.m_timeModel.TimeScale;
+        m_onlineTime.m_timeModel = cResult.PersonalClock;
+        m_onlineTime.m_timeModel.TimeScale = cTimeScale;
+    }
+
+    // Published at once, as at a sleep's end, so a resync that comes later keeps the new day.
+    ToggleGameClock(false);
+    WriteGameClock(m_onlineTime.m_timeModel);
+    m_lastTick = m_world.GetTick();
+    spdlog::info("SleepVote: the clock follows the server again, day {} of month {}, hour {:.2f}, {:.3f} days passed", m_onlineTime.m_timeModel.Day,
+                 m_onlineTime.m_timeModel.Month, m_onlineTime.m_timeModel.Time, cResult.DaysPassed);
+}
+
+/**
+ * End a shared skip whose rest never reported its end, after TimeSkipHours::kLongestRestSeconds.
+ *
+ * @param aNow The game's time now, in milliseconds.
+ */
+void CalendarService::EndRestThatRanTooLong(const uint64_t aNow) noexcept
+{
+    if (!m_sharedSkip.HasRunTooLong(aNow))
+        return;
+
+    spdlog::warn("SleepVote: the rest outlasted {} s; the clock follows the server again", TimeSkipHours::kLongestRestSeconds);
+    EndSharedSkip();
+}
+
+/**
+ * Report this player's combat state to a server that can move the hour for a plugin, when it changed.
+ *
+ * @param aDelta The frame's time, in seconds.
+ */
 void CalendarService::ReportCombat(double aDelta) noexcept
 {
     m_combatCheckTimer -= aDelta;
@@ -540,28 +319,25 @@ void CalendarService::ReportCombat(double aDelta) noexcept
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     const bool cFighting = pPlayer && pPlayer->IsInCombat();
-    // The server only checks the party for combat at the ask. A watcher attacked later gets their controls
-    // back but keeps watching, so the sleep's hours still arrive once, at the finish.
-    if (cFighting && s_sleepControlsLocked)
-    {
-        s_sleepControlsLocked = false;
-        Utils::ShowHudMessage("urSovngarde: in combat, controls released while " + PlayerName(*m_watchedSleeper) + " sleeps");
-    }
 
-    // Only a server that can grant a sleep needs combat reports. If it stops granting them, a last report
-    // clears this player from its combat set, so re-enabling sleep cannot refuse it on a stale entry.
+    // Only a server that can move the hour for a plugin needs combat reports.
+    // If it stops granting them, a last report clears this player from its combat set, so re-enabling sleep cannot refuse it on a stale entry.
     const bool cInCombat = cFighting && m_world.GetServerSettings().SleepEnabled;
     if (cInCombat == m_reportedCombat)
         return;
 
     m_reportedCombat = cInCombat;
 
-    RequestSleep report{};
-    report.SleepStep = RequestSleep::Step::kCombat;
+    RequestCombatState report{};
     report.InCombat = cInCombat;
     m_transport.Send(report);
 }
 
+/**
+ * Hand the clock to the game, or take it from the game, keeping the game's date and hour now as its own clock for when it is offline.
+ *
+ * @param aEnable True to let the game move its clock, false to have the shared clock written into it.
+ */
 void CalendarService::ToggleGameClock(bool aEnable)
 {
     auto* pGameTime = TimeData::Get();
@@ -574,16 +350,17 @@ void CalendarService::ToggleGameClock(bool aEnable)
     s_gameClockLocked = !aEnable;
 }
 
+/**
+ * Move the shared clock on and write it into the game's clock, except while a shared skip leaves the clock to the game.
+ *
+ * @param aEvent The frame's update.
+ */
 void CalendarService::HandleUpdate(const UpdateEvent& aEvent) noexcept
 {
     PerfScope perfScope("CalendarService::HandleUpdate");
 
     if (m_transport.IsOnline())
-    {
         ReportCombat(aEvent.Delta);
-        UpdateSleep(aEvent.Delta);
-        UpdateWatch(aEvent.Delta);
-    }
 
     if (m_transport.IsOnline() || s_gameClockLocked)
     {
@@ -595,6 +372,8 @@ void CalendarService::HandleUpdate(const UpdateEvent& aEvent) noexcept
 
         const auto now = m_world.GetTick();
 
+        EndRestThatRanTooLong(now);
+
         // we got disconnected or the client got ahead of us
         if (now < m_lastTick)
             return;
@@ -604,8 +383,9 @@ void CalendarService::HandleUpdate(const UpdateEvent& aEvent) noexcept
 
         GameClockFrame::Globals globals{};
         globals.GameDaysPassed = pGameTime->GameDaysPassed->f;
-        // Maintain the authoritative baseline even while a granted sleeper owns the native clock.
-        if (!GameClockFrame::Step(m_onlineTime, m_offlineTime.m_timeModel, delta, updateDelta, m_fadeTimer, s_gameClockLocked, globals))
+        // Maintain the authoritative baseline even while a shared skip leaves the clock to the game.
+        const bool cWritesGameClock = s_gameClockLocked && !m_sharedSkip.IsRunning();
+        if (!GameClockFrame::Step(m_onlineTime, m_offlineTime.m_timeModel, delta, updateDelta, m_fadeTimer, cWritesGameClock, globals))
             return;
         pGameTime->TimeScale->f = globals.TimeScale;
         pGameTime->GameDay->f = globals.GameDay;

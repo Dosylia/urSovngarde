@@ -391,7 +391,7 @@ void SteamFriendsService::JoinFriend(const std::string& acFriendId, const std::s
     if (choices.empty())
     {
         spdlog::info("SteamFriends: a Steam friend's server can't be reached from here (no network in common, no public address)");
-        Utils::ShowHudMessage("urSovngarde: your friend's server can't be reached from here; a virtual LAN or an open port is needed");
+        Utils::ShowModHudMessage("your friend's server can't be reached from here; a virtual LAN or an open port is needed");
         SendToPage("steamJoinFailed", "notReachable");
         return;
     }

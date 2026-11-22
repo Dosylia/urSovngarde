@@ -196,7 +196,7 @@ void VRPanel::ToggleOnStickChord() noexcept
         if (menu.Open(MenuSurface::kPanel))
             spdlog::info("VRPanel: opened by both stick clicks");
         else
-            Utils::ShowHudMessage("urSovngarde: the menu cannot open here");
+            Utils::ShowModHudMessage("the menu cannot open here");
     }
 }
 
