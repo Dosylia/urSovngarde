@@ -45,6 +45,8 @@ struct ActorExtension
     //! Its owner's game, this one or another, revived it since its last death, as this game last heard.
     //! An announcement from here carries it (CharacterService::BuildActorData).
     bool RevivedSinceDeath = false;
+    //! An NPC copy made from a spawn whose 3D step has not run yet (CharacterService::RunRemoteUpdates); a death in between is logged (SpawnDeathDiag).
+    bool AwaitingFirst3D = false;
     //! A copy of another player's summon, marked here as commanded by this game's player so it turns on no one.
     //! That mark is ours, not a spell's, so it does not mean a spell is raising the body (Actor::IsBeingRaised).
     bool CommandedAsSummonCopy = false;

@@ -1,6 +1,8 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Services/Generic/DownedHold.h>
+#include <Copies/SpawnDeathDiag.h>
+#include <Games/LifeStates.h>
 
 #include <Actor.h>
 #include <PlayerCharacter.h>
@@ -9,9 +11,6 @@
 
 namespace
 {
-// The game's life states, as Actor::SetLifeState takes them.
-constexpr uint32_t kAlive = 0;
-
 std::atomic<bool> s_holds{false};
 // Whether this down already logged a refused stand-up, so a game that tries every frame logs once.
 std::atomic<bool> s_refusalLoggedThisDown{false};
@@ -28,17 +27,19 @@ TSetLifeState* RealSetLifeState = nullptr;
  */
 bool IsHeldDownStandUp(const Actor* apActor, const uint32_t aState) noexcept
 {
-    return aState == kAlive && s_holds.load() && apActor == PlayerCharacter::Get() && apActor->actorState.IsBleedingOut();
+    return aState == LifeStates::kAlive && s_holds.load() && apActor == PlayerCharacter::Get() && apActor->actorState.IsBleedingOut();
 }
 
 /**
  * The game's Actor::SetLifeState, refusing only the stand-up of this game's player while its down holds.
+ * A copy's death before its 3D step is noted for the log (SpawnDeathDiag).
  *
  * @param apThis The actor whose life state changes.
  * @param aState The life state it is given.
  */
 void TP_MAKE_THISCALL(HookSetLifeState, Actor, uint32_t aState)
 {
+    SpawnDeathDiag::NoteLifeState(apThis, aState, _ReturnAddress());
     if (IsHeldDownStandUp(apThis, aState))
     {
         if (!s_refusalLoggedThisDown.exchange(true))

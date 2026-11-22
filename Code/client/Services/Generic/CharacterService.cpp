@@ -17,6 +17,7 @@
 #include <Copies/RecentDeletes.h>
 #include <Copies/RecentModelChanges.h>
 #include <Copies/SceneLines.h>
+#include <Copies/FrameStartSwitchOff.h>
 #include <CrashHandler.h>
 #include <unordered_set>
 #include <Copies/CopyRemovalPolicy.h>
@@ -412,18 +413,6 @@ struct WaitingCopy
 
 TiltedPhoques::Vector<WaitingCopy> s_waitingCopies;
 
-// Removed copies to switch off, by handle, on the main thread at the start of a frame (CharacterService::DisableQueuedCopies).
-// The client's update runs on one of the game's job threads.
-// Switching off an actor there while another job runs it crashes in the game's movement code (SkyrimVR.exe+0x714EB2).
-std::mutex s_disableQueueLock;
-TiltedPhoques::Vector<uint32_t> s_disableQueue;
-
-void DisableAtFrameStart(const Actor* apActor) noexcept
-{
-    std::scoped_lock lock(s_disableQueueLock);
-    s_disableQueue.push_back(apActor->GetHandle().handle.iBits);
-}
-
 // The waiting entry of that actor, by handle as well as id, or null when it is not waiting to be freed.
 WaitingCopy* FindWaitingCopy(const Actor* apActor) noexcept
 {
@@ -755,7 +744,7 @@ void RunWaitingCopies() noexcept
 
         // One that had no 3D when it was queued was left switched on; once its cell gives it 3D it is switched off.
         if (!pActor->IsDisabled() && pActor->GetNiNode() && !pActor->IsStillLoading())
-            DisableAtFrameStart(pActor);
+            FrameStartSwitchOff::Queue(pActor);
 
         stillWaiting.push_back(waiting);
     }
@@ -880,6 +869,7 @@ ActorValues SpawnValues(const CharacterSpawnRequest& acMessage, Actor* apActor) 
 /**
  * Set up a copy of another game's character from its spawn message.
  * The copy is marked remote, turned and placed in this player's cell, and given the owner's values.
+ * An NPC copy is also marked as waiting for its 3D step, so a death before that step is logged (SpawnDeathDiag).
  * A player's copy is also marked as one, and its entity gets the player's component.
  *
  * @param aWorld The world that holds the character's entity.
@@ -891,6 +881,8 @@ ActorValues SpawnValues(const CharacterSpawnRequest& acMessage, Actor* apActor) 
 void SetUpCopyFromSpawn(World& aWorld, const entt::entity aEntity, Actor* apActor, const CharacterSpawnRequest& acMessage, const NiPoint3& acPosition) noexcept
 {
     apActor->GetExtension()->SetRemote(true);
+    // Marked before its values, which a copy can die of, so a death before the 3D step is logged with its stack (SpawnDeathDiag).
+    apActor->GetExtension()->AwaitingFirst3D = !acMessage.IsPlayer;
     apActor->rotation.x = acMessage.Rotation.x;
     apActor->rotation.z = acMessage.Rotation.y;
     apActor->MoveTo(PlayerCharacter::Get()->parentCell, acPosition);
@@ -1360,13 +1352,13 @@ void CharacterService::OnGameLoaded() noexcept
     s_pendingGhostEnables.clear();
 }
 
+/**
+ * Switch off the copies queued since the last frame (FrameStartSwitchOff): removed copies, and copies whose ragdoll falls away under the ground (FallStop).
+ * Called on the main thread at the start of a frame.
+ */
 void CharacterService::DisableQueuedCopies() noexcept
 {
-    TiltedPhoques::Vector<uint32_t> handles;
-    {
-        std::scoped_lock lock(s_disableQueueLock);
-        handles.swap(s_disableQueue);
-    }
+    std::vector<uint32_t> handles = FrameStartSwitchOff::TakeQueued();
     if (handles.empty() || IsProcessExiting())
         return;
 
@@ -1439,7 +1431,7 @@ void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
         {
             spdlog::info("Temporary Remote Held {:X}: {} handle(s) still on it, disabled and queued ({} of {} slots used); the server removed it",
                          aFormId, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
-            DisableAtFrameStart(pActor);
+            FrameStartSwitchOff::Queue(pActor);
             s_waitingCopies.push_back(WaitingCopy{aFormId, pActor->GetHandle().handle.iBits, std::chrono::steady_clock::now()});
             ReleaseGhostOf(aFormId);
             return;
@@ -1665,7 +1657,7 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
                 {
                     spdlog::info("Leftover copy {:X} from the last connection: {} handle(s) still on it, disabled and queued ({} of {} slots used)",
                                  formIdComponent.Id, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
-                    DisableAtFrameStart(pActor);
+                    FrameStartSwitchOff::Queue(pActor);
                     s_waitingCopies.push_back(WaitingCopy{formIdComponent.Id, pActor->GetHandle().handle.iBits, std::chrono::steady_clock::now()});
                 }
                 else
@@ -3597,7 +3589,7 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
     {
         spdlog::info("OwnCopy: {:X} came back with its cell after its removal; not announced, to be switched off", pActor->formID);
         pWaiting->QueuedAt = std::chrono::steady_clock::now();
-        DisableAtFrameStart(pActor);
+        FrameStartSwitchOff::Queue(pActor);
         return;
     }
 
@@ -3875,7 +3867,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
                                  aFormId, handles, s_waitingCopies.size() + 1, CopyRemovalPolicy::kMaxWaiting);
 
                     // Disabled, not freed: silent, no AI, not drawn, and nothing dangling.
-                    DisableAtFrameStart(pActor);
+                    FrameStartSwitchOff::Queue(pActor);
                     s_waitingCopies.push_back(WaitingCopy{aFormId, pActor->GetHandle().handle.iBits, std::chrono::steady_clock::now()});
                     ReleaseGhostOf(aFormId);
                     DeleteRemoteEntityComponents(aEntity);
@@ -4874,6 +4866,10 @@ void CharacterService::LayDownStandingBodies() noexcept
 }
 #endif
 
+/**
+ * Run the copies of other games' characters: their places, actions and faces, and the 3D step of the ones whose 3D just came.
+ * The 3D step gives a copy its inventory, factions and life as in its owner's game, and clears its wait for that step (ActorExtension::AwaitingFirst3D).
+ */
 void CharacterService::RunRemoteUpdates() noexcept
 {
     // Each actor plays at its own delay, from how its updates arrive (InterpolationSystem, PlaybackClock).
@@ -4980,9 +4976,12 @@ void CharacterService::RunRemoteUpdates() noexcept
         // A body here that is alive at its owner stays a body (IsDeadAgainstOwner); its owner was sent the killing blow at the spawn.
         // One its owner revived since its last death, before or while it waited, is no such body: the owner knows of that death.
         const bool cStaysBody = IsDeadAgainstOwner(pActor, waitingFor3D.SpawnRequest.IsDead, waitingFor3D.SpawnRequest.RevivedSinceDeath);
-        // The server's mark, kept for an announcement from here (BuildActorData).
+        // The server's mark, kept for an announcement from here (BuildActorData); the 3D step is reached, so a death from here on is not an early one.
         if (ActorExtension* pExtension = pActor->GetExtension())
+        {
             pExtension->RevivedSinceDeath = waitingFor3D.SpawnRequest.RevivedSinceDeath;
+            pExtension->AwaitingFirst3D = false;
+        }
         if (pActor->IsDead() != waitingFor3D.SpawnRequest.IsDead && !cStaysBody)
         {
             if (waitingFor3D.SpawnRequest.IsDead)

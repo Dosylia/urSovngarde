@@ -49,13 +49,18 @@ void PulseClashHaptics(uint8_t aSide) noexcept;
  * Move a dead body whose owner has it elsewhere to where the owner has it, by moving its ragdoll, which it is drawn from.
  * A living NPC knocked down here is moved only right after its owner carried it.
  * Every rigid body moves by the same offset, when it lies more than 64 units away across the ground, or more than 256 below (at most twice a second).
+ * A copy made here whose ragdoll lies deep under the ground and still drops is not moved but switched off (FallStop).
  *
  * @param apActor The body's copy.
  * @param acWanted Where its owner has it.
  * @return False when nothing was moved.
  */
 bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept;
-//! Forgets what PlaceCorpse and the owner's posing knew of a copy, so a new copy under the same id starts afresh.
+/**
+ * Forget what PlaceCorpse, the fall stop and the owner's posing knew of a copy, so a new copy under the same id starts afresh.
+ *
+ * @param aFormId The copy.
+ */
 void ForgetCorpse(uint32_t aFormId) noexcept;
 /**
  * List the names of the nodes in an actor's 3D whose name contains a part, in any case, for checks that cannot look at the screen (the rig).

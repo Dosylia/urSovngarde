@@ -6,6 +6,9 @@
 #include <Games/Skyrim/VR/VRHaptics.h>
 #include <Games/Skyrim/VR/VRControllers.h>
 #include <Games/Skyrim/GameSound.h>
+#include <Copies/CopyRegistry.h>
+#include <Copies/FallStop.h>
+#include <Copies/FrameStartSwitchOff.h>
 
 #include <Actor.h>
 #include <Games/ActorExtension.h>
@@ -4525,9 +4528,15 @@ void PulseClashHaptics(const uint8_t aSide) noexcept
         VRHaptics::Pulse(aSide == 1, 3999);
 }
 
+/**
+ * Forget what PlaceCorpse, the fall stop and the owner's posing knew of a copy, so a new copy under the same id starts afresh.
+ *
+ * @param aFormId The copy.
+ */
 void ForgetCorpse(const uint32_t aFormId) noexcept
 {
     s_placedCorpses.erase(aFormId);
+    FallStop::Forget(aFormId);
     std::scoped_lock lock(s_bodyPosedLock);
     s_bodyPosedByOwnerAt.erase(aFormId);
 }
@@ -4536,6 +4545,7 @@ void ForgetCorpse(const uint32_t aFormId) noexcept
  * Move a dead body whose owner has it elsewhere to where the owner has it, by moving its ragdoll, which it is drawn from.
  * A living NPC knocked down here is moved only right after its owner carried it.
  * Every rigid body moves by the same offset, when it lies more than 64 units away across the ground, or more than 256 below (at most twice a second).
+ * A copy made here whose ragdoll lies deep under the ground and still drops is not moved but switched off (FallStop).
  *
  * @param apActor The body's copy.
  * @param acWanted Where its owner has it.
@@ -4626,6 +4636,14 @@ bool PlaceCorpse(Actor* apActor, const glm::vec3& acWanted) noexcept
                      apActor->formID, cDepth, std::chrono::duration<float>(cNow - placed.FirstSeenAt).count(), placed.FirstDepth,
                      glm::length(glm::vec2{acWanted.x - cRagdollRoot.x, acWanted.y - cRagdollRoot.y}), apActor->parentCell ? apActor->parentCell->formID : 0,
                      apActor->parentCell && apActor->parentCell->IsAttached());
+    }
+
+    // A guard, not a fix: a copy made here whose ragdoll lies deep under the ground and still drops has nothing under it, and is switched off (FallStop).
+    // Removed then, it is asked for again when this game announces its cell, and the copy made then starts afresh.
+    if (CopyRegistry::IsOwnCopy(apActor->formID) && FallStop::NoteLookAndCheckFall(apActor->formID, cDepth, cRagdollRoot.z))
+    {
+        FrameStartSwitchOff::Queue(apActor);
+        return false;
     }
 
     if (placed.SayAfter && cNow - placed.MovedAt >= std::chrono::seconds(1))

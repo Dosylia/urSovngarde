@@ -138,7 +138,10 @@ struct CharacterService
      */
     void LayDownStandingBodies() noexcept;
 #endif
-    //! Switches off the removed copies queued since the last frame; called on the main thread at the start of a frame.
+    /**
+     * Switch off the copies queued since the last frame (FrameStartSwitchOff): removed copies, and copies whose ragdoll falls away under the ground (FallStop).
+     * Called on the main thread at the start of a frame.
+     */
     static void DisableQueuedCopies() noexcept;
     //! Draws or sheathes a remote copy's weapon in two passes, as for a copy that arrives (ApplyCachedWeaponDraws).
     //! aForce: drawn even if the copy's state already says so, as on arrival, for a draw whose animation this game never played.
@@ -193,6 +196,10 @@ private:
     void RunWeaponTouch() noexcept;
 
 private:
+    /**
+     * Run the copies of other games' characters: their places, actions and faces, and the 3D step of the ones whose 3D just came.
+     * The 3D step gives a copy its inventory, factions and life as in its owner's game, and clears its wait for that step (ActorExtension::AwaitingFirst3D).
+     */
     void RunRemoteUpdates() noexcept;
     void RunFactionsUpdates() const noexcept;
     void RunSpawnUpdates() const noexcept;
