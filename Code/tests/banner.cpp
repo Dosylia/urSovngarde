@@ -109,6 +109,53 @@ TEST_CASE("the meter fills from the left in the attackers' colour and the rest i
     WARN("a meter's fill takes " << cMilliseconds << " ms to draw");
 }
 
+TEST_CASE("a picture for the eye images is blue-green-red, each colour multiplied by its alpha", "[banner]")
+{
+    // Two pixels, straight RGBA: a half-transparent one and an opaque one.
+    const BannerPicture::Picture cPicture{2, 1, {200, 100, 50, 128, 10, 20, 30, 255}};
+    std::vector<uint8_t> bgra;
+    REQUIRE(BannerPicture::ToPremultipliedBgra(cPicture, bgra));
+    REQUIRE(bgra.size() == 8);
+    // 50, 100 and 200 at 128 of 255 are 25.1, 50.2 and 100.4, rounded.
+    CHECK(bgra[0] == 25);
+    CHECK(bgra[1] == 50);
+    CHECK(bgra[2] == 100);
+    CHECK(bgra[3] == 128);
+    // An opaque pixel keeps its colours, with red and blue changing places.
+    CHECK(bgra[4] == 30);
+    CHECK(bgra[5] == 20);
+    CHECK(bgra[6] == 10);
+    CHECK(bgra[7] == 255);
+}
+
+TEST_CASE("a transparent pixel shows no colour in the eye images, and a broken picture gives nothing", "[banner]")
+{
+    const BannerPicture::Picture cClear{1, 1, {255, 255, 255, 0}};
+    std::vector<uint8_t> bgra;
+    REQUIRE(BannerPicture::ToPremultipliedBgra(cClear, bgra));
+    REQUIRE(bgra.size() == 4);
+    CHECK(bgra[0] == 0);
+    CHECK(bgra[1] == 0);
+    CHECK(bgra[2] == 0);
+    CHECK(bgra[3] == 0);
+
+    // A buffer that held an older picture is emptied, not left with it.
+    const BannerPicture::Picture cTooShort{2, 2, {1, 2, 3, 4}};
+    CHECK_FALSE(BannerPicture::ToPremultipliedBgra(cTooShort, bgra));
+    CHECK(bgra.empty());
+    CHECK_FALSE(BannerPicture::ToPremultipliedBgra(BannerPicture::Picture{}, bgra));
+}
+
+TEST_CASE("a picture for the eye images reuses the memory of the buffer it is written into", "[banner]")
+{
+    const BannerPicture::Picture cPicture{2, 1, {200, 100, 50, 128, 10, 20, 30, 255}};
+    std::vector<uint8_t> bgra(64);
+    const uint8_t* pBefore = bgra.data();
+    REQUIRE(BannerPicture::ToPremultipliedBgra(cPicture, bgra));
+    CHECK(bgra.size() == 8);
+    CHECK(bgra.data() == pBefore);
+}
+
 // Hidden: draws the pictures in the game's own fonts, to look at them outside the headset.
 //   set STR_GAME_DATA=F:\SteamLibrary\steamapps\common\SkyrimVR\Data
 //   TPTests.exe "[.banner-preview]"

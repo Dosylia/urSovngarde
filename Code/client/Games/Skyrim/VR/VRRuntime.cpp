@@ -99,7 +99,7 @@ std::optional<RuntimeFound> LookUpRuntime(const HMODULE ahOpenVR) noexcept
 /**
  * Write once in the log which runtime the game uses and where its openvr_api.dll came from, for crash reports.
  * It says only "the game folder's" or "another folder's", never the path, which can hold the Windows user name.
- * Tools that read crash reports match this line's wording: keep it as it is.
+ * Tools that read crash reports match its wording up to the runtime, the file's origin and the whole-PC note: keep that part as it is.
  *
  * @param acFound The runtime found.
  * @param ahOpenVR The game's openvr_api.dll.
@@ -114,7 +114,7 @@ void LogRuntime(const RuntimeFound& acFound, const HMODULE ahOpenVR) noexcept
     const char* cpFrom = cFromGameFolder ? "the game folder's" : "another folder's";
 
     if (acFound.Kind == Runtime::kOpenComposite)
-        spdlog::info("VRRuntime: the game runs on OpenComposite ({} openvr_api.dll){}, not SteamVR; the SteamVR menu and the banners are off", cpFrom,
+        spdlog::info("VRRuntime: the game runs on OpenComposite ({} openvr_api.dll){}, not SteamVR; the SteamVR menu is off, the banners are drawn into the eye images", cpFrom,
                      acFound.Where == Install::kWholePc ? ", installed for the whole PC" : "");
     else
         spdlog::info("VRRuntime: the game runs on SteamVR ({} openvr_api.dll)", cpFrom);

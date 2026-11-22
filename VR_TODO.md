@@ -132,6 +132,8 @@ his scene never finishes. Use an alternate start, or connect after the intro.
     Change in build 99f1165 (client and server on FUS, MGO and the flat rig): a VR player's posed copy is no longer placed or turned by the interpolation; its place is kept and given on the main thread at the frame end, right before its pose (`PosedCopyPlacement`; the places kept when a frame end starts are the ones it gives, and each interpolation step drops its older one). `PoseKeepDiag` lines end with how many places were given at the frame end.
       Rig (flat watching the VR player's copy, 60 fps): `cross-pose.py --frames 20` passed (arms up in every picture, posed at every frame end); the copy followed the VR player 300 units to 0 units off; 595 of 595 places given at the frame end. The game still moves the copy's body between frame ends at about 60% of frames (its character controller carrying out the place later), as before, which the pictures never show.
       Not seen in play: whether the flicker is gone in a headset.
+      Play 2026-11-22 12:44 on MGO (5a18cd8c), reported by player 2 for a few seconds, maybe with menus: on player 2's side, `PoseKeepDiag` for player 1's copy switched 16, 24 and 14 times per 10 s at 12:43:13 to 12:43:33, and 15 and 28 at 12:44:33 to 12:44:43; 0 to 2 elsewhere, up to 14 later.
+      Player 2's panel was open 12:43:48 to 12:43:57 and 12:44:16 to 12:44:25, between those windows rather than during them.
 - **Dead bodies, at connect and after (needs eed5ad8 on both games).** The first player plays alone a little, then the second connects near an old fight. Bodies lie down in both games, and stay down when you walk away and back.
   An older save may still hold bodies that stand: they should drop within a few seconds of you coming near. If one stands: its form id, and `BodyStand:` in the log. The dead creatures of "Dead on one side" are not all covered, see below.
 - **A dragon fight with both players near (needs 8f303ba on both games).** The game must not stop. A `NonFinite:` line in either log is the guard catching what froze the game on 10-31, and it names
@@ -588,6 +590,14 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       The connected players' list moved into `PlayerManager::ListIds` (owner's review, no behaviour change): build 4190b25, TPTests 220 of 220, `--menu-line` green.
       Next play session on MGO: `Gameplay:bEnableSleep` and `bEnablePvp` are on in MGO's server config; MGO needs the main build with this work, client and server, before it.
       Waiting on a play session: the menu lines in the headset, and whether 30 s feels right.
+      Play 2026-11-22 on MGO (5a18cd8c, both games): player 2 was told he cannot wait in this location every time, anywhere, and never reached the menu; player 1 could open it.
+      Player 2's log holds only player 1's `SleepVote` lines (12:00, 12:01, 12:16) and no vote of his own, so two players never voted.
+      Cause: the game's own refusal (`sNoWaitInCell`), from the chargen flags his save keeps: the intro (MQ101) switches waiting off at stages 10, 65 and 80 and on again only at 255.
+      On 10-22 his game went on from a save older than 255 while player 1's had passed it, so 255 was never relayed to him again; MQ101 finished at 1000 with waiting still off.
+      His Sleep/Wait menu has not opened once since 11-18 (player 1's 30 times). Root issue: stages are relayed as they happen, so a game that goes back to an older save misses the ones between (KNOWN_ISSUES).
+      Repair, in the tree, not built: after each load and after another game's intro stage, when MQ101 is done, one of its stages 10, 65 or 80 ran here, 255 never did, and waiting is still off, waiting is switched back on (`IntroWaitRepair`); 6 unit cases.
+      The stage 10/65/80 condition leaves alone the alternate starts (MGO's Alternate Perspective finishes MQ101 without 255 and clears the flag itself).
+      To see in play: player 2's log says `IntroWaitRepair:` after a load and his Sleep/Wait menu opens; that is also the first two-player vote.
 - [!] **A downed player gets up by levelling up** (play 2026-11-21 13:59 on MGO, 8825f9f, player 1). Fixed in build 3f94616 (client and server on FUS, flat client on the flat rig; not on MGO yet; rig only, not seen in play).
       Player 1 went down at 13:59:21 (`player is down, waiting for a revive`), opened the skills menu while down and levelled up at 13:59:25; at 13:59:26 `the bleedout ended by itself 5348 ms after going down; respawning`, and the respawn skipped the wait.
       Cause: the level-up adds +10 to the chosen attribute (`ConfirmLevelUpAttributeCallback::Run`, the actor value owner's ModActorValue), so health goes from 0 to above it, and the game stands a bleeding-out player up as soon as health is above zero, whatever `SetNoBleedoutRecovery` says; a potion's or a spell's refill does the same.
@@ -596,6 +606,43 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
       `live-down-heal` (health raised by 10 as a level-up does, then refilled as a potion does, before and after a respawn): RED on 8825f9f (both downs ended), green on 3f94616 (9 of 9: the player stays down and bleeding out, `DownedHold: the game would stand the downed player up ...; kept down`); `live-revive` 10 of 10 on fd4509d (a revive still stands the player up); on flat, a death through the hooked function did not crash.
       Not tested: a real level-up in a headset, a real potion, what the other player sees of the refused stand-up, a save loaded while down, the flat game's down.
       The 503 ms `ended by itself` at 13:57:44 (no heal seen) is not explained.
+      Play 2026-11-22 12:00:55 on MGO (5a18cd8c, PvP on), player 2 downed by player 1's sword: `the bleedout ended by itself 33 ms after going down`, then the respawn, with player 1 alive beside him.
+      33 ms is the down's first frame, and the hold started only on the frame after: the down set health to exactly 0, then the hold was off until the next update.
+      The same down at 12:42 shows the game tries that stand-up during a down (`DownedHold: the game would stand the downed player up`, 12:42:35, refused).
+      His health was about 0 then; the -30 player 1 received came from the next blow during the fade.
+      Change, in the tree, not built (the game was running): the hold starts in the frame the down starts (`PlayerService::IsDownHeld`, used both places), and the `ended by itself` line now gives the life state and health, so a death (1 or 2) can be told from a stand-up (0).
+      Build cc7da40 (client on FUS; same protocol). `live-down-firstframe` (small heals right behind the blow, one lands in the frame after the down): RED on 5a18cd8c (`the bleedout ended by itself 14 ms after going down`, the player stood and respawned), green on cc7da40 (`DownedHold: ... kept down` in the down's own millisecond, health taken back, down until given up).
+      A fast health regeneration did not do it (not red on 5a18cd8c): the game gives a downed player no regeneration; a heal still running does.
+      Not seen in play yet.
+- [ ] **Player 1's game froze for good: three of the game's threads waiting on each other while it loaded an NPC** (play 2026-11-22 12:54:06 on MGO, 5a18cd8c). Not fixed, cause in the game's own code; whether ours makes it likelier is not known.
+      Reported as a crash; the game stayed open, `last frame` growing, until it was closed; no crash dump, so the launcher sent nothing.
+      The main thread waits in `Main::Render` for a frame job.
+      That job (`MagicCaster::FindTargets`, then `Actor::GetGhost`) waits to read the extra data lock of NPC 000BDF90, a levelled actor (base 317D3) about 2 cells from player 1, never named in our log.
+      A third thread holds that lock for writing inside `TESObjectREFR::Set3D` for the same NPC, and loops in the IOManager's wait (SE 73900, resending an event with no listener) for that NPC's `QueuedCharacter` task.
+      The task stays in state 3 and no thread holds it: the main thread would run it, and the main thread waits for the job.
+      No frame of ours on either stuck thread. Read from the freeze dump and from the frozen game's memory (no debugger).
+      The holding thread runs the game's `QueuedPromoteReferencesTask`: promoting that reference replays its saved changes and loads its 3D synchronously, holding the persistence lock and the NPC's extra-data lock.
+      A fourth thread, the Papyrus VM's frame job, waits for that persistence lock while a quest alias fill promotes a reference; the main thread waits for both jobs.
+      The alias fills come from quest FE305801, started and stopped in pairs every 5 s (888 times that day); very likely a mod's NPC potion scan (its script is Stop, wait 0.5 s, Start), not certain: the light plugin count lands on another plugin.
+      Nothing of ours promotes references, fills aliases or loads 3D; our code is on the VM job only as the wrapper around the game's VM update. Not seen in the four other freeze dumps (11-21 16:35, player 2's 14:19, 16:57 and today's).
+      The 11-21 16:23 and 16:24 freezes were a busy Papyrus VM job that recovered, not this chain; the rig's `live-load` record is inventory code, also not this.
+      Verdict: a game deadlock made likelier by a quest restarted every 5 s; no fix of ours.
+- [ ] **No death screen and no down messages on OpenComposite** (play 2026-11-22 12:33 on MGO, 5a18cd8c, both players). Not fixed.
+      Both players fell and the party was down; each got a dark fade into the respawn, no "YOU DIED", no "You are down", no "<name> is reviving you"; only the HUD line after a revive showed.
+      Both games run on OpenComposite (`VRRuntime: ... the SteamVR menu and the banners are off`), where the banners are off since build afb0604, as OpenComposite's overlay calls abort.
+      So with OpenComposite nothing replaces them. The owner wants the banners on every kind of game.
+      Build 0bf88d0 (client on FUS; same protocol): on OpenComposite the same pictures are drawn into the game's eye images (`BannerEyeImages` through `VREyeDraw`), head-locked, with the fades, the banner over the meter, both over the panel; SteamVR's overlays moved unchanged into `BannerOverlays`; the way is chosen by the runtime.
+      Flat, proposed: the same pictures through ImGui's foreground draw list at the frame end, the banner a little below the middle, the meter at the top.
+      After review fixes (one handover for picture, place and alpha; the meter reuses its buffer; the pixel checks and picture slots in their own files): TPTests 243 of 243.
+      Rig on SteamVR, 0bf88d0: the death card, "Bot is reviving you" and the place name shown through the overlays with the same lines as before; `live-revive-held` and `live-down-firstframe` green; `live-death-line`'s Netch part invalid (the Netch never hit), its console part green.
+      Not tested: OpenComposite itself (needs Unleashed ticked on the rig, a modlist change, the owner's yes), then a headset for the fades and the place.
+- [ ] **Player 2's game froze for about 35 s, a script running on a job thread** (play 2026-11-22 12:40:33 to 12:41:10 on MGO, 5a18cd8c). Recovered by itself. Not read further.
+      The main thread waited for a frame job; one job thread ran the Papyrus VM's registered updates at a full core the whole time (`SkyrimVM::ProcessRegisteredUpdates`); the dump does not name the script.
+- [ ] **NPCs suddenly pushed and flying everywhere for player 1** (play 2026-11-22 about 12:04 on MGO, 5a18cd8c; player 1: "like they suddenly got pushed and flew everywhere"). Not fixed, not reproduced.
+      Player 1 came out of a 22 s loading screen into Markarth at 12:03:42 (player 1's clock, about 4 s behind player 2's); about 50 copies of player 2's NPCs arrived with it (soldiers and generals of both sides, horses, chickens, goats, guards).
+      At 12:03:48 player 1 handed away 11 NPCs; at 12:03:52, player 2's 12:03:56, player 1 took over about 15 of the copies at once (horses, the cart driver, a goat, chickens, a guard, Torom): the moment of the report.
+      No fall, ragdoll, knock or non-finite line in that minute; `GainDiag` says each was gained 0 or 1 unit from its last owner's report, so not a jump of ours.
+      Likely, unverified: bodies released to the game's physics at once, overlapping or held against each other, pushed apart. Next: a rig run handing over a crowd of copies at once, watching their speeds after the gain.
 - [ ] **A mod's carts: no wheels, an invisible cart, prisoners riding a flying cart** (play 2026-11-21 14:06 to 14:09 on MGO, 8825f9f, seen by player 1).
       The carts are a mod's actors named Goods (FE01EB60, FE01EB2E); their drivers and prisoners were copies in player 1's game of NPCs player 2's game spawned (`IdleCartDriverSway`, `IdleCartPrisonerASway`, `BSway`, `DSway`).
       Imperial soldiers attacked a cart player 1 could not see. Which part of a Goods copy's 3D does not come through (the wheels and body as worn items or attached nodes, or the whole model) is not read yet.

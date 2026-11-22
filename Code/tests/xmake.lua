@@ -41,11 +41,14 @@ target("TPTests")
         add_packages("zlib")
         -- The panel's marks in the eye images: plain numbers, with Direct3D's viewport type.
         add_files("../client/UI/Menu/EyeGeometry.cpp")
+        -- Where the banner and the meter are shown relative to the headset: plain numbers, in the eye geometry's corners.
+        add_files("../client/UI/Banner/BannerPlacement.cpp")
     else
         -- Windows minidumps: on Linux this file broke the server's CI build from 2026-10-07 (c5d3236e).
         remove_files("smalldump.cpp")
         remove_files("banner.cpp")
         remove_files("eye_geometry.cpp")
+        remove_files("banner_placement.cpp")
         -- PatchCheck.h asks Windows what memory a call leads to.
         remove_files("patch_check.cpp")
     end

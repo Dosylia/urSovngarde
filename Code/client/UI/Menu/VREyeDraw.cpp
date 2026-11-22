@@ -3,6 +3,9 @@
 #ifdef SKYRIMVR
 
 #include <UI/Menu/VREyeDraw.h>
+#include <UI/Menu/EyeDrawChecks.h>
+#include <UI/Menu/EyeDrawMarks.h>
+#include <UI/Menu/EyeDrawPicture.h>
 #include <UI/Menu/EyeGeometry.h>
 #include <UI/Menu/PanelColours.h>
 
@@ -15,6 +18,7 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -26,6 +30,12 @@
 
 namespace
 {
+using EyeDrawMarks::EyeMatrices;
+using EyeDrawMarks::EyeVertices;
+using EyeDrawMarks::Mark;
+using EyeDrawMarks::Marks;
+using EyeDrawMarks::Vertex;
+
 using TVR_GetGenericInterface = void*(__cdecl*)(const char*, vr::EVRInitError*);
 TVR_GetGenericInterface RealVR_GetGenericInterface = nullptr;
 
@@ -44,6 +54,7 @@ DWORD s_mainThread = 0;
 
 // The shaders' code; their colours Panel, Gold and Pale are written in front of it from the C++ constants (ShaderSource).
 // The picture is premultiplied, as CEF paints it: the dark panel shows where the page is transparent.
+// A banner layer's picture is premultiplied too; PsLayer scales it by the layer's alpha, and the blend lays it over the eye image.
 constexpr const char* kShaderCode = R"(
 struct VsIn { float4 Position : POSITION; float2 Uv : TEXCOORD0; };
 struct PsIn { float4 Position : SV_POSITION; float2 Uv : TEXCOORD0; };
@@ -54,6 +65,8 @@ float4 PsPanel(PsIn i) : SV_Target { float4 c = Picture.Sample(Linear, i.Uv); re
 float4 PsBeam(PsIn i) : SV_Target { return float4(Gold, 1.0); }
 float4 PsDot(PsIn i) : SV_Target { float2 d = i.Uv * 2.0 - 1.0; clip(1.0 - dot(d, d)); return float4(Gold, 1.0); }
 float4 PsRing(PsIn i) : SV_Target { float2 d = i.Uv * 2.0 - 1.0; float r = dot(d, d); clip(1.0 - r); clip(r - 0.45); return float4(Pale, 1.0); }
+cbuffer Layer : register(b0) { float LayerAlpha; float3 LayerPadding; };
+float4 PsLayer(PsIn i) : SV_Target { return Picture.Sample(Linear, i.Uv) * LayerAlpha; }
 )";
 
 // The shaders in kShaderCode: the vertex shader every mark shares, and the pixel shader that colours each kind of mark.
@@ -64,38 +77,37 @@ enum Shader : size_t
     kBeamShader,
     kDotShader,
     kRingShader,
+    kLayerShader,
     kShaderCount,
 };
 // Each shader's function in kShaderCode, in the order of Shader.
-constexpr const char* kShaderEntries[kShaderCount]{"VsMain", "PsPanel", "PsBeam", "PsDot", "PsRing"};
+constexpr const char* kShaderEntries[kShaderCount]{"VsMain", "PsPanel", "PsBeam", "PsDot", "PsRing", "PsLayer"};
+
+/**
+ * What the layer shader reads from its constant buffer; the GPU takes constants in blocks of 16 bytes.
+ */
+struct LayerConstants
+{
+    // How much of the layer shows, 0 to 1.
+    float Alpha = 0.f;
+    float Padding[3]{};
+};
+// Every sample of a pixel takes the blend: its sample mask.
+constexpr UINT kAllSamples = 0xFFFFFFFF;
 
 // In metres: half the dot's width, half the beam's, half the hand ring's.
 constexpr float kDotHalf = 0.008f;
 constexpr float kBeamHalf = 0.002f;
 constexpr float kRingHalf = 0.02f;
-// The rings' colour, red, green, blue.
-constexpr uint8_t kPaleRgb[3]{235, 235, 235};
 // In metres: the nearest and the farthest the eyes' projections draw.
 constexpr float kNearClip = 0.05f;
 constexpr float kFarClip = 100.f;
 
-/**
- * One corner of a mark as the GPU takes it: where it lands in an eye, and which point of the picture it shows.
- */
-struct Vertex
-{
-    // In the eye's clip space: x, y, z, w.
-    float Position[4];
-    // Across and down the picture, 0 to 1.
-    float Uv[2];
-};
-// A mark's four corners in one eye, as a triangle strip.
-using EyeVertices = std::array<Vertex, 4>;
 // Four corners in the headset's space, from the top left, clockwise as the player faces them.
 using HeadCorners = EyeGeometry::HeadCorners;
 
 /**
- * Everything the panel is drawn with, all on the game's device, made at its first frame submitted from the main thread.
+ * Everything the panel and the banner layers are drawn with, all on the game's device, made at its first frame submitted from the main thread.
  */
 struct Drawer
 {
@@ -108,15 +120,14 @@ struct Drawer
     ID3D11PixelShader* pBeamShader = nullptr;
     ID3D11PixelShader* pDotShader = nullptr;
     ID3D11PixelShader* pRingShader = nullptr;
+    ID3D11PixelShader* pLayerShader = nullptr;
     ID3D11InputLayout* pLayout = nullptr;
     ID3D11Buffer* pVertices = nullptr;
     ID3D11SamplerState* pSampler = nullptr;
     ID3D11RasterizerState* pRaster = nullptr;
-    // The page's picture, with its smaller levels.
-    ID3D11Texture2D* pPicture = nullptr;
-    ID3D11ShaderResourceView* pPictureView = nullptr;
-    uint32_t PictureWidth = 0;
-    uint32_t PictureHeight = 0;
+    // How a banner layer is laid over the eye image, and the constant buffer that gives the layer shader its alpha.
+    ID3D11BlendState* pLayerBlend = nullptr;
+    ID3D11Buffer* pLayerAlpha = nullptr;
     // The eye image last drawn into, and the view to draw into it.
     ID3D11Texture2D* pTarget = nullptr;
     ID3D11RenderTargetView* pTargetView = nullptr;
@@ -126,49 +137,31 @@ struct Drawer
 Drawer s_drawer;
 
 std::mutex s_lock;
-std::vector<uint8_t> s_pixels;
-// The picture taken over by the render thread, uploaded there without holding the lock.
-std::vector<uint8_t> s_renderPixels;
-uint32_t s_width = 0;
-uint32_t s_height = 0;
-bool s_pictureChanged = false;
+// The panel's page, and each banner layer's picture in drawing order: given under s_lock, taken over with the scene.
+EyeDrawPicture s_panelPicture;
+std::array<EyeDrawPicture, BannerPlacement::kLayerCount> s_layerPictures;
 // The panel in the game's world, while it is shown, and what pointing draws over it.
 std::optional<VREyeDraw::Quad> s_panel;
 VREyeDraw::Pointing s_pointing;
-// Each eye's projection and place in the head.
-std::array<vr::HmdMatrix44_t, 2> s_projection{};
-std::array<vr::HmdMatrix34_t, 2> s_eyeToHead{};
+// Each banner layer's corners in the headset's space while it is shown, in drawing order.
+std::array<std::optional<EyeGeometry::HeadCorners>, BannerPlacement::kLayerCount> s_layerCorners;
+// How much of each banner layer shows, 0 to 1.
+std::array<float, BannerPlacement::kLayerCount> s_layerAlpha{};
+// The eyes, asked of the runtime as the panel or a layer starts showing.
+EyeMatrices s_eyes;
 // The double-wide eye image the right eye was already drawn into with the left, at the left eye's Submit.
 ID3D11Texture2D* s_bothEyesDrawnInto = nullptr;
-// One check per game that each kind of mark lands in the eye image; it waits for the GPU, so not at every showing.
-// A sample can fall under another mark, so a check tries again on later frames until its colour shows, a few times at most.
-constexpr int kCheckTries = 20;
-// How far each colour of a checked pixel may be from the expected one, for the eye image's rounding.
-constexpr int kColourTolerance = 12;
-int s_panelTries = 0;
-int s_beamTries = 0;
-int s_ringTries = 0;
 
 /**
- * Check if a kind of mark still has to be checked.
- *
- * @param aTries How many times its check has tried so far; kCheckTries once it is done.
- * @return True while its check has tries left.
- */
-bool IsCheckPending(const int aTries) noexcept
-{
-    return aTries < kCheckTries;
-}
-
-/**
- * Give up on the panel for the rest of the game, and log why the first time.
+ * Give up drawing into the eye images for the rest of the game, and log why the first time.
+ * Then no panel shows inside the game, and on OpenComposite no banner either.
  *
  * @param acpWhat What went wrong, for the log.
  */
 void Fail(const char* acpWhat) noexcept
 {
     if (!s_drawer.Failed.exchange(true))
-        spdlog::error("VREyeDraw: {}; no panel inside the game this session", acpWhat);
+        spdlog::error("VREyeDraw: {}; no panel inside the game this session, and on OpenComposite no banners either", acpWhat);
 }
 
 /**
@@ -185,7 +178,7 @@ std::string ShaderSource()
         return fmt::format("static const float3 {} = float3({}.0, {}.0, {}.0) / 255.0;\n", acpName, static_cast<int>(acRgb[0]), static_cast<int>(acRgb[1]),
                            static_cast<int>(acRgb[2]));
     };
-    return cColour("Panel", PanelColours::kPanelRgb) + cColour("Gold", PanelColours::kGoldRgb) + cColour("Pale", kPaleRgb) + kShaderCode;
+    return cColour("Panel", PanelColours::kPanelRgb) + cColour("Gold", PanelColours::kGoldRgb) + cColour("Pale", PanelColours::kPaleRgb) + kShaderCode;
 }
 
 /**
@@ -217,7 +210,36 @@ bool CompileShaders(std::array<ID3DBlob*, kShaderCount>& aBlobs) noexcept
 }
 
 /**
- * Make the objects the panel is drawn with on the game's device: shaders, the corners' layout and buffer, the sampler, the rasterizer.
+ * Make what a banner layer is laid over the eye image with: its blend, and the constant buffer that gives its alpha.
+ * The layer is premultiplied: its colour is added, and the eye image shows through as much as the layer lets.
+ * The eye image's own alpha is left as the game wrote it.
+ *
+ * @param apDevice The game's device.
+ * @return True when both were made.
+ */
+bool MakeLayerObjects(ID3D11Device* apDevice) noexcept
+{
+    D3D11_BLEND_DESC blend{};
+    D3D11_RENDER_TARGET_BLEND_DESC& target = blend.RenderTarget[0];
+    target.BlendEnable = TRUE;
+    target.SrcBlend = D3D11_BLEND_ONE;
+    target.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    target.BlendOp = D3D11_BLEND_OP_ADD;
+    target.SrcBlendAlpha = D3D11_BLEND_ONE;
+    target.DestBlendAlpha = D3D11_BLEND_ZERO;
+    target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
+
+    D3D11_BUFFER_DESC alpha{};
+    alpha.ByteWidth = sizeof(LayerConstants);
+    alpha.Usage = D3D11_USAGE_DYNAMIC;
+    alpha.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    alpha.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    return SUCCEEDED(apDevice->CreateBlendState(&blend, &s_drawer.pLayerBlend)) && SUCCEEDED(apDevice->CreateBuffer(&alpha, nullptr, &s_drawer.pLayerAlpha));
+}
+
+/**
+ * Make the objects the panel and the banner layers are drawn with on the game's device: shaders, the corners' layout and buffer, the sampler, the rasterizer, the layers' blend.
  *
  * @param acBlobs The compiled shaders, in the order of Shader.
  * @return True when every object was made.
@@ -238,6 +260,7 @@ bool MakeDrawingObjects(const std::array<ID3DBlob*, kShaderCount>& acBlobs) noex
                 SUCCEEDED(pDevice->CreateVertexShader(pVertexBlob->GetBufferPointer(), pVertexBlob->GetBufferSize(), nullptr, &s_drawer.pVertexShader)) &&
                 cMakePixelShader(kPanelShader, &s_drawer.pPanelShader) && cMakePixelShader(kBeamShader, &s_drawer.pBeamShader) &&
                 cMakePixelShader(kDotShader, &s_drawer.pDotShader) && cMakePixelShader(kRingShader, &s_drawer.pRingShader) &&
+                cMakePixelShader(kLayerShader, &s_drawer.pLayerShader) &&
                 SUCCEEDED(pDevice->CreateInputLayout(cLayout, 2, pVertexBlob->GetBufferPointer(), pVertexBlob->GetBufferSize(), &s_drawer.pLayout));
 
     D3D11_BUFFER_DESC vertices{};
@@ -258,7 +281,7 @@ bool MakeDrawingObjects(const std::array<ID3DBlob*, kShaderCount>& acBlobs) noex
     raster.CullMode = D3D11_CULL_NONE;
     raster.DepthClipEnable = TRUE;
     made = made && SUCCEEDED(pDevice->CreateRasterizerState(&raster, &s_drawer.pRaster));
-    return made;
+    return made && MakeLayerObjects(pDevice);
 }
 
 /**
@@ -303,74 +326,19 @@ bool MakeDrawer(ID3D11Texture2D* apTarget) noexcept
 }
 
 /**
- * Make the picture's texture on the game's device, at a new size.
+ * Put a picture taken over this frame on the game's device.
  *
- * @param aWidth The picture's width in pixels.
- * @param aHeight Its height in pixels.
- * @return True when it was made; otherwise the panel is off for the rest of the game.
- */
-bool MakePictureTexture(const uint32_t aWidth, const uint32_t aHeight) noexcept
-{
-    SafeRelease(s_drawer.pPictureView);
-    SafeRelease(s_drawer.pPicture);
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = aWidth;
-    desc.Height = aHeight;
-    desc.MipLevels = 0;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
-    if (FAILED(s_drawer.pDevice->CreateTexture2D(&desc, nullptr, &s_drawer.pPicture)) ||
-        FAILED(s_drawer.pDevice->CreateShaderResourceView(s_drawer.pPicture, nullptr, &s_drawer.pPictureView)))
-    {
-        Fail("the panel's picture could not be made on the game's device");
-        return false;
-    }
-    s_drawer.PictureWidth = aWidth;
-    s_drawer.PictureHeight = aHeight;
-    return true;
-}
-
-/**
- * Put the newest picture on the game's device, with its smaller levels: the page lands on far fewer eye pixels than it has, and thin text would shimmer.
- *
+ * @param aPicture The picture.
+ * @param acpWhat What it shows, for the log: "panel", or a banner layer's name.
  * @param apImmediate The game's device context, which runs the upload.
- * @return True when there is a picture to draw.
+ * @return True when it can be drawn; a texture that cannot be made turns the panel and the banner layers off for the rest of the game.
  */
-bool UploadPicture(ID3D11DeviceContext* apImmediate) noexcept
+bool UploadForFrame(EyeDrawPicture& aPicture, const char* acpWhat, ID3D11DeviceContext* apImmediate) noexcept
 {
-    uint32_t width = 0;
-    uint32_t height = 0;
-    bool changed = false;
-    {
-        // A new picture is taken over by swapping, so the lock is held only for that.
-        std::scoped_lock lock(s_lock);
-        if (s_pictureChanged)
-        {
-            s_renderPixels.swap(s_pixels);
-            s_pictureChanged = false;
-            changed = true;
-        }
-        width = s_width;
-        height = s_height;
-    }
-    if (s_renderPixels.empty())
-        return false;
-    if (!s_drawer.pPicture || s_drawer.PictureWidth != width || s_drawer.PictureHeight != height)
-    {
-        if (!MakePictureTexture(width, height))
-            return false;
-        changed = true;
-    }
-    if (changed)
-    {
-        apImmediate->UpdateSubresource(s_drawer.pPicture, 0, nullptr, s_renderPixels.data(), width * 4, 0);
-        apImmediate->GenerateMips(s_drawer.pPictureView);
-    }
-    return true;
+    const EyeDrawPicture::Upload cUpload = aPicture.PutOnDevice(s_drawer.pDevice, apImmediate);
+    if (cUpload == EyeDrawPicture::Upload::kFailed)
+        Fail(fmt::format("the {}'s picture could not be made on the game's device", acpWhat).c_str());
+    return cUpload == EyeDrawPicture::Upload::kReady;
 }
 
 /**
@@ -438,40 +406,33 @@ D3D11_VIEWPORT ViewportFor(const D3D11_TEXTURE2D_DESC& acTarget, const vr::VRTex
 }
 
 /**
- * Read one pixel of the eye image back from the GPU; it waits for the GPU to get there.
+ * Record how the next mark is laid over the eye image: opaque, or a banner layer at its alpha.
  *
- * @param apImmediate The game's device context.
- * @param apTarget The eye image.
- * @param acTarget Its description.
- * @param aX The pixel, across.
- * @param aY The pixel, down.
- * @param aOut Filled with the pixel's four bytes, in the eye image's own order.
- * @return True when it was read; never for a multisampled image.
+ * @param aLayerAlpha A banner layer's alpha, 0 to 1; nothing for a mark drawn opaque.
+ * @return True when recorded; false when the layer's alpha could not be written, which turns the panel and the layers off for the rest of the game.
  */
-bool ReadPixel(ID3D11DeviceContext* apImmediate, ID3D11Texture2D* apTarget, const D3D11_TEXTURE2D_DESC& acTarget, const UINT aX, const UINT aY, uint8_t (&aOut)[4]) noexcept
+bool RecordBlend(const std::optional<float> aLayerAlpha) noexcept
 {
-    D3D11_TEXTURE2D_DESC staging = acTarget;
-    staging.Width = staging.Height = 1;
-    staging.MipLevels = staging.ArraySize = 1;
-    staging.SampleDesc.Count = 1;
-    staging.Usage = D3D11_USAGE_STAGING;
-    staging.BindFlags = 0;
-    staging.MiscFlags = 0;
-    staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    ID3D11Texture2D* pStaging = nullptr;
-    if (acTarget.SampleDesc.Count != 1 || FAILED(s_drawer.pDevice->CreateTexture2D(&staging, nullptr, &pStaging)))
-        return false;
-    const D3D11_BOX cBox{aX, aY, 0, aX + 1, aY + 1, 1};
-    apImmediate->CopySubresourceRegion(pStaging, 0, 0, 0, 0, apTarget, 0, &cBox);
-    D3D11_MAPPED_SUBRESOURCE pixel{};
-    const bool cRead = SUCCEEDED(apImmediate->Map(pStaging, 0, D3D11_MAP_READ, 0, &pixel));
-    if (cRead)
+    ID3D11DeviceContext* pContext = s_drawer.pDeferred;
+    if (!aLayerAlpha)
     {
-        std::memcpy(aOut, pixel.pData, 4);
-        apImmediate->Unmap(pStaging, 0);
+        // No blend state: the default draws the mark opaque.
+        pContext->OMSetBlendState(nullptr, nullptr, kAllSamples);
+        return true;
     }
-    pStaging->Release();
-    return cRead;
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(pContext->Map(s_drawer.pLayerAlpha, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+    {
+        Fail("a banner layer's alpha could not be written");
+        return false;
+    }
+    LayerConstants constants;
+    constants.Alpha = *aLayerAlpha;
+    std::memcpy(mapped.pData, &constants, sizeof(constants));
+    pContext->Unmap(s_drawer.pLayerAlpha, 0);
+    pContext->OMSetBlendState(s_drawer.pLayerBlend, nullptr, kAllSamples);
+    pContext->PSSetConstantBuffers(0, 1, &s_drawer.pLayerAlpha);
+    return true;
 }
 
 /**
@@ -479,9 +440,9 @@ bool ReadPixel(ID3D11DeviceContext* apImmediate, ID3D11Texture2D* apTarget, cons
  *
  * @param acVertices The mark's corners in that eye.
  * @param acViewport The eye's part of the eye image.
- * @param apShader The pixel shader that colours the mark.
+ * @param acMark The mark: its shader, its picture, and how it is laid over the eye image.
  */
-void RecordDraw(const EyeVertices& acVertices, const D3D11_VIEWPORT& acViewport, ID3D11PixelShader* apShader) noexcept
+void RecordDraw(const EyeVertices& acVertices, const D3D11_VIEWPORT& acViewport, const Mark& acMark) noexcept
 {
     ID3D11DeviceContext* pContext = s_drawer.pDeferred;
     D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -492,10 +453,12 @@ void RecordDraw(const EyeVertices& acVertices, const D3D11_VIEWPORT& acViewport,
     }
     std::memcpy(mapped.pData, acVertices.data(), sizeof(EyeVertices));
     pContext->Unmap(s_drawer.pVertices, 0);
+    if (!RecordBlend(acMark.LayerAlpha))
+        return;
 
     const UINT cStride = sizeof(Vertex);
     const UINT cOffset = 0;
-    // No blend or depth state: the defaults draw the panel opaque, over everything the game drew, so a menu is never behind a wall.
+    // No depth state: every mark is drawn over everything the game drew, so a menu is never behind a wall.
     pContext->OMSetRenderTargets(1, &s_drawer.pTargetView, nullptr);
     pContext->RSSetViewports(1, &acViewport);
     pContext->RSSetState(s_drawer.pRaster);
@@ -503,94 +466,132 @@ void RecordDraw(const EyeVertices& acVertices, const D3D11_VIEWPORT& acViewport,
     pContext->IASetVertexBuffers(0, 1, &s_drawer.pVertices, &cStride, &cOffset);
     pContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
     pContext->VSSetShader(s_drawer.pVertexShader, nullptr, 0);
-    pContext->PSSetShader(apShader, nullptr, 0);
-    pContext->PSSetShaderResources(0, 1, &s_drawer.pPictureView);
+    pContext->PSSetShader(acMark.pShader, nullptr, 0);
+    pContext->PSSetShaderResources(0, 1, &acMark.pPicture);
     pContext->PSSetSamplers(0, 1, &s_drawer.pSampler);
     pContext->Draw(4, 0);
 }
 
 /**
- * Find the middle of a mark in an eye's clip space.
- *
- * @param acVertices The mark's corners in that eye.
- * @return The average of its four corners: x, y, z, w.
+ * A banner layer as it is drawn this frame: where it is in the view, and how much of it shows.
  */
-std::array<float, 4> ClipCentreOf(const EyeVertices& acVertices) noexcept
+struct ShownLayer
 {
-    std::array<float, 4> centre{};
-    for (const auto& cVertex : acVertices)
-        for (int c = 0; c < 4; ++c)
-            centre[c] += cVertex.Position[c] / 4.f;
-    return centre;
-}
-
-/**
- * What the update thread last gave to draw, copied for one frame: the panel, the pointing over it, and the eyes to draw them for.
- */
-struct Scene
-{
-    VREyeDraw::Quad Panel;
-    VREyeDraw::Pointing Pointing;
-    std::array<vr::HmdMatrix44_t, 2> Projection{};
-    std::array<vr::HmdMatrix34_t, 2> EyeToHead{};
+    // Its corners in the headset's space.
+    HeadCorners Corners{};
+    // From 0 to 1.
+    float Alpha = 0.f;
 };
 
 /**
- * Copy what the update thread last gave to draw, under the lock shared with it.
+ * What the update thread last gave to draw, copied for one frame: the panel, the pointing over it, the banner layers, and the eyes to draw them for.
+ */
+struct Scene
+{
+    // The panel in the game's world, or nothing while it is hidden.
+    std::optional<VREyeDraw::Quad> Panel;
+    VREyeDraw::Pointing Pointing;
+    // Each banner layer shown, in drawing order.
+    std::array<std::optional<ShownLayer>, BannerPlacement::kLayerCount> Layers;
+    EyeMatrices Eyes;
+};
+
+/**
+ * Check if any part of a scene is left to draw.
  *
- * @return The scene, or nothing while the panel is hidden.
+ * @param acScene The scene.
+ * @return True when the panel or a banner layer is in it.
+ */
+bool HasAnything(const Scene& acScene) noexcept
+{
+    return acScene.Panel || std::any_of(acScene.Layers.begin(), acScene.Layers.end(), [](const std::optional<ShownLayer>& acLayer) { return acLayer.has_value(); });
+}
+
+/**
+ * Copy what the update thread last gave to draw, and take over the pictures it gave, under the lock shared with it.
+ * Taken together, a frame draws a picture only with the place and alpha it was given with.
+ *
+ * @return The scene, or nothing while neither the panel nor a banner layer is shown.
  */
 std::optional<Scene> TakeScene() noexcept
 {
     std::scoped_lock lock(s_lock);
-    if (!s_panel)
+    s_panelPicture.TakeOver();
+    for (EyeDrawPicture& picture : s_layerPictures)
+        picture.TakeOver();
+    Scene scene{s_panel, s_pointing, {}, s_eyes};
+    for (size_t i = 0; i < scene.Layers.size(); ++i)
+    {
+        if (s_layerCorners[i])
+            scene.Layers[i] = ShownLayer{*s_layerCorners[i], s_layerAlpha[i]};
+    }
+    if (!HasAnything(scene))
         return std::nullopt;
-    return Scene{*s_panel, s_pointing, s_projection, s_eyeToHead};
+    return scene;
 }
 
 /**
- * One mark in both eyes, with the shader that colours it.
- */
-struct Mark
-{
-    std::array<EyeVertices, 2> Eyes{};
-    ID3D11PixelShader* pShader = nullptr;
-};
-
-/**
- * Everything to draw this frame, and the points the once-per-game checks sample.
- */
-struct Marks
-{
-    // The panel, then the beam, the dot and the rings over it, in that order: nothing has depth, the last drawn is seen.
-    std::array<Mark, 5> List{};
-    size_t Count = 0;
-    // The beam's middle in the headset's space, when the beam is drawn.
-    std::optional<glm::vec3> BeamMiddle;
-    // A point on each hand's ring in the headset's space, when that ring is drawn.
-    std::array<std::optional<glm::vec3>, 2> RingPoints;
-};
-
-/**
- * Work out every mark to draw this frame, in both eyes, from where the game rendered the frame.
+ * Put the pictures of what is shown on the game's device, and leave out what cannot be drawn this frame.
+ * The panel is left out without the headset's place or before its first picture; a banner layer while it shows nothing or before its first picture.
  *
- * @param acScene The panel and the pointing over it, in the game's world.
- * @param acHead The headset where the game rendered this frame from.
- * @return The marks in drawing order, with the points the checks sample.
+ * @param aScene What the update thread gave to draw; the parts that cannot be drawn are taken out of it.
+ * @param acHead The headset where the game rendered this frame from, or nothing when not known.
+ * @param apImmediate The game's device context, which runs the uploads.
+ * @return True when anything is left to draw.
  */
-Marks MarksFor(const Scene& acScene, const VRControllers::HeadSpace& acHead) noexcept
+bool KeepDrawableParts(Scene& aScene, const std::optional<VRControllers::HeadSpace>& acHead, ID3D11DeviceContext* apImmediate) noexcept
 {
-    Marks marks;
-    const auto cAdd = [&](const HeadCorners& acCorners, ID3D11PixelShader* apShader)
+    if (aScene.Panel && !(acHead && UploadForFrame(s_panelPicture, "panel", apImmediate)))
+        aScene.Panel.reset();
+    for (size_t i = 0; i < aScene.Layers.size(); ++i)
     {
-        const std::array<EyeVertices, 2> cEyes{VerticesFor(acScene.Projection[0], acScene.EyeToHead[0], acCorners), VerticesFor(acScene.Projection[1], acScene.EyeToHead[1], acCorners)};
-        marks.List[marks.Count++] = {cEyes, apShader};
-    };
+        std::optional<ShownLayer>& layer = aScene.Layers[i];
+        if (!layer)
+            continue;
+        const char* pName = BannerPlacement::NamesOf(static_cast<BannerPlacement::Layer>(i)).Log;
+        const bool cVisible = layer->Alpha > 0.f;
+        if (!cVisible || !UploadForFrame(s_layerPictures[i], pName, apImmediate))
+            layer.reset();
+    }
+    return HasAnything(aScene);
+}
+
+/**
+ * Add one mark to this frame's list, worked out for both eyes.
+ *
+ * @param aMarks The list it goes into.
+ * @param acEyes The eyes it is drawn for.
+ * @param acCorners Its corners in the headset's space.
+ * @param apShader The pixel shader that colours it.
+ * @param apPicture The picture that shader reads.
+ * @param aLayerAlpha A banner layer's alpha; nothing for a mark drawn opaque.
+ * @return Where it is in the list.
+ */
+size_t AddMark(Marks& aMarks, const EyeMatrices& acEyes, const HeadCorners& acCorners, ID3D11PixelShader* apShader, ID3D11ShaderResourceView* apPicture,
+               const std::optional<float> aLayerAlpha) noexcept
+{
+    const std::array<EyeVertices, 2> cEyes{VerticesFor(acEyes.Projection[0], acEyes.EyeToHead[0], acCorners), VerticesFor(acEyes.Projection[1], acEyes.EyeToHead[1], acCorners)};
+    aMarks.List[aMarks.Count] = {cEyes, apShader, apPicture, aLayerAlpha};
+    return aMarks.Count++;
+}
+
+/**
+ * Add the panel and the pointing over it, placed in the game's world and seen from where the game rendered this frame.
+ *
+ * @param aMarks This frame's marks.
+ * @param acScene The scene, with its panel.
+ * @param acHead The headset where the game rendered this frame from.
+ */
+void AddPanelMarks(Marks& aMarks, const Scene& acScene, const VRControllers::HeadSpace& acHead) noexcept
+{
+    ID3D11ShaderResourceView* pPage = s_panelPicture.GetView();
+    const auto cAdd = [&](const HeadCorners& acCorners, ID3D11PixelShader* apShader) { AddMark(aMarks, acScene.Eyes, acCorners, apShader, pPage, std::nullopt); };
 
     HeadCorners panel{};
     for (size_t i = 0; i < panel.size(); ++i)
-        panel[i] = acHead.Point(acScene.Panel.Corners[i]);
+        panel[i] = acHead.Point(acScene.Panel->Corners[i]);
     cAdd(panel, s_drawer.pPanelShader);
+    aMarks.HasPanel = true;
 
     if (acScene.Pointing.Beam)
     {
@@ -599,7 +600,7 @@ Marks MarksFor(const Scene& acScene, const VRControllers::HeadSpace& acHead) noe
         if (const auto cStrip = EyeGeometry::Strip(cFrom, cTo, kBeamHalf))
         {
             cAdd(*cStrip, s_drawer.pBeamShader);
-            marks.BeamMiddle = (cFrom + cTo) * 0.5f;
+            aMarks.BeamMiddle = (cFrom + cTo) * 0.5f;
         }
     }
     if (acScene.Pointing.Dot)
@@ -613,8 +614,39 @@ Marks MarksFor(const Scene& acScene, const VRControllers::HeadSpace& acHead) noe
         cAdd(cRing, s_drawer.pRingShader);
         // A point on the ring itself, which is hollow: most of the way from its centre to its right edge.
         const glm::vec3 cRightEdge = (cRing[1] + cRing[2]) * 0.5f;
-        marks.RingPoints[i] = cCentre + (cRightEdge - cCentre) * 0.85f;
+        aMarks.RingPoints[i] = cCentre + (cRightEdge - cCentre) * 0.85f;
     }
+}
+
+/**
+ * Add the banner layers shown this frame, in drawing order.
+ * Their corners are already in the headset's space, so each lands at the same place in the view whichever way the head turns.
+ *
+ * @param aMarks This frame's marks.
+ * @param acScene The scene, with its layers.
+ */
+void AddLayerMarks(Marks& aMarks, const Scene& acScene) noexcept
+{
+    for (size_t i = 0; i < acScene.Layers.size(); ++i)
+    {
+        if (const auto& cLayer = acScene.Layers[i])
+            aMarks.LayerMarks[i] = AddMark(aMarks, acScene.Eyes, cLayer->Corners, s_drawer.pLayerShader, s_layerPictures[i].GetView(), cLayer->Alpha);
+    }
+}
+
+/**
+ * Work out every mark to draw this frame, in both eyes: the panel and its pointing from where the game rendered the frame, then the banner layers over them.
+ *
+ * @param acScene What to draw: the panel in the game's world, the layers in the headset's space.
+ * @param acHead The headset where the game rendered this frame from; the panel is drawn only with it.
+ * @return The marks in drawing order, with the points the checks sample.
+ */
+Marks MarksFor(const Scene& acScene, const std::optional<VRControllers::HeadSpace>& acHead) noexcept
+{
+    Marks marks;
+    if (acScene.Panel && acHead)
+        AddPanelMarks(marks, acScene, *acHead);
+    AddLayerMarks(marks, acScene);
     return marks;
 }
 
@@ -631,9 +663,9 @@ ID3D11CommandList* RecordMarks(const Marks& acMarks, const int aEye, const D3D11
 {
     for (size_t i = 0; i < acMarks.Count; ++i)
     {
-        RecordDraw(acMarks.List[i].Eyes[aEye], acViewport, acMarks.List[i].pShader);
+        RecordDraw(acMarks.List[i].Eyes[aEye], acViewport, acMarks.List[i]);
         if (acpRightViewport && !s_drawer.Failed)
-            RecordDraw(acMarks.List[i].Eyes[1], *acpRightViewport, acMarks.List[i].pShader);
+            RecordDraw(acMarks.List[i].Eyes[1], *acpRightViewport, acMarks.List[i]);
     }
 
     ID3D11CommandList* pCommands = nullptr;
@@ -646,152 +678,7 @@ ID3D11CommandList* RecordMarks(const Marks& acMarks, const int aEye, const D3D11
 }
 
 /**
- * A check that one kind of mark lands in the eye image: a pixel of the left eye, read before and after the drawing.
- */
-struct Check
-{
-    // The kind of mark and the name of its colour, for the log.
-    const char* pWhat = nullptr;
-    const char* pColourName = nullptr;
-    std::pair<UINT, UINT> Pixel{};
-    // The colour the pixel should have once drawn: red, green, blue.
-    std::array<uint32_t, 3> Expected{};
-    // The tries counter of that kind of mark.
-    int* pTries = nullptr;
-    uint8_t Before[4]{};
-    // Whether the pixel could be read before the drawing.
-    bool Read = false;
-};
-
-/**
- * This frame's checks: at most one for each kind of mark.
- */
-struct Checks
-{
-    std::array<Check, 3> List{};
-    size_t Count = 0;
-};
-
-/**
- * Turn a colour constant into the form a check expects.
- *
- * @param acRgb The colour: red, green, blue.
- * @return The same colour, one number per part.
- */
-std::array<uint32_t, 3> RgbOf(const uint8_t (&acRgb)[3]) noexcept
-{
-    return {acRgb[0], acRgb[1], acRgb[2]};
-}
-
-/**
- * Work out the colour the middle of the picture should have in the eye image: the page's pixel over the dark panel, as the panel's shader lays it.
- *
- * @return Red, green, blue; black before a picture is on the device.
- */
-std::array<uint32_t, 3> PictureCentreOverPanel() noexcept
-{
-    std::array<uint32_t, 3> colour{};
-    const size_t cIndex = (static_cast<size_t>(s_drawer.PictureHeight / 2) * s_drawer.PictureWidth + s_drawer.PictureWidth / 2) * 4;
-    if (cIndex + 3 < s_renderPixels.size())
-    {
-        for (int c = 0; c < 3; ++c)
-            colour[c] = PanelColours::OverPanel(&s_renderPixels[cIndex], c);
-    }
-    return colour;
-}
-
-/**
- * Choose this frame's checks for the left eye: for each kind of mark still unchecked, a pixel where it shows and the colour it should have there.
- *
- * @param acScene The scene drawn this frame, for the left eye's projection.
- * @param acMarks The marks drawn this frame.
- * @param acViewport The left eye's part of the eye image.
- * @return The checks; none for a mark the left eye does not see.
- */
-Checks ChecksFor(const Scene& acScene, const Marks& acMarks, const D3D11_VIEWPORT& acViewport) noexcept
-{
-    Checks checks;
-    const auto cAdd = [&](const char* acpWhat, const char* acpColourName, const std::optional<std::pair<UINT, UINT>>& acPixel, const std::array<uint32_t, 3>& acExpected, int& aTries)
-    {
-        if (!acPixel)
-            return;
-        Check& check = checks.List[checks.Count++];
-        check.pWhat = acpWhat;
-        check.pColourName = acpColourName;
-        check.Pixel = *acPixel;
-        check.Expected = acExpected;
-        check.pTries = &aTries;
-    };
-    const auto cLeftEyePixel = [&](const glm::vec3& acHeadPoint) { return EyeGeometry::PixelOf(EyeGeometry::ToClip(acScene.Projection[0].m, acScene.EyeToHead[0].m, acHeadPoint), acViewport); };
-
-    if (IsCheckPending(s_panelTries))
-        cAdd("panel", "picture centre", EyeGeometry::PixelOf(ClipCentreOf(acMarks.List[0].Eyes[0]), acViewport), PictureCentreOverPanel(), s_panelTries);
-    if (IsCheckPending(s_beamTries) && acMarks.BeamMiddle)
-        cAdd("beam", "beam", cLeftEyePixel(*acMarks.BeamMiddle), RgbOf(PanelColours::kGoldRgb), s_beamTries);
-    // The first ring the left eye sees: a hand held low can be out of view.
-    for (const auto& cPoint : acMarks.RingPoints)
-    {
-        if (!IsCheckPending(s_ringTries) || checks.Count == checks.List.size())
-            break;
-        if (!cPoint)
-            continue;
-        const auto cPixel = cLeftEyePixel(*cPoint);
-        if (!cPixel)
-            continue;
-        cAdd("hand ring", "ring", cPixel, RgbOf(kPaleRgb), s_ringTries);
-        break;
-    }
-    return checks;
-}
-
-/**
- * Read each check's pixel before the drawing, to log it next to the pixel after.
- *
- * @param aChecks The checks; each one's pixel before is filled in.
- * @param apImmediate The game's device context.
- * @param apTarget The eye image.
- * @param acTarget Its description.
- */
-void ReadPixelsBefore(Checks& aChecks, ID3D11DeviceContext* apImmediate, ID3D11Texture2D* apTarget, const D3D11_TEXTURE2D_DESC& acTarget) noexcept
-{
-    for (size_t i = 0; i < aChecks.Count; ++i)
-    {
-        Check& check = aChecks.List[i];
-        check.Read = ReadPixel(apImmediate, apTarget, acTarget, check.Pixel.first, check.Pixel.second, check.Before);
-    }
-}
-
-/**
- * Read each check's pixel again after the drawing: the expected colour ends the check, and so does its last try; either way it is logged.
- *
- * @param acChecks The checks, with their pixels before.
- * @param apImmediate The game's device context.
- * @param apTarget The eye image.
- * @param acTarget Its description.
- */
-void FinishChecks(const Checks& acChecks, ID3D11DeviceContext* apImmediate, ID3D11Texture2D* apTarget, const D3D11_TEXTURE2D_DESC& acTarget) noexcept
-{
-    for (size_t i = 0; i < acChecks.Count; ++i)
-    {
-        const Check& cCheck = acChecks.List[i];
-        uint8_t after[4]{};
-        if (!cCheck.Read || !ReadPixel(apImmediate, apTarget, acTarget, cCheck.Pixel.first, cCheck.Pixel.second, after))
-            continue;
-        // Its colour, within what the eye image's rounding allows, ends the check; so does the last try, which is logged as it is.
-        bool matches = true;
-        for (int c = 0; c < 3; ++c)
-            matches = matches && std::abs(static_cast<int>(after[c]) - static_cast<int>(cCheck.Expected[c])) <= kColourTolerance;
-        *cCheck.pTries = matches ? kCheckTries : *cCheck.pTries + 1;
-        if (!matches && IsCheckPending(*cCheck.pTries))
-            continue;
-        spdlog::info("VREyeDraw: {} drawn into the left eye at {},{}; pixel before {},{},{}, after {},{},{}, {} {},{},{}", cCheck.pWhat, cCheck.Pixel.first,
-                     cCheck.Pixel.second, cCheck.Before[0], cCheck.Before[1], cCheck.Before[2], after[0], after[1], after[2], cCheck.pColourName, cCheck.Expected[0],
-                     cCheck.Expected[1], cCheck.Expected[2]);
-    }
-}
-
-/**
- * Draw the panel and the pointing over it into the eye image the game submits now, as that eye sees them this frame.
+ * Draw the panel, the pointing over it and the banner layers into the eye image the game submits now, as that eye sees them this frame.
  *
  * @param aEye Which eye the game submits.
  * @param apTarget The eye image.
@@ -799,8 +686,8 @@ void FinishChecks(const Checks& acChecks, ID3D11DeviceContext* apImmediate, ID3D
  */
 void Draw(const vr::EVREye aEye, ID3D11Texture2D* apTarget, const vr::VRTextureBounds_t* apBounds) noexcept
 {
-    const auto cScene = TakeScene();
-    if (!cScene)
+    auto scene = TakeScene();
+    if (!scene)
         return;
 
     // Drawn with the left eye already, in the same double-wide image.
@@ -812,13 +699,12 @@ void Draw(const vr::EVREye aEye, ID3D11Texture2D* apTarget, const vr::VRTextureB
     s_bothEyesDrawnInto = nullptr;
 
     // The headset where the game rendered this frame from: the game set its node before drawing, on this thread.
-    const auto cHead = VRControllers::HeadSpaceNow();
-    if (!cHead)
-        return;
+    // Only the panel needs it, being placed in the game's world; the banner layers are placed relative to the headset.
+    const std::optional<VRControllers::HeadSpace> cHead = scene->Panel ? VRControllers::HeadSpaceNow() : std::nullopt;
 
     ID3D11DeviceContext* pImmediate = nullptr;
     s_drawer.pDevice->GetImmediateContext(&pImmediate);
-    if (!UploadPicture(pImmediate) || !EnsureTargetView(apTarget))
+    if (!KeepDrawableParts(*scene, cHead, pImmediate) || !EnsureTargetView(apTarget))
     {
         pImmediate->Release();
         return;
@@ -833,7 +719,7 @@ void Draw(const vr::EVREye aEye, ID3D11Texture2D* apTarget, const vr::VRTextureB
     const bool cBoth = aEye == vr::Eye_Left && std::max(cBounds.uMin, cBounds.uMax) <= 0.5f;
     const D3D11_VIEWPORT cRightViewport = ViewportFor(target, {cBounds.uMin + 0.5f, cBounds.vMin, cBounds.uMax + 0.5f, cBounds.vMax});
 
-    const Marks cMarks = MarksFor(*cScene, *cHead);
+    const Marks cMarks = MarksFor(*scene, cHead);
     ID3D11CommandList* pCommands = RecordMarks(cMarks, aEye == vr::Eye_Left ? 0 : 1, cViewport, cBoth ? &cRightViewport : nullptr);
     if (!pCommands)
     {
@@ -841,10 +727,11 @@ void Draw(const vr::EVREye aEye, ID3D11Texture2D* apTarget, const vr::VRTextureB
         return;
     }
 
-    Checks checks;
+    const EyeDrawChecks::EyeImage cImage{s_drawer.pDevice, pImmediate, apTarget, target};
+    EyeDrawChecks::Checks checks;
     if (aEye == vr::Eye_Left)
-        checks = ChecksFor(*cScene, cMarks, cViewport);
-    ReadPixelsBefore(checks, pImmediate, apTarget, target);
+        checks = EyeDrawChecks::ChecksFor(cMarks, scene->Eyes, cViewport, s_panelPicture, s_layerPictures);
+    EyeDrawChecks::ReadPixelsBefore(checks, cImage);
 
     // Run with the game's own state put back afterwards.
     pImmediate->ExecuteCommandList(pCommands, TRUE);
@@ -852,12 +739,26 @@ void Draw(const vr::EVREye aEye, ID3D11Texture2D* apTarget, const vr::VRTextureB
     if (cBoth)
         s_bothEyesDrawnInto = apTarget;
 
-    FinishChecks(checks, pImmediate, apTarget, target);
+    EyeDrawChecks::FinishChecks(checks, cImage);
     pImmediate->Release();
 }
 
 /**
- * Stand in for the compositor's Submit: draw the panel into the eye image, then hand it to the runtime as the game asked.
+ * Ask the runtime for each eye's projection and place in the head.
+ * Asked on the update thread, as the panel or a banner layer starts showing, and kept for the render thread.
+ *
+ * @return Both eyes' matrices, left then right.
+ */
+EyeMatrices ReadEyeMatrices() noexcept
+{
+    EyeMatrices eyes;
+    eyes.Projection = {s_drawer.pSystem->GetProjectionMatrix(vr::Eye_Left, kNearClip, kFarClip), s_drawer.pSystem->GetProjectionMatrix(vr::Eye_Right, kNearClip, kFarClip)};
+    eyes.EyeToHead = {s_drawer.pSystem->GetEyeToHeadTransform(vr::Eye_Left), s_drawer.pSystem->GetEyeToHeadTransform(vr::Eye_Right)};
+    return eyes;
+}
+
+/**
+ * Stand in for the compositor's Submit: draw the panel and the banner layers into the eye image, then hand it to the runtime as the game asked.
  * Only on the game's main thread, and only Direct3D images; everything is made at the first one.
  *
  * @param apThis The compositor.
@@ -907,7 +808,7 @@ void* __cdecl HookVR_GetGenericInterface(const char* apVersion, vr::EVRInitError
         spdlog::info("VREyeDraw: on the compositor's Submit ({})", apVersion);
     }
     else
-        spdlog::error("VREyeDraw: the compositor's Submit could not be hooked; no panel inside the game");
+        spdlog::error("VREyeDraw: the compositor's Submit could not be hooked; no panel inside the game, and on OpenComposite no banners either");
     return pInterface;
 }
 
@@ -918,16 +819,17 @@ TiltedPhoques::Initializer s_eyeDrawHook(
         s_mainThread = GetCurrentThreadId();
         TP_HOOK_IAT(VR_GetGenericInterface, "openvr_api.dll");
         if (!RealVR_GetGenericInterface)
-            spdlog::error("VREyeDraw: the game's import of VR_GetGenericInterface was not found; no panel inside the game");
+            spdlog::error("VREyeDraw: the game's import of VR_GetGenericInterface was not found; no panel inside the game, and on OpenComposite no banners either");
     });
 } // namespace
 
 namespace VREyeDraw
 {
 /**
- * Check if the panel can be drawn: everything it needs was made on the game's device at its first frame, and nothing failed since.
+ * Check if the eye images can be drawn into: everything the panel and the banner's layers need was made on the game's device at its first frame, and nothing failed since.
+ * After a failure neither shows for the rest of the game: no panel, and on OpenComposite no banners.
  *
- * @return True once the panel can be shown.
+ * @return True once the panel and the banner's layers can be shown.
  */
 bool IsReady() noexcept
 {
@@ -944,13 +846,8 @@ bool IsReady() noexcept
  */
 void SetPicture(std::vector<uint8_t>& aPixels, const uint32_t aWidth, const uint32_t aHeight) noexcept
 {
-    if (aPixels.size() != static_cast<size_t>(aWidth) * aHeight * 4)
-        return;
     std::scoped_lock lock(s_lock);
-    s_pixels.swap(aPixels);
-    s_width = aWidth;
-    s_height = aHeight;
-    s_pictureChanged = true;
+    s_panelPicture.Give(aPixels, aWidth, aHeight);
 }
 
 /**
@@ -962,18 +859,14 @@ void Show(const Quad& acQuad) noexcept
 {
     if (!IsReady())
         return;
-    // The eyes' projections and places in the head are asked of the runtime here, on the update thread, and kept for the render thread.
-    const std::array<vr::HmdMatrix44_t, 2> cProjection{s_drawer.pSystem->GetProjectionMatrix(vr::Eye_Left, kNearClip, kFarClip),
-                                                       s_drawer.pSystem->GetProjectionMatrix(vr::Eye_Right, kNearClip, kFarClip)};
-    const std::array<vr::HmdMatrix34_t, 2> cEyeToHead{s_drawer.pSystem->GetEyeToHeadTransform(vr::Eye_Left), s_drawer.pSystem->GetEyeToHeadTransform(vr::Eye_Right)};
+    const EyeMatrices cEyes = ReadEyeMatrices();
     std::scoped_lock lock(s_lock);
-    s_projection = cProjection;
-    s_eyeToHead = cEyeToHead;
+    s_eyes = cEyes;
     s_panel = acQuad;
 }
 
 /**
- * Stop drawing the panel and everything over it.
+ * Stop drawing the panel and the pointing over it; the banner's layers are not touched.
  */
 void Hide() noexcept
 {
@@ -991,6 +884,70 @@ void SetPointing(const Pointing& acPointing) noexcept
 {
     std::scoped_lock lock(s_lock);
     s_pointing = acPointing;
+}
+
+/**
+ * Change the picture of one of the banner's layers while it shows, from the next frame on; its place and alpha stay.
+ * It is taken by swapping, so the caller gets an older buffer back to fill next time.
+ *
+ * @param aLayer Which layer.
+ * @param aPixels The whole picture, BGRA premultiplied like the panel's, top row first; ignored when its size does not match the width and height.
+ * @param aWidth Its width in pixels.
+ * @param aHeight Its height in pixels.
+ */
+void SetLayerPicture(const BannerPlacement::Layer aLayer, std::vector<uint8_t>& aPixels, const uint32_t aWidth, const uint32_t aHeight) noexcept
+{
+    std::scoped_lock lock(s_lock);
+    s_layerPictures[BannerPlacement::IndexOf(aLayer)].Give(aPixels, aWidth, aHeight);
+}
+
+/**
+ * Show one of the banner's layers from the next frame on, until it is hidden: its picture, its place relative to the headset and its alpha, in one handover.
+ * A frame draws all of the old or all of the new, never a new picture at an old place or alpha.
+ *
+ * @param aLayer Which layer.
+ * @param aPixels A new picture, BGRA premultiplied, top row first, taken by swapping; empty to keep the picture the layer has.
+ * @param aWidth The new picture's width in pixels.
+ * @param aHeight Its height in pixels.
+ * @param acCorners The layer's corners in the headset's space, in metres, from the top left, clockwise as the player faces it.
+ * @param aAlpha How much of it shows, from 0 to 1.
+ */
+void ShowLayer(const BannerPlacement::Layer aLayer, std::vector<uint8_t>& aPixels, const uint32_t aWidth, const uint32_t aHeight, const EyeGeometry::HeadCorners& acCorners,
+               const float aAlpha) noexcept
+{
+    if (!IsReady())
+        return;
+    const EyeMatrices cEyes = ReadEyeMatrices();
+    const size_t cIndex = BannerPlacement::IndexOf(aLayer);
+    std::scoped_lock lock(s_lock);
+    if (!aPixels.empty())
+        s_layerPictures[cIndex].Give(aPixels, aWidth, aHeight);
+    s_layerCorners[cIndex] = acCorners;
+    s_layerAlpha[cIndex] = aAlpha;
+    s_eyes = cEyes;
+}
+
+/**
+ * Set how much of one of the banner's layers shows, for its fades; kept while it is hidden.
+ *
+ * @param aLayer Which layer.
+ * @param aAlpha From 0, nothing, to 1, all of it.
+ */
+void SetLayerAlpha(const BannerPlacement::Layer aLayer, const float aAlpha) noexcept
+{
+    std::scoped_lock lock(s_lock);
+    s_layerAlpha[BannerPlacement::IndexOf(aLayer)] = aAlpha;
+}
+
+/**
+ * Stop drawing one of the banner's layers; its picture and alpha are kept for its next showing.
+ *
+ * @param aLayer Which layer.
+ */
+void HideLayer(const BannerPlacement::Layer aLayer) noexcept
+{
+    std::scoped_lock lock(s_lock);
+    s_layerCorners[BannerPlacement::IndexOf(aLayer)].reset();
 }
 } // namespace VREyeDraw
 

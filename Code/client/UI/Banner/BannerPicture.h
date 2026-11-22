@@ -35,6 +35,16 @@ Picture MeterFace(const std::wstring& acLabel) noexcept;
 //! Fills a meter's bar, in place: the attackers' colour aFill (0 to 1) of it from the left, the defenders' colour the rest.
 void FillMeter(Picture& aMeter, float aFill, uint32_t aAttackRgb, uint32_t aDefendRgb) noexcept;
 
+/**
+ * Write a picture in the form the game's eye images are drawn from: blue, green, red and alpha, each colour already multiplied by its alpha.
+ * The pictures are straight RGBA, as SteamVR's overlays take them; the eye images take the browser's form, whose smaller levels blend without dark edges.
+ *
+ * @param acPicture The picture.
+ * @param aBgra Filled with its pixels, top row first, four bytes each; its memory is reused when big enough. Emptied when nothing is written.
+ * @return True when written; false for an empty picture or one whose pixels do not match its size.
+ */
+bool ToPremultipliedBgra(const Picture& acPicture, std::vector<uint8_t>& aBgra) noexcept;
+
 //! Which of the fonts the pictures use could be read, for the log.
 std::string FontReport() noexcept;
 

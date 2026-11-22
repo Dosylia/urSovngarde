@@ -4,11 +4,13 @@
 
 #ifdef SKYRIMVR
 
+#include <UI/Banner/BannerEyeImages.h>
+#include <UI/Banner/BannerOverlays.h>
 #include <UI/Banner/BannerPicture.h>
+#include <UI/Banner/BannerPresenter.h>
 #include <Games/Skyrim/VR/VRRuntime.h>
 
 #include <immersive_launcher/launcher.h>
-#include <openvr/openvr.h>
 
 #include <algorithm>
 #include <chrono>
@@ -21,46 +23,33 @@ namespace
 {
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
+using BannerPlacement::Layer;
 
-// The banner is 1.6 m wide, 1.5 m in front of the eyes and a little below them: the middle of the view, readable without turning.
-constexpr float kWidthMeters = 1.6f;
-constexpr float kDistanceMeters = 1.5f;
-constexpr float kBelowEyesMeters = 0.05f;
-// The meter is 0.9 m wide at the same distance, near the top of the view, clear of the banner and tilted to face the eyes.
-constexpr float kMeterWidthMeters = 0.9f;
-constexpr float kMeterAboveEyesMeters = 0.45f;
 constexpr auto kFadeIn = 800ms;
 constexpr auto kFadeOut = 1200ms;
 // A meter not shown again for this long fades out, so one its plugin forgot does not stay for the session.
 constexpr auto kMeterStale = 10s;
 
-// None under OpenComposite: the banners are not shown there.
-vr::IVROverlay* GetOverlay() noexcept
+/**
+ * One layer's showing and its fades.
+ */
+struct LayerFade
 {
-    static vr::IVROverlay* s_pOverlay = nullptr;
-    if (!s_pOverlay)
-        s_pOverlay = VRRuntime::GetOpenVROverlay();
-    return s_pOverlay;
-}
-
-// One overlay and its fades.
-struct Panel
-{
-    vr::VROverlayHandle_t Handle = vr::k_ulOverlayHandleInvalid;
+    Layer Which;
     bool Showing = false;
     Clock::time_point ShownAt{};
     // The latest time point, for one that stays until hidden.
     Clock::time_point FadeOutAt{};
-    // The alpha last given to SteamVR, so a panel that holds still costs no call each frame.
+    // The alpha last given to the presenter, so a layer that holds still costs no call each frame.
     float Alpha = -1.f;
-    // A failure is logged once, not at every try.
-    bool Warned = false;
 };
-Panel s_banner;
-Panel s_meter;
+LayerFade s_banner{Layer::kBanner};
+LayerFade s_meter{Layer::kMeter};
 Clock::time_point s_meterCalledAt{};
 
-// What the meter's picture shows, the fill in thousandths.
+/**
+ * What the meter's picture shows, the fill in thousandths.
+ */
 struct MeterLook
 {
     std::string Label;
@@ -73,53 +62,53 @@ struct MeterLook
 std::optional<MeterLook> s_meterLook;
 BannerPicture::Picture s_meterPicture;
 
-bool EnsureOverlay(vr::IVROverlay* apOverlay, Panel& aPanel, const char* acpKey, const char* acpName, const float aWidthMeters, const vr::HmdMatrix34_t& acPlacement,
-                   const uint32_t aSortOrder) noexcept
+/**
+ * Find where this game shows the banner's pictures: SteamVR's overlays, or the game's own eye images on OpenComposite, whose overlays cannot take a picture.
+ *
+ * @return The presenter, or null while the VR runtime is not known yet.
+ */
+BannerPresenter* PresenterInUse() noexcept
 {
-    if (aPanel.Handle != vr::k_ulOverlayHandleInvalid)
-        return true;
-    const auto cError = apOverlay->CreateOverlay(acpKey, acpName, &aPanel.Handle);
-    if (cError != vr::VROverlayError_None)
-    {
-        if (!aPanel.Warned)
-            spdlog::warn("VRBanner: the overlay {} could not be created ({})", acpKey, static_cast<int>(cError));
-        aPanel.Warned = true;
-        aPanel.Handle = vr::k_ulOverlayHandleInvalid;
-        return false;
-    }
-    apOverlay->SetOverlayWidthInMeters(aPanel.Handle, aWidthMeters);
-    apOverlay->SetOverlayTransformTrackedDeviceRelative(aPanel.Handle, vr::k_unTrackedDeviceIndex_Hmd, &acPlacement);
-    apOverlay->SetOverlaySortOrder(aPanel.Handle, aSortOrder);
+    if (VRRuntime::IsOpenComposite())
+        return &BannerEyeImages::GetPresenter();
+    return BannerOverlays::GetPresenter();
+}
 
-    // The pictures are written in the game's own fonts, read from its Data folder.
+/**
+ * Read the game's fonts for the pictures from its Data folder, the first time only.
+ */
+void ReadGameFontsOnce() noexcept
+{
     static bool s_fontsRead = false;
-    if (!s_fontsRead)
-    {
-        s_fontsRead = true;
-        if (const auto* pContext = launcher::GetLaunchContext())
-            BannerPicture::SetGameData(pContext->gamePath / L"Data");
-        spdlog::info("VRBanner: fonts {}", BannerPicture::FontReport());
-    }
-    return true;
+    if (s_fontsRead)
+        return;
+    s_fontsRead = true;
+    if (const auto* pContext = launcher::GetLaunchContext())
+        BannerPicture::SetGameData(pContext->gamePath / L"Data");
+    spdlog::info("VRBanner: fonts {}", BannerPicture::FontReport());
 }
 
-bool EnsureBanner(vr::IVROverlay* apOverlay) noexcept
+/**
+ * Find the presenter with a layer ready to show pictures, and the game's fonts read to draw them.
+ *
+ * @param aLayer Which layer.
+ * @return The presenter, or null when this game cannot show that layer now.
+ */
+BannerPresenter* PresenterReadyFor(const Layer aLayer) noexcept
 {
-    const vr::HmdMatrix34_t cPlacement = {{{1.f, 0.f, 0.f, 0.f}, {0.f, 1.f, 0.f, -kBelowEyesMeters}, {0.f, 0.f, 1.f, -kDistanceMeters}}};
-    // Drawn over the meter, should the two meet.
-    return EnsureOverlay(apOverlay, s_banner, "ursovngarde.banner", "urSovngarde banner", kWidthMeters, cPlacement, 1);
+    BannerPresenter* pPresenter = PresenterInUse();
+    if (!pPresenter || !pPresenter->Prepare(aLayer))
+        return nullptr;
+    ReadGameFontsOnce();
+    return pPresenter;
 }
 
-bool EnsureMeter(vr::IVROverlay* apOverlay) noexcept
-{
-    // Turned about the x axis until it faces the eyes, its top leaning towards them.
-    const float cTilt = std::atan2(kMeterAboveEyesMeters, kDistanceMeters);
-    const float cCos = std::cos(cTilt);
-    const float cSin = std::sin(cTilt);
-    const vr::HmdMatrix34_t cPlacement = {{{1.f, 0.f, 0.f, 0.f}, {0.f, cCos, -cSin, kMeterAboveEyesMeters}, {0.f, cSin, cCos, -kDistanceMeters}}};
-    return EnsureOverlay(apOverlay, s_meter, "ursovngarde.meter", "urSovngarde meter", kMeterWidthMeters, cPlacement, 0);
-}
-
+/**
+ * Turn UTF-8 text into the wide text the pictures are written from.
+ *
+ * @param acText The text, UTF-8.
+ * @return The same text, wide; empty for empty or broken text.
+ */
 std::wstring Widen(const std::string& acText) noexcept
 {
     const int cLength = MultiByteToWideChar(CP_UTF8, 0, acText.c_str(), -1, nullptr, 0);
@@ -130,90 +119,144 @@ std::wstring Widen(const std::string& acText) noexcept
     return wide;
 }
 
-// How much of a panel shows; a fade-out that starts during the fade-in goes down from there.
-float AlphaAt(const Panel& acPanel, const Clock::time_point aNow) noexcept
+/**
+ * Work out how much of a layer shows at a moment; a fade-out that starts during the fade-in goes down from there.
+ *
+ * @param acFade The layer's fades.
+ * @param aNow The moment.
+ * @return From 0, nothing, to 1, all of it.
+ */
+float AlphaAt(const LayerFade& acFade, const Clock::time_point aNow) noexcept
 {
-    if (aNow >= acPanel.FadeOutAt)
-        return std::clamp(1.f - std::chrono::duration<float>(aNow - acPanel.FadeOutAt) / std::chrono::duration<float>(kFadeOut), 0.f, 1.f);
-    if (aNow < acPanel.ShownAt + kFadeIn)
-        return std::clamp(std::chrono::duration<float>(aNow - acPanel.ShownAt) / std::chrono::duration<float>(kFadeIn), 0.f, 1.f);
+    if (aNow >= acFade.FadeOutAt)
+        return std::clamp(1.f - std::chrono::duration<float>(aNow - acFade.FadeOutAt) / std::chrono::duration<float>(kFadeOut), 0.f, 1.f);
+    if (aNow < acFade.ShownAt + kFadeIn)
+        return std::clamp(std::chrono::duration<float>(aNow - acFade.ShownAt) / std::chrono::duration<float>(kFadeIn), 0.f, 1.f);
     return 1.f;
 }
 
-void SetAlpha(vr::IVROverlay* apOverlay, Panel& aPanel, const float aAlpha) noexcept
+/**
+ * Give a layer's alpha to the presenter, only when it changed.
+ *
+ * @param aPresenter Where the layer is shown.
+ * @param aFade The layer's fades, which remember the alpha given.
+ * @param aAlpha From 0, nothing, to 1, all of it.
+ */
+void SetAlpha(BannerPresenter& aPresenter, LayerFade& aFade, const float aAlpha) noexcept
 {
-    if (aAlpha == aPanel.Alpha)
+    if (aAlpha == aFade.Alpha)
         return;
-    apOverlay->SetOverlayAlpha(aPanel.Handle, aAlpha);
-    aPanel.Alpha = aAlpha;
+    aPresenter.SetAlpha(aFade.Which, aAlpha);
+    aFade.Alpha = aAlpha;
 }
 
-// Starts the fade-out from what shows now.
-void FadeOut(Panel& aPanel, const Clock::time_point aNow) noexcept
+/**
+ * Start a layer's fade-out from what shows now.
+ *
+ * @param aFade The layer's fades.
+ * @param aNow The moment the fade-out starts.
+ */
+void FadeOut(LayerFade& aFade, const Clock::time_point aNow) noexcept
 {
-    const float cShown = AlphaAt(aPanel, aNow);
-    aPanel.FadeOutAt = aNow - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(kFadeOut) * (1.f - cShown));
+    const float cShown = AlphaAt(aFade, aNow);
+    aFade.FadeOutAt = aNow - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(kFadeOut) * (1.f - cShown));
 }
 
-// Fades in again from what shows now, and stays.
-void FadeBackIn(Panel& aPanel, const Clock::time_point aNow) noexcept
+/**
+ * Fade a layer in again from what shows now, to stay.
+ *
+ * @param aFade The layer's fades.
+ * @param aNow The moment the fade-in starts.
+ */
+void FadeBackIn(LayerFade& aFade, const Clock::time_point aNow) noexcept
 {
-    const float cShown = AlphaAt(aPanel, aNow);
-    aPanel.ShownAt = aNow - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(kFadeIn) * cShown);
-    aPanel.FadeOutAt = Clock::time_point::max();
+    const float cShown = AlphaAt(aFade, aNow);
+    aFade.ShownAt = aNow - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(kFadeIn) * cShown);
+    aFade.FadeOutAt = Clock::time_point::max();
 }
 
-void Present(vr::IVROverlay* apOverlay, const BannerPicture::Picture& acPicture, const std::string& acWhat, const float aHoldSeconds) noexcept
+/**
+ * Show a picture in the banner, in place of the one showing, fading in from nothing.
+ *
+ * @param aPresenter Where the banner is shown.
+ * @param acPicture The picture; an empty one shows nothing.
+ * @param acWhat What it shows, for the log.
+ * @param aHoldSeconds How long it stays fully shown, between the fades.
+ */
+void Present(BannerPresenter& aPresenter, const BannerPicture::Picture& acPicture, const std::string& acWhat, const float aHoldSeconds) noexcept
 {
     if (acPicture.Rgba.empty())
         return;
-    const auto cError = apOverlay->SetOverlayRaw(s_banner.Handle, const_cast<uint8_t*>(acPicture.Rgba.data()), acPicture.Width, acPicture.Height, 4);
-    if (cError != vr::VROverlayError_None)
-    {
-        spdlog::warn("VRBanner: '{}' could not be drawn ({})", acWhat, static_cast<int>(cError));
+    if (!aPresenter.SetPicture(Layer::kBanner, acPicture, acWhat, PictureChange::kForShowing))
         return;
-    }
     const auto cNow = Clock::now();
     s_banner.ShownAt = cNow;
     s_banner.FadeOutAt = cNow + kFadeIn + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(aHoldSeconds));
     s_banner.Showing = true;
-    SetAlpha(apOverlay, s_banner, 0.f);
-    apOverlay->ShowOverlay(s_banner.Handle);
+    SetAlpha(aPresenter, s_banner, 0.f);
+    aPresenter.Show(Layer::kBanner);
     spdlog::info("VRBanner: '{}' shown for {:.1f} s", acWhat, aHoldSeconds);
 }
 
-void Fade(vr::IVROverlay* apOverlay, Panel& aPanel, const Clock::time_point aNow) noexcept
+/**
+ * Move a layer's fade on to a moment, and hide it once it has faded out.
+ *
+ * @param aPresenter Where the layer is shown.
+ * @param aFade The layer's fades.
+ * @param aNow The moment.
+ */
+void Fade(BannerPresenter& aPresenter, LayerFade& aFade, const Clock::time_point aNow) noexcept
 {
-    if (!aPanel.Showing)
+    if (!aFade.Showing)
         return;
-    if (aNow >= aPanel.FadeOutAt && aNow - aPanel.FadeOutAt >= kFadeOut)
+    if (aNow >= aFade.FadeOutAt && aNow - aFade.FadeOutAt >= kFadeOut)
     {
-        apOverlay->HideOverlay(aPanel.Handle);
-        aPanel.Showing = false;
+        aPresenter.Hide(aFade.Which);
+        aFade.Showing = false;
         return;
     }
-    SetAlpha(apOverlay, aPanel, AlphaAt(aPanel, aNow));
+    SetAlpha(aPresenter, aFade, AlphaAt(aFade, aNow));
 }
 } // namespace
 
+/**
+ * Show a line of text in the banner, in place of the one showing.
+ *
+ * @param acText The text, UTF-8.
+ * @param aRgb The text's colour, 0xRRGGBB.
+ * @param aTextHeight How tall the letters are, in 1024ths of the banner's width.
+ * @param aHoldSeconds How long it stays fully shown, between the fades.
+ */
 void Show(const std::string& acText, const uint32_t aRgb, const int aTextHeight, const float aHoldSeconds) noexcept
 {
-    vr::IVROverlay* pOverlay = GetOverlay();
-    if (!pOverlay || !EnsureBanner(pOverlay))
+    BannerPresenter* pPresenter = PresenterReadyFor(Layer::kBanner);
+    if (!pPresenter)
         return;
-    Present(pOverlay, BannerPicture::Line(Widen(acText), aRgb, aTextHeight), acText, aHoldSeconds);
+    Present(*pPresenter, BannerPicture::Line(Widen(acText), aRgb, aTextHeight), acText, aHoldSeconds);
 }
 
+/**
+ * Show the death card in the banner, in place of the one showing; other plugins can show it too.
+ * The title in large letters between thin rules under an emblem, and a smaller line below it.
+ *
+ * @param acTitle The title, UTF-8.
+ * @param acSubtitle The smaller line, UTF-8; empty for none.
+ * @param aRgb The card's colour, 0xRRGGBB.
+ * @param aHoldSeconds How long it stays fully shown, between the fades.
+ */
 void ShowDeath(const std::string& acTitle, const std::string& acSubtitle, const uint32_t aRgb, const float aHoldSeconds) noexcept
 {
-    vr::IVROverlay* pOverlay = GetOverlay();
-    if (!pOverlay || !EnsureBanner(pOverlay))
+    BannerPresenter* pPresenter = PresenterReadyFor(Layer::kBanner);
+    if (!pPresenter)
         return;
     // The card is not written to a file here: encoding it took longer than drawing it, on the main thread, at every death.
     // To see one, draw its text (the "shown" line logs it) with TPTests' [.banner-preview] case.
-    Present(pOverlay, BannerPicture::DeathCard(Widen(acTitle), Widen(acSubtitle), aRgb), acSubtitle.empty() ? acTitle : acTitle + " / " + acSubtitle, aHoldSeconds);
+    Present(*pPresenter, BannerPicture::DeathCard(Widen(acTitle), Widen(acSubtitle), aRgb), acSubtitle.empty() ? acTitle : acTitle + " / " + acSubtitle, aHoldSeconds);
 }
 
+/**
+ * Fade out the banner showing, if any.
+ */
 void Hide() noexcept
 {
     const auto cNow = Clock::now();
@@ -221,10 +264,19 @@ void Hide() noexcept
         FadeOut(s_banner, cNow);
 }
 
+/**
+ * Show a bar near the top of the view, a layer of its own, until HideMeter: banners and cards show beside it.
+ * A call while it shows changes it in place, without a fade; one not shown again for 10 s fades out.
+ *
+ * @param acLabel The label above the bar, UTF-8; empty for none.
+ * @param aFill From 0 to 1, how much of the bar the attackers' colour fills from the left; the defenders' colour fills the rest.
+ * @param aAttackRgb The attackers' colour, 0xRRGGBB.
+ * @param aDefendRgb The defenders' colour, 0xRRGGBB.
+ */
 void ShowMeter(const std::string& acLabel, const float aFill, const uint32_t aAttackRgb, const uint32_t aDefendRgb) noexcept
 {
-    vr::IVROverlay* pOverlay = GetOverlay();
-    if (!pOverlay || !EnsureMeter(pOverlay))
+    BannerPresenter* pPresenter = PresenterReadyFor(Layer::kMeter);
+    if (!pPresenter)
         return;
 
     // Drawn again only when it would look different, and its label and frame only with a new label: those take most of the time.
@@ -237,14 +289,10 @@ void ShowMeter(const std::string& acLabel, const float aFill, const uint32_t aAt
         if (s_meterPicture.Rgba.empty())
             return;
         BannerPicture::FillMeter(s_meterPicture, aFill, aAttackRgb, aDefendRgb);
-        const auto cError = pOverlay->SetOverlayRaw(s_meter.Handle, s_meterPicture.Rgba.data(), s_meterPicture.Width, s_meterPicture.Height, 4);
-        if (cError != vr::VROverlayError_None)
-        {
-            if (!s_meter.Warned)
-                spdlog::warn("VRBanner: the meter '{}' could not be drawn ({})", acLabel, static_cast<int>(cError));
-            s_meter.Warned = true;
+        // A meter already showing changes in place; one that is not starts a showing below.
+        const PictureChange cChange = s_meter.Showing ? PictureChange::kInPlace : PictureChange::kForShowing;
+        if (!pPresenter->SetPicture(Layer::kMeter, s_meterPicture, acLabel, cChange))
             return;
-        }
         s_meterLook = cLook;
     }
 
@@ -257,13 +305,16 @@ void ShowMeter(const std::string& acLabel, const float aFill, const uint32_t aAt
         s_meter.ShownAt = cNow;
         s_meter.FadeOutAt = Clock::time_point::max();
         s_meter.Showing = true;
-        SetAlpha(pOverlay, s_meter, 0.f);
-        pOverlay->ShowOverlay(s_meter.Handle);
+        SetAlpha(*pPresenter, s_meter, 0.f);
+        pPresenter->Show(Layer::kMeter);
     }
     else if (cNow >= s_meter.FadeOutAt)
         FadeBackIn(s_meter, cNow);
 }
 
+/**
+ * Fade the meter out.
+ */
 void HideMeter() noexcept
 {
     const auto cNow = Clock::now();
@@ -273,12 +324,15 @@ void HideMeter() noexcept
     spdlog::info("VRBanner: meter hidden");
 }
 
+/**
+ * Run the fades, and fade out a meter not shown again for a while; call once a frame.
+ */
 void Update() noexcept
 {
     if (!s_banner.Showing && !s_meter.Showing)
         return;
-    vr::IVROverlay* pOverlay = GetOverlay();
-    if (!pOverlay)
+    BannerPresenter* pPresenter = PresenterInUse();
+    if (!pPresenter)
         return;
     const auto cNow = Clock::now();
     if (s_meter.Showing && cNow < s_meter.FadeOutAt && cNow - s_meterCalledAt >= kMeterStale)
@@ -286,8 +340,8 @@ void Update() noexcept
         FadeOut(s_meter, cNow);
         spdlog::info("VRBanner: meter not shown again for {} s, so hidden", std::chrono::duration_cast<std::chrono::seconds>(kMeterStale).count());
     }
-    Fade(pOverlay, s_banner, cNow);
-    Fade(pOverlay, s_meter, cNow);
+    Fade(*pPresenter, s_banner, cNow);
+    Fade(*pPresenter, s_meter, cNow);
 }
 } // namespace VRBanner
 
@@ -295,26 +349,59 @@ void Update() noexcept
 
 namespace VRBanner
 {
-void Show(const std::string&, uint32_t, int, float) noexcept
+/**
+ * Show a line of text in the banner: nothing in the flat game, which shows no banner.
+ *
+ * @param acText The text, UTF-8.
+ * @param aRgb The text's colour, 0xRRGGBB.
+ * @param aTextHeight How tall the letters are, in 1024ths of the banner's width.
+ * @param aHoldSeconds How long it stays fully shown, between the fades.
+ */
+void Show(const std::string& /*acText*/, uint32_t /*aRgb*/, int /*aTextHeight*/, float /*aHoldSeconds*/) noexcept
 {
 }
 
-void ShowDeath(const std::string&, const std::string&, uint32_t, float) noexcept
+/**
+ * Show the death card in the banner: nothing in the flat game, which shows no banner.
+ *
+ * @param acTitle The title, UTF-8.
+ * @param acSubtitle The smaller line, UTF-8; empty for none.
+ * @param aRgb The card's colour, 0xRRGGBB.
+ * @param aHoldSeconds How long it stays fully shown, between the fades.
+ */
+void ShowDeath(const std::string& /*acTitle*/, const std::string& /*acSubtitle*/, uint32_t /*aRgb*/, float /*aHoldSeconds*/) noexcept
 {
 }
 
+/**
+ * Fade out the banner showing: nothing in the flat game, which shows no banner.
+ */
 void Hide() noexcept
 {
 }
 
-void ShowMeter(const std::string&, float, uint32_t, uint32_t) noexcept
+/**
+ * Show a bar near the top of the view: nothing in the flat game, which shows no meter.
+ *
+ * @param acLabel The label above the bar, UTF-8; empty for none.
+ * @param aFill From 0 to 1, how much of the bar the attackers' colour fills from the left; the defenders' colour fills the rest.
+ * @param aAttackRgb The attackers' colour, 0xRRGGBB.
+ * @param aDefendRgb The defenders' colour, 0xRRGGBB.
+ */
+void ShowMeter(const std::string& /*acLabel*/, float /*aFill*/, uint32_t /*aAttackRgb*/, uint32_t /*aDefendRgb*/) noexcept
 {
 }
 
+/**
+ * Fade the meter out: nothing in the flat game, which shows no meter.
+ */
 void HideMeter() noexcept
 {
 }
 
+/**
+ * Run the fades: nothing in the flat game, which shows no banner.
+ */
 void Update() noexcept
 {
 }

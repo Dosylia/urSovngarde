@@ -787,6 +787,49 @@ void FillMeter(Picture& aMeter, const float aFill, const uint32_t aAttackRgb, co
         }
 }
 
+namespace
+{
+/**
+ * Multiply one colour of a pixel by the pixel's alpha, rounded to the nearest step.
+ *
+ * @param aColour The colour, 0 to 255.
+ * @param aAlpha The pixel's alpha, 0 to 255.
+ * @return The colour as much as the alpha shows of it, 0 to 255.
+ */
+uint8_t Premultiplied(const uint32_t aColour, const uint32_t aAlpha) noexcept
+{
+    return static_cast<uint8_t>((aColour * aAlpha + 127) / 255);
+}
+} // namespace
+
+/**
+ * Write a picture in the form the game's eye images are drawn from: blue, green, red and alpha, each colour already multiplied by its alpha.
+ * The pictures are straight RGBA, as SteamVR's overlays take them; the eye images take the browser's form, whose smaller levels blend without dark edges.
+ *
+ * @param acPicture The picture.
+ * @param aBgra Filled with its pixels, top row first, four bytes each; its memory is reused when big enough. Emptied when nothing is written.
+ * @return True when written; false for an empty picture or one whose pixels do not match its size.
+ */
+bool ToPremultipliedBgra(const Picture& acPicture, std::vector<uint8_t>& aBgra) noexcept
+{
+    if (acPicture.Rgba.empty() || acPicture.Rgba.size() != static_cast<size_t>(acPicture.Width) * acPicture.Height * 4)
+    {
+        aBgra.clear();
+        return false;
+    }
+    aBgra.resize(acPicture.Rgba.size());
+    for (size_t at = 0; at < aBgra.size(); at += 4)
+    {
+        // Red and blue change places; each colour is scaled by the alpha, which stays as it is.
+        const uint32_t cAlpha = acPicture.Rgba[at + 3];
+        aBgra[at + 0] = Premultiplied(acPicture.Rgba[at + 2], cAlpha);
+        aBgra[at + 1] = Premultiplied(acPicture.Rgba[at + 1], cAlpha);
+        aBgra[at + 2] = Premultiplied(acPicture.Rgba[at + 0], cAlpha);
+        aBgra[at + 3] = static_cast<uint8_t>(cAlpha);
+    }
+    return true;
+}
+
 std::string FontReport() noexcept
 {
     std::string report;
