@@ -25,6 +25,7 @@
 #include <Forms/BGSKeyword.h>
 #include <Interface/UI.h>
 #include <Services/PapyrusService.h>
+#include <Services/Generic/IntroWaitRepair.h>
 
 static TESQuest* FindQuestByNameId(const String& name)
 {
@@ -402,6 +403,8 @@ BSTEventResult QuestService::OnEvent(const TESLoadGameEvent*, const EventDispatc
                 it.value().LastProgress = cNow;
             }
         });
+    // A save whose intro skipped the stage that switches waiting back on gets waiting back.
+    m_world.GetRunner().Queue(&IntroWaitRepair::RepairWaiting);
 
     return BSTEventResult::kOk;
 }
@@ -905,6 +908,10 @@ void QuestService::OnQuestUpdate(const NotifyQuestUpdate& aUpdate) noexcept
 
     if (!bResult)
         spdlog::error("Failed to update the client quest state, quest: {:X}, stage: {}, status: {}", formId, aUpdate.Stage, aUpdate.Status);
+
+    // Another game's intro stage can end the intro here after the load's repair ran.
+    if (formId == IntroWaitRepair::kIntroQuestId)
+        IntroWaitRepair::RepairWaiting();
 }
 
 bool QuestService::StopQuest(uint32_t aformId)

@@ -160,7 +160,10 @@ struct PlayerCharacter : Actor
     TESForm* locationForm;
     uint8_t padAC8[0x28];
     int32_t difficulty;
-    uint8_t padAFC[0xB10 - 0xAFC];
+    uint8_t padAFC[0xB02 - 0xAFC];
+    // What a script switched off for a while through the game's SetInChargen, kept in the save: bit 0 saving, bit 1 waiting and sleeping (IntroWaitRepair), bit 2 the message that controls are off.
+    uint8_t chargenFlags;
+    uint8_t padB03[0xB10 - 0xB03];
     GameArray<TintMask*> baseTints;
     GameArray<TintMask*>* overlayTints;
 
@@ -178,7 +181,10 @@ struct PlayerCharacter : Actor
     TESForm* locationForm;
     uint8_t pad11D0[0x11F4 - 0x11D0];
     int32_t difficulty;
-    uint8_t pad11F8[0x1208 - 0x11F8];
+    uint8_t pad11F8[0x11FE - 0x11F8];
+    // What a script switched off for a while through the game's SetInChargen, kept in the save: bit 0 saving, bit 1 waiting and sleeping (IntroWaitRepair), bit 2 the message that controls are off.
+    uint8_t chargenFlags;
+    uint8_t pad11FF[0x1208 - 0x11FF];
     GameArray<TintMask*> baseTints;
     GameArray<TintMask*>* overlayTints;
 
@@ -190,6 +196,7 @@ struct PlayerCharacter : Actor
 static_assert(offsetof(PlayerCharacter, objectives) == 0x590);
 static_assert(offsetof(PlayerCharacter, pSkills) == 0x9C0);
 static_assert(offsetof(PlayerCharacter, locationForm) == 0xAD8);
+static_assert(offsetof(PlayerCharacter, chargenFlags) == 0xB12);
 static_assert(offsetof(PlayerCharacter, baseTints) == 0xB20);
 static_assert(offsetof(PlayerCharacter, overlayTints) == 0xB38);
 static_assert(sizeof(PlayerCharacter) == 0xBF0);
@@ -199,6 +206,7 @@ static_assert(offsetof(PlayerCharacter, objectives) == 0xB70);
 static_assert(offsetof(PlayerCharacter, pSkills) == 0x10B0);
 static_assert(offsetof(PlayerCharacter, locationForm) == 0x11C8);
 static_assert(offsetof(PlayerCharacter, difficulty) == 0x11F4);
+static_assert(offsetof(PlayerCharacter, chargenFlags) == 0x11FE);
 static_assert(offsetof(PlayerCharacter, baseTints) == 0x1208);
 static_assert(offsetof(PlayerCharacter, overlayTints) == 0x1220);
 static_assert(sizeof(PlayerCharacter) == 0x12D8);
