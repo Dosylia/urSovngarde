@@ -25,6 +25,11 @@ wait 4
 log CHECK logged QuestItem: picked up quest object 44E12 \(reference 44E13\)
 expect invchanges 44E12 >= 1
 wait 2
+
+# Back to the rig's start by Papyrus: the next script's bot finds no host indoors.
+log -- back to the rig's start
+log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
+wait 30
 log DO god off
 log CHECK game alive
 log done

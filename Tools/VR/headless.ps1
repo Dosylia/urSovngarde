@@ -374,6 +374,20 @@ function Set-RigConnect {
     Write-Host "Connect file set to the test server ($($text.Split("`r")[0])) for this run."
 }
 
+# The live scripts hit the player as another player does (live-copy, live-pvp-*), so the test server plays with PvP on.
+# The release folder's server is only the rig's and the bot tests'; the server writes its ini at its first start, with PvP off.
+function Set-RigServerPvp {
+    $ini = Join-Path $release 'config\STServer.ini'
+    if (-not (Test-Path -LiteralPath $ini)) {
+        Write-Host "No $ini yet: this first server start writes it with PvP off, and the next 'up' turns PvP on." -ForegroundColor Yellow
+        return
+    }
+    $text = [IO.File]::ReadAllText($ini)
+    if ($text -notmatch '(?m)^bEnablePvp=false') { return }
+    [IO.File]::WriteAllText($ini, ($text -replace '(?m)^bEnablePvp=false', 'bEnablePvp=true'))
+    Write-Host 'The test server plays with PvP on, as the live scripts expect.'
+}
+
 function Restore-Connect {
     # Only a file naming this PC is the rig's. Nothing here may stop the player's own file coming back.
     $listServer = Get-Content -LiteralPath $listConnectFile -TotalCount 1 -ErrorAction SilentlyContinue
@@ -498,6 +512,7 @@ try {
     if (-not $loaded) { throw "SteamVR is up, but the null driver did not add its controllers (see $vrLog). Is the built driver_null.dll still in place?" }
 
     if (-not $NoConnect -and -not $ServerAddress -and -not (Test-Running '^(urSovngardeServer|SkyrimTogetherServer)$')) {
+        Set-RigServerPvp
         Start-Process -FilePath (Join-Path $release 'urSovngardeServer.exe') -WorkingDirectory $release -WindowStyle Hidden
         $startedServer = $true
         @{ startedServer = $true; save = $Save; profileDir = $profileDir } | ConvertTo-Json | Set-Content $stateFile

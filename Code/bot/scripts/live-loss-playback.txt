@@ -1,8 +1,11 @@
 # A lost packet costs only itself: under loss and lag the game's copy of this bot never starves for long.
 #
-#   $env:STBOT_FAKE_LAG_MS = '40'; $env:STBOT_FAKE_LOSS_PCT = '2'; python Tools\VR\live-check.py live-loss-playback
+#   python Tools\VR\live-check.py live-loss-playback
 #   ...the same with $env:STBOT_RELIABLE_MOVEMENT = '1' and --expect-fail: movement sent reliably, as before playback session B; must be RED
 #   then Remove-Item Env:STBOT_RELIABLE_MOVEMENT (live-check calls any other run with it INVALID)
+#
+# The bot's fake network, which live-check gives the bot for this script alone (values set in the shell win):
+# bot env: STBOT_FAKE_LAG_MS=40 STBOT_FAKE_LOSS_PCT=2
 #
 # Sent reliably, one lost movement packet holds back every later one until it is sent again, and the copy's stream stalls meanwhile.
 # Sent unreliably, a loss leaves one gap.

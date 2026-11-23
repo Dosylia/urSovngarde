@@ -32,6 +32,7 @@ Checks:
     player has <hex>                                                      the local player carries that item
     hands within <units>                                                  copies' hands are where their owners have
                                                                           them (median of the game's measurements)
+    held left|right npc|copy|ref <hex>                                    that HIGGS hand holds the actor or reference now
     player in <worldspace>                                                outdoors in that worldspace (Tamriel), not
                                                                           in an interior
     ref <hex> near <x> <y> <z> <units> | ref <hex> near player <units>    a reference of the game's own is that close
@@ -1361,6 +1362,14 @@ class Run:
                 form, why = self.subject(what)
                 seen, detail = in_view(form) if form else (None, why)
                 ok = seen is not None and seen != (words[-1] == 'away')
+            elif who == 'held' and what in ('left', 'right') and len(words) > 2:
+                # "held left|right npc|copy|ref <hex>": that HIGGS hand holds the actor or reference now (HiggsVR.GetGrabbedObject).
+                # A drag that let go reads as a body at rest, so a script about a held body REQUIREs this.
+                form, why = (words[3], None) if words[2] == 'ref' and len(words) > 3 else self.subject(words[2])
+                held = papyrus_global('HiggsVR', 'GetGrabbedObject', [what == 'left'])
+                held_id = held.get('formId', '') if isinstance(held, dict) else ''
+                ok = bool(form) and bool(held_id) and int(str(held_id), 16) & 0xFFFFFFFF == int(form, 16) & 0xFFFFFFFF
+                detail = 'the %s hand holds %s, wanted %s' % (what, held_id or held, form or why)
             elif who == 'hands' and what == 'within':
                 # "hands within <units>": the copies' hands against the owners' own numbers, from the game's
                 # "VRBodySync: actor X hands -- owner L(..) R(..); copy L(..) R(..)" lines since the script began
@@ -1742,7 +1751,8 @@ class Run:
         self.log_start = len(session_lines())
         self.log_from = self.log_start
         self.server_from = server_log_size()
-        proc = subprocess.Popen(cmd, cwd=RELEASE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+        self.bot_env = script_bot_env(self.script)
+        proc = subprocess.Popen(cmd, cwd=RELEASE, env=self.bot_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
         log = io.open(os.path.join(RELEASE, 'logs', self.script + '-bot.log'), 'w', encoding='utf-8')
         # Read on a thread of its own: a DO line holds the loop below for up to half a minute ("DO watch"), and a bot that fills
         # the pipe meanwhile stops dead, mid-replay. The server then gives its NPCs away (live-copy-knockdown, 2026-10-31).
@@ -2507,10 +2517,27 @@ def write_report(rows, setup):
     return path
 
 
-def run_conditions(lines):
+def script_bot_env(script):
+    """The bot's environment for a script: the shell's, with the defaults the script's "# bot env: NAME=value ..." lines give.
+    A script that needs a fake network (live-loss-playback) says so itself, so it runs in the suite too; the shell's own values win."""
+    env = dict(os.environ)
+    try:
+        with io.open(os.path.join(RELEASE, 'scripts', script + '.txt'), encoding='utf-8') as f:
+            for line in f:
+                m = re.match(r'#\s*bot env:\s*(.*)$', line.strip())
+                if m:
+                    for pair in m.group(1).split():
+                        name, _, value = pair.partition('=')
+                        env.setdefault(name, value)
+    except OSError:
+        pass
+    return env
+
+
+def run_conditions(lines, env):
     """The rig's frame rate and the bot's network during a run, kept with its result."""
     fps = sorted(int(m.group(1)) for m in (re.search(r'Perf last 30 s: .*\((\d+) fps\)', l) for l in lines) if m)
-    network = {k: os.environ[k] for k in ('STBOT_FAKE_LAG_MS', 'STBOT_FAKE_LOSS_PCT', 'STBOT_FAKE_REORDER_PCT', 'STBOT_RELIABLE_MOVEMENT') if os.environ.get(k)}
+    network = {k: env[k] for k in ('STBOT_FAKE_LAG_MS', 'STBOT_FAKE_LOSS_PCT', 'STBOT_FAKE_REORDER_PCT', 'STBOT_RELIABLE_MOVEMENT') if env.get(k)}
     return (fps[len(fps) // 2] if fps else None), network
 
 
@@ -2586,7 +2613,7 @@ def main():
             failed += 1
         shots += run.shots
         lines = session_lines()
-        fps, network = run_conditions(lines[getattr(run, 'log_start', 0):])
+        fps, network = run_conditions(lines[getattr(run, 'log_start', 0):], getattr(run, 'bot_env', os.environ))
         record({'time': started, 'script': name, 'build': client_build(lines), 'verdict': kind, 'expect_fail': expect_fail,
                 'fps': fps, 'network': network, 'invalid': run.invalid, 'jank': {kind: count for kind, (count, _, _) in getattr(run, 'jank', {}).items()},
                 'checks': [{'result': 'skip' if ok is None else ('pass' if ok else 'fail'), 'check': text, 'detail': str(detail)[:300]}

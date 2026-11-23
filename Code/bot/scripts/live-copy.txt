@@ -77,6 +77,8 @@ log CHECK copy health 100
 wait 3
 
 log -- hitting the player for 30, as a sword does
+# Another player's hit counts only with PvP on (headless.ps1 turns it on for the test server); with PvP off the game rightly refuses it.
+log REQUIRE bot logged info\] Accepted as player \d+ .*; PvP on
 log CHECK player mark
 wait 1
 hit other -30

@@ -9,7 +9,8 @@ Checks:
   - with the head turned, aimed at where a panel fixed to the head would now be, the page gets no pointer;
   - a controller behind the panel, pointing back at its centre, gives the page no pointer;
   - opened while looking straight up, the panel is ahead, not behind: aimed at where it opens when looking ahead, the pointer is near the page centre;
-  - the beam and a hand ring were drawn into the left eye's image this game (the drawer reads the pixel back once).
+  - the beam and a hand ring were drawn into the left eye's image (the drawer reads the pixel back once per game);
+    judged only when that check came during this script, so run it first in a fresh game: otherwise SKIP, and the run is INCONCLUSIVE.
 """
 import importlib.util
 import math
@@ -50,6 +51,7 @@ def drawn(log, what, colour):
 
 def main():
     results = []
+    skipped = []
 
     def check(name, ok, detail=''):
         results.append(ok)
@@ -60,6 +62,8 @@ def main():
     if not pid:
         print('INVALID: urSovngarde.exe is not running')
         return 2
+    # The drawer checks each mark once per game: a line from before this script came from another script's aim.
+    log_before = len(laser.menu.this_game_log())
     game = play.Player(8921)
     page = shared.DevTools()
     call(pid, 'urSovngarde_SetMenuOpen', 0)
@@ -101,12 +105,22 @@ def main():
 
     log = laser.menu.this_game_log()
     for what, colour in (('beam', 'beam'), ('hand ring', 'ring')):
-        found = drawn(log, what, colour)
+        name = f'the {what} was drawn into the eye image in its colour'
+        found = drawn(log[log_before:], what, colour)
+        earlier = None if found else drawn(log, what, colour)
+        if earlier:
+            # Its pixel was sampled under another script's aim (the beam's middle can lie over the panel): nothing to judge here.
+            skipped.append(name)
+            print(f'skip  {name} (checked earlier in this game, by another script: after, expected: {earlier}; run this script first in a fresh game)')
+            continue
         close = bool(found) and all(abs(a - e) <= 12 for a, e in zip(found[0], found[1]))
-        check(f'the {what} was drawn into the eye image in its colour', close, f'after, expected: {found}' if found else 'no check line this game')
+        check(name, close, f'after, expected: {found}' if found else 'no check line this game')
 
     call(pid, 'urSovngarde_SetMenuOpen', 0)
     passed = all(results)
+    if passed and skipped:
+        print(f'INCONCLUSIVE: {sum(results)} of {len(results)} checks, {len(skipped)} not judged in this game')
+        return 2
     print(f'{"PASS" if passed else "FAIL"}: {sum(results)} of {len(results)} checks')
     return 0 if passed else 1
 

@@ -17,12 +17,15 @@ expect known me
 waitfor known other 40
 wait 5
 
-# The bottle is an ordinary reference, in memory only while its cell is loaded: the script before this one in the suite
-# (live-whiterun) leaves the player in Whiterun, from where Mistwatch's references are not loaded.
+# The bottle is an ordinary reference, in memory only while its cell is loaded: the script before this one in the suite (live-teleport-far) leaves the player at the far end of the map.
 log -- to Mistwatch, where the bottle is
 log DO god on
 log DO papyrus ObjectReference MoveTo 14 4AFD9 f:-32 f:-911 f:262 b:false
 wait 30
+# The bot does not follow a Papyrus move: after live-teleport-far it would stay at the far end, out of reach of the bottle's moves.
+# So it goes where a fresh bot stands, 200 units east of the rig's start.
+teleport 140887 -32896
+wait 3
 log -- the player goes next to the bottle
 log DO papyrus ObjectReference MoveTo 14 92CFE f:150 f:0 f:0 b:true
 wait 10
