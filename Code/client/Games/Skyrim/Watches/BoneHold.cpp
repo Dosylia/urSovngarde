@@ -589,12 +589,14 @@ void CollectNodes(void* apRoot, std::unordered_set<const void*>& aOut) noexcept
 
 /**
  * Read the set of the player's bones again: the third-person skeleton, and the first-person one found from its right hand up to its top.
+ *
+ * @return How many bones the set holds now.
  */
-void UpdatePlayerNodes() noexcept
+size_t UpdatePlayerNodes() noexcept
 {
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     if (!pPlayer)
-        return;
+        return 0;
     std::unordered_set<const void*> nodes;
     nodes.reserve(1024);
     if (void* pRoot = pPlayer->GetNiNode())
@@ -610,8 +612,44 @@ void UpdatePlayerNodes() noexcept
             pTop = pParent;
         CollectNodes(pTop, nodes);
     }
+    const size_t cCount = nodes.size();
     std::scoped_lock lock(s_heldLock);
     s_playerNodes.swap(nodes);
+    return cCount;
+}
+
+/**
+ * Check whether the player's skeleton was built again since the last look.
+ * A race change or character creation builds a new body root and a new first-person right hand.
+ *
+ * @return True when either one is another node than at the last look, and the first time they are there.
+ */
+bool HasPlayerSkeletonChanged() noexcept
+{
+    static void* s_lastRoot = nullptr;
+    static void* s_lastHand = nullptr;
+    PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pPlayer)
+        return false;
+    void* pRoot = pPlayer->GetNiNode();
+    void* pHand = nullptr;
+    GuardedRead::Value(reinterpret_cast<uint8_t*>(pPlayer) + kFirstPersonHandOffset, pHand);
+    if (pRoot == s_lastRoot && pHand == s_lastHand)
+        return false;
+    s_lastRoot = pRoot;
+    s_lastHand = pHand;
+    return true;
+}
+
+/**
+ * Read the player's bones again after its skeleton was built again, and tell how many there are and how long the read took.
+ */
+void RereadPlayerNodes() noexcept
+{
+    const auto cStart = std::chrono::steady_clock::now();
+    const size_t cCount = UpdatePlayerNodes();
+    const std::chrono::duration<double, std::milli> cTook = std::chrono::steady_clock::now() - cStart;
+    spdlog::info("BoneHold: the player's skeleton changed; {} bones read again in {:.1f} ms", cCount, cTook.count());
 }
 
 /**
@@ -710,9 +748,9 @@ void Update() noexcept
     if (!s_pVTable.load(std::memory_order_acquire))
         return;
 
-    // The player's skeleton is rebuilt at a race change, so it is read again every half second or so.
-    if (cFrame % 30 == 0)
-        UpdatePlayerNodes();
+    // The player's skeleton is built again only at a race change or in character creation, so its bones are read again only then.
+    if (HasPlayerSkeletonChanged())
+        RereadPlayerNodes();
     // Before anything held goes back, so a repaired entry no longer reaches it.
     RepairGraphs(cFrame);
     ReleaseOldHeld();
