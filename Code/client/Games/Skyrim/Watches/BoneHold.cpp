@@ -597,6 +597,9 @@ size_t UpdatePlayerNodes() noexcept
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     if (!pPlayer)
         return 0;
+    // Each character of a name read below asks Windows whether it can be read, a slow call in a process this size.
+    // The blocks already found answer almost all of those questions.
+    ReadableMemory::CacheScope regions;
     std::unordered_set<const void*> nodes;
     nodes.reserve(1024);
     if (void* pRoot = pPlayer->GetNiNode())

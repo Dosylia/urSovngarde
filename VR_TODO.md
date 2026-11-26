@@ -206,11 +206,17 @@ After the session the logs answer the rest: `Stall:`, `Silence:`, `ThreadOwners:
 `logs/process-end.log` if a game vanishes.
 
 ### Reported or changed from 2026-11-02
-- [!] **A long frame every 30 frames on one player's PC since v1.9.82** (reported 2026-11-23: "micro lags every second", only with urSovngarde loaded, connected or not; the same modlist through MO2 alone runs normally).
-      In that player's log the long frames are one in every 29 to 31 in all 17 windows of a session (`63 frames over 50 ms` of about 1900, p99 145-177 ms), with `mod update avg 0.5 ms`; that player's older build ran 88-89 fps with 0-5 a window.
-      The only work our client did every 30 frames was the bone hold's read of the player's bones (`BoneHold::Update`, since 5976743d), on the main loop outside the timed update. Not shown to be the cause: on FUS and MGO here the same read takes about 1 ms.
+- [!] **A long frame every 30 frames on players' PCs since v1.9.82** (reported 2026-11-23 and 2026-11-26 by two players: "micro lags every second", only with urSovngarde loaded, connected or not; the same modlist through MO2 alone runs normally).
+      In the first player's log the long frames are one in every 29 to 31 in all 17 windows of a session (`63 frames over 50 ms` of about 1900, p99 145-177 ms), with `mod update avg 0.5 ms`; that player's older build ran 88-89 fps with 0-5 a window.
+      The second player's log is the same: 59 long frames in windows of about 1780 frames, p99 about 116 ms.
+      The only work our client did every 30 frames was the bone hold's read of the player's bones (`BoneHold::Update`, since 5976743d), on the main loop outside the timed update.
+      In 6 of the first player's 8 `Stall:` reads (the main thread sampled inside a frame of 200 ms or more) the main thread is in that read: `BoneHold::Update` -> `GuardedRead::Text` -> `ReadableMemory::IsReadable` -> `VirtualQuery`, inside the system call.
+      `GuardedRead::Text` asks Windows about each character of a name, and the read climbs the first-person skeleton up to 32 levels by name, so one read makes hundreds to thousands of those calls.
+      So the same read takes about 1 ms on FUS and MGO here and well over 100 ms on those PCs: the number of calls is the same, each call is slower there.
       Change in build v1.9.82-1-gcd8daec9-dirty.f33599c (client on FUS): the player's bones are read again only when the body root or the first-person hand is another node (a race change, character creation), each time with `BoneHold: the player's skeleton changed; N bones read again in X ms`.
-      Rig: `live-race-rebuild` ok, the line after each race change, 166 bones in 1.0 ms. To see on that player's PC: no long frame every 30 frames in `Perf last 30 s`, and the time in that line.
+      Rig: `live-race-rebuild` ok, the line after each race change, 166 bones in 1.0 ms.
+      Added after it, not built: the read keeps a `ReadableMemory::CacheScope` open, so the memory blocks already found answer almost all of those questions and a read after a load or a race change is no long frame on those PCs either.
+      To see on those players' PCs: no long frame every 30 frames in `Perf last 30 s`, the line only after a load or a race change, and its time.
 
 - [!] **The map freeze, player 2 and together** (cause and fix in KNOWN_ISSUES, "Freeze after closing the unpaused map"). Seen fixed by player 1,
       30 closes online on 2026-10-30. To see: "The map, player 2 and together".
