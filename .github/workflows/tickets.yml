@@ -1,0 +1,95 @@
+# Tells the hub's ticket board which tickets a push to main fixed and which a release tag delivered.
+# A commit names a ticket with T-<number> anywhere in its message.
+# Only commits naming a ticket are sent; the hub answers with ticket ids only, so the log shows nothing private.
+# Needs two repository secrets: TICKETS_HUB_URL (the hub's address) and TICKETS_GITHUB_KEY; without them it does nothing.
+name: Tickets
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  tell-the-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the secrets are set
+        id: secrets
+        env:
+          HUB: ${{ secrets.TICKETS_HUB_URL }}
+          KEY: ${{ secrets.TICKETS_GITHUB_KEY }}
+        run: |
+          if [ -n "$HUB" ] && [ -n "$KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::TICKETS_HUB_URL or TICKETS_GITHUB_KEY is not set; the hub is not told."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Build the message for the hub
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, subprocess
+
+          def git(*args):
+              return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout
+
+          def commits_in(range_spec):
+              # One record per commit: sha, then the whole message, split by NUL bytes.
+              out = git('log', '--format=%H%x00%B%x00', range_spec)
+              parts = out.split('\x00')
+              found = []
+              for i in range(0, len(parts) - 1, 2):
+                  sha, message = parts[i].strip(), parts[i + 1].strip()
+                  if sha and re.search(r'\bT-\d+\b', message):
+                      found.append({'sha': sha, 'message': message.splitlines()[0][:300], 'url': f"{os.environ['REPO_URL']}/commit/{sha}"})
+              return found
+
+          if os.environ['REF_TYPE'] == 'tag':
+              tag = os.environ['REF_NAME']
+              # The newest earlier release tag, compared as numbers, as the release workflow does.
+              tags = [t for t in git('tag', '--list').split() if re.fullmatch(r'v\d+\.\d+\.\d+', t) and t != tag]
+              key = lambda t: tuple(int(x) for x in t[1:].split('.'))
+              earlier = sorted((t for t in tags if key(t) < key(tag)), key=key) if re.fullmatch(r'v\d+\.\d+\.\d+', tag) else []
+              previous = earlier[-1] if earlier else None
+              body = {'event': 'tag', 'tag': tag, 'previousTag': previous, 'commits': commits_in(f'{previous}..{tag}' if previous else tag)}
+          else:
+              before, after = os.environ['BEFORE'], os.environ['AFTER']
+              # A branch pushed for the first time has no commit before it: only the pushed commit is read.
+              range_spec = after if not before or set(before) == {'0'} else f'{before}..{after}'
+              body = {'event': 'push', 'ref': os.environ['REF'], 'commits': commits_in(range_spec)}
+
+          with open('tickets-body.json', 'w') as f:
+              json.dump(body, f)
+          print(f"{body['event']}: {len(body['commits'])} commit(s) naming a ticket")
+          EOF
+
+      - name: Tell the hub
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          HUB: ${{ secrets.TICKETS_HUB_URL }}
+          KEY: ${{ secrets.TICKETS_GITHUB_KEY }}
+        run: |
+          if [ "$(python3 -c "import json; print(len(json.load(open('tickets-body.json'))['commits']))")" = "0" ]; then
+            echo "No commit names a ticket; nothing sent."
+            exit 0
+          fi
+          status=$(curl -sS -o answer.json -w '%{http_code}' -X POST "${HUB%/}/api/github" \
+            -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' --data-binary @tickets-body.json)
+          echo "The hub answered $status: $(cat answer.json)"
+          [ "$status" = "200" ]
