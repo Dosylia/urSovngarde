@@ -33,7 +33,10 @@ using NiLayout::kParentOffset;
 using NodeWatch::kMaxChildren;
 constexpr uint32_t kTransformsBytes = NiLayout::kWorldOffset + 0x34 - kLocalOffset; // local, then world, 0x34 each
 constexpr size_t kHeldMax = 8192;
-constexpr auto kHoldFor = std::chrono::milliseconds(1500);
+// TEMPORARY: held 10 s rather than 1.5 s, to name the node, the delay and the caller of a game call that reaches a freed node seconds after its free.
+// Such a call lands on the held node's class table and is told (NodeQuarantine) instead of crashing, so while this lasts it also hides that crash.
+// The list's size still bounds the memory held: when it is full, the oldest goes at once.
+constexpr auto kHoldFor = std::chrono::milliseconds(10000);
 // The player's own bones are held far longer: a late write came 35 s after a race change.
 constexpr size_t kPlayerHeldMax = 4096;
 constexpr auto kPlayerHoldFor = std::chrono::seconds(120);
@@ -454,6 +457,42 @@ void DescribeGraph(uint8_t* apGraph) noexcept
 }
 
 /**
+ * Log the root an animation graph is bound to while its bone table still points at freed nodes, and the actor's 3D now.
+ * TEMPORARY: it tells whether the actor's 3D was replaced, or its graph's root lost the skeleton.
+ * The first 20 such graphs are told, then one in every hundred.
+ *
+ * @param apRefr The actor; never null.
+ * @param aGraph Where the graph is in the actor's list of animation graphs, from 0.
+ * @param apRoot The graph's root node; null when it has none.
+ */
+void DescribeGraphRoot(TESObjectREFR* apRefr, uint32_t aGraph, void* apRoot) noexcept
+{
+    static size_t s_told = 0;
+    if (!NodeWatch::IsTold(++s_told))
+        return;
+    // GuardedRead::Text asks Windows whether each character can be read; the blocks already found answer most of those questions.
+    ReadableMemory::CacheScope regions;
+    void* p3D = apRefr->GetNiNode();
+    const char* pRootName = nullptr;
+    const char* p3DName = nullptr;
+    void* pRootVTable = nullptr;
+    if (apRoot)
+    {
+        GuardedRead::Value(static_cast<uint8_t*>(apRoot) + kNameOffset, pRootName);
+        GuardedRead::Value(apRoot, pRootVTable);
+    }
+    if (p3D)
+        GuardedRead::Value(static_cast<uint8_t*>(p3D) + kNameOffset, p3DName);
+    std::unordered_set<const void*> tree;
+    CollectNodes(apRoot, tree);
+    const bool cRootFreed = pRootVTable == s_deadVTable;
+    const bool cRootIs3D = p3D == apRoot;
+    spdlog::warn("GraphRebind: actor {:X}'s animation graph {} is bound to root {} ('{}'{}, {} nodes from it down); its 3D now is {} ('{}'){} ({} so far)", apRefr->formID, aGraph,
+                 fmt::ptr(apRoot), GuardedRead::Text(pRootName), cRootFreed ? ", freed" : "", tree.size(), fmt::ptr(p3D), GuardedRead::Text(p3DName),
+                 cRootIs3D ? ", the same node" : "", s_told);
+}
+
+/**
  * Move an actor's animation bone table entries off freed nodes.
  * An actor's animation graphs keep, for each animated bone, the node its pose is written to.
  * A skeleton rebuilt for a race change or character creation can leave such an entry on the old, freed node: the pose is then written into freed memory each frame.
@@ -477,12 +516,18 @@ void RepairGraphsOf(TESObjectREFR* apRefr) noexcept
             auto* pData = *reinterpret_cast<uint8_t**>(pGraph + kGraphBoneNodesOffset);
             const uint32_t cSize = *reinterpret_cast<uint32_t*>(pGraph + kGraphBoneNodesOffset + 0x10);
             void* pRoot = *reinterpret_cast<void**>(pGraph + kGraphRootOffset);
+            bool rootTold = false;
             for (uint32_t i = 0; pData && i < cSize && i < 1024; ++i)
             {
                 void*& node = *reinterpret_cast<void**>(pData + i * kBoneNodeEntrySize);
                 void* pVTable = nullptr;
                 if (!node || !GuardedRead::Value(node, pVTable) || pVTable != s_deadVTable)
                     continue;
+                if (!rootTold)
+                {
+                    rootTold = true;
+                    DescribeGraphRoot(apRefr, g, pRoot);
+                }
                 const std::string cName = HeldName(node);
                 void* pNow = FindByName(pRoot, cName);
                 if (pNow && *static_cast<void**>(pNow) == s_deadVTable)

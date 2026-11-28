@@ -65,8 +65,8 @@ wait 2
 draw on
 wait 2
 draw off
-# The copy's freed nodes are held 1.5 s and the loaded actors' graphs looked at every tenth frame; a late write shows within that hold.
-wait 10
+# The copy's freed nodes are held 10 s and a write to one is told as its hold ends; the wait covers that hold.
+wait 12
 log CHECK absent NodeQuarantine: freed node .* was written
 log CHECK game alive
 log done

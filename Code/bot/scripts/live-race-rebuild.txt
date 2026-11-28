@@ -3,7 +3,7 @@
 #   python Tools\VR\live-check.py live-race-rebuild
 #
 # Character creation crashed in the player's lighting on a shader property that held a bone's local transform (SkyrimVR.exe+0x1354C40, +0x1355720).
-# So something wrote to a freed bone. Each race change frees the old skeleton; the client holds every freed named node 1.5 s and tells a write to it (`NodeQuarantine: freed node ... was written`).
+# So something wrote to a freed bone. Each race change frees the old skeleton; the client holds every freed named node 10 s, the player's own 120 s, and tells a write to it (`NodeQuarantine: freed node ... was written`).
 # This is a search, not a pass or fail: the lines name the bones that are written after their free, and how soon.
 log live race rebuild
 waitfor connected 45
