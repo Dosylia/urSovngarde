@@ -16,7 +16,11 @@ import re
 import sys
 from collections import Counter
 
-DEFAULT_LOG = r'E:\FUS\tools\Skyrim Together VR\logs\tp_client.log'
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pcfolders import client_dir, fus_root  # noqa: E402
+
+# The client log of this PC's FUS install.
+DEFAULT_LOG = os.path.join(client_dir(fus_root()), 'logs', 'tp_client.log')
 
 # What each shipped fix writes when it fires, and what its absence means. The wording matters: "did not fire" is
 # not the same as "is broken", and several of these only fire when the player does the thing.

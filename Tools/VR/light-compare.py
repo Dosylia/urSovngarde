@@ -27,13 +27,14 @@ import urllib.request
 
 from PIL import Image
 
+from pcfolders import client_dir, fus_root
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RELEASE = os.path.join(ROOT, 'build', 'windows', 'x64', 'release')
 SHOTS = os.path.join(RELEASE, 'logs', 'shots')
-FUS_ROOT = os.environ.get('SKYRIM_FUS_ROOT') or next(
-    (path for path in ('C:/FUS', 'E:/FUS') if os.path.isfile(os.path.join(path, 'ModOrganizer.exe'))), 'E:/FUS')
+FUS_ROOT = fus_root()
 CAPTURES = os.path.join(FUS_ROOT, 'overwrite', 'SKSE', 'Plugins', 'devbench', 'captures')
-CLIENT_LOG = os.path.join(FUS_ROOT, 'tools', 'Skyrim Together VR', 'logs', 'tp_client.log')
+CLIENT_LOG = os.path.join(client_dir(FUS_ROOT), 'logs', 'tp_client.log')
 DEVBENCH = 'http://127.0.0.1:8921/api/tool/'
 
 CLEAR_WEATHER = '81A'      # SkyrimClear

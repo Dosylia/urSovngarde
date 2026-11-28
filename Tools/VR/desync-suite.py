@@ -25,14 +25,15 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import play  # noqa: E402
+from pcfolders import client_dir, fus_root  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RELEASE = os.path.join(ROOT, 'build', 'windows', 'x64', 'release')
 OUT = os.path.join(ROOT, 'build', 'desync')
 HEADLESS = os.path.join(ROOT, 'Tools', 'VR', 'headless.ps1')
 LIVE_CHECK = os.path.join(ROOT, 'Tools', 'VR', 'live-check.py')
-FUS_ROOT = next((r for r in (os.environ.get('SKYRIM_FUS_ROOT') or '', 'C:/FUS', 'E:/FUS') if r and os.path.isfile(os.path.join(r, 'ModOrganizer.exe'))), 'C:/FUS')
-CLIENT_DIR = next((p for p in (os.path.join(FUS_ROOT, 'tools', n) for n in ('Skyrim Together VR', 'urSovngarde')) if os.path.isfile(os.path.join(p, 'urSovngarde.exe'))), '')
+FUS_ROOT = fus_root('C:/FUS')
+CLIENT_DIR = client_dir(FUS_ROOT, '')
 CLIENT_LOG = os.path.join(CLIENT_DIR, 'logs', 'tp_client.log')
 SERVER = '127.0.0.1:10578'
 BANDIT_MELEE, BANDIT_ARCHER, BANDIT_TANK = 'F62D7', 'F62D8', 'F62D9'

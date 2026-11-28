@@ -17,12 +17,10 @@ $ErrorActionPreference = 'Stop'
 if ($Flat -and -not $ClientFolder) { throw 'With -Flat, name the flat client folder: -ClientFolder <folder>.' }
 # Without -ClientFolder, the VR tools folder of the FUS install, found as deploy-client.ps1 finds it.
 if (-not $ClientFolder) {
-    $fusRoot = $env:SKYRIM_FUS_ROOT
-    if (-not $fusRoot) {
-        $fusRoot = @('C:\FUS', 'E:\FUS') | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'ModOrganizer.exe') } | Select-Object -First 1
-    }
-    if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT or -ClientFolder.' }
-    $ClientFolder = Join-Path $fusRoot 'tools\Skyrim Together VR'
+    . (Join-Path $PSScriptRoot 'PcFolders.ps1')
+    $fusRoot = Get-FusRoot
+    if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT, this PC''s folders on the hub, or -ClientFolder.' }
+    $ClientFolder = Get-ClientFolder $fusRoot
     Write-Host "Client folder: $ClientFolder"
 }
 

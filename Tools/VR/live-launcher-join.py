@@ -25,14 +25,10 @@ import threading
 import time
 import urllib.request
 
-FUS_ROOT = os.environ.get('SKYRIM_FUS_ROOT') or next(
-    (path for path in ('C:/FUS', 'E:/FUS') if os.path.isfile(os.path.join(path, 'ModOrganizer.exe'))),
-    'E:/FUS',
-)
-CLIENT_DIR = next(
-    (path for path in (os.path.join(FUS_ROOT, 'tools', name) for name in ('Skyrim Together VR', 'urSovngarde')) if os.path.isfile(os.path.join(path, 'urSovngarde.exe'))),
-    os.path.join(FUS_ROOT, 'tools', 'Skyrim Together VR'),
-)
+from pcfolders import client_dir, fus_root
+
+FUS_ROOT = fus_root()
+CLIENT_DIR = client_dir(FUS_ROOT)
 FLAT = '--flat' in sys.argv[1:]
 if FLAT:
     # Both games open the page's debugging port, so the flat game runs alone for this test.

@@ -10,21 +10,22 @@ import subprocess
 import tempfile
 import time
 
+import pcfolders
+
 ASK_FILE = os.path.join(tempfile.gettempdir(), 'two-games-second')
 
 
 def fus_root():
-    for root in (os.environ.get('SKYRIM_FUS_ROOT') or '', 'C:/FUS', 'E:/FUS'):
-        if root and os.path.isfile(os.path.join(root, 'ModOrganizer.exe')):
-            return root
+    root = pcfolders.fus_root('')
+    if root and os.path.isfile(os.path.join(root, 'ModOrganizer.exe')):
+        return root
     raise SystemExit('Mod Organizer not found')
 
 
 def game_exe(root):
-    for name in ('Skyrim Together VR', 'urSovngarde'):
-        path = os.path.join(root, 'tools', name, 'urSovngarde.exe')
-        if os.path.isfile(path):
-            return path
+    path = os.path.join(pcfolders.client_dir(root, ''), 'urSovngarde.exe')
+    if os.path.isfile(path):
+        return path
     raise SystemExit('urSovngarde.exe not found')
 
 

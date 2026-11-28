@@ -46,18 +46,17 @@ $gameProcess = if ($Shortcut) { @('SkyrimVR') } else { @('urSovngarde', 'SkyrimT
 $gamePattern = '^(' + ($gameProcess -join '|') + ')$'
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'PcFolders.ps1')
 
 $steamRoot = $env:SKYRIM_STEAM_ROOT
+if (-not $steamRoot) { $steamRoot = Get-PcFolder 'steam' }
 if (-not $steamRoot) {
     $steamRoot = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam' -ErrorAction SilentlyContinue).InstallPath
 }
 if (-not $steamRoot) { $steamRoot = 'C:\Program Files (x86)\Steam' }
 $settingsPath = Join-Path $steamRoot 'config\steamvr.vrsettings'
-$fusRoot = $env:SKYRIM_FUS_ROOT
-if (-not $fusRoot) {
-    $fusRoot = @('C:\FUS', 'E:\FUS') | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'ModOrganizer.exe') } | Select-Object -First 1
-}
-if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT to its directory.' }
+$fusRoot = Get-FusRoot
+if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT, or this PC''s folders on the hub.' }
 $mo2 = Join-Path $fusRoot 'ModOrganizer.exe'
 $mo2Ini = Join-Path $fusRoot 'ModOrganizer.ini'
 # The MO2 entry that runs the mod's program, found by its program: the launcher renames its title ("urSovngarde"), never its program.
@@ -79,10 +78,7 @@ function Get-ModEntryTitle([string]$ini) {
 $mo2Shortcut = if ($Shortcut) { $Shortcut } else { Get-ModEntryTitle $mo2Ini }
 if (-not $mo2Shortcut) { $mo2Shortcut = 'SkyrimTogetherVR' }
 $release = (Resolve-Path (Join-Path $PSScriptRoot '..\..\build\windows\x64\release')).Path
-# The client's folder among MO2's tools: 'Skyrim Together VR' on the host's PC, 'urSovngarde' on another player's.
-$clientDir = @('Skyrim Together VR', 'urSovngarde') | ForEach-Object { Join-Path $fusRoot "tools\$_" } |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'urSovngarde.exe') } | Select-Object -First 1
-if (-not $clientDir) { $clientDir = Join-Path $fusRoot 'tools\Skyrim Together VR' }
+$clientDir = Get-ClientFolder $fusRoot
 $clientLog = Join-Path $clientDir 'logs\tp_client.log'
 $stateFile = Join-Path $env:TEMP 'st-headless-state.json'
 # The game plays in the player's own MO2 profile, so whatever it saves lands among the player's saves.

@@ -19,14 +19,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'PcFolders.ps1')
 
 if (-not $Destination) {
-    $fusRoot = $env:SKYRIM_FUS_ROOT
-    if (-not $fusRoot) {
-        $fusRoot = @('C:\FUS', 'E:\FUS') | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'ModOrganizer.exe') } | Select-Object -First 1
-    }
-    if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT or -Destination.' }
-    $Destination = Join-Path $fusRoot 'tools\Skyrim Together VR'
+    $fusRoot = Get-FusRoot
+    if (-not $fusRoot) { throw 'FUS installation not found. Set SKYRIM_FUS_ROOT, this PC''s folders on the hub, or -Destination.' }
+    $Destination = Get-ClientFolder $fusRoot
 }
 
 $release = if ($From) { (Resolve-Path $From).Path } else { (Resolve-Path (Join-Path $PSScriptRoot '..\..\build\windows\x64\release')).Path }

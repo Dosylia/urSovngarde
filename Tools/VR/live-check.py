@@ -141,17 +141,13 @@ Checks are asked while the script carries on, so a script puts a wait after each
 """
 import io, json, math, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pcfolders import client_dir, fus_root, pc_folder  # noqa: E402
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RELEASE = os.path.join(ROOT, 'build', 'windows', 'x64', 'release')
-FUS_ROOT = os.environ.get('SKYRIM_FUS_ROOT') or next(
-    (path for path in ('C:/FUS', 'E:/FUS') if os.path.isfile(os.path.join(path, 'ModOrganizer.exe'))),
-    'E:/FUS',
-)
-# The client's folder among MO2's tools: 'Skyrim Together VR' on the host's PC, 'urSovngarde' on another player's.
-CLIENT_DIR = next(
-    (path for path in (os.path.join(FUS_ROOT, 'tools', name) for name in ('Skyrim Together VR', 'urSovngarde')) if os.path.isfile(os.path.join(path, 'urSovngarde.exe'))),
-    os.path.join(FUS_ROOT, 'tools', 'Skyrim Together VR'),
-)
+FUS_ROOT = fus_root()
+CLIENT_DIR = client_dir(FUS_ROOT)
 CLIENT_LOG = os.path.join(CLIENT_DIR, 'logs', 'tp_client.log')
 DEVBENCH = 'http://127.0.0.1:8921/api/tool/'
 HEALTH_TOLERANCE = 1.5
@@ -542,7 +538,8 @@ def setup():
 
 
 SETUP = setup()
-HISTORY = os.environ.get('LIVE_CHECK_HISTORY') or os.path.join(os.path.dirname(ROOT), 'TiltedEvolution-toolbox', 'test-history', 'live.jsonl')
+# The run history: LIVE_CHECK_HISTORY, else the test history of this PC's toolbox, else the old toolbox beside the repo.
+HISTORY = os.environ.get('LIVE_CHECK_HISTORY') or os.path.join(pc_folder('toolbox') or os.path.join(os.path.dirname(ROOT), 'TiltedEvolution-toolbox'), 'test-history', 'live.jsonl')
 
 
 def record(entry):

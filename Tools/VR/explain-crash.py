@@ -24,8 +24,12 @@ import os
 import re
 import sys
 
-DEFAULT_CLIENT = r'E:\FUS\tools\Skyrim Together VR\urSovngarde.exe'
-DEFAULT_LOG = r'E:\FUS\tools\Skyrim Together VR\logs\tp_client.log'
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pcfolders import client_dir, fus_root  # noqa: E402
+
+# The client of this PC's FUS install.
+DEFAULT_CLIENT = os.path.join(client_dir(fus_root()), 'urSovngarde.exe')
+DEFAULT_LOG = os.path.join(client_dir(fus_root()), 'logs', 'tp_client.log')
 BASE = 0x140000000
 
 MAX_SYM_NAME = 2000

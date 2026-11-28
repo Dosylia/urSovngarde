@@ -23,12 +23,14 @@ import time
 import urllib.error
 import urllib.request
 
+from pcfolders import pc_folder
+
 TRIGGER = 1 << 33
 SPELL_UP = math.radians(90)
 SPELL_LEFT = math.radians(60)
 LONG_MS = 60000
 PLAYER_FORM = '0x00000014'
-FUS_ROOTS = [os.environ.get('SKYRIM_FUS_ROOT') or '', 'C:/FUS', 'E:/FUS']
+FUS_ROOTS = [os.environ.get('SKYRIM_FUS_ROOT') or '', pc_folder('fus') or '', 'C:/FUS', 'E:/FUS']
 
 
 def rotated(yaw, pitch, x, y, z):

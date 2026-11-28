@@ -22,11 +22,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import play  # noqa: E402
+from pcfolders import client_dir, fus_root  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 OUT = os.path.join(ROOT, 'build', 'desync', 'two-games')
 ASK_FILE = os.path.join(tempfile.gettempdir(), 'two-games-second')
-LOGS = next((p for p in (r'C:\Fus\tools\urSovngarde\logs', r'E:\FUS\tools\Skyrim Together VR\logs') if os.path.isdir(p)), None)
+LOGS = next((p for p in (os.path.join(client_dir(fus_root()), 'logs'), r'C:\Fus\tools\urSovngarde\logs', r'E:\FUS\tools\Skyrim Together VR\logs') if os.path.isdir(p)), None)
 
 
 def log(*args):
