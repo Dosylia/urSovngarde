@@ -25,6 +25,7 @@
 #include <Structs/DoorState.h>
 
 #include <PlayerCharacter.h>
+#include <Copies/Takeover.h>
 #include <Games/ActorExtension.h>
 #include <Games/Skyrim/Interface/UI.h>
 #include <Forms/TESObjectCELL.h>
@@ -292,6 +293,12 @@ entt::entity ObjectService::CreateObjectEntity(const uint32_t acFormId, const ui
     return entity;
 }
 
+/**
+ * An activation in this game: run it when it was held back to be run here, and send it when one of this game's own actors made it.
+ * A copy's activation is not sent, as its owner's game reports its own.
+ *
+ * @param acEvent The activation: the object, who used it, and a door's state before it.
+ */
 void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
 {
     if (acEvent.ActivateFlag)
@@ -347,6 +354,9 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     // Only this game's own actors: a remote copy's activation replays its owner's, and sending it back repeats it there.
     if (!m_world.all_of<LocalComponent>(*pEntity))
     {
+        // Kept for when this game gains the NPC: a copy that sat down here can sit by its graph alone (Takeover::NoteGainedInFurniture).
+        if (acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Furniture)
+            Takeover::NoteCopyFurniture(acEvent.pActivator->formID, acEvent.pObject->formID);
         spdlog::info("Activation of {:X} by {:X}, another game's actor, not sent: its owner reports its own", acEvent.pObject->formID, acEvent.pActivator->formID);
         return;
     }

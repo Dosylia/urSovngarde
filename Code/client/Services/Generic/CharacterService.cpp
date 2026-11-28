@@ -2632,6 +2632,7 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
 
         Takeover::NoteGainedMoving(pActor, m_world.try_get<InterpolationComponent>(cEntity));
         Takeover::LogGain(pActor, m_world.try_get<InterpolationComponent>(cEntity));
+        Takeover::NoteGainedInFurniture(pActor);
 
         // Reconcile while hooks still treat the actor as remote/non-authoritative.
         pActor->GetExtension()->SetRemote(true);
@@ -3470,13 +3471,27 @@ bool CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
 // Taken at any distance, an NPC at the edge of both games' loaded areas went back and forth: claimed here, given up as it left this game's area, announced again by the other.
 constexpr float cLeaderClaimDistance = 6000.f;
 
-// A placed NPC alive at its owner: a temporary actor is not the same one in another game, and a body stays with its owner.
+/**
+ * Check whether the party leader's game may take an NPC another game runs.
+ * A temporary actor is not the same one in another game, a mount goes with its rider, and a body stays with its owner.
+ *
+ * @param apActor The NPC.
+ * @param acRemote Its copy's remote component here.
+ * @return True for a placed NPC that is not a mount and is alive at its owner.
+ */
 static bool IsLeaderClaimable(const Actor* apActor, const RemoteComponent& acRemote) noexcept
 {
     return !apActor->IsTemporary() && !apActor->IsMount() && !apActor->IsDead() && !acRemote.DeadAtOwner;
 }
 
-// Measured where its owner last reported it, which can be far from where this game's reference was.
+/**
+ * Check whether an NPC is near this game's player, for the leader's claim.
+ * It is measured where its owner last reported it, which can be far from where this game's reference was.
+ *
+ * @param apActor The NPC.
+ * @param apInterpolation Its playback of its owner's reports, if it has one.
+ * @return True within cLeaderClaimDistance in the player's worldspace, or in the player's own cell indoors.
+ */
 static bool IsNearLocalPlayer(const Actor* apActor, const InterpolationComponent* apInterpolation) noexcept
 {
     const PlayerCharacter* pPlayer = PlayerCharacter::Get();

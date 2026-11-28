@@ -35,7 +35,13 @@ private:
     void OnDisconnected(const DisconnectedEvent&) noexcept;
     void OnCellChange(const CellChangeEvent&) noexcept;
     void OnAssignObjectsResponse(const AssignObjectsResponse&) noexcept;
-    void OnActivate(const ActivateEvent&) noexcept;
+    /**
+     * An activation in this game: run it when it was held back to be run here, and send it when one of this game's own actors made it.
+     * A copy's activation is not sent, as its owner's game reports its own.
+     *
+     * @param acEvent The activation: the object, who used it, and a door's state before it.
+     */
+    void OnActivate(const ActivateEvent& acEvent) noexcept;
     void OnActivateNotify(const NotifyActivate&) noexcept;
     void OnLockChange(const LockChangeEvent&) noexcept;
     void OnLockChangeNotify(const NotifyLockChange&) noexcept;

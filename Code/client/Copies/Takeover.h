@@ -18,6 +18,22 @@ void LogTrailAtGain(const Actor* apActor, const char* acpHow) noexcept;
 void NoteReplay(uint32_t aFormId, const char* acpEvent, bool aTaken) noexcept;
 //! TEMPORARY: one action this game's AI performed, kept for an NPC gained in the last 6 s.
 void NoteOwnAction(uint32_t aFormId, const char* acpEvent, bool aTaken) noexcept;
-//! Each frame: the stops and readings that are due.
+
+/**
+ * Note that a copy here used a piece of furniture, which this game's AI or an idle replayed on it made it do.
+ * Read when this game gains the NPC (NoteGainedInFurniture).
+ *
+ * @param aFormId The copy's form id.
+ * @param aFurnitureId The furniture reference's form id.
+ */
+void NoteCopyFurniture(uint32_t aFormId, uint32_t aFurnitureId) noexcept;
+
+/**
+ * Note an NPC gained whose copy here used a piece of furniture and sits in it by its graph alone: its graph is sent the furniture's exit a moment later.
+ *
+ * @param apActor The NPC gained, still a copy here.
+ */
+void NoteGainedInFurniture(Actor* apActor) noexcept;
+//! Each frame: the stops, resets and readings that are due.
 void Run(World& aWorld) noexcept;
 } // namespace Takeover

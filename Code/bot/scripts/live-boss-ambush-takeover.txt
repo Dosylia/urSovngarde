@@ -1,0 +1,49 @@
+# A boss waiting in its ambush furniture, taken over by the party leader's game: does it come out of its idle and move, or stay stuck?
+#
+#   python Tools\VR\live-check.py live-boss-ambush-takeover
+#
+# In play (2026-11-22, Bleak Falls Barrow) the giant spider 3A1E1 reached the host's game as another game's copy in its ceiling hole.
+# The server gave her to the party leader 10 s after the leader's arrival, and the leader's AI then had every action refused for minutes.
+# Here the bot registers the spider first, in her own cell (371DE) at her placed position, so this game, the party's leader, gets her as a copy and is handed her.
+# The bot sends no idle of its own, so whether this game's copy uses her furniture before the hand-over is part of what this shows (`ClaimDiag: ... furniture used here as a copy`).
+# It leaves the player inside Bleak Falls Barrow: run it alone, then `headless.ps1 down`.
+log live boss ambush takeover
+waitfor connected 45
+expect known me
+waitfor known other 40
+wait 3
+log REQUIRE bot logged info\] In the party of player \d+ as a member
+
+log -- the bot registers the giant spider of Bleak Falls Barrow in her own cell, where she is placed
+teleport 140887 -32896
+wait 1
+cell 371DE
+wait 2
+stay
+npc 3A1E1
+waitfor owned == 1 20
+# From the bot's place by the rig's start (140887, -32896, about -10488) to her placed position (3184, -3123, -1796).
+npcmove -137703 29773 8692
+wait 5
+
+log -- this game goes to her, 400 units from her so that a spider free to move has to come to the player; its player is the party's leader
+log DO god on
+log DO papyrus ObjectReference MoveTo 14 3A1E1 f:0 f:400 f:0 b:false
+# Her copy is here about 5 s after the move, and this game is handed her about 18 s after it.
+wait 12
+log DO mark spider ref 3A1E1
+wait 20
+log REQUIRE logged TakeoverDiag: NPC 3A1E1 as it is gained
+log CHECK logged ClaimDiag: NPC 3A1E1 gained
+log CHECK logged Takeover: NPC 3A1E1 sat in its furniture as a copy here by its graph alone; its graph took '\w+' to leave it
+
+log -- once out of her idle (its exit takes a few seconds), her AI's actions must be taken, and she must come to the player
+log DO logmark
+wait 20
+log CHECK absent ActionFlood: actor 3A1E1 performed action
+# Stuck, she does not move at all (0 units on a build without the change); free, she drops from her hole and fights, from afar too, as she spits.
+log CHECK moved spider atleast 30
+log CHECK game alive
+wait 3
+log done
+stop

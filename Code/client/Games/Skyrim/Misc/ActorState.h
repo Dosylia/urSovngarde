@@ -66,6 +66,13 @@ struct ActorState : IMovementState
     //! Bit 10 of flags1 (CommonLibVR ActorState1 swimming).
     bool IsSwimming() const noexcept { return ((flags1 >> 10) & 1) != 0; }
 
+    /**
+     * Read this actor's sit and sleep state.
+     *
+     * @return SIT_SLEEP_STATE, bits 14-17 of flags1 (CommonLibVR ActorState1): 0 none, 3 sitting, 7 sleeping, the others on the way in or out.
+     */
+    uint32_t SitSleepState() const noexcept { return (flags1 >> 14) & 0xF; }
+
     //! KNOCK_STATE_ENUM, bits 25-27 of flags1 (CommonLibVR ActorState1).
     //! Anything but normal (0) is a body thrown down, lying in its ragdoll, or getting up.
     bool IsKnockedDown() const noexcept { return (flags1 & 0xE000000) != 0; }

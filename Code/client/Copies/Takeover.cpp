@@ -7,9 +7,11 @@
 #include <PlayerCharacter.h>
 #include <Systems/InterpolationSystem.h>
 
+#include <array>
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 
 namespace
 {
@@ -56,6 +58,95 @@ void RunGainedMoving() noexcept
     }
 }
 
+// The furniture each copy here last used, by the copy's form id, and the NPCs gained while their copy sat in it by its graph alone.
+// Its graph then holds the furniture's idle while the game has no sit state, so every action of its AI is refused and it stays where it is.
+// A moment after the gain, once this game runs it, its graph is sent the furniture's exit, and its AI acts again.
+constexpr size_t kMaxCopyFurniture = 1024;
+constexpr auto kFurnitureResetAfter = std::chrono::milliseconds(250);
+std::mutex s_furnitureLock;
+TiltedPhoques::Map<uint32_t, uint32_t> s_copyFurniture;
+struct GainedInFurniture
+{
+    uint32_t FormId{};
+    std::chrono::steady_clock::time_point At{};
+};
+TiltedPhoques::Vector<GainedInFurniture> s_gainedInFurniture;
+
+/**
+ * Read whether an NPC's graph is driven by its animation, as in a furniture's idle.
+ *
+ * @param apActor The NPC.
+ * @return The graph's bAnimationDriven; nothing when its graph has no such variable.
+ */
+std::optional<bool> GraphAnimationDriven(Actor* apActor) noexcept
+{
+    static BSFixedString s_animationDriven("bAnimationDriven");
+    bool driven = false;
+    if (!apActor->animationGraphHolder.GetVariableBool(&s_animationDriven, &driven))
+        return std::nullopt;
+    return driven;
+}
+
+/**
+ * Check whether an NPC sits in its furniture by its graph alone: its graph is animation-driven while the game has no sit state.
+ *
+ * @param apActor The NPC.
+ * @return True when its graph holds a furniture's idle the game does not know of.
+ */
+bool SitsByGraphAlone(Actor* apActor) noexcept
+{
+    return apActor->actorState.SitSleepState() == 0 && GraphAnimationDriven(apActor).value_or(false);
+}
+
+// The events that take a graph out of a furniture's idle, from Skyrim.esm's exit idles: furniture in general, a frostbite spider's three ceiling holes, a draugr's coffin, an ice wraith's or a wisp's ambush, a spriggan's tree.
+// A graph takes only the events of its own behaviour, so they are tried in turn until one is taken; the reset to standing, which only human graphs have, comes last.
+constexpr std::array<const char*, 8> kFurnitureExitEvents{"IdleFurnitureExit", "idleSleepHoleExitStart", "idleSleepHoleExitMediumStart", "idleSleepHoleExitSmallStart",
+                                                         "IdleSleepSarcExitStart", "AmbushIdleStop", "idleLeanExitStart", "IdleForceDefaultState"};
+
+/**
+ * Send an NPC's graph the events that leave a furniture's idle, until one is taken.
+ *
+ * @param apActor The NPC.
+ * @return The event its graph took; null when it took none.
+ */
+const char* LeaveFurnitureIdle(Actor* apActor) noexcept
+{
+    for (const char* cpEvent : kFurnitureExitEvents)
+    {
+        BSFixedString event(cpEvent);
+        if (apActor->SendAnimationEvent(&event))
+            return cpEvent;
+    }
+    return nullptr;
+}
+
+/**
+ * Take each NPC gained in its furniture out of the furniture's idle once it is due, if this game still runs it and it still sits by its graph alone.
+ */
+void RunGainedInFurniture() noexcept
+{
+    const auto cNow = std::chrono::steady_clock::now();
+    for (auto it = s_gainedInFurniture.begin(); it != s_gainedInFurniture.end();)
+    {
+        if (cNow < it->At)
+        {
+            ++it;
+            continue;
+        }
+
+        Actor* pActor = Cast<Actor>(TESForm::GetById(it->FormId));
+        // Given away again by now, or killed: its graph is not this reset's to touch.
+        const bool cStillOurs = pActor && pActor->GetNiNode() && !pActor->GetExtension()->IsRemote() && !pActor->actorState.IsDeadOrDying();
+        if (cStillOurs && SitsByGraphAlone(pActor))
+        {
+            const char* cpTaken = LeaveFurnitureIdle(pActor);
+            spdlog::info("Takeover: NPC {:X} sat in its furniture as a copy here by its graph alone; {}", pActor->formID,
+                         cpTaken ? fmt::format("its graph took '{}' to leave it", cpTaken) : std::string("its graph took none of the furniture exits"));
+        }
+        it = s_gainedInFurniture.erase(it);
+    }
+}
+
 } // namespace
 
 namespace Takeover
@@ -68,6 +159,37 @@ void NoteGainedMoving(Actor* apActor, const InterpolationComponent* apInterpolat
     const bool cOwnGraphCopy = apActor->GetExtension()->IsRemote() && apInterpolation && !apInterpolation->ForeignGraph;
     if (const float cCopySpeed = cOwnGraphCopy ? InterpolationSystem::ReportedSpeed(apActor->formID, *apInterpolation) : 0.f; cCopySpeed > cMovingSpeed)
         s_gainedMoving.push_back({apActor->formID, cCopySpeed, std::chrono::steady_clock::now() + std::chrono::milliseconds(500)});
+}
+
+/**
+ * Note that a copy here used a piece of furniture, which this game's AI or an idle replayed on it made it do.
+ * Read when this game gains the NPC (NoteGainedInFurniture).
+ *
+ * @param aFormId The copy's form id.
+ * @param aFurnitureId The furniture reference's form id.
+ */
+void NoteCopyFurniture(uint32_t aFormId, uint32_t aFurnitureId) noexcept
+{
+    std::scoped_lock _{s_furnitureLock};
+    if (s_copyFurniture.size() > kMaxCopyFurniture)
+        s_copyFurniture.clear();
+    s_copyFurniture[aFormId] = aFurnitureId;
+}
+
+/**
+ * Note an NPC gained whose copy here used a piece of furniture and sits in it by its graph alone: its graph is sent the furniture's exit a moment later.
+ *
+ * @param apActor The NPC gained, still a copy here.
+ */
+void NoteGainedInFurniture(Actor* apActor) noexcept
+{
+    bool usedFurniture = false;
+    {
+        std::scoped_lock _{s_furnitureLock};
+        usedFurniture = s_copyFurniture.erase(apActor->formID) > 0;
+    }
+    if (usedFurniture && !apActor->IsDead() && SitsByGraphAlone(apActor))
+        s_gainedInFurniture.push_back({apActor->formID, std::chrono::steady_clock::now() + kFurnitureResetAfter});
 }
 
 } // namespace Takeover
@@ -172,6 +294,30 @@ void RunTrails() noexcept
         spdlog::info("TakeoverDiag: NPC {:X}, what this game's AI performed on it in the 6 s after the gain:{}", cFormId, cText);
 }
 
+/**
+ * TEMPORARY: what might show an NPC waiting in a scripted idle (a ceiling hole, a coffin), read as this game gains it.
+ * Its owner's game has it in its furniture, while the copy here only replays the idle, so the game sets no sit state here.
+ *
+ * @param apActor The NPC gained.
+ * @param apInterpolation Its playback of its last owner's reports, if it has one.
+ */
+void LogScriptedIdleCandidates(Actor* apActor, const InterpolationComponent* apInterpolation) noexcept
+{
+    const std::optional<bool> cAnimationDriven = GraphAnimationDriven(apActor);
+
+    uint32_t furnitureId = 0;
+    {
+        std::scoped_lock _{s_furnitureLock};
+        if (const auto it = s_copyFurniture.find(apActor->formID); it != s_copyFurniture.end())
+            furnitureId = it->second;
+    }
+
+    const float cOwnerSpeed = apInterpolation ? InterpolationSystem::ReportedSpeed(apActor->formID, *apInterpolation) : 0.f;
+    spdlog::info("ClaimDiag: NPC {:X} gained: sit/sleep state {}, furniture used here as a copy {}, its last owner's speed {:.0f}, bAnimationDriven {}", apActor->formID,
+                 apActor->actorState.SitSleepState(), furnitureId ? fmt::format("{:X}", furnitureId) : std::string("none"), cOwnerSpeed,
+                 cAnimationDriven ? (*cAnimationDriven ? "true" : "false") : "absent");
+}
+
 // TEMPORARY: the second reading of each gained NPC, the action trails that are due, and a line each time an NPC this game runs starts or stops swimming.
 void RunTakeoverDiag(World& aWorld) noexcept
 {
@@ -218,6 +364,7 @@ void LogGain(Actor* apActor, const InterpolationComponent* apInterpolation) noex
     if (apActor->IsDead())
         return;
     LogTakeoverState(apActor, "as it is gained");
+    LogScriptedIdleCandidates(apActor, apInterpolation);
     LogGainedPlace(apActor, apInterpolation);
     s_takeoverWatches.push_back({apActor->formID, std::chrono::steady_clock::now() + std::chrono::seconds(3)});
     LogTrailAtGain(apActor, "");
@@ -266,6 +413,7 @@ void NoteOwnAction(uint32_t aFormId, const char* acpEvent, bool aTaken) noexcept
 void Run(World& aWorld) noexcept
 {
     RunGainedMoving();
+    RunGainedInFurniture();
     RunTakeoverDiag(aWorld);
 }
 } // namespace Takeover
